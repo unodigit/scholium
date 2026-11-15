@@ -20,10 +20,13 @@
 export {
   DeviceKeyError,
   PasskeyCancelledError,
+  RecordSigningError,
   isDeviceKeyError,
   isPasskeyCancellation,
+  isRecordSigningError,
   toDeviceKeyError,
   type DeviceKeyErrorCode,
+  type RecordSigningErrorCode,
 } from "./errors";
 
 export {
@@ -107,3 +110,14 @@ export {
   type SignOptions,
   type UnlockDeviceKeyOptions,
 } from "./device-key";
+
+export {
+  RECORD_ENVELOPE_VERSION,
+  SIGN_AND_SUBMIT_REASON,
+  signRecord,
+  type ComputeRecordCid,
+  type RecordCid,
+  type RecordSigner,
+  type SignRecordOptions,
+  type SignedRecord,
+} from "./sign-record";

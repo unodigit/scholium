@@ -53,6 +53,43 @@ export class PasskeyCancelledError extends DeviceKeyError {
   }
 }
 
+/** Stable failure codes for {@link RecordSigningError}. */
+export type RecordSigningErrorCode =
+  /** The type, body, prev or proofs cannot form a valid, DAG-CBOR-encodable record. */
+  | "invalid-record"
+  /** verify-core could not be loaded, so no record id could be computed. */
+  | "record-id-failed";
+
+/**
+ * A record could not be built or identified, so nothing was signed.
+ *
+ * Raised before the passkey prompt: a malformed record never asks the user to
+ * authorise it. Device and passkey failures (locked, cancelled, no key) stay
+ * {@link DeviceKeyError}s.
+ */
+export class RecordSigningError extends Error {
+  /** Stable code callers can branch on. */
+  readonly code: RecordSigningErrorCode;
+
+  constructor(
+    code: RecordSigningErrorCode,
+    message: string,
+    options: { cause?: unknown } = {},
+  ) {
+    super(message);
+    this.name = "RecordSigningError";
+    this.code = code;
+    if (options.cause !== undefined) {
+      this.cause = options.cause;
+    }
+  }
+}
+
+/** True when `error` is a {@link RecordSigningError}. */
+export function isRecordSigningError(error: unknown): error is RecordSigningError {
+  return error instanceof RecordSigningError;
+}
+
 /** True when `error` looks like the user abandoning a WebAuthn prompt. */
 export function isPasskeyCancellation(error: unknown): boolean {
   if (error instanceof PasskeyCancelledError) {

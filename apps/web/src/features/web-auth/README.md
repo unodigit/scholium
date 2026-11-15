@@ -35,6 +35,43 @@ if (await key.exists()) {
 }
 ```
 
+## Signing records
+
+`signRecord(type, body, prev)` turns a payload into a submit-ready envelope:
+
+```ts
+import { signRecord } from "@/features/web-auth";
+
+const record = await signRecord("paper.version", { title: "…" }, previousId);
+// { v: 1, type, id: "bafyrei…", author: "did:key:z6Mk…",
+//   created: "2026-11-14T05:33:00Z", prev: previousId, body, proofs: [],
+//   sig: "<unpadded base64url Ed25519>" }
+```
+
+- **Author** is the device key's `did:key`; **created** is UTC at second
+  precision; **proofs** default to `[]` (pass `{ proofs }` to attach some).
+- **`prev`** is required. Pass `null` to start a chain. An empty string is
+  rejected so a missing id cannot silently fork a chain.
+- **`id`** is computed by `verify-core` (`computeRecordCid`): a CIDv1 over the
+  seven content fields, excluding `id` and `sig`.
+- **`sig`** is Ed25519 over the **binary CID bytes** (`CID.bytes`, not the
+  base32 string), encoded as unpadded base64url. A verifier recomputes the id
+  from the envelope, checks it equals `id`, then verifies `sig` over those
+  bytes with the key named by `author`.
+- **One prompt per call.** Every call shows the "Sign and submit" passkey
+  prompt, even when the key is still unlocked from an earlier prompt.
+- **Validation happens first.** The envelope is built and its id computed
+  *before* the prompt, so a malformed record raises `RecordSigningError`
+  (`invalid-record`) without asking the user to approve anything. A missing
+  device key (`not-found`), a dismissed prompt (`passkey-cancelled`) and a
+  failed passkey (`passkey-failed`) are `DeviceKeyError`s.
+- `body` and `proofs` are copied, so mutating them afterwards cannot make the
+  returned record disagree with its `id` and `sig`.
+
+`verify-core` is loaded on first use; if it cannot load, `signRecord` raises
+`RecordSigningError` with code `record-id-failed`. Tests inject
+`{ signer, computeRecordCid, now }` instead of touching the real device key.
+
 ## Security model
 
 | Property | How it is enforced |
@@ -61,6 +98,7 @@ key").
 | `MemoryDeviceKeyStorage` | Test / non-persistent storage. |
 | `BrowserPasskeyProvider` | `navigator.credentials.create/get` adapter. |
 | `didKeyFromEd25519PublicKey` | `did:key:z6Mk…` encoding (base58btc + Ed25519 multicodec). |
+| `signRecord` | Build a record envelope, compute its id with `verify-core` and sign it behind a "Sign and submit" passkey prompt. |
 
 All failures are `DeviceKeyError` with a stable `code`
 (`unsupported`, `storage-unavailable`, `not-found`, `already-exists`,
@@ -76,6 +114,7 @@ All failures are `DeviceKeyError` with a stable `code`
 | `device-key-storage.ts` | Record shape, IndexedDB and memory stores. |
 | `passkey.ts` | WebAuthn registration and assertion validation. |
 | `device-key.ts` | Manager that ties storage, crypto and passkeys together. |
+| `sign-record.ts` | `signRecord`: envelope building, record id, passkey-gated signature. |
 | `did-key.ts` | Base58btc / `did:key` encoding. |
 | `encoding.ts` | base64url, hex and byte helpers. |
 | `errors.ts` | Typed errors and cancellation detection. |

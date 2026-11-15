@@ -20,6 +20,11 @@ describe("web-auth public surface", () => {
       "isEd25519Supported",
       "toBase64Url",
       "fromBase64Url",
+      "signRecord",
+      "SIGN_AND_SUBMIT_REASON",
+      "RECORD_ENVELOPE_VERSION",
+      "RecordSigningError",
+      "isRecordSigningError",
     ]) {
       expect(webAuth).toHaveProperty(name);
     }
