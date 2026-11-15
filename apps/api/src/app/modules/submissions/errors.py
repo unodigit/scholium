@@ -26,7 +26,9 @@ __all__ = [
     "GENESIS_RATE_LIMITED",
     "MANIFEST_FILE_NOT_STORED",
     "MANIFEST_FILE_SIZE_MISMATCH",
+    "NOTICE_NOT_AUTHORIZED",
     "SHORT_ID_COLLISION",
+    "UNKNOWN_NOTICE_TARGET",
     "UNKNOWN_PAPER",
     "VERSION_OUT_OF_SEQUENCE",
     "CategoryNotEndorsed",
@@ -35,7 +37,9 @@ __all__ = [
     "ManifestFileError",
     "ManifestFileNotStored",
     "ManifestFileSizeMismatch",
+    "NoticeNotAuthorized",
     "ShortIdCollision",
+    "UnknownNoticeTarget",
     "UnknownPaper",
     "UnknownVersion",
     "VersionOutOfSequence",
@@ -61,6 +65,12 @@ VERSION_OUT_OF_SEQUENCE = "urn:scholium:problem:version-out-of-sequence"
 
 #: A ``paper.version`` names a paper this node has no ``paper.genesis`` for.
 UNKNOWN_PAPER = "urn:scholium:problem:unknown-paper"
+
+#: A withdrawal, correction or retraction targets no paper or version this node holds.
+UNKNOWN_NOTICE_TARGET = "urn:scholium:problem:unknown-notice-target"
+
+#: A withdrawal, correction or retraction is signed by neither a paper author nor a tier-4 member.
+NOTICE_NOT_AUTHORIZED = "urn:scholium:problem:notice-not-authorized"
 
 _MAX_ECHO = 64
 
@@ -331,6 +341,65 @@ class UnknownPaper(ProblemException, LookupError):
                     "input": shown,
                 }
             ],
+        )
+
+
+class UnknownNoticeTarget(ProblemException, LookupError):
+    """A notice names a record that is neither a paper nor a version here: ``422``.
+
+    ``body.target`` must be the cid of a paper's ``paper.genesis`` or of one of
+    its versions; a notice cannot create the paper it is about, and a cid that
+    names some other record (a manifest, a review) is no paper at all.
+    """
+
+    def __init__(self, kind: str, target: object) -> None:
+        self.kind = kind
+        self.target = target
+        shown = _clip(target if isinstance(target, str) else repr(target))
+        message = (
+            f"The {kind} targets {shown!r}, which is not a paper or a paper "
+            "version this node holds."
+        )
+        super().__init__(
+            422,
+            message,
+            type=UNKNOWN_NOTICE_TARGET,
+            errors=[
+                {
+                    "loc": ["body", "target"],
+                    "msg": message,
+                    "type": "unknown_notice_target",
+                    "input": shown,
+                }
+            ],
+        )
+
+
+class NoticeNotAuthorized(ProblemException, PermissionError):
+    """A notice is signed by someone who may not speak for the paper: ``403``.
+
+    A withdrawal, correction or retraction is shown on every version of the
+    paper, so only the paper's own authors -- or a tier-4 member, who acts for
+    the integrity process -- may sign one.  ``author`` is the DID the signature
+    authenticates, which is not necessarily whoever relayed the record.
+    """
+
+    def __init__(self, kind: str, author: object, paper_cid: object, required_tier: int) -> None:
+        self.kind = kind
+        self.author = author
+        self.paper_cid = paper_cid
+        self.required_tier = int(required_tier)
+        shown = _clip(author if isinstance(author, str) else repr(author))
+        message = (
+            f"A {kind} may be signed only by an author of the paper or by a "
+            f"tier-{self.required_tier} member; {shown} is neither."
+        )
+        super().__init__(
+            403,
+            message,
+            type=NOTICE_NOT_AUTHORIZED,
+            paper_cid=paper_cid,
+            required_tier=self.required_tier,
         )
 
 

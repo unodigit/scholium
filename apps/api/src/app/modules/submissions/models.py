@@ -59,6 +59,24 @@ order (1-based) and ``credit_roles`` the CRediT roles the record names, or NULL
 when it names none.  ``consent_cid``/``consent_decision`` stay NULL until the
 author signs a ``coauthor.consent`` (the consents plugin).
 
+``notices`` (``database_schema/notices``)::
+
+    notices(record_cid TEXT PRIMARY KEY,
+            paper_cid TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL)
+
+One row per accepted ``withdrawal``, ``correction`` or ``retraction`` record.
+``record_cid`` is the notice record's own cid, so replaying the same record can
+never add a second notice.  The row is keyed to the *paper*, not to a version:
+a notice that names a version still belongs to the whole paper, which is what
+makes every version show it.  ``kind`` is the record type, ``reason`` the text
+readers are shown and ``created_at`` the instant the signer's record is dated
+(UTC), so the table is a pure projection of the signed records.  The notice's
+target and any ``replacement`` stay in the record itself, which the ledger
+serves by ``record_cid``.
+
 The models are declared on the application's shared declarative base so
 ``main.create_app`` -- which creates tables after the module loader has
 imported every module package -- registers them in one pass.
@@ -90,6 +108,7 @@ __all__ = [
     "DEFAULT_LICENCE",
     "INITIAL_STATUS",
     "Authorship",
+    "Notice",
     "Paper",
     "PaperVersion",
     "ensure_tables",
@@ -187,6 +206,30 @@ class Authorship(db.Base):
         )
 
 
+class Notice(db.Base):
+    """One withdrawal, correction or retraction notice, shown on every version."""
+
+    __tablename__ = "notices"
+
+    #: cid of the notice record.
+    record_cid = Column(Text, primary_key=True)
+    #: cid of the paper's ``paper.genesis`` record, whichever version the
+    #: notice named.  Readers look notices up by paper.
+    paper_cid = Column(Text, nullable=False, index=True)
+    #: ``withdrawal``, ``correction`` or ``retraction`` (the record type).
+    kind = Column(Text, nullable=False)
+    #: The reason readers are shown.
+    reason = Column(Text, nullable=False)
+    #: The instant the record is dated, in UTC (naive, like every timestamp here).
+    created_at = Column(DateTime, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"<Notice record_cid={self.record_cid!r} paper_cid={self.paper_cid!r} "
+            f"kind={self.kind!r}>"
+        )
+
+
 # Self-healing table creation, mirroring the other modules: callers that never
 # build the app (scripts, tests) still get their tables on first use.
 _table_lock = threading.Lock()
@@ -194,14 +237,19 @@ _table_engine: Optional[Engine] = None
 
 
 def ensure_tables() -> None:
-    """Create the ``papers``, ``paper_versions`` and ``authorship`` tables if needed."""
+    """Create the ``papers``, ``paper_versions``, ``authorship`` and ``notices`` tables if needed."""
     global _table_engine
     if _table_engine is db.engine:
         return
     with _table_lock:
         if _table_engine is db.engine:
             return
-        for table in (Paper.__table__, PaperVersion.__table__, Authorship.__table__):
+        for table in (
+            Paper.__table__,
+            PaperVersion.__table__,
+            Authorship.__table__,
+            Notice.__table__,
+        ):
             try:
                 table.create(bind=db.engine, checkfirst=True)
             except (OperationalError, ProgrammingError):
