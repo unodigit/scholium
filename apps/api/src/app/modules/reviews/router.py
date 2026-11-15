@@ -380,3 +380,96 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
         "reviews": reviews_out,
         "gate_open": gate_open,
     }
+
+
+@router.post("/reviews/{cid}/rating", status_code=201)
+def rate_review(
+    cid: str,
+    payload: Any = Body(default=None),
+    principal: Principal = Depends(require_tier(Tier.REVIEWER)),
+) -> dict[str, Any]:
+    """Record a tier-3 member's quality rating (1-5) of review ``cid``.
+
+    The caller must be a tier-3 member who is neither the review's own author
+    (its reviewer) nor an author of the paper the review targets.  The rating
+    is stored in the ``review_ratings`` table.
+    """
+    ensure_tables()
+    review = service.resolve_review(cid)
+    if review is None:
+        raise ProblemException(404, f"No review {cid!r}.")
+
+    # Record-shaped body: a signed review.rating envelope.
+    if isinstance(payload, dict) and payload.get("type") == "review.rating":
+        # Authorization is enforced against the record's author, who must be
+        # the caller: a rating is signed by the member casting it.
+        author_did = payload.get("author")
+        if not isinstance(author_did, str) or not author_did:
+            raise ProblemException(422, "author is required")
+        if author_did != principal.did:
+            raise ProblemException(403, "The rating's author must be the caller.")
+        # Target must match the path.
+        body = payload.get("body")
+        if isinstance(body, dict):
+            target = body.get("review") or body.get("reviewCid") or body.get("review_cid")
+            if isinstance(target, str) and target and target != review.review_cid and target != cid:
+                raise ProblemException(422, "The rating targets a different review.")
+        # Not the reviewer, not an author.
+        paper_cid = None
+        try:
+            from app.modules.submissions.models import PaperVersion
+
+            with db.SessionLocal() as session:
+                pv = session.get(PaperVersion, review.version_cid)
+                if pv is not None:
+                    paper_cid = getattr(pv, "paper_cid", None)
+        except Exception:
+            paper_cid = None
+        if paper_cid and service.is_review_author(author_did, review.version_cid):
+            raise ProblemException(403, "An author of the paper may not rate its review.")
+        if service.is_review_reviewer(author_did, review):
+            raise ProblemException(403, "The reviewer of a review may not rate it.")
+        # Run through the ingest pipeline (validates envelope/body/cid/sig).
+        from app.modules.ingest.service import ingest
+
+        result = ingest(payload)
+        # The handler normally saved the row; ensure it exists.
+        return {
+            "id": result.record_id,
+            "review_cid": review.review_cid,
+            "reviewCid": review.review_cid,
+            "rating": service.rating_value_from_body(body if isinstance(body, dict) else {}),
+            "state": result.state,
+            "anchor": result.anchor,
+            "status": "recorded",
+        }
+
+    # Direct body: {"rating": N} (with common aliases).
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ProblemException(422, "body must be a JSON object.")
+    rating = service.rating_value_from_body(payload)
+    if rating is None:
+        # maybe nested under "rating" already; try payload.get("rating")
+        rating = service.rating_value_from_body({"rating": payload.get("rating")}) if "rating" in payload else None
+    if rating is None or rating < 1 or rating > 5:
+        raise ProblemException(422, "rating must be an integer from 1 to 5.")
+
+    # Authorization: caller is neither reviewer nor author.
+    if service.is_review_author(principal.did, review.version_cid):
+        raise ProblemException(403, "An author of the paper may not rate its review.")
+    if service.is_review_reviewer(principal.did, review):
+        raise ProblemException(403, "The reviewer of a review may not rate it.")
+
+    service.save_review_rating(review.review_cid, principal.did, rating)
+    return {
+        "review_cid": review.review_cid,
+        "reviewCid": review.review_cid,
+        "cid": review.review_cid,
+        "id": review.review_cid,
+        "rating": rating,
+        "rater_did": principal.did,
+        "rater": principal.did,
+        "status": "recorded",
+    }

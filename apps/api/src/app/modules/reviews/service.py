@@ -32,12 +32,14 @@ from .errors import (
     UnknownReviewTarget,
 )
 from .escrow import seal_identity, uniqueness_token
-from .models import Review, ReviewEscrow, ReviewInvitation, ensure_table, ensure_tables
+from .models import Review, ReviewEscrow, ReviewInvitation, ReviewRating, ensure_table, ensure_tables
 
 __all__ = [
     "COMMITTED",
     "REVIEW_COMMIT_MIN_TIER",
     "REVIEW_COMMIT_TYPE",
+    "REVIEW_RATING_MIN_TIER",
+    "REVIEW_RATING_TYPE",
     "Review",
     "ReviewCommitFields",
     "ReviewEscrow",
@@ -1021,3 +1023,177 @@ def persist_review_commit(entry: Any) -> None:
     from app.modules import ledger
 
     apply_review_commit(ledger.stored_envelope(entry).model_dump())
+
+# --------------------------------------------------------------------------- #
+# Review quality ratings (feature 113)
+# --------------------------------------------------------------------------- #
+
+
+def _paper_cid_for_version(version_cid: str) -> Optional[str]:
+    """The paper cid a version belongs to, or ``None``."""
+    if not isinstance(version_cid, str) or not version_cid:
+        return None
+    try:
+        from app.modules.submissions.models import PaperVersion
+    except Exception:
+        return None
+    ensure_tables()
+    with db.SessionLocal() as session:
+        row = session.get(PaperVersion, version_cid)
+        if row is None:
+            return None
+        return getattr(row, "paper_cid", None)
+
+
+def resolve_review(review_cid: object) -> Optional[Review]:
+    """Resolve a review by its own cid, or by a ``review.formal`` record cid.
+
+    Returns the saved :class:`Review` row, or ``None`` when nothing matches.
+    """
+    row = get_review(review_cid)
+    if row is not None:
+        return row
+    if not isinstance(review_cid, str) or not review_cid:
+        return None
+    # Fall back: treat the value as a review.formal record cid and map it to
+    # the review it opened (same version and pseudonymous review key).
+    try:
+        from app.modules import ledger
+    except Exception:
+        return None
+    entry = ledger.entry_by_cid(review_cid)
+    if entry is None:
+        return None
+    if getattr(entry, "record_type", None) != "review.formal":
+        return None
+    body = getattr(entry, "body", None)
+    if not isinstance(body, dict):
+        return None
+    version_cid = body.get("target") or body.get("versionCid") or body.get("version_cid")
+    review_key = getattr(entry, "author_did", None) or body.get("reviewKey") or body.get("review_key")
+    if not (isinstance(version_cid, str) and isinstance(review_key, str)):
+        return None
+    ensure_tables()
+    with db.SessionLocal() as session:
+        row = (
+            session.query(Review)
+            .filter(Review.version_cid == version_cid, Review.review_key == review_key)
+            .one_or_none()
+        )
+        if row is not None:
+            session.expunge(row)
+        return row
+
+
+def is_review_author(caller_did: str, version_cid: str) -> bool:
+    """Whether ``caller_did`` is listed as an author of ``version_cid``."""
+    if not isinstance(caller_did, str) or not caller_did:
+        return False
+    if not isinstance(version_cid, str) or not version_cid:
+        return False
+    try:
+        from app.modules.submissions.models import Authorship, PaperVersion
+    except Exception:
+        return False
+    ensure_tables()
+    with db.SessionLocal() as session:
+        # Any version of the same paper counts: an author of the paper is an
+        # author of one of its versions.
+        paper_cid = None
+        pv = session.get(PaperVersion, version_cid)
+        if pv is not None:
+            paper_cid = getattr(pv, "paper_cid", None)
+        if paper_cid:
+            version_cids = [r[0] for r in session.query(PaperVersion.version_cid).filter(PaperVersion.paper_cid == paper_cid).all()]
+        else:
+            version_cids = [version_cid]
+        row = (
+            session.query(Authorship)
+            .filter(Authorship.version_cid.in_(version_cids), Authorship.author_did == caller_did)
+            .first()
+        )
+        return row is not None
+
+
+def is_review_reviewer(caller_did: str, review: Review) -> bool:
+    """Whether ``caller_did`` is the person who wrote ``review``.
+
+    The reviewer's identity is escrowed, never stored in plaintext, so the
+    comparison is done on the HMAC uniqueness token: a match means the caller
+    is the reviewer without revealing who either party is.
+    """
+    if not isinstance(caller_did, str) or not caller_did:
+        return False
+    if review is None:
+        return False
+    paper_cid = _paper_cid_for_version(review.version_cid)
+    if not paper_cid:
+        return False
+    try:
+        token = uniqueness_token(caller_did, paper_cid)
+    except Exception:
+        return False
+    escrow = get_escrow(review.review_cid)
+    if escrow is None:
+        return False
+    return getattr(escrow, "uniqueness_token", None) == token
+
+
+def save_review_rating(review_cid: str, rater_did: str, rating: int) -> ReviewRating:
+    """Persist one rating row and return it (detached)."""
+    ensure_tables()
+    with db.SessionLocal() as session:
+        row = ReviewRating(review_cid=review_cid, rater_did=rater_did, rating=int(rating))
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        session.expunge(row)
+        return row
+
+
+def rating_value_from_body(body: Mapping[str, Any]) -> Optional[int]:
+    """Extract a rating integer from a body under any common spelling."""
+    if not isinstance(body, Mapping):
+        return None
+    for key in ("rating", "score", "value", "stars"):
+        if key in body:
+            try:
+                return int(body[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def handle_review_rating(record: Mapping[str, Any]) -> str:
+    """Ingest handler for ``review.rating`` records."""
+    from app.errors import ProblemException
+
+    if not isinstance(record, Mapping):
+        raise ProblemException(422, "Invalid record.")
+    body = record.get("body")
+    if not isinstance(body, Mapping):
+        raise ProblemException(422, "body must be an object.")
+    review_cid = body.get("review") or body.get("reviewCid") or body.get("review_cid")
+    if not isinstance(review_cid, str) or not review_cid:
+        raise ProblemException(422, "review is required.")
+    rating = rating_value_from_body(body)
+    if rating is None or rating < 1 or rating > 5:
+        raise ProblemException(422, "rating must be an integer 1-5.")
+    review = resolve_review(review_cid)
+    if review is None:
+        raise ProblemException(404, f"No review {review_cid!r}.")
+    author_did = record.get("author")
+    if not isinstance(author_did, str) or not author_did:
+        raise ProblemException(422, "author is required.")
+    # tier check already enforced by ingest min_tier, but re-check author.
+    paper_cid = _paper_cid_for_version(review.version_cid)
+    if paper_cid and is_review_author(author_did, review.version_cid):
+        raise ProblemException(403, "An author of the paper may not rate its review.")
+    if is_review_reviewer(author_did, review):
+        raise ProblemException(403, "The reviewer of a review may not rate it.")
+    save_review_rating(review.review_cid, author_did, rating)
+    return "accepted"
+
+
+REVIEW_RATING_TYPE = "review.rating"
+REVIEW_RATING_MIN_TIER = 3

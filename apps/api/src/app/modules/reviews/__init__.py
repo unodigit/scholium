@@ -62,7 +62,7 @@ from .escrow import (
     seal_identity,
     uniqueness_token,
 )
-from .models import Review, ReviewEscrow, ReviewInvitation, ensure_table, ensure_tables
+from .models import Review, ReviewEscrow, ReviewInvitation, ReviewRating, ensure_table, ensure_tables
 from .reveal import (
     CONFIDENCE_LEVELS,
     RECOMMENDATIONS,
@@ -96,6 +96,12 @@ from .service import (
     get_review,
     get_review_invitation,
     handle_review_commit,
+    handle_review_rating,
+    is_review_author,
+    is_review_reviewer,
+    rating_value_from_body,
+    resolve_review,
+    save_review_rating,
     is_author_or_moderator,
     is_tier3_reviewer,
     list_invitations,
@@ -166,6 +172,12 @@ __all__ = [
     "handle_review_reveal",
     "is_author_or_moderator",
     "is_tier3_reviewer",
+    "handle_review_rating",
+    "is_review_author",
+    "is_review_reviewer",
+    "rating_value_from_body",
+    "resolve_review",
+    "save_review_rating",
     "list_invitations",
     "list_review_invitations",
     "normalise_recommendation",
@@ -216,6 +228,14 @@ def _register_record_type() -> None:
             REVIEW_FORMAL_TYPE,
             handle_review_reveal,
             min_tier=REVIEW_REVEAL_MIN_TIER,
+        )
+    from .service import REVIEW_RATING_MIN_TIER, REVIEW_RATING_TYPE
+
+    if ingest.get(REVIEW_RATING_TYPE) is None:
+        ingest.register(
+            REVIEW_RATING_TYPE,
+            handle_review_rating,
+            min_tier=REVIEW_RATING_MIN_TIER,
         )
 
 

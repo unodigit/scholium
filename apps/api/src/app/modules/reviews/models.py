@@ -65,6 +65,7 @@ __all__ = [
     "Review",
     "ReviewEscrow",
     "ReviewInvitation",
+    "ReviewRating",
     "ensure_table",
     "ensure_tables",
 ]
@@ -140,6 +141,24 @@ class ReviewEscrow(db.Base):
         return f"<ReviewEscrow review_cid={self.review_cid!r}>"
 
 
+
+class ReviewRating(db.Base):
+    """One tier-3 member's quality rating of a revealed review."""
+
+    __tablename__ = "review_ratings"
+
+    review_cid = Column(Text, nullable=False)
+    rater_did = Column(Text, nullable=False)
+    rating = Column(Integer, nullable=False)
+
+    __mapper_args__ = {"primary_key": [review_cid, rater_did]}
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"<ReviewRating review_cid={self.review_cid!r} "
+            f"rater_did={self.rater_did!r} rating={self.rating!r}>"
+        )
+
 _table_lock = threading.Lock()
 _table_engine: Optional[Engine] = None
 
@@ -155,6 +174,7 @@ def ensure_table() -> None:
                 ReviewInvitation.__table__,
                 Review.__table__,
                 ReviewEscrow.__table__,
+                ReviewRating.__table__,
             ):
                 try:
                     table.create(bind=db.engine, checkfirst=True)
