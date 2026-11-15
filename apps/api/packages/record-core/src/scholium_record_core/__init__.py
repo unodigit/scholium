@@ -5,6 +5,10 @@ signed records.  Record ids are CIDv1 (dag-cbor codec, sha2-256) over
 the DAG-CBOR encoding of the envelope content fields, excluding ``id``
 and ``sig``.
 
+Records are signed by their author's Ed25519 key over those same
+canonical bytes, and authors are identified by `did:key` Ed25519
+identifiers (see :mod:`scholium_record_core.signing`).
+
 Files are addressed by file ids: CIDv1 (raw codec, sha2-256) over the
 file bytes (see :mod:`scholium_record_core.file_id`).  ``manifest``
 record bodies -- the ``files`` list of ``path``/``cid``/``size``/
@@ -62,6 +66,25 @@ from .short_id import (
     parse_short_id,
     parse_version_id,
 )
+from .signing import (
+    DID_KEY_PREFIX,
+    DID_KEY_SCHEME_PREFIX,
+    ED25519_MULTICODEC,
+    ED25519_PUBLIC_KEY_LENGTH,
+    ED25519_SEED_LENGTH,
+    ED25519_SIGNATURE_LENGTH,
+    SIG_ENCODING,
+    decode_signature,
+    did_key_from_public_key,
+    did_key_from_signing_key,
+    encode_signature,
+    is_ed25519_did_key,
+    public_key_from_did_key,
+    sign_envelope,
+    sign_record,
+    verify_envelope,
+    verify_record,
+)
 
 __version__ = "0.1.0"
 
@@ -71,6 +94,12 @@ __all__ = [
     "CID_CODEC_CODE",
     "CID_HASH",
     "CID_VERSION",
+    "DID_KEY_PREFIX",
+    "DID_KEY_SCHEME_PREFIX",
+    "ED25519_MULTICODEC",
+    "ED25519_PUBLIC_KEY_LENGTH",
+    "ED25519_SEED_LENGTH",
+    "ED25519_SIGNATURE_LENGTH",
     "ENVELOPE_FIELDS",
     "EXCLUDED_FIELDS",
     "FILE_BASE",
@@ -90,18 +119,29 @@ __all__ = [
     "SHORT_ID_GROUP_SIZE",
     "SHORT_ID_PAYLOAD_LENGTH",
     "SHORT_ID_PREFIX",
+    "SIG_ENCODING",
     "VersionId",
     "canonical_envelope",
     "compute_file_cid",
     "compute_file_id",
     "compute_record_cid",
     "compute_record_id",
+    "decode_signature",
     "derive_short_id",
+    "did_key_from_public_key",
+    "did_key_from_signing_key",
+    "encode_signature",
     "format_version_id",
+    "is_ed25519_did_key",
     "parse_file_cid",
     "parse_short_id",
     "parse_version_id",
+    "public_key_from_did_key",
     "record_bytes",
+    "sign_envelope",
+    "sign_record",
     "validate_manifest_body",
     "validate_manifest_entry",
+    "verify_envelope",
+    "verify_record",
 ]

@@ -5,6 +5,11 @@ the record core:
 
 * ``records.json`` -- every implementation must derive each vector's
   ``dag_cbor_hex`` and ``id`` from its ``envelope`` alone.
+* ``signatures.json`` -- every implementation must derive each key's
+  ``public_key_hex`` and ``did_key`` from its ``seed_hex`` alone, each
+  vector's ``sig`` from its ``envelope`` and key's seed alone, accept
+  every entry of ``vectors`` and reject every entry of ``invalid``
+  (verification must return false).
 * ``short_ids.json`` -- every implementation must derive each vector's
   ``short_id`` and ``version_ids`` from its ``genesis_cid`` alone, and
   reject every entry of ``invalid``.
@@ -24,11 +29,13 @@ from pathlib import Path
 from typing import Any
 
 from multiformats import CID
+from nacl.signing import SigningKey
 
 from .envelope import compute_record_id, record_bytes
 from .file_id import compute_file_id
 from .manifest import validate_manifest_body
 from .short_id import derive_short_id, format_version_id
+from .signing import did_key_from_public_key, sign_envelope
 
 
 def refresh_vectors(doc: dict[str, Any]) -> dict[str, Any]:
@@ -41,6 +48,28 @@ def refresh_vectors(doc: dict[str, Any]) -> dict[str, Any]:
         envelope = vector["envelope"]
         vector["dag_cbor_hex"] = record_bytes(envelope).hex()
         vector["id"] = compute_record_id(envelope)
+    return doc
+
+
+def refresh_signature_vectors(doc: dict[str, Any]) -> dict[str, Any]:
+    """Recompute every signature vector's derived outputs in place.
+
+    Each key's ``public_key_hex`` and ``did_key`` are rewritten from its
+    ``seed_hex``, and each vector's ``dag_cbor_hex`` and ``sig`` from its
+    ``envelope`` and its key's seed.  Seeds, envelopes, the ``invalid``
+    recipes and the ``invalid_did_keys`` inputs are preserved verbatim.
+    """
+    keys = {key["name"]: key for key in doc["keys"]}
+    for key in doc["keys"]:
+        seed = SigningKey(bytes.fromhex(key["seed_hex"]))
+        key["public_key_hex"] = bytes(seed.verify_key).hex()
+        key["did_key"] = did_key_from_public_key(bytes(seed.verify_key))
+    for vector in doc["vectors"]:
+        envelope = vector["envelope"]
+        vector["dag_cbor_hex"] = record_bytes(envelope).hex()
+        vector["sig"] = sign_envelope(
+            envelope, bytes.fromhex(keys[vector["key"]]["seed_hex"])
+        )
     return doc
 
 

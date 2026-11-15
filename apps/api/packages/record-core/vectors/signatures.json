@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "description": "Cross-language test vectors for Scholium record signatures. The sig of a record is the Ed25519 signature (unpadded base64url) by the author's key over dag_cbor_hex — the canonical DAG-CBOR bytes of the envelope fields v, type, author, created, prev, body, proofs, excluding id and sig — exactly the bytes the record id is hashed over. Every implementation must derive each key's public_key_hex and did_key from seed_hex alone, each vector's sig from its envelope and the named key alone, accept every entry of vectors, reject every entry of invalid (verification returns false; set replaces a dotted envelope path, sign_with re-signs the untampered envelope with another key, corrupt_sig flips a byte of the signature), and reject every input of invalid_did_keys with the stated error kind: format (not a did:key:z… string), encoding (not valid base58btc) or key (valid multibase but not a 34-byte ed25519-pub multikey).",
+  "signature": {
+    "algorithm": "Ed25519",
+    "preimage": "record_bytes(envelope): canonical DAG-CBOR of the seven content fields, excluding id and sig",
+    "encoding": "base64url-unpadded",
+    "library": "PyNaCl (libsodium)"
+  },
+  "did_key": {
+    "method": "did:key",
+    "multicodec": "0xed01",
+    "multicodec_name": "ed25519-pub",
+    "multibase": "base58btc",
+    "prefix": "did:key:z",
+    "public_key_length": 32
+  },
+  "keys": [
+    {
+      "name": "author-a",
+      "description": "signing seed = sha256(b'scholium-signature-vector-author-a'); not a secret, a vector input",
+      "seed_hex": "7147e8c9e6b3324c4088c6d05a03a12733ca996da17c321bfa57d6a6c0c9d791",
+      "public_key_hex": "fedde9196b87c4c20301064f78f84507772ad22852e6e4463c8acdc081fa061b",
+      "did_key": "did:key:z6Mkwc9rogXCMpsKLhntHKtoVx3JtP89U347svDSeA5QtnvW"
+    },
+    {
+      "name": "author-b",
+      "description": "signing seed = sha256(b'scholium-signature-vector-author-b'); not a secret, a vector input",
+      "seed_hex": "3d65b9d9e0bb3dc0eb8de053b44c3a560010c6a8543cfe9c4eaeacb46f323406",
+      "public_key_hex": "03a9467f1ef0b477cb079e2ba2c07b4876bf88fe32665465c94c773d8b113edb",
+      "did_key": "did:key:z6MkehYybT4PgAVrJmCXwsFL4bac2RT1SC9o1xKaY2ztvrhG"
+    }
+  ],
+  "vectors": [
+    {
+      "name": "paper-genesis-signed",
+      "description": "paper.genesis signed by author-a; the acceptance shape: verify(envelope, sig) is true, verify(tamper body, sig) is false",
+      "key": "author-a",
+      "envelope": {
+        "v": 1,
+        "type": "paper.genesis",
+        "author": "did:key:z6Mkwc9rogXCMpsKLhntHKtoVx3JtP89U347svDSeA5QtnvW",
+        "created": "2026-11-14T05:33:00Z",
+        "prev": null,
+        "body": {
+          "seed": "scholium-vector-1",
+          "title": "A Minimal Scholium Paper",
+          "categories": [
+            "mathematics"
+          ],
+          "licence": "CC-BY-4.0"
+        },
+        "proofs": []
+      },
+      "dag_cbor_hex": "a761760164626f6479a46473656564717363686f6c69756d2d766563746f722d31657469746c65781841204d696e696d616c205363686f6c69756d205061706572676c6963656e63656943432d42592d342e306a63617465676f72696573816b6d617468656d61746963736470726576f664747970656d70617065722e67656e6573697366617574686f7278386469643a6b65793a7a364d6b776339726f6758434d70734b4c686e74484b746f5678334a74503839553334377376445365413551746e76576670726f6f667380676372656174656474323032362d31312d31345430353a33333a30305a",
+      "id": "bafyreif2mdl6rytswfkgqyocacqepzzjcm45mxoiyebk2p3vottitgqlb4",
+      "sig": "gBRvXyHvI32SwUwXJKSRgnLbIohwj_NQknSUaIj9iJXG-4EgmMHnRP-M8LZf8iDupsrD6E2aDzqK9NeomIFMDQ"
+    },
+    {
+      "name": "paper-version-signed",
+      "description": "paper.version with unicode body chained to the genesis vector's id, signed by author-b",
+      "key": "author-b",
+      "envelope": {
+        "v": 1,
+        "type": "paper.version",
+        "author": "did:key:z6MkehYybT4PgAVrJmCXwsFL4bac2RT1SC9o1xKaY2ztvrhG",
+        "created": "2026-11-14T09:12:00Z",
+        "prev": "bafyreif2mdl6rytswfkgqyocacqepzzjcm45mxoiyebk2p3vottitgqlb4",
+        "body": {
+          "paper": "bafyreif2mdl6rytswfkgqyocacqepzzjcm45mxoiyebk2p3vottitgqlb4",
+          "n": 2,
+          "title": "Café méthodes — 中文标题 ✦",
+          "abstract": "Cross-language vectors pin the canonical record bytes.",
+          "authors": [
+            {
+              "did": "did:key:z6Mkwc9rogXCMpsKLhntHKtoVx3JtP89U347svDSeA5QtnvW",
+              "credit": [
+                "conceptualization",
+                "writing – original draft"
+              ],
+              "corresponding": true,
+              "orcid": null
+            }
+          ],
+          "licence": "CC-BY-4.0",
+          "changeNote": "Add the vector appendix."
+        },
+        "proofs": []
+      },
+      "dag_cbor_hex": "a761760164626f6479a7616e02657061706572783b6261667972656966326d646c367279747377666b6771796f6361637165707a7a6a636d34356d786f697965626b327033766f7474697467716c6234657469746c657824436166c3a9206dc3a974686f64657320e2809420e4b8ade69687e6a087e9a29820e29ca667617574686f727381a46364696478386469643a6b65793a7a364d6b776339726f6758434d70734b4c686e74484b746f5678334a74503839553334377376445365413551746e7657656f72636964f6666372656469748271636f6e6365707475616c697a6174696f6e781a77726974696e6720e28093206f726967696e616c2064726166746d636f72726573706f6e64696e67f5676c6963656e63656943432d42592d342e30686162737472616374783643726f73732d6c616e677561676520766563746f72732070696e207468652063616e6f6e6963616c207265636f72642062797465732e6a6368616e67654e6f746578184164642074686520766563746f7220617070656e6469782e6470726576783b6261667972656966326d646c367279747377666b6771796f6361637165707a7a6a636d34356d786f697965626b327033766f7474697467716c623464747970656d70617065722e76657273696f6e66617574686f7278386469643a6b65793a7a364d6b6568597962543450674156724a6d43587773464c34626163325254315343396f31784b6159327a74767268476670726f6f667380676372656174656474323032362d31312d31345430393a31323a30305a",
+      "id": "bafyreifk26mpdquzturvnugd3qf4r3ol2xseac2ibs4cprrslhkjpv45g4",
+      "sig": "HrvfMtTTxI4tWNGJSXKW7FuoPhRmx-DnUQ5_nRdIpM4cOEQ3Vzgro4MPcPvbO-1nnRELwuDlSUHASyz5bYv-Ag"
+    },
+    {
+      "name": "endorsement-signed-with-proof-object",
+      "description": "endorsement carrying a W3C VC-shaped object inside proofs; proofs are signed content, so replacing them must fail",
+      "key": "author-b",
+      "envelope": {
+        "v": 1,
+        "type": "endorsement",
+        "author": "did:key:z6MkehYybT4PgAVrJmCXwsFL4bac2RT1SC9o1xKaY2ztvrhG",
+        "created": "2026-11-15T12:00:00Z",
+        "prev": null,
+        "body": {
+          "endorsee": "did:key:z6Mkwc9rogXCMpsKLhntHKtoVx3JtP89U347svDSeA5QtnvW",
+          "category": "physics",
+          "expiry": "2027-11-14T00:00:00Z"
+        },
+        "proofs": [
+          {
+            "@context": [
+              "https://www.w3.org/ns/credentials/v2"
+            ],
+            "type": "VerifiableCredential",
+            "issuer": "did:key:z6MkehYybT4PgAVrJmCXwsFL4bac2RT1SC9o1xKaY2ztvrhG",
+            "credentialSubject": {
+              "id": "did:key:z6Mkwc9rogXCMpsKLhntHKtoVx3JtP89U347svDSeA5QtnvW",
+              "role": "endorser",
+              "category": "physics"
+            },
+            "proof": {
+              "type": "Ed25519Signature2020",
+              "created": "2026-11-01T08:00:00Z",
+              "verificationMethod": "did:key:z6MkehYybT4PgAVrJmCXwsFL4bac2RT1SC9o1xKaY2ztvrhG#0",
+              "proofValue": "z3u2f7y8JcS9qLCmR1hT6nD8bV4xW2aK5eQ7pN0sZ9oI4uB6cE3g"
+            }
+          }
+        ]
+      },
+      "dag_cbor_hex": "a761760164626f6479a36665787069727974323032372d31312d31345430303a30303a30305a6863617465676f7279677068797369637368656e646f7273656578386469643a6b65793a7a364d6b776339726f6758434d70734b4c686e74484b746f5678334a74503839553334377376445365413551746e76576470726576f664747970656b656e646f7273656d656e7466617574686f7278386469643a6b65793a7a364d6b6568597962543450674156724a6d43587773464c34626163325254315343396f31784b6159327a74767268476670726f6f667381a564747970657456657269666961626c6543726564656e7469616c6570726f6f66a4647479706574456432353531395369676e617475726532303230676372656174656474323032362d31312d30315430383a30303a30305a6a70726f6f6656616c756578347a337532663779384a635339714c436d52316854366e4438625634785732614b35655137704e30735a396f49347542366345336772766572696669636174696f6e4d6574686f64783a6469643a6b65793a7a364d6b6568597962543450674156724a6d43587773464c34626163325254315343396f31784b6159327a747672684723306669737375657278386469643a6b65793a7a364d6b6568597962543450674156724a6d43587773464c34626163325254315343396f31784b6159327a74767268476840636f6e7465787481782468747470733a2f2f7777772e77332e6f72672f6e732f63726564656e7469616c732f76327163726564656e7469616c5375626a656374a362696478386469643a6b65793a7a364d6b776339726f6758434d70734b4c686e74484b746f5678334a74503839553334377376445365413551746e765764726f6c6568656e646f727365726863617465676f72796770687973696373676372656174656474323032362d31312d31355431323a30303a30305a",
+      "id": "bafyreiaw3fh5lzd5g46utxrrgvd7gasioanfw2qerha2rvlzpvgkql6cvi",
+      "sig": "kEhUsvmzUHltaiPKq7kEy4D8FBfz-A-jaxCS-PvK-sTiYVfOoHYJwamNmQ0cmUIvJBxXSOffiHpKyXLlzBzBAw"
+    },
+    {
+      "name": "manifest-signed",
+      "description": "manifest record body signed by author-a",
+      "key": "author-a",
+      "envelope": {
+        "v": 1,
+        "type": "manifest",
+        "author": "did:key:z6Mkwc9rogXCMpsKLhntHKtoVx3JtP89U347svDSeA5QtnvW",
+        "created": "2026-11-14T09:15:30Z",
+        "prev": null,
+        "body": {
+          "files": [
+            {
+              "path": "main.pdf",
+              "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+              "size": 21,
+              "mediaType": "application/pdf",
+              "role": "manuscript"
+            }
+          ]
+        },
+        "proofs": []
+      },
+      "dag_cbor_hex": "a761760164626f6479a16566696c657381a563636964783b6261666b726569663273627a3232356732776f6f353673616d6f646c6f746e7676676c613766727773727363366465796266676e737a7a3537726d6470617468686d61696e2e70646664726f6c656a6d616e757363726970746473697a6515696d65646961547970656f6170706c69636174696f6e2f7064666470726576f66474797065686d616e696665737466617574686f7278386469643a6b65793a7a364d6b776339726f6758434d70734b4c686e74484b746f5678334a74503839553334377376445365413551746e76576670726f6f667380676372656174656474323032362d31312d31345430393a31353a33305a",
+      "id": "bafyreia5ynz2bmnibopi7i6sseskn656sr4fqxtr5ut5mcn75fwsxxsihy",
+      "sig": "kuAMqrilxU02DLI-8MLXniyDz6y4Ou1KE88mLMutSrYDpOBzUeouHGovqV5NCda18euk9yihBFYyweOM_WFMCA"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "tampered-body",
+      "description": "body.seed changed after signing; the signature no longer covers the body bytes",
+      "base": "paper-genesis-signed",
+      "set": {
+        "body.seed": "scholium-vector-tampered"
+      }
+    },
+    {
+      "name": "tampered-unicode-title",
+      "description": "a single character of the unicode body title changed after signing",
+      "base": "paper-version-signed",
+      "set": {
+        "body.title": "Café méthodes — 中文题 ✦"
+      }
+    },
+    {
+      "name": "tampered-created",
+      "description": "created timestamp changed after signing; created is signed content",
+      "base": "paper-genesis-signed",
+      "set": {
+        "created": "2026-11-14T05:33:01Z"
+      }
+    },
+    {
+      "name": "tampered-prev",
+      "description": "prev repointed at another record after signing; the chain link is signed content",
+      "base": "paper-version-signed",
+      "set": {
+        "prev": "bafyreicincmn5eotnt4a7ik3wq7dohecjikpgxvbikftwgyyrdml6rszey"
+      }
+    },
+    {
+      "name": "tampered-proofs",
+      "description": "the verifiable credential dropped from proofs after signing; proofs are signed content",
+      "base": "endorsement-signed-with-proof-object",
+      "set": {
+        "proofs": []
+      }
+    },
+    {
+      "name": "wrong-signing-key",
+      "description": "envelope left intact but the signature made by author-b's key while author stays author-a",
+      "base": "paper-genesis-signed",
+      "sign_with": "author-b"
+    },
+    {
+      "name": "corrupt-signature",
+      "description": "one byte of the signature flipped after signing",
+      "base": "paper-genesis-signed",
+      "corrupt_sig": true
+    }
+  ],
+  "invalid_did_keys": [
+    {
+      "name": "not-a-string",
+      "description": "an integer, not a string",
+      "input": 12345,
+      "error": "format"
+    },
+    {
+      "name": "empty",
+      "description": "the empty string",
+      "input": "",
+      "error": "format"
+    },
+    {
+      "name": "missing-prefix",
+      "description": "bare multibase without the did:key: scheme",
+      "input": "6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+      "error": "format"
+    },
+    {
+      "name": "wrong-method",
+      "description": "a did, but not the did:key method",
+      "input": "did:web:example.com",
+      "error": "format"
+    },
+    {
+      "name": "non-z-multibase",
+      "description": "did:key with base64 (u) multibase; only base58btc is supported",
+      "input": "did:key:u6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+      "error": "format"
+    },
+    {
+      "name": "invalid-base58",
+      "description": "0, O, I and l are not in the base58btc alphabet",
+      "input": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb0OIl",
+      "error": "encoding"
+    },
+    {
+      "name": "wrong-multicodec",
+      "description": "valid base58btc multikey, but secp256k1-pub (0xe701), not ed25519-pub",
+      "input": "did:key:zQ3smq1ALigAqsWooK3F9f9Si4E8H3rhtQAv5ejJUvThMhLXS",
+      "error": "key"
+    },
+    {
+      "name": "truncated-key",
+      "description": "ed25519-pub header followed by only 16 key bytes",
+      "input": "did:key:zAq9tFMGHepEkoWJckKyqJ1Wbz",
+      "error": "key"
+    }
+  ]
+}
