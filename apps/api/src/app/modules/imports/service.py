@@ -35,8 +35,8 @@ What the record says
 
 ``claimed: false`` is what makes the import *unclaimed*: it stays that way until
 an author signs a ``paper.version`` that references this record's cid
-(feature 125), which is recorded in the papers table rather than by re-writing
-the (immutable) mirror.  ``manifest`` commits to exactly the metadata the node
+(feature 125, :mod:`app.modules.imports.claims`), which is recorded in the
+papers table rather than by re-writing the (immutable) mirror.  ``manifest`` commits to exactly the metadata the node
 mirrored: it is the raw-codec file id (:func:`scholium_record_core.compute_file_id`)
 of the metadata object as canonical JSON (sorted keys, no whitespace, UTF-8), so
 anyone holding that metadata can recompute it.  The snapshot itself is stored in
