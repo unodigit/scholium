@@ -1,0 +1,66 @@
+/* ============================================================================
+   Shell for the standalone Discussion page (`/discussion/…`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame and the page header live here: the global
+   navigation is mounted by the layout, and the tab's own styles live with the
+   feature (`features/paper-discussion/paper-discussion.css`). Every value is a
+   design token.
+   ============================================================================ */
+
+.pdisc-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--margin-panel) + var(--space-unit) * 48);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .pdisc-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
+
+.pdisc-header {
+  margin-block-end: calc(var(--space-unit) * 6);
+}
+
+.pdisc-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.pdisc-title {
+  margin: 0;
+}
+
+.pdisc-lede {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.pdisc-notice {
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background: var(--surface);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.pdisc-notice__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.pdisc-notice__text {
+  margin: calc(var(--space-unit) * 1) 0 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
