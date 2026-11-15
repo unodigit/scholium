@@ -5,13 +5,16 @@ The module loader mounts ``router`` under ``/v1``, so this package serves:
 * ``GET /v1/papers/{id}/v/{n}/text`` -- return version ``n`` of paper ``id``'s
   paragraphs (``paragraph_id``, ``position`` and ``text``) for the HTML
   reading view.
+* ``GET /v1/papers/{id}/compare?from=1&to=2`` -- paragraph-level diff between
+  two versions, with added, removed and changed paragraphs plus both change
+  notes.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict
 
 from . import service
@@ -64,6 +67,15 @@ def _not_found(paper_id: str, n: int):
     )
 
 
+
+def _not_found_compare(paper_id: str, from_n: int, to_n: int):
+    from app.errors import ProblemException
+
+    return ProblemException(
+        404,
+        f"No paper {paper_id!r} has both versions {from_n} and {to_n} on this node.",
+    )
+
 @router.get(
     "/papers/{paper_id}/v/{n}/text",
     response_model=VersionText,
@@ -95,3 +107,23 @@ def get_paper_text(paper_id: str, n: int) -> VersionText:
         count=len(items),
         paragraphs=items,
     )
+
+
+@router.get(
+    "/papers/{paper_id}/compare",
+    summary="Compare two versions of a paper paragraph by paragraph",
+)
+def compare_papers(
+    paper_id: str,
+    from_: int = Query(..., alias="from"),
+    to: int = Query(..., alias="to"),
+) -> dict[str, Any]:
+    """Return a paragraph-level diff between versions ``from`` and ``to``."""
+    try:
+        result = service.compare_versions(paper_id, from_, to)
+    except ValueError:
+        result = None
+    if result is None:
+        # Distinguish missing paper vs missing version with the same 404.
+        raise _not_found_compare(paper_id, from_, to)
+    return result

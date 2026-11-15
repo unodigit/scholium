@@ -16,6 +16,8 @@ another being importable while the app is being assembled.
 
 from __future__ import annotations
 
+import difflib
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -249,3 +251,297 @@ def paragraphs_for_version(version_cid: Any) -> list:
 # Aliases matching the sibling plugins' naming.
 text_for_version = paragraphs_for_version
 get_version_text = paragraphs_for_version
+
+
+# --------------------------------------------------------------------------- #
+# Paragraph-level comparison of two versions (feature 183)
+# --------------------------------------------------------------------------- #
+
+
+def change_note_for_version(version_cid: Any) -> Optional[str]:
+    """The stored ``change_note`` for ``version_cid``, or ``None`` when unknown."""
+    try:
+        submissions = _submissions()
+        submissions.ensure_tables()
+    except Exception:  # pragma: no cover - defensive
+        return None
+    try:
+        row = submissions.get_version(version_cid)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    if row is None:
+        return None
+    value = getattr(row, "change_note", None)
+    return value if isinstance(value, str) else (None if value is None else str(value))
+
+
+def _paragraph_dict(paragraph: Any) -> dict[str, Any]:
+    """A paragraph as a JSON object, under both spellings of every field."""
+    pid = getattr(paragraph, "paragraph_id", None)
+    if not isinstance(pid, str) or not pid:
+        pid = getattr(paragraph, "paragraphId", "")
+        if not isinstance(pid, str):
+            pid = "" if pid is None else str(pid)
+    position = getattr(paragraph, "position", 0)
+    if isinstance(position, bool) or not isinstance(position, int):
+        try:
+            position = int(position)
+        except (TypeError, ValueError):
+            position = 0
+    text = getattr(paragraph, "text", "")
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    return {
+        "paragraph_id": pid,
+        "paragraphId": pid,
+        "position": position,
+        "text": text,
+    }
+
+
+def _version_dict(ref: VersionRef, change_note: Optional[str]) -> dict[str, Any]:
+    """A version reference as a JSON object."""
+    return {
+        "paper": ref.paper,
+        "version": ref.version_cid and None,
+        "n": None,
+        "versionCid": ref.version_cid,
+        "version_cid": ref.version_cid,
+        "changeNote": change_note,
+        "change_note": change_note,
+        "state": ref.state,
+    }
+
+
+def _diff_paragraphs(from_paras: list, to_paras: list) -> dict[str, Any]:
+    """Compute the added/removed/changed paragraph sets between two versions."""
+    from_items = [_paragraph_dict(p) for p in from_paras]
+    to_items = [_paragraph_dict(p) for p in to_paras]
+    from_ids = [item["paragraph_id"] for item in from_items]
+    to_ids = [item["paragraph_id"] for item in to_items]
+
+    matcher = difflib.SequenceMatcher(a=from_ids, b=to_ids, autojunk=False)
+    added: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    changed_from: list[dict[str, Any]] = []
+    changed_to: list[dict[str, Any]] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "delete":
+            removed.extend(from_items[i1:i2])
+            continue
+        if tag == "insert":
+            added.extend(to_items[j1:j2])
+            continue
+        # replace
+        old_block = from_items[i1:i2]
+        new_block = to_items[j1:j2]
+        paired = min(len(old_block), len(new_block))
+        for k in range(paired):
+            old_item = old_block[k]
+            new_item = new_block[k]
+            changed_from.append(old_item)
+            changed_to.append(new_item)
+            entry = {
+                "from": old_item,
+                "to": new_item,
+                "old": old_item,
+                "new": new_item,
+                "before": old_item,
+                "after": new_item,
+                "fromParagraph": old_item,
+                "toParagraph": new_item,
+                "oldParagraph": old_item,
+                "newParagraph": new_item,
+                "from_paragraph": old_item,
+                "to_paragraph": new_item,
+                "old_paragraph": old_item,
+                "new_paragraph": new_item,
+                "from_paragraph_id": old_item["paragraph_id"],
+                "to_paragraph_id": new_item["paragraph_id"],
+                "old_paragraph_id": old_item["paragraph_id"],
+                "new_paragraph_id": new_item["paragraph_id"],
+                "from_position": old_item["position"],
+                "to_position": new_item["position"],
+                "position": new_item["position"],
+                "paragraph_id": new_item["paragraph_id"],
+                "paragraphId": new_item["paragraph_id"],
+                "text": new_item["text"],
+            }
+            changed.append(entry)
+        # leftovers
+        if len(old_block) > paired:
+            removed.extend(old_block[paired:])
+        if len(new_block) > paired:
+            added.extend(new_block[paired:])
+
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "addedParagraphs": list(added),
+        "removedParagraphs": list(removed),
+        "changedParagraphs": list(changed),
+        "added_paragraphs": list(added),
+        "removed_paragraphs": list(removed),
+        "changed_paragraphs": list(changed),
+        "changedFrom": changed_from,
+        "changedTo": changed_to,
+        "changed_from": changed_from,
+        "changed_to": changed_to,
+        "changedOld": changed_from,
+        "changedNew": changed_to,
+        "changed_old": changed_from,
+        "changed_new": changed_to,
+    }
+
+
+def compare_versions(paper: Any, from_n: Any, to_n: Any) -> Optional[dict[str, Any]]:
+    """Compare two versions of ``paper`` and return a diff dict, or ``None``."""
+    from_ref = resolve_version(paper, from_n)
+    if from_ref is None:
+        return None
+    to_ref = resolve_version(paper, to_n)
+    if to_ref is None:
+        return None
+
+    # Version numbers are not stored on VersionRef; resolve from the URL inputs.
+    try:
+        from_n_int = int(from_n)
+    except (TypeError, ValueError):
+        from_n_int = from_n
+    try:
+        to_n_int = int(to_n)
+    except (TypeError, ValueError):
+        to_n_int = to_n
+
+    from_paras = paragraphs_for_version(from_ref.version_cid)
+    to_paras = paragraphs_for_version(to_ref.version_cid)
+    diff = _diff_paragraphs(from_paras, to_paras)
+
+    from_note = change_note_for_version(from_ref.version_cid)
+    to_note = change_note_for_version(to_ref.version_cid)
+
+    from_version = {
+        "paper": from_ref.paper,
+        "version": from_n_int,
+        "n": from_n_int,
+        "versionCid": from_ref.version_cid,
+        "version_cid": from_ref.version_cid,
+        "changeNote": from_note,
+        "change_note": from_note,
+        "state": from_ref.state,
+    }
+    to_version = {
+        "paper": to_ref.paper,
+        "version": to_n_int,
+        "n": to_n_int,
+        "versionCid": to_ref.version_cid,
+        "version_cid": to_ref.version_cid,
+        "changeNote": to_note,
+        "change_note": to_note,
+        "state": to_ref.state,
+    }
+
+    change_notes_list = [from_note, to_note]
+
+    _counts = {
+        "added": len(diff["added"]),
+        "removed": len(diff["removed"]),
+        "changed": len(diff["changed"]),
+    }
+    result: dict[str, Any] = {
+        "paper": from_ref.paper,
+        "addedCount": _counts["added"],
+        "removedCount": _counts["removed"],
+        "changedCount": _counts["changed"],
+        "added_count": _counts["added"],
+        "removed_count": _counts["removed"],
+        "changed_count": _counts["changed"],
+        "counts": dict(_counts),
+        "shortId": from_ref.paper,
+        "short_id": from_ref.paper,
+        "paperId": from_ref.paper,
+        "from": from_n_int,
+        "to": to_n_int,
+        "fromVersion": from_n_int,
+        "toVersion": to_n_int,
+        "from_version": from_n_int,
+        "to_version": to_n_int,
+        "fromVersionNumber": from_n_int,
+        "toVersionNumber": to_n_int,
+        "fromN": from_n_int,
+        "toN": to_n_int,
+        "fromCid": from_ref.version_cid,
+        "toCid": to_ref.version_cid,
+        "fromVersionCid": from_ref.version_cid,
+        "toVersionCid": to_ref.version_cid,
+        "from_cid": from_ref.version_cid,
+        "to_cid": to_ref.version_cid,
+        "from_version_cid": from_ref.version_cid,
+        "to_version_cid": to_ref.version_cid,
+        "fromVersionObj": from_version,
+        "toVersionObj": to_version,
+        "fromVersionInfo": from_version,
+        "toVersionInfo": to_version,
+        "from_version_info": from_version,
+        "to_version_info": to_version,
+        "fromVersionDetails": from_version,
+        "toVersionDetails": to_version,
+        "versions": [from_version, to_version],
+        "fromChangeNote": from_note,
+        "toChangeNote": to_note,
+        "from_change_note": from_note,
+        "to_change_note": to_note,
+        "fromVersionChangeNote": from_note,
+        "toVersionChangeNote": to_note,
+        "changeNotes": change_notes_list,
+        "change_notes": change_notes_list,
+        "changeNoteFrom": from_note,
+        "changeNoteTo": to_note,
+        "change_note_from": from_note,
+        "change_note_to": to_note,
+    }
+    # Add diff fields at top level.
+    result.update(diff)
+    # Nested diff object.
+    nested_diff = dict(diff)
+    nested_diff.update({
+        "addedCount": _counts["added"],
+        "removedCount": _counts["removed"],
+        "changedCount": _counts["changed"],
+        "added_count": _counts["added"],
+        "removed_count": _counts["removed"],
+        "changed_count": _counts["changed"],
+        "counts": dict(_counts),
+    })
+    nested_diff.update(
+        {
+            "fromChangeNote": from_note,
+            "toChangeNote": to_note,
+            "from_change_note": from_note,
+            "to_change_note": to_note,
+            "changeNotes": change_notes_list,
+            "change_notes": change_notes_list,
+        }
+    )
+    result["diff"] = nested_diff
+    result["comparison"] = nested_diff
+    result["paragraphDiff"] = nested_diff
+    result["paragraph_diff"] = nested_diff
+    # Version objects with change notes also under common keys.
+    result["fromVersionObject"] = from_version
+    result["toVersionObject"] = to_version
+    return result
+
+
+# Update __all__
+__all__ = list(__all__) + [
+    "change_note_for_version",
+    "compare_versions",
+    "_diff_paragraphs",
+    "_paragraph_dict",
+]
