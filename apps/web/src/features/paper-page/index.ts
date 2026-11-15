@@ -30,6 +30,11 @@
  * Authors on the byline also get an **Invite reviewer** action under the
  * header's four, which sends a reviewer's DID to
  * `POST /v1/papers/{id}/review-invitations` for the version on screen.
+ *
+ * **Cite** opens a dialog with the version on screen as BibTeX and as RIS, each
+ * read from `GET /v1/papers/{id}/cite?format=bibtex|ris` and copied with a
+ * click; **Download** opens a menu whose item saves the paper's archive
+ * (`GET /v1/export/paper/{id}.car`). Both are plain links until the page runs.
  */
 
 export {
@@ -53,6 +58,33 @@ export {
   type MarginDrawerProps,
 } from "./margin-drawer";
 export { PaperActions, type PaperActionsProps } from "./paper-actions";
+export {
+  CITE_DIALOG_TITLE,
+  CITE_LABEL,
+  COPIED_FOR_MS,
+  CiteDialog,
+  type CiteDialogProps,
+} from "./cite-dialog";
+export {
+  ARCHIVE_ITEM_HINT,
+  ARCHIVE_ITEM_LABEL,
+  DOWNLOAD_LABEL,
+  DownloadMenu,
+  type DownloadMenuProps,
+} from "./download-menu";
+export {
+  CITE_FORMATS,
+  CitationResponseError,
+  citeFormat,
+  citePath,
+  describeCiteError,
+  loadCitation,
+  parseCitation,
+  type CiteClient,
+  type CiteFormat,
+  type CiteFormatId,
+  type LoadCitation,
+} from "./cite";
 export { InviteReviewer, type InviteReviewerProps } from "./invite-reviewer";
 export {
   INVITEE_PROBLEMS,

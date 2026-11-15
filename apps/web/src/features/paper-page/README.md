@@ -9,7 +9,7 @@ right.
 │ Can a Meta-Agent Choose the Safer…?  │ sch:kosf-osvu-xlev/v1  ⧉  │
 │ Mei Zhang · Rafael Silva · Lena H…   │ ◔ Anchor pending          │
 │ ○ Preprint · v1 of 1 · CC BY 4.0     ├───────────────────────────┤
-│ [ PDF ] [ HTML ] [ Cite ] [Download] │ Reviews (2)   AI  Discuss…│
+│ [ PDF ] [HTML] [ Cite ] [Download ▾] │ Reviews (2)   AI  Discuss…│
 │                                      │ Versions   Files   Proof  │
 │ Abstract                             ├───────────────────────────┤
 │ We propose an evaluation framework…  │ …the open tab…            │
@@ -38,6 +38,8 @@ error.
 | --- | --- | --- |
 | Header: title, authors, status chip, `v2 of 2`, licence | `paper-header.tsx` | server |
 | Actions: PDF, HTML, Cite, Download | `paper-actions.tsx` | server |
+| Cite: the dialog with BibTeX and RIS, and what it reads | `cite-dialog.tsx`, `cite.ts` | client island |
+| Download: the menu with the paper's archive | `download-menu.tsx` | client island |
 | Invite reviewer (authors only) | `invite-reviewer.tsx`, `invitation.ts` | client island |
 | Reading column (≤ 720 px): abstract, then the text | `reading-column.tsx` | server |
 | Paragraphs with margin markers, the `A` shortcut and typeset math | `reading-text.tsx` | client island |
@@ -256,12 +258,68 @@ Each is a real link, so the row works before any JavaScript runs.
   with no declared media type comes back as `application/octet-stream`.
 - **HTML** — the rendition the page starts on; marked as the current view; jumps to
   the reading column, and brings the HTML back from the PDF view.
-- **Cite** — `GET /v1/papers/{id}/v{n}/cite?format=bibtex`: BibTeX of the exact
-  version on screen.
-- **Download** — `GET /v1/export/paper/{id}.car`: the whole paper's archive.
+- **Cite** — opens a dialog with the version on screen cited as **BibTeX** and as
+  **RIS** (below).
+- **Download ▾** — opens a menu whose item, **Paper archive**, saves
+  `GET /v1/export/paper/{id}.car`: the whole paper (every signed record, file and log
+  entry of all its versions, not only the one on screen) as one file (below).
 
-Cite and Download are plain links for now. The Cite dialog (BibTeX and RIS, copy)
-and the Download menu replace those two elements and keep the endpoints.
+Each is a real link until the page runs, so the row works before any JavaScript:
+Cite is a link to the BibTeX (`GET /v1/papers/{id}/v{n}/cite?format=bibtex`, in a new
+tab) and Download a link to the archive. Once the page runs, both become buttons
+(`aria-haspopup`), the same way the margin drawer's toggle appears (`use-enhanced.ts`:
+false in the server's HTML and while hydrating, true after, so hydration never sees a
+mismatch).
+
+### The Cite dialog
+
+A modal dialog (`role="dialog"`, `aria-modal`) named "Cite this paper", and described
+by the version both entries name (`sch:xxxx-xxxx-xxxx/v2`). It holds two sections,
+**BibTeX** then **RIS**, each with the citation in a read-only text field and its own
+**Copy** button.
+
+- **Where the text comes from.** `GET /v1/papers/{id}/v{n}/cite?format=bibtex` and
+  `…?format=ris`, one request each, made when the dialog opens (`cite.ts`). The path
+  names the version on screen, so the citation holds the reader to that exact text;
+  the node adds a retraction note when the paper is retracted. Public read: no token
+  is sent, and nothing is cached, so closing and reopening asks again and a retraction
+  since the page was drawn is never missed.
+- **What is shown is what is copied.** The body is plain text, read as text (the API
+  client's default sniffing would try JSON on an entry that starts with a brace) and
+  never edited. An empty or non-text body is an error, never a blank box with a Copy
+  button on it. The field keeps the node's line breaks and scrolls sideways rather than
+  wrapping.
+- **States, per format.** Loading ("Loading the BibTeX…", Copy dashed and disabled),
+  ready, or failed (an icon and a sentence in the node's words, and **Try again** for
+  that format only). One format failing never hides the other.
+- **Copy** uses the shared clipboard helper (`ui-kit/clipboard.ts`: the async API,
+  then `execCommand` on a plain-HTTP node). The button says **Copied** with a tick for
+  two seconds, and the confirmation is written to a live region *inside* the dialog,
+  because a toast outside a modal is not read out. If the browser refuses both routes
+  it says "Couldn't copy. Select the text above and copy it by hand." and never
+  "Copied"; the text is in a focusable field for exactly that.
+- **Keyboard and focus.** Focus moves to the dialog on open; Tab and Shift+Tab go round
+  inside it; Escape, the Close button or a press on the scrim closes it (a press that
+  starts inside and ends outside, as when selecting text, does not); focus goes back to
+  Cite. The page behind cannot scroll while it is open. It is drawn on `<body>` (a
+  portal) at `z-index: 55`: above the record side sheet, under the toast.
+
+### The Download menu
+
+The WAI-ARIA menu-button pattern: the button says whether the menu is open
+(`aria-expanded`); a click, Enter, Space or ArrowDown opens it on the first item and
+ArrowUp on the last; the arrows (wrapping), Home and End move between items; Escape
+closes it and returns focus to the button; Tab closes it and carries on to the next
+control; a press anywhere else closes it. The item is a real link with `download`
+(the node sends the archive as an attachment, which is what actually saves it: a
+cross-origin `download` attribute is ignored). The closed menu is `hidden`, not
+removed, so an item chosen and closed in the same click cannot lose the download the
+browser is about to start. On a phone the menu hangs from the whole row, so it never
+leaves the screen.
+
+Their styles are in `paper-actions.css`, apart from `paper-page.css`, because the
+dialog's scrim is the one thing on the page that is `position: fixed` at every
+width, and that sheet pins "nothing leaves the flow from 1280 px" for the layout.
 
 ## Invite reviewer
 
@@ -353,8 +411,8 @@ Added in v2 (1)      Removed from v1 (1)
 ## Not here (other features)
 
 Status banners above the title (Retracted, Corrected, newer version, content
-removed); the Cite dialog and Download menu. Until the banners land, a retraction
-or correction is shown by the status chip only.
+removed). Until the banners land, a retraction or correction is shown by the status
+chip only (the Cite dialog's citation carries the node's retraction note regardless).
 
 The PDF view has no text layer (no selecting or searching inside the canvas) and no
 zoom of its own; the HTML has the text, and "Open in a new tab" has the browser's
@@ -388,6 +446,11 @@ tokens, the 720/360 widths, focus rings and touch targets.
 | `invitation.test.ts` | who is offered the action, what counts as a DID, the exact request (path, body, bearer token) through the real API client, the `201` body, every failure's sentence |
 | `invite-reviewer.test.tsx` | the disclosure, focus, sending once, the mistakes caught before sending, a refusal shown in the node's words, Sign in when a session has ended |
 | `invite-header.test.tsx` | the header with the real byline, token store and API client: shown to each author, not to a stranger or a signed-out reader, and the POST it makes |
+| `cite.test.ts` | the cite path for the version on screen, the exact request (query, no token, no cache, forced text), the text kept byte for byte, an empty body refused, every failure's sentence |
+| `cite-dialog.test.tsx` | link before the page runs, button after; opening, focus, both formats read for the version; loading, failed and retry per format; copying exact text, Copied, a refused clipboard; Escape, Close, scrim, focus return, the Tab trap, scroll lock |
+| `download-menu.test.tsx` | link before the page runs; the menu-button pattern (open, arrows, Home/End, Escape, Tab, outside press); the archive item and its `download`; the closed menu staying in the page |
+| `cite-header.test.tsx` | the real header with the real page data and API client: links in the server's HTML, the cite requests for the version in the address, copying what the node sent, a version the node does not list, the archive's address |
+| `paper-actions.css.test.ts` | tokens only, no shadow, the layering against nav / drawer / record sheet / toast, focus rings, 44 px targets, the hidden menu, the phone layout, forced colours |
 | `margin-drawer.test.tsx` | the frame: no toggle and no `data-enhanced` in the server's HTML, the toggle's state, collapsing keeping the panel mounted and its state, the address opening and closing it |
 
 `paper-page.css.test.ts` also pins the drawer and sheet by width (which query

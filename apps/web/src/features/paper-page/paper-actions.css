@@ -1,0 +1,369 @@
+/* ============================================================================
+   Paper page actions: the Download menu and the Cite dialog —
+   docs/design.md §5.2 (`[ Cite ] [ Download ▾ ]`), §3 (tokens), §9
+   (accessibility), §10 (responsive behaviour).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work. Rules are
+   prefixed `ppg-` (paper page) so nothing leaks into other features. The
+   buttons in the row are `.ppg-action` (paper-page.css); this file is what
+   opens from them.
+
+   Kept apart from paper-page.css because the dialog's scrim is the one thing on
+   the page that is `position: fixed` at every width. That sheet's contract is
+   that nothing leaves the flow from 1280 px, and that holds for the layout; the
+   dialog only exists while the reader has asked for it.
+
+   Colour rules (src/styles/README.md):
+   - Text is --ink or --ink-2; an error is an icon and words, never colour alone.
+   - --ai is never used here: nothing here is AI output.
+   - No shadow: only the annotation popover floats (§3). The menu and the dialog
+     are set off by a border (and, for the dialog, the scrim).
+
+   Controls are at least 44 px tall on touch (§9). Unlayered on purpose, like the
+   other feature stylesheets: a component stylesheet must not re-declare
+   Tailwind's cascade layers.
+   ============================================================================ */
+
+/* Visible to assistive technology, not to the eye: .ppg-visually-hidden, from
+   paper-page.css, is on the page whenever these are. */
+
+/* What the Download menu hangs from on a phone (see the narrow rule below). */
+.ppg-actions {
+  position: relative;
+}
+
+/* ---- Download menu ---------------------------------------------------------- */
+
+/* The button is a `.ppg-action`, so it looks like its neighbours in the row.
+   The wrapper is what the menu hangs from. */
+.ppg-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.ppg-menu-button {
+  gap: calc(var(--space-unit) * 1);
+}
+
+/* Open is marked by fill and border (like the current view) as well as by the
+   chevron turning, so it is never colour alone. */
+.ppg-menu-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.ppg-menu-chevron {
+  flex: none;
+  transition: transform var(--duration-fast) var(--ease-decel);
+}
+
+.ppg-menu-button[aria-expanded="true"] .ppg-menu-chevron {
+  transform: rotate(180deg);
+}
+
+.ppg-menu-list[hidden] {
+  display: none;
+}
+
+/* Above the margin drawer (30), under the global nav (40). A border, no
+   shadow: only the annotation popover floats (§3). */
+.ppg-menu-list {
+  position: absolute;
+  inset-block-start: calc(100% + var(--space-unit) * 1);
+  inset-inline-start: 0;
+  z-index: 35;
+  box-sizing: border-box;
+  display: grid;
+  min-inline-size: 100%;
+  inline-size: max-content;
+  max-inline-size: min(
+    calc(var(--space-unit) * 80),
+    calc(100vw - var(--space-unit) * 8)
+  );
+  padding: calc(var(--space-unit) * 1);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+}
+
+.ppg-menu-item {
+  box-sizing: border-box;
+  display: grid;
+  gap: calc(var(--space-unit) * 0.5);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ppg-menu-item:hover,
+.ppg-menu-item:focus-visible {
+  background-color: var(--accent-soft);
+}
+
+/* Inside the item: the menu's own border is a hand's width away. */
+.ppg-menu-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.ppg-menu-item-name {
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+}
+
+.ppg-menu-item-hint {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+@media (pointer: coarse) {
+  .ppg-menu-item {
+    min-block-size: calc(var(--space-unit) * 11);
+  }
+}
+
+/* On a phone the button can sit anywhere along a wrapped row, so the menu hangs
+   from the whole row instead and takes its width, and never leaves the screen. */
+@media (width < 40rem) {
+  .ppg-menu {
+    position: static;
+  }
+
+  .ppg-menu-list {
+    inset-inline: 0;
+    inline-size: auto;
+    max-inline-size: none;
+  }
+}
+
+/* ---- Cite dialog ------------------------------------------------------------ */
+
+/* Above the record side sheet (50), under the toast (60). The scrim is the
+   token, so it follows light and dark. */
+.ppg-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--space-unit) * 4);
+  background-color: var(--scrim);
+  overflow-y: auto;
+}
+
+/* No shadow: the scrim and a border lift it off the page. */
+.ppg-dialog {
+  box-sizing: border-box;
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+  inline-size: min(100%, calc(var(--space-unit) * 160));
+  max-block-size: 100%;
+  overflow-y: auto;
+  padding: calc(var(--space-unit) * 6);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* Focus lands on the dialog itself when it opens, so a screen reader reads its
+   name. It is not a control, so it has no ring (the column does the same). */
+.ppg-dialog:focus {
+  outline: none;
+}
+
+.ppg-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 4);
+}
+
+.ppg-dialog-title {
+  margin: 0;
+  font-size: var(--type-reading);
+  font-weight: 600;
+  line-height: var(--leading-reading);
+}
+
+.ppg-dialog-lede {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+/* An id is read character by character, so it is in the code face. */
+.ppg-cite-id {
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
+.ppg-cite-entry {
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+  min-inline-size: 0;
+}
+
+.ppg-cite-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 4);
+}
+
+.ppg-cite-entry-title {
+  margin: 0;
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.ppg-dialog-close,
+.ppg-cite-copy,
+.ppg-cite-retry {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-unit) * 1.5);
+  min-block-size: calc(var(--space-unit) * 9);
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+  cursor: pointer;
+}
+
+.ppg-dialog-close {
+  min-inline-size: calc(var(--space-unit) * 9);
+  padding-inline: 0;
+}
+
+.ppg-dialog-close:hover,
+.ppg-cite-copy:hover:not(:disabled),
+.ppg-cite-retry:hover {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+/* Not ready to copy: dashed and quiet, like an action that cannot be used. */
+.ppg-cite-copy:disabled {
+  border-style: dashed;
+  background-color: transparent;
+  color: var(--ink-2);
+  cursor: not-allowed;
+}
+
+.ppg-dialog-close:focus-visible,
+.ppg-cite-copy:focus-visible,
+.ppg-cite-retry:focus-visible,
+.ppg-cite-text:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ppg-dialog-close-icon,
+.ppg-cite-icon {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.ppg-cite-icon--critical {
+  color: var(--critical);
+}
+
+/* The citation as the node wrote it: line breaks kept, long lines scroll
+   instead of wrapping, so what is copied is what is seen. */
+.ppg-cite-text {
+  box-sizing: border-box;
+  inline-size: 100%;
+  margin: 0;
+  padding: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+
+.ppg-cite-loading {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* An icon and words, never colour alone (§9): the colour is on the icon, the
+   words stay in --ink. */
+.ppg-cite-error {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.ppg-cite-error-text {
+  flex: 1 1 12rem;
+}
+
+@media (pointer: coarse) {
+  .ppg-dialog-close,
+  .ppg-cite-copy,
+  .ppg-cite-retry {
+    min-block-size: calc(var(--space-unit) * 11);
+  }
+
+  .ppg-dialog-close {
+    min-inline-size: calc(var(--space-unit) * 11);
+  }
+}
+
+/* On a phone the gutter and the padding shrink, so the citations get the width. */
+@media (width < 40rem) {
+  .ppg-dialog-backdrop {
+    padding: calc(var(--space-unit) * 2);
+  }
+
+  .ppg-dialog {
+    padding: calc(var(--space-unit) * 4);
+  }
+}
+
+/* Forced colours drop fills: keep the dialog's edge and its field visible. */
+@media (forced-colors: active) {
+  .ppg-dialog,
+  .ppg-menu-list,
+  .ppg-cite-text {
+    border-color: CanvasText;
+  }
+}

@@ -3,7 +3,9 @@
  *
  * Two kinds of address live here. The **API** ones (cite, archive) are
  * absolute URLs because they are plain links the browser follows, not
- * API-client requests, the way the Files tab's download links are. The
+ * API-client requests, the way the Files tab's download links are. (The Cite
+ * dialog reads its text through the API client instead, `cite.ts`; the cite
+ * link here is what the action is until the page runs.) The
  * **in-page** ones are fragments: the reading column answers to `#reading`
  * and every margin tab answers to `#{tab id}`, which is also how the Verify
  * badge "always opens the Proof tab" (`#proof`, ui-kit).
@@ -81,7 +83,8 @@ export function categoryHref(category: string): string {
 
 /**
  * The citation of the version on screen, as BibTeX
- * (`GET /v1/papers/{id}/cite?format=bibtex`).
+ * (`GET /v1/papers/{id}/cite?format=bibtex`): the link the Cite action is until
+ * the page runs and it becomes the dialog.
  *
  * The version id carries the `sch:` id and `/vN`, so the citation names the
  * exact version the reader is looking at, and says so if it was retracted.

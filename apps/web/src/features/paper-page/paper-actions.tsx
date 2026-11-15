@@ -17,32 +17,45 @@
  * - **HTML** is the rendition the page starts on, so it is marked as the
  *   current view and jumps to the reading column; following it from the PDF
  *   view brings the HTML back.
- * - **Cite** opens the BibTeX of this exact version.
- * - **Download** saves the paper's archive.
+ * - **Cite** opens a dialog with this exact version cited as BibTeX and as RIS,
+ *   each copied with a click (`cite-dialog.tsx`). Until the page runs it is a
+ *   link to the BibTeX, which opens in a new tab.
+ * - **Download** opens a menu whose item saves the paper's archive
+ *   (`download-menu.tsx`). Until the page runs it is a link to the archive.
  *
- * Cite and Download are plain links for now; the Cite dialog (BibTeX and RIS,
- * copy) and the Download menu are a later feature that replaces these two
- * elements and keeps the endpoints.
- *
- * Server-safe: no hooks, no state of its own. The PDF and HTML links are client
- * islands that read which view is showing; everything they render first is the
- * same markup the server sends.
+ * Server-safe: no hooks, no state of its own. The PDF and HTML links, the Cite
+ * dialog and the Download menu are client islands (the first two read which
+ * view is showing); everything they render first is the same markup the server
+ * sends.
  */
 
+import { CiteDialog } from "./cite-dialog";
+import { DownloadMenu } from "./download-menu";
 import type { PdfAccess } from "./paper-facts";
 import { READING_ID } from "./paper-links";
 import { ReadingViewLink } from "./reading-view";
+import "./paper-actions.css";
 
 export interface PaperActionsProps {
   /** Whether, and where, the PDF can be opened. */
   readonly pdf: PdfAccess;
-  /** The BibTeX of the version on screen. */
+  /** The paper, `sch:xxxx-xxxx-xxxx`: what the Cite dialog asks the node to cite. */
+  readonly paperId: string;
+  /** The version on screen: the one both citations name. */
+  readonly version: number;
+  /** The BibTeX of the version on screen: the Cite link until the page runs. */
   readonly citeUrl: string;
-  /** The paper's archive. */
+  /** The paper's archive: the Download link until the page runs, then the menu's item. */
   readonly archiveUrl: string;
 }
 
-export function PaperActions({ pdf, citeUrl, archiveUrl }: PaperActionsProps) {
+export function PaperActions({
+  pdf,
+  paperId,
+  version,
+  citeUrl,
+  archiveUrl,
+}: PaperActionsProps) {
   return (
     <div className="ppg-actions-block">
       <div className="ppg-actions" role="group" aria-label="Read, cite and download">
@@ -65,23 +78,8 @@ export function PaperActions({ pdf, citeUrl, archiveUrl }: PaperActionsProps) {
         <ReadingViewLink view="html" className="ppg-action" href={`#${READING_ID}`}>
           HTML
         </ReadingViewLink>
-        <a
-          className="ppg-action"
-          href={citeUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Cite
-          <span className="ppg-visually-hidden"> as BibTeX (opens in a new tab)</span>
-        </a>
-        <a
-          className="ppg-action"
-          href={archiveUrl}
-          download
-          title="The whole paper as one archive: its signed records, files and log entries."
-        >
-          Download
-        </a>
+        <CiteDialog paperId={paperId} version={version} href={citeUrl} />
+        <DownloadMenu href={archiveUrl} />
       </div>
       {pdf.kind === "unavailable" ? (
         <p id="ppg-pdf-note" className="ppg-actions-note">

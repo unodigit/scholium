@@ -236,6 +236,55 @@ export function notFound(): Response {
   return json({ title: "Not Found", status: 404, detail: "No listed paper." }, 404);
 }
 
+/**
+ * `GET /v1/papers/{id}/v2/cite?format=bibtex`: plain text, as the node's
+ * citation module writes it (authors are the DIDs the version lists).
+ */
+export const BIBTEX_BODY = [
+  "@misc{sch-6sel-2dio-orm6-v2,",
+  "  title = {{Can a Meta-Agent Choose the Safer Branch?}},",
+  `  author = {{${ALICE}} and {${BOB}}},`,
+  "  year = {2027},",
+  "  publisher = {Scholium},",
+  "  version = {2},",
+  "  eprint = {sch:6sel-2dio-orm6/v2},",
+  "  eprinttype = {Scholium},",
+  "  eprintclass = {cs.AI},",
+  "  keywords = {cs.AI, cs.MA},",
+  "}",
+  "",
+].join("\n");
+
+/** `GET /v1/papers/{id}/v2/cite?format=ris` */
+export const RIS_BODY = [
+  "TY  - UNPB",
+  "ID  - sch:6sel-2dio-orm6/v2",
+  "TI  - Can a Meta-Agent Choose the Safer Branch?",
+  `AU  - ${ALICE}`,
+  `AU  - ${BOB}`,
+  "PY  - 2027",
+  "DA  - 2027/03/02/",
+  "PB  - Scholium",
+  "ET  - 2",
+  "KW  - cs.AI",
+  "KW  - cs.MA",
+  "ER  - ",
+  "",
+].join("\n");
+
+/** A citation, the way the node serves one: text, not JSON. */
+export function citation(format: string): Response {
+  const ris = format.toLowerCase() === "ris";
+  return new Response(ris ? RIS_BODY : BIBTEX_BODY, {
+    status: 200,
+    headers: {
+      "content-type": ris
+        ? "application/x-research-info-systems; charset=utf-8"
+        : "application/x-bibtex; charset=utf-8",
+    },
+  });
+}
+
 /** One answer per read, by name; an omitted read answers `404`. */
 export type Routes = Partial<{
   paper: (path: string) => Response;
@@ -246,6 +295,7 @@ export type Routes = Partial<{
   threads: () => Response;
   text: () => Response;
   compare: (from: number, to: number) => Response;
+  cite: (format: string, path: string) => Response;
 }>;
 
 /** What the node answers when every read works. */
@@ -258,6 +308,7 @@ export const HAPPY: Routes = {
   threads: () => json(THREADS_BODY),
   text: () => json(TEXT_BODY),
   compare: () => json(COMPARE_BODY),
+  cite: (format) => citation(format),
 };
 
 export { json };
@@ -273,6 +324,11 @@ export function stubApi(routes: Routes = HAPPY): ReturnType<typeof vi.fn> {
     const profile = /^\/v1\/profiles\/(.+)$/.exec(path);
     if (profile !== null) {
       return routes.profile !== undefined ? routes.profile(profile[1]) : notFound();
+    }
+    if (/\/cite$/.test(path)) {
+      return routes.cite !== undefined
+        ? routes.cite(url.searchParams.get("format") ?? "bibtex", path)
+        : notFound();
     }
     if (/\/versions$/.test(path)) return (routes.versions ?? notFound)();
     if (/\/compare$/.test(path)) {

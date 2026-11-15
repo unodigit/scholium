@@ -6,7 +6,7 @@
  * Can a Meta-Agent Choose the Safer Branch?
  * Mei Zhang · A. Okafor · R. Silva · J. Tan
  * ✓ Reviewed · v2 of 2 · CC BY 4.0
- * [ PDF ] [ HTML ] [ Cite ] [ Download ]
+ * [ PDF ] [ HTML ] [ Cite ] [ Download ▾ ]
  * ```
  *
  * The paper comes first (principle 1): the title is the page's `<h1>` in the
@@ -102,6 +102,8 @@ export function PaperHeader({ data }: PaperHeaderProps) {
 
       <PaperActions
         pdf={pdf}
+        paperId={shortId}
+        version={version}
         citeUrl={citeHref(shortId, version)}
         archiveUrl={archiveHref(shortId)}
       />

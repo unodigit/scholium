@@ -13,9 +13,10 @@ import {
 } from "./paper-links";
 
 /**
- * Where the page's actions and tabs point. The Cite and Download actions are
- * plain links to the node's endpoints, and every tab answers to a fragment
- * (`#proof` is the one the Verify badge uses).
+ * Where the page's actions and tabs point. The Cite link (what the action is
+ * until the page runs, when it becomes the dialog) and the Download archive
+ * (the link, and then the menu's item) are the node's endpoints, and every tab
+ * answers to a fragment (`#proof` is the one the Verify badge uses).
  */
 
 const NODE = "https://node.example";
