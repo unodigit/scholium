@@ -22,15 +22,19 @@ Exit codes:
 
 from __future__ import annotations
 
+import dag_cbor
+import httpx
+
 import argparse
+import base64
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
-from scholium_record_core import verify_paper
+from scholium_record_core import parse_file_cid, verify_paper
 
-from .archive import load_archive
+from .archive import Archive, load_archive
 from .car import CarError, read_car
 from .checklist import (
     FAIL,
@@ -93,6 +97,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--verbose",
         action="store_true",
         help="also print record ids, signers and every individual finding",
+    )
+    parser.add_argument(
+        "--node",
+        metavar="URL",
+        help="fetch the records and proofs from this node instead of reading a "
+        "local archive (pass an sch: id as the positional argument)",
     )
 
 
@@ -177,11 +187,155 @@ def _result_line(verdict: Verdict) -> str:
     return f"Result: VERIFIED (status: {verdict.status})"
 
 
+def _fetch_sync_range(base: str, cursor: int = 0) -> list[dict[str, Any]]:
+    """Fetch every event-log entry from ``base`` (paginated)."""
+    entries: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    current = cursor
+    while True:
+        response = httpx.get(
+            f"{base}/v1/sync/range", params={"from": current}, timeout=30.0
+        )
+        response.raise_for_status()
+        page = response.json()
+        if not isinstance(page, list) or not page:
+            break
+        new_items = [item for item in page if item.get("seq") not in seen]
+        if not new_items:
+            break
+        for item in new_items:
+            seen.add(item.get("seq"))
+        entries.extend(new_items)
+        current = max(item.get("seq", current) for item in new_items)
+        if len(page) < 1:
+            break
+    return entries
+
+
+def _run_node(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    """Run ``scholium verify ... --node URL``; return the exit code."""
+    base = str(args.node).rstrip("/")
+    target = str(getattr(args, "file", None) or getattr(args, "target", None) or "")
+    paper = args.paper or (target.split("/")[0] if target.startswith("sch:") else None)
+    head = args.head or (target if "/" in target else None)
+    authorities = list(args.authority or [])
+
+    entries: list[dict[str, Any]] = []
+    sync_error: Exception | None = None
+    try:
+        entries = _fetch_sync_range(base)
+    except Exception as exc:  # noqa: BLE001 - network/HTTP/JSON failure
+        sync_error = exc
+
+    records: list[dict[str, Any]] = []
+    files: dict[bytes, bytes] = {}
+    if entries:
+        for entry in entries:
+            raw_value = entry.get("raw")
+            try:
+                raw = base64.b64decode(str(raw_value), validate=True)
+                value = dag_cbor.decode(raw)
+            except Exception:  # noqa: BLE001 - skip malformed entries
+                continue
+            if not isinstance(value, dict):
+                continue
+            record = dict(value)
+            if "id" not in record:
+                record["id"] = entry.get("record_cid")
+            records.append(record)
+
+        # Fetch proofs (best effort: the node must answer, but a failure to
+        # fetch one does not invalidate the records we already hold).
+        for entry in entries:
+            cid = entry.get("record_cid")
+            if not isinstance(cid, str):
+                continue
+            try:
+                httpx.get(f"{base}/v1/records/{cid}/proof", timeout=30.0).raise_for_status()
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Fetch file bytes for any manifest we can decode (best effort).
+        record_by_id = {r.get("id"): r for r in records if isinstance(r.get("id"), str)}
+        for record in records:
+            body = record.get("body")
+            if not isinstance(body, dict):
+                continue
+            manifest_cid = body.get("manifest")
+            manifest = record_by_id.get(manifest_cid) if isinstance(manifest_cid, str) else None
+            if not isinstance(manifest, dict):
+                continue
+            manifest_body = manifest.get("body")
+            if not isinstance(manifest_body, dict):
+                continue
+            for entry_file in manifest_body.get("files", []) or []:
+                if not isinstance(entry_file, dict):
+                    continue
+                cid = entry_file.get("cid")
+                if not isinstance(cid, str):
+                    continue
+                try:
+                    response = httpx.get(f"{base}/v1/content/{cid}", timeout=30.0)
+                    response.raise_for_status()
+                except Exception:  # noqa: BLE001
+                    continue
+                try:
+                    key = bytes(parse_file_cid(cid))
+                except Exception:  # noqa: BLE001
+                    continue
+                files[key] = response.content
+
+    # Fall back to an exported CAR when the log could not be replayed.
+    if not records:
+        paper_id = paper or target.split("/")[0]
+        try:
+            response = httpx.get(f"{base}/v1/export/paper/{paper_id}.car", timeout=30.0)
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            cause = sync_error if sync_error is not None else exc
+            print(f"scholium: cannot fetch from {base}: {cause}", file=err)
+            return EXIT_USAGE
+        try:
+            verdict = verify_car_bytes(
+                response.content, paper=paper, head=head, authorities=authorities
+            )
+        except ValueError as exc:
+            print(f"scholium: {exc}", file=err)
+            return EXIT_USAGE
+        name = target
+        for line in render(verdict, name, verbose=args.verbose, marks=_marks(out)):
+            print(line, file=out)
+        return EXIT_VERIFIED if verdict.ok else EXIT_NOT_VERIFIED
+
+    try:
+        archive = Archive(
+            block_count=len(entries) + len(records) + len(files),
+            records=tuple(records),
+            files=files,
+            corrupt={},
+            cids={},
+        )
+        report = verify_paper(tuple(records), paper=paper, head=head, authorities=authorities)
+    except ValueError as exc:
+        print(f"scholium: {exc}", file=err)
+        return EXIT_USAGE
+    verdict = build_verdict(archive, report)
+
+    name = target
+    for line in render(verdict, name, verbose=args.verbose, marks=_marks(out)):
+        print(line, file=out)
+    return EXIT_VERIFIED if verdict.ok else EXIT_NOT_VERIFIED
+
+
 def run(args: argparse.Namespace, out: TextIO | None = None, err: TextIO | None = None) -> int:
     """Run ``scholium verify`` for parsed ``args``; return the exit code."""
     out = out if out is not None else sys.stdout
     err = err if err is not None else sys.stderr
-    path = Path(args.file)
+    if getattr(args, "node", None):
+        return _run_node(args, out, err)
+
+    target = getattr(args, "file", None) or getattr(args, "target", None)
+    path = Path(target)
     try:
         data = path.read_bytes()
     except OSError as exc:
