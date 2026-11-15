@@ -30,6 +30,19 @@ It runs after the pipeline has validated the envelope, the body schema, the
 cid and the signature, and after the duplicate check -- but before the record
 is appended to the ledger, so raising a problem document there refuses the
 record without side effects.
+
+Feature 42 exposes the endorsement *for submission*:
+
+* :func:`can_submit` is the gate other modules consult -- for example a
+  ``paper.genesis`` handler asking whether its author may submit in every
+  category it names::
+
+      from app.modules.endorsements import can_submit
+
+      can_submit("did:key:...", "cs.AI")   # True only for an active endorsement
+
+* :func:`active_endorsements` backs ``GET /v1/me/endorsements``: every
+  endorsement of one DID that has not expired, each carrying its expiry.
 """
 
 from __future__ import annotations
@@ -53,6 +66,8 @@ __all__ = [
     "ENDORSER_MIN_TIER",
     "InsufficientEndorserTier",
     "account_tier",
+    "active_endorsements",
+    "can_submit",
     "handle_endorsement",
     "normalise_expiry",
     "save_endorsement",
@@ -326,3 +341,86 @@ def _grant_author(session: Any, did: str) -> None:
         session.add(Account(did=did, tier=AUTHOR_TIER, created_at=_utcnow()))
     elif int(account.tier) < AUTHOR_TIER:
         account.tier = AUTHOR_TIER
+
+
+# --------------------------------------------------------------------------- #
+# Submission rights (feature 42)
+# --------------------------------------------------------------------------- #
+
+
+def _as_naive_utc(value: Optional[datetime]) -> datetime:
+    """Return ``value`` (default: now) as the naive UTC the columns store."""
+    if value is None:
+        return _utcnow()
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _active_clause(moment: datetime) -> Any:
+    """SQL predicate matching endorsements that have not expired at ``moment``."""
+    return (Endorsement.expires_at.is_(None)) | (Endorsement.expires_at > moment)
+
+
+def can_submit(did: object, category: object, *, now: Optional[datetime] = None) -> bool:
+    """Return whether ``did`` may submit in ``category`` right now.
+
+    Submission rights are conferred by an endorsement, not by a trust tier: a
+    DID may submit in a category exactly when an *active* endorsement of that
+    DID for that category exists.  An endorsement is active until its
+    ``expires_at``; one without an expiry never lapses.  An endorsement of
+    another DID, of another category or one that has expired does not count.
+
+    Missing, empty or non-string arguments answer ``False`` rather than
+    raising, so a caller can test untrusted record fields directly::
+
+        can_submit(record["author"], category)   # False unless endorsed
+
+    ``now`` (naive or aware UTC) exists for tests; it defaults to the current
+    instant.
+    """
+    if not isinstance(did, str) or not did:
+        return False
+    if not isinstance(category, str) or not category:
+        return False
+
+    ensure_tables()
+    moment = _as_naive_utc(now)
+    with db.SessionLocal() as session:
+        found = (
+            session.query(Endorsement.record_cid)
+            .filter(
+                Endorsement.endorsee_did == did,
+                Endorsement.category == category,
+                _active_clause(moment),
+            )
+            .first()
+        )
+    return found is not None
+
+
+def active_endorsements(
+    did: object, *, now: Optional[datetime] = None
+) -> list[Endorsement]:
+    """Return ``did``'s unexpired endorsements, ordered by category then cid.
+
+    Expired endorsements are left out, so every row returned is one the
+    endorsee may still rely on.  A caller DID that is missing, empty or not a
+    string has no endorsements.  ``now`` defaults to the current instant and
+    exists for tests.
+    """
+    if not isinstance(did, str) or not did:
+        return []
+
+    ensure_tables()
+    moment = _as_naive_utc(now)
+    with db.SessionLocal() as session:
+        return (
+            session.query(Endorsement)
+            .filter(
+                Endorsement.endorsee_did == did,
+                _active_clause(moment),
+            )
+            .order_by(Endorsement.category, Endorsement.record_cid)
+            .all()
+        )

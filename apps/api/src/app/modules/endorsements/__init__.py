@@ -14,9 +14,23 @@ cid and the signature, and then calls :func:`handle_endorsement`, which
 Accepting the record and applying its effects are one step, so a refused
 endorsement never reaches the ledger and never changes a tier.
 
-The module loader discovers packages under ``app.modules`` automatically.
-Importing this package is what registers the type handler; there is no router
-of its own yet (``GET /v1/me/endorsements`` arrives with feature 42).
+Feature 42 turns an endorsement into a submission right and exposes it:
+
+* :func:`can_submit` answers whether a DID may submit in a category -- ``True``
+  exactly when it holds an active (unexpired) endorsement for that category;
+* :func:`active_endorsements` lists those endorsements;
+* ``GET /v1/me/endorsements`` serves the caller's own active endorsements,
+  with their expiry, through the ``router`` exported here.
+
+Other plugins gate on the same helper::
+
+    from app.modules.endorsements import can_submit
+
+    can_submit(record["author"], category)
+
+The module loader discovers packages under ``app.modules`` automatically, so
+importing this package registers the record type and mounts the router under
+``/v1``.
 """
 
 from __future__ import annotations
@@ -24,12 +38,16 @@ from __future__ import annotations
 from app.modules.ingest import register
 
 from .models import Endorsement, ensure_tables
+from .router import router
+from .schemas import EndorsementOut
 from .service import (
     AUTHOR_TIER,
     ENDORSEMENT_TYPE,
     ENDORSER_MIN_TIER,
     InsufficientEndorserTier,
     account_tier,
+    active_endorsements,
+    can_submit,
     handle_endorsement,
     normalise_expiry,
     save_endorsement,
@@ -46,10 +64,14 @@ __all__ = [
     "ENDORSEMENT_TYPE",
     "ENDORSER_MIN_TIER",
     "Endorsement",
+    "EndorsementOut",
     "InsufficientEndorserTier",
     "account_tier",
+    "active_endorsements",
+    "can_submit",
     "ensure_tables",
     "handle_endorsement",
     "normalise_expiry",
+    "router",
     "save_endorsement",
 ]
