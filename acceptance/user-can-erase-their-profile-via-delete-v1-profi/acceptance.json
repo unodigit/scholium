@@ -1,0 +1,1 @@
+{"command": "cd apps/api && uv run --all-packages pytest -o python_files='acceptance_*.py' ../../acceptance/user-can-erase-their-profile-via-delete-v1-profi"}
