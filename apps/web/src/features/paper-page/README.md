@@ -411,8 +411,8 @@ Added in v2 (1)      Removed from v1 (1)
 ## Not here (other features)
 
 Status banners above the title (Retracted, Corrected, newer version, content
-removed). Until the banners land, a retraction or correction is shown by the status
-chip only (the Cite dialog's citation carries the node's retraction note regardless).
+removed) are rendered by `PaperHeader` as `DecisionBanner`s (ui-kit), one per
+applicable decision, above the title on every version.
 
 The PDF view has no text layer (no selecting or searching inside the canvas) and no
 zoom of its own; the HTML has the text, and "Open in a new tab" has the browser's

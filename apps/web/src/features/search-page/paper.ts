@@ -51,6 +51,12 @@ export interface PaperNotice {
   readonly kind: string;
   readonly reason: string;
   readonly createdAt: string | null;
+  /** Policy clause cited by a moderation decision, when the notice carries one. */
+  readonly clause?: string | null;
+  /** Reason category of a legal-removal notice, when the notice carries one. */
+  readonly category?: string | null;
+  /** Pre-formatted removal date of a legal-removal notice, when known. */
+  readonly removedOn?: string | null;
 }
 
 /** Everything the paper page shows for one version. */
@@ -243,6 +249,9 @@ function parseNotice(value: unknown): PaperNotice | null {
     kind,
     reason: readText(value.reason) ?? "",
     createdAt: readText(value.createdAt ?? value.created_at),
+    clause: readText(value.clause),
+    category: readText(value.category),
+    removedOn: readText(value.removedOn ?? value.removed_on ?? value.removedAt ?? value.removed_at),
   };
 }
 
