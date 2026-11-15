@@ -371,6 +371,124 @@ def test_muting_a_did_hides_their_posts_for_that_caller(client):
     assert hidden["id"] in cids(threads(client, paper))
 
 
+def test_mute_is_private_to_the_muter(client):
+    muted = Member(tier=1)
+    muter = Member(tier=1)
+    bystander = Member(tier=1)
+    paper = publish(muted)
+    record = post(client, muted, paper, f"private mute {uuid.uuid4().hex}")
+
+    response = client.post("/v1/me/mutes", json={"did": muted.did}, headers=muter.headers)
+    assert response.status_code == 201, response.text
+
+    assert record["id"] not in cids(threads(client, paper, muter))
+    assert record["id"] in cids(threads(client, paper, bystander))
+    # The muted member still sees their own post.
+    assert record["id"] in cids(threads(client, paper, muted))
+
+
+def test_mute_response_names_the_muted_did(client):
+    muted = Member(tier=1)
+    muter = Member(tier=1)
+
+    response = client.post("/v1/me/mutes", json={"did": muted.did}, headers=muter.headers)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["muted"] == muted.did
+    assert body["muter"] == muter.did
+
+
+def test_mute_covers_posts_made_after_the_mute(client):
+    muted = Member(tier=1)
+    muter = Member(tier=1)
+    paper = publish(muted)
+
+    client.post("/v1/me/mutes", json={"did": muted.did}, headers=muter.headers)
+    later = post(client, muted, paper, f"posted after mute {uuid.uuid4().hex}")
+
+    assert later["id"] not in cids(threads(client, paper, muter))
+
+
+def test_mute_hides_replies_and_keeps_replies_to_a_muted_parent(client):
+    muted = Member(tier=1)
+    muter = Member(tier=1)
+    other = Member(tier=1)
+    paper = publish(muted)
+    root = post(client, muted, paper, f"muted root {uuid.uuid4().hex}")
+    kept = post(client, other, paper, f"reply to muted {uuid.uuid4().hex}", parent=root["id"])
+    own = post(client, other, paper, f"other root {uuid.uuid4().hex}")
+    hidden_reply = post(
+        client, muted, paper, f"muted reply {uuid.uuid4().hex}", parent=own["id"]
+    )
+
+    client.post("/v1/me/mutes", json={"did": muted.did}, headers=muter.headers)
+
+    visible = cids(threads(client, paper, muter))
+    assert root["id"] not in visible
+    assert hidden_reply["id"] not in visible
+    # A visible post is never lost because its parent was muted.
+    assert kept["id"] in visible
+    assert own["id"] in visible
+
+
+def test_muting_the_same_did_twice_is_idempotent(client):
+    from app.modules.discussion import Mute, ensure_tables
+
+    muted = Member(tier=1)
+    muter = Member(tier=1)
+
+    first = client.post("/v1/me/mutes", json={"did": muted.did}, headers=muter.headers)
+    second = client.post("/v1/me/mutes", json={"did": muted.did}, headers=muter.headers)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    ensure_tables()
+    with db.SessionLocal() as session:
+        rows = session.query(Mute).filter(Mute.muter_did == muter.did).all()
+    assert [(row.muter_did, row.muted_did) for row in rows] == [(muter.did, muted.did)]
+
+
+def test_tier_0_account_can_mute(client):
+    muted = Member(tier=1)
+    reader = Member(tier=0)
+    paper = publish(muted)
+    record = post(client, muted, paper, f"tier zero mute {uuid.uuid4().hex}")
+
+    response = client.post("/v1/me/mutes", json={"did": muted.did}, headers=reader.headers)
+
+    assert response.status_code == 201, response.text
+    assert record["id"] not in cids(threads(client, paper, reader))
+
+
+def test_mute_without_a_token_is_401(client):
+    muted = Member(tier=1)
+
+    response = client.post("/v1/me/mutes", json={"did": muted.did})
+
+    assert response.status_code == 401, response.text
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"did": ""}, {"did": "   "}, {"did": None}])
+def test_mute_without_a_did_is_422(client, payload):
+    muter = Member(tier=1)
+
+    response = client.post("/v1/me/mutes", json=payload, headers=muter.headers)
+
+    assert response.status_code == 422, response.text
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
+
+
+def test_a_member_cannot_mute_themselves(client):
+    muter = Member(tier=1)
+
+    response = client.post("/v1/me/mutes", json={"did": muter.did}, headers=muter.headers)
+
+    assert response.status_code == 422, response.text
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
+
+
 # --------------------------------------------------------------------------- #
 # Persistence backstop
 # --------------------------------------------------------------------------- #
