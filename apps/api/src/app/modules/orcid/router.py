@@ -70,7 +70,9 @@ from pydantic import BaseModel, ConfigDict
 from app.security import Principal, get_current_principal
 from app.settings import settings
 
-from .state import sign_state
+from app.modules.ledger.origin import node_signing_key
+from .state import InvalidState, sign_state, verify_state
+from .service import exchange_code, issue_orcid_credential
 
 __all__ = [
     "AUTHORIZE_PATH",
@@ -226,3 +228,46 @@ def start_orcid_link(
         auth_url=url,
         state=state,
     )
+
+
+@router.get(
+    "/callback",
+    summary="Exchange an ORCID authorization code for a node-signed ORCID ownership credential",
+)
+def orcid_callback(
+    request: Request,
+    code: str,
+    state: str,
+) -> dict:
+    """Exchange ``code`` and verify ``state``, then issue and persist the credential."""
+    try:
+        claims = verify_state(state)
+    except InvalidState as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    did = claims.get("did")
+    if not isinstance(did, str) or not did.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="The OAuth state is not bound to a DID.",
+        )
+
+    if node_signing_key() is None:
+        raise HTTPException(
+            status_code=503,
+            detail="This node cannot issue credentials: no usable Ed25519 key was found at NODE_KEY_PATH.",
+        )
+
+    try:
+        orcid_id = exchange_code(code, redirect_uri=callback_url(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # pragma: no cover - network/HTTP errors
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    try:
+        credential = issue_orcid_credential(did, orcid_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return credential

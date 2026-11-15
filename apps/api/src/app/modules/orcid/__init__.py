@@ -17,6 +17,7 @@ the ``router`` exported here under ``/v1``; nothing else needs wiring.
 
 from __future__ import annotations
 
+from .models import Credential, ensure_tables as ensure_credential_tables
 from .router import (
     AUTHORIZE_PATH,
     CALLBACK_PATH,
@@ -29,6 +30,7 @@ from .router import (
     orcid_base_url,
     router,
 )
+from .service import exchange_code, issue_orcid_credential
 from .state import (
     STATE_ALGORITHM,
     STATE_PURPOSE,
@@ -41,6 +43,7 @@ from .state import (
 __all__ = [
     "AUTHORIZE_PATH",
     "CALLBACK_PATH",
+    "Credential",
     "DEFAULT_ORCID_BASE_URL",
     "InvalidState",
     "ORCID_AUTH_SCOPE",
@@ -51,6 +54,9 @@ __all__ = [
     "authorize_endpoint",
     "build_authorize_url",
     "callback_url",
+    "ensure_credential_tables",
+    "exchange_code",
+    "issue_orcid_credential",
     "orcid_base_url",
     "router",
     "sign_state",
