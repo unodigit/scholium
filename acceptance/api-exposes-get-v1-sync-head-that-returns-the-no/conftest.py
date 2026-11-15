@@ -27,10 +27,12 @@ for p in (SRC, PKG / "record-core" / "src", PKG / "cli" / "src"):
         sys.path.insert(0, str(p))
 
 worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
-if "PYTEST_XDIST_WORKER" in os.environ:
-    os.environ["DATABASE_URL"] = f"sqlite:///./test_{worker}.db"
-else:
-    os.environ.setdefault("DATABASE_URL", f"sqlite:///./test_{worker}.db")
+# A fresh database per session and worker: a file shared across suites or
+# runs makes uniqueness rules (one review per person, one DID per ORCID)
+# fail on data left behind by an earlier test.
+os.environ["DATABASE_URL"] = (
+    f"sqlite:///{tempfile.mkdtemp(prefix=f'scholium-acceptance-db-{worker}-')}/scholium.db"
+)
 os.environ.setdefault("JOBS_EAGER", "1")
 
 # origin.node_did() consults these before the key file; they must not

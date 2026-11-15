@@ -43,6 +43,11 @@ MOCK_CODE = "mock-0000-0002-1825-0097"
 #: The ORCID iD embedded in ``MOCK_CODE``.
 ORCID_ID = "0000-0002-1825-0097"
 
+#: A second valid ORCID iD: one ORCID links to one DID only, so a second
+#: linking test in the same database must use its own iD.
+SECOND_ORCID_ID = "0000-0002-9079-593X"
+SECOND_MOCK_CODE = f"mock-{SECOND_ORCID_ID}"
+
 
 def start_link_flow(client) -> tuple[str, str]:
     """Start an authenticated ORCID link flow and return ``(did, state)``.
@@ -91,9 +96,9 @@ def test_callback_with_mock_code_and_valid_state_returns_200_with_credential(
 def test_profile_shows_the_linked_orcid_id_after_linking(client):
     did, state = start_link_flow(client)
 
-    linked = client.get(URL, params={"code": MOCK_CODE, "state": state})
+    linked = client.get(URL, params={"code": SECOND_MOCK_CODE, "state": state})
     assert linked.status_code == 200, linked.text
 
     profile = client.get(f"/v1/profiles/{did}")
     assert profile.status_code == 200, profile.text
-    assert profile.json().get("orcid") == ORCID_ID, profile.text
+    assert profile.json().get("orcid") == SECOND_ORCID_ID, profile.text
