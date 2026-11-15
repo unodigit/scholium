@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SubmitWizard } from "./submit-wizard";
 import { WizardRail } from "./wizard-rail";
 import { WIZARD_STEPS, nextStep, stepIndex } from "./wizard-steps";
+import type { ManagerDeps } from "./upload-manager";
 
 vi.mock("next/link", async () => {
   const { createElement } = await import("react");
@@ -76,5 +77,59 @@ describe("SubmitWizard", () => {
   it("does not nag someone who is signed in", () => {
     render(<SubmitWizard signedIn />);
     expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+  });
+});
+
+const CID = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku";
+
+/** A fingerprinter and uploader the test drives by hand, so no network is needed. */
+function fakeManagerDeps(): {
+  deps: ManagerDeps;
+  uploads: { callbacks: Parameters<NonNullable<ManagerDeps["startUpload"]>>[2] }[];
+  hashes: { resolve: (cid: string) => void }[];
+} {
+  const uploads: { callbacks: Parameters<NonNullable<ManagerDeps["startUpload"]>>[2] }[] = [];
+  const hashes: { resolve: (cid: string) => void }[] = [];
+  const deps: ManagerDeps = {
+    startUpload: (_file, _init, callbacks) => {
+      uploads.push({ callbacks });
+      return { stop: vi.fn(async () => undefined) };
+    },
+    fingerprint: () =>
+      new Promise<string>((resolve) => {
+        hashes.push({ resolve });
+      }),
+  };
+  return { deps, uploads, hashes };
+}
+
+describe("SubmitWizard — Files to Details and back", () => {
+  it("opens step 2 after Files, and Back finds the same files", async () => {
+    const { deps, uploads, hashes } = fakeManagerDeps();
+    render(<SubmitWizard signedIn managerDeps={deps} />);
+
+    fireEvent.change(screen.getByLabelText("Choose paper files"), {
+      target: { files: [new File(["x"], "paper.pdf", { type: "application/pdf" })] },
+    });
+    await act(async () => {
+      uploads[0].callbacks.onSuccess({ cid: CID, url: null });
+      hashes[0].resolve(CID);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Details" }));
+
+    expect(screen.getByRole("heading", { level: 2, name: "Details" })).toBeTruthy();
+    const steps = (): HTMLElement[] =>
+      within(screen.getByRole("navigation", { name: "Submission progress" })).getAllByRole("listitem");
+    expect(steps()[0].getAttribute("data-state")).toBe("done");
+    expect(steps()[1].getAttribute("aria-current")).toBe("step");
+    // The Files step is out of the way while Details is open.
+    expect(screen.queryByRole("heading", { level: 2, name: "Files" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to Files" }));
+
+    expect(screen.getByRole("heading", { level: 2, name: "Files" })).toBeTruthy();
+    expect(screen.getByText("paper.pdf", { selector: ".sw-file__name" })).toBeTruthy();
+    expect(steps()[0].getAttribute("aria-current")).toBe("step");
   });
 });

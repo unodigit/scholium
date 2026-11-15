@@ -93,7 +93,7 @@ export function FilesStep({
 
   return (
     <section className="sw-step" aria-labelledby="sw-files-title">
-      <h2 id="sw-files-title" className="sw-step__title">
+      <h2 id="sw-files-title" className="sw-step__title" tabIndex={-1}>
         Files
       </h2>
       <p className="sw-step__lede">

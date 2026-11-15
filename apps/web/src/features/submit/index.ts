@@ -1,11 +1,12 @@
 /**
  * `submit` — the /submit wizard (docs/design.md §5.4).
  *
- * Step 1, Files, is built: drag-and-drop PDF, LaTeX, code and data, resumable
- * tus uploads, a per-file fingerprint, and the size limits stated up front.
+ * Steps 1 and 2 are built: Files (drag-and-drop PDF, LaTeX, code and data,
+ * resumable tus uploads, a per-file fingerprint) and Details (title, abstract,
+ * categories, and a licence picker that defaults to CC BY 4.0).
  *
  * ```tsx
- * import { FilesStep, SubmitWizard } from "@/features/submit";
+ * import { DetailsStep, FilesStep, SubmitWizard } from "@/features/submit";
  *
  * <SubmitWizard />                       // the whole page
  * <FilesStep onFilesChange={setFiles} /> // just step 1
@@ -16,9 +17,30 @@
  */
 
 export { SubmitWizard, type SubmitWizardProps } from "./submit-wizard";
+export { DetailsStep, type DetailsStepProps } from "./details-step";
 export { FilesStep, type FilesStepProps } from "./files-step";
 export { WizardRail } from "./wizard-rail";
 export { WIZARD_STEPS, nextStep, stepIndex, type WizardStepId } from "./wizard-steps";
+
+export {
+  ABSTRACT_MAX_LENGTH,
+  CATEGORIES,
+  CATEGORY_GROUPS,
+  DEFAULT_LICENCE_ID,
+  LICENCES,
+  MAX_CATEGORIES,
+  TITLE_MAX_LENGTH,
+  canContinueDetails,
+  detailsBlockers,
+  emptyDetails,
+  licenceById,
+  toggleCategory,
+  type CategoryGroup,
+  type CategoryOption,
+  type DetailsValues,
+  type JournalFit,
+  type LicenceOption,
+} from "./details";
 
 export {
   FILE_ROLES,

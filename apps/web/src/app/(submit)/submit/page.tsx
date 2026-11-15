@@ -13,6 +13,7 @@ export const metadata: Metadata = {
  *
  * Step 1 (Files) takes the PDF and/or LaTeX source plus optional code and
  * data, uploads each resumably and fingerprints it on the author's device.
+ * Step 2 (Details) takes the title, abstract, categories and licence.
  */
 export default function SubmitPage() {
   return <SubmitWizard />;

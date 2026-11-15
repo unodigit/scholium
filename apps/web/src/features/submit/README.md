@@ -4,7 +4,9 @@
 3 Authors · 4 Checks · 5 Sign**. This feature owns it; the route is
 `apps/web/src/app/(submit)/submit/page.tsx`, the shell is `SubmitWizard`.
 
-Only **step 1, Files** is built so far.
+**Steps 1, Files and 2, Details** are built so far. `SubmitWizard` keeps the
+Files step mounted while Details is open, so going back finds the same uploads,
+and it owns the Details draft so stepping back and forward keeps what was typed.
 
 ## Step 1 — Files
 
@@ -44,14 +46,41 @@ anything is dropped.
   dropped outside a zone is ignored rather than opened (which would end the
   upload).
 - **Continue** opens when no file is moving, paused or failed and at least one
-  finished file is a PDF or LaTeX source. With no `onContinue` (no step 2 yet)
-  it stays closed and says why.
+  finished file is a PDF or LaTeX source, and goes on to Details.
+
+## Step 2 — Details
+
+Title, abstract, categories and licence — the fields that appear on the paper
+page and travel inside the signed record.
+
+- **Title and abstract** are required. The character limits (300 and 5,000) are
+  counted beside each field before they are reached. Metadata extraction will
+  pre-fill both from the PDF when that lands; `DetailsStep` already takes its
+  values from the wizard, so there is one place to add the fill.
+- **Categories** are a fixed, grouped list of arXiv-style ids (the record stores
+  `cs.AI`, not a display name). At least one is required and at most three are
+  allowed; a chosen chip carries a check icon and `aria-pressed`, so selection
+  is never colour alone. The plain-language name of each id is read out with it.
+- **Licence** is a radio group with **CC BY 4.0 selected by default** (PRD
+  PUB-9). Every option explains itself in one line and carries a
+  journal-compatibility flag in words and an icon ("Accepted by most journals"
+  or "Check your journal"), with a note that this is guidance, not legal advice.
+  The picker stores the ids the signed record uses: `CC-BY-4.0`,
+  `CC-BY-SA-4.0`, `CC-BY-NC-4.0`, `CC-BY-NC-ND-4.0`, `CC0-1.0`.
+- **Continue** names the first thing missing; with no step 3 to go to it stays
+  closed and says so. **Back to Files** returns to the same file list.
 
 ## For the next steps
 
 `FilesStep` reports the finished files as `SubmitFile[]` — `{ id, path, size,
 mediaType, role, cid }`, the shape a manifest is built from — through
 `onFilesChange` (whenever that set changes) and `onContinue`.
+
+`DetailsStep` reports `DetailsValues` — `{ title, abstract, categories,
+licence }` — through `onChange` for the wizard's draft and `onContinue` for step
+3. Step 3 (Authors) plugs into `SubmitWizard` beside the current two: pass an
+`onContinue` to `DetailsStep` and render the new step when `step` becomes
+`"authors"`.
 
 ## Layout
 
@@ -62,8 +91,10 @@ mediaType, role, cid }`, the shape a manifest is built from — through
 | `tus-upload.ts` | one tus upload: resume, retries, `Upload-Cid`, plain-language failures |
 | `upload-manager.ts` | the file list and its state machine; no React |
 | `use-upload-manager.ts` | binds the manager to React; online, unload and stray-drop handling |
-| `files-step.tsx`, `drop-zone.tsx`, `file-row.tsx`, `file-view.ts` | the step's UI and its wording |
-| `wizard-rail.tsx`, `wizard-steps.ts`, `submit-wizard.tsx` | the shell and progress rail |
+| `files-step.tsx`, `drop-zone.tsx`, `file-row.tsx`, `file-view.ts` | the Files step's UI and its wording |
+| `details.ts` | licence options and ids, category groups, the step's rules |
+| `details-step.tsx` | the Details form: title, abstract, categories, licence |
+| `wizard-rail.tsx`, `wizard-steps.ts`, `submit-wizard.tsx` | the shell, progress rail and step switching |
 | `submit.css` | styles; global design tokens only |
 
 Components are `.tsx`, so `tsconfig.json` here sets `jsx: react-jsx` for vitest

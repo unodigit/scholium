@@ -1,5 +1,5 @@
 /**
- * Small inline icons for the Files step. Stroke-only, `currentColor`, and
+ * Small inline icons for the submit wizard. Stroke-only, `currentColor`, and
  * `aria-hidden`: every icon here sits next to a word that carries the meaning,
  * so none of them is ever the only signal (docs/design.md §9).
  */
@@ -32,6 +32,17 @@ export function CheckIcon(): ReactElement {
   return (
     <Svg>
       <path d="M3 8.5l3.2 3L13 4.5" />
+    </Svg>
+  );
+}
+
+/** A circled "i": something worth checking, not a failure. */
+export function InfoIcon(): ReactElement {
+  return (
+    <Svg>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 7.2v4" />
+      <path d="M8 4.9v.1" />
     </Svg>
   );
 }
