@@ -126,6 +126,23 @@ describe("the layout (docs/design.md §5.2)", () => {
     );
   });
 
+  it("fits a wide display formula into the column by scrolling it, not by widening the page", () => {
+    const display = declarations(page, ".ppg-text .katex-display");
+    expect(display).toMatch(/max-inline-size:\s*100%/);
+    expect(display).toMatch(/overflow-x:\s*auto/);
+  });
+
+  it("keeps the PDF's pages inside the column, each holding its place", () => {
+    const pageBox = declarations(page, ".ppg-pdf-page");
+    expect(pageBox).toMatch(/inline-size:\s*100%/);
+    expect(pageBox).toMatch(/border:\s*1px solid var\(--rule\)/);
+    // The canvas fills its box; the box's height comes from the aspect ratio
+    // the viewer sets, so the column does not jump as pages are drawn.
+    const canvas = declarations(page, ".ppg-pdf-canvas");
+    expect(canvas).toMatch(/inline-size:\s*100%/);
+    expect(canvas).toMatch(/display:\s*block/);
+  });
+
   it("sets the abstract in the reading serif at the reading size", () => {
     const abstract = declarations(page, ".ppg-abstract-body");
     expect(abstract).toMatch(/font-family:\s*var\(--family-serif\)/);
@@ -173,6 +190,18 @@ describe("accessibility (docs/design.md §9)", () => {
 
   it("keeps hidden tab panels hidden whatever else sets their display", () => {
     expect(declarations(page, ".ppg-tabpanel[hidden]")).toMatch(/display:\s*none/);
+  });
+
+  it("keeps the hidden rendition hidden whatever else sets its display", () => {
+    // The HTML stays mounted under the PDF (and the PDF under the HTML), so
+    // `hidden` is what takes the one that is not showing out of the page.
+    expect(declarations(page, ".ppg-view[hidden]")).toMatch(/display:\s*none/);
+  });
+
+  it("gives the PDF view's link a visible 2 px focus ring in the focus colour", () => {
+    expect(declarations(page, ".ppg-pdf-link:focus-visible")).toMatch(
+      /outline:\s*2px solid var\(--focus-ring\)/,
+    );
   });
 
   it("hides text visually without removing it from assistive technology", () => {

@@ -19,9 +19,11 @@
  */
 
 import { MarginPanel } from "./margin-panel";
+import { pdfAccess } from "./paper-facts";
 import { PaperHeader } from "./paper-header";
 import type { PaperPageData } from "./paper-page-data";
 import { ReadingColumn } from "./reading-column";
+import { ReadingViewProvider } from "./reading-view";
 import "./paper-page.css";
 
 export interface PaperPageViewProps {
@@ -29,11 +31,17 @@ export interface PaperPageViewProps {
 }
 
 export function PaperPageView({ data }: PaperPageViewProps) {
+  const pdf = pdfAccess(data.manifest.ok ? data.manifest.data : undefined);
+
   return (
     <div className="ppg">
       <div className="ppg-main">
-        <PaperHeader data={data} />
-        <ReadingColumn data={data} />
+        {/* The header's PDF and HTML actions and the column share which
+            rendition is showing, so the provider sits above both. */}
+        <ReadingViewProvider pdfAvailable={pdf.kind === "available"}>
+          <PaperHeader data={data} />
+          <ReadingColumn data={data} />
+        </ReadingViewProvider>
       </div>
       <aside className="ppg-margin" aria-label="Margin of the paper">
         <MarginPanel

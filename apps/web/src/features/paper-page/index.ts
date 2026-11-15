@@ -18,6 +18,10 @@
  * the PDF, HTML, Cite and Download actions; a reading column of at most 720 px;
  * and a 360 px margin panel whose tabs are the Reviews, AI, Discussion,
  * Versions, Files and Proof tabs of the features that own them.
+ *
+ * The reading column shows the version's text as HTML paragraphs (from
+ * `GET /v1/papers/{id}/v/{n}/text`) with the math typeset by KaTeX, and the PDF
+ * and HTML actions switch it between that and the PDF drawn by PDF.js.
  */
 
 export {
@@ -81,3 +85,48 @@ export {
   type ReadingParagraph,
   type ReadingText as ReadingTextData,
 } from "./reading";
+
+export {
+  MAX_MATH_LENGTH,
+  mathPlan,
+  splitMath,
+  type MathSegment,
+  type ParagraphSegment,
+  type TextSegment,
+} from "./math";
+
+export {
+  TYPESET_ATTRIBUTE,
+  hasMath,
+  loadKatex,
+  typesetParagraph,
+  typesetParagraphs,
+  type LoadMath,
+  type MathRenderer,
+} from "./math-typeset";
+
+export {
+  MAX_CANVAS_PIXELS,
+  MAX_PIXEL_RATIO,
+  describePdfError,
+  isRenderCancelled,
+  loadPdfjs,
+  planPageRender,
+  type LoadPdfjs,
+  type PageRenderPlan,
+  type PdfjsLike,
+} from "./pdf-render";
+
+export { PdfView, type PdfViewProps } from "./pdf-view";
+
+export {
+  PDF_HASH,
+  ReadingViewLink,
+  ReadingViewProvider,
+  ReadingViews,
+  viewFromHash,
+  type ReadingViewId,
+  type ReadingViewLinkProps,
+  type ReadingViewProviderProps,
+  type ReadingViewsProps,
+} from "./reading-view";

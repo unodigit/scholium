@@ -260,6 +260,100 @@
   overflow-wrap: anywhere;
 }
 
+/* ---- Math (KaTeX) ----------------------------------------------------------
+   KaTeX brings its own stylesheet for the glyphs; this only fits the formulas
+   into the measure. Colour and size are inherited from the paragraph. A
+   display formula is its own line and scrolls sideways if it is wider than the
+   column, rather than widening the page. */
+
+.ppg-text .katex-display {
+  max-inline-size: 100%;
+  margin-block: calc(var(--space-unit) * 4);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* ---- Rendition: HTML or PDF ------------------------------------------------- */
+
+/* The HTML stays mounted under the PDF; hidden must win over any display set on it. */
+.ppg-view[hidden] {
+  display: none;
+}
+
+/* ---- PDF view (PDF.js) ------------------------------------------------------ */
+
+.ppg-pdf {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+  margin-block-start: calc(var(--space-unit) * 2);
+}
+
+.ppg-pdf-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 1) calc(var(--space-unit) * 4);
+}
+
+.ppg-pdf-summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.ppg-pdf-link {
+  color: var(--accent);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.ppg-pdf-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ppg-pdf-retry {
+  justify-self: start;
+}
+
+.ppg-pdf-pages {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A page keeps its place from the start (its height comes from the aspect
+   ratio set on it), so the column does not jump as pages are drawn. */
+.ppg-pdf-page {
+  box-sizing: border-box;
+  position: relative;
+  inline-size: 100%;
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  overflow: hidden;
+}
+
+.ppg-pdf-canvas {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.ppg-pdf-page-note {
+  position: absolute;
+  inset-block-start: calc(var(--space-unit) * 3);
+  inset-inline: calc(var(--space-unit) * 3);
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
 /* ---- Margin panel ---------------------------------------------------------- */
 
 .ppg-margin {

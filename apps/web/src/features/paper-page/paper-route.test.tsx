@@ -19,6 +19,7 @@ import {
   MANIFEST_BODY,
   PAPER_BODY,
   SHORT_ID,
+  TEXT_BODY,
   json,
   notFound,
   stubApi,
@@ -255,6 +256,54 @@ describe("/p/{id}: the reading column", () => {
     mount(await page(BARE_ID));
 
     expect(screen.getByText("This version has no abstract.")).toBeTruthy();
+  });
+
+  it("sends a formula as the LaTeX the author wrote: typesetting happens once the page runs", async () => {
+    stubApi({
+      ...HAPPY,
+      text: () =>
+        json({
+          ...TEXT_BODY,
+          paragraphs: [
+            {
+              paragraph_id: "para-math",
+              position: 0,
+              text: "The score is $s = \\sum_i w_i x_i$ for each branch.",
+            },
+          ],
+        }),
+    });
+    mount(await page(BARE_ID));
+
+    const paragraph = document.getElementById("p-para-math");
+    expect(paragraph?.textContent).toBe(
+      "The score is $s = \\sum_i w_i x_i$ for each branch.",
+    );
+    // KaTeX is loaded in the browser, not on the server: no typeset markup yet.
+    expect(document.querySelector(".katex")).toBeNull();
+  });
+
+  it("starts on the text, with no PDF viewer in the page", async () => {
+    stubApi();
+    mount(await page(BARE_ID));
+
+    const reading = screen.getByRole("region", { name: "Paper text" });
+    expect(within(reading).getByText(/Multi-agent systems increasingly/)).toBeTruthy();
+    expect(reading.querySelector("[hidden]")).toBeNull();
+    expect(screen.queryByRole("region", { name: "PDF of this version", hidden: true })).toBeNull();
+    expect(document.querySelector("canvas")).toBeNull();
+  });
+
+  it("still shows the text of a version that has no PDF", async () => {
+    stubApi({
+      ...HAPPY,
+      manifest: () => json({ ...MANIFEST_BODY, files: [MANIFEST_BODY.files[1]] }),
+    });
+    mount(await page(BARE_ID));
+
+    const reading = screen.getByRole("region", { name: "Paper text" });
+    expect(within(reading).getByText(/Multi-agent systems increasingly/)).toBeTruthy();
+    expect(reading.querySelector("[hidden]")).toBeNull();
   });
 });
 

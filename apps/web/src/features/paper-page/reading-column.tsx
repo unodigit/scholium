@@ -12,13 +12,23 @@
  * text for this version) and "could not be loaded" (the read failed; reloading
  * may help) are different sentences, so the reader knows whether to wait.
  *
- * Server-safe except for {@link ReadingText}, the client island that owns the
- * paragraphs' markers and the `A` shortcut.
+ * **Two renditions, one column.** The HTML above is what the column shows. The
+ * header's PDF action swaps it for the version's PDF, drawn by PDF.js
+ * (`ReadingViews`); the HTML stays mounted underneath, hidden, so choosing the
+ * PDF and coming back loses nothing. Math in the paragraphs is typeset by
+ * `ReadingText`.
+ *
+ * Server-safe except for {@link ReadingViews} (which view is showing) and
+ * {@link ReadingText} (the paragraphs' markers, the `A` shortcut and the math),
+ * which are client islands. The HTML is rendered here, on the server, and
+ * handed to `ReadingViews` as children, so the first response still has it all.
  */
 
+import { pdfAccess } from "./paper-facts";
 import { READING_ID } from "./paper-links";
 import type { PaperPageData } from "./paper-page-data";
 import { ReadingText } from "./reading-text";
+import { ReadingViews } from "./reading-view";
 
 export interface ReadingColumnProps {
   readonly data: PaperPageData;
@@ -27,6 +37,7 @@ export interface ReadingColumnProps {
 export function ReadingColumn({ data }: ReadingColumnProps) {
   const { paper, reading, shortId, version } = data;
   const paragraphs = reading.ok ? reading.data.paragraphs : [];
+  const pdf = pdfAccess(data.manifest.ok ? data.manifest.data : undefined);
 
   return (
     <section
@@ -35,31 +46,33 @@ export function ReadingColumn({ data }: ReadingColumnProps) {
       aria-label="Paper text"
       tabIndex={-1}
     >
-      <section className="ppg-abstract" aria-labelledby="ppg-abstract-heading">
-        <h2 id="ppg-abstract-heading" className="ppg-section-title">
-          Abstract
-        </h2>
-        <p className="ppg-abstract-body">
-          {paper.abstract.trim() !== ""
-            ? paper.abstract
-            : "This version has no abstract."}
-        </p>
-      </section>
+      <ReadingViews pdfUrl={pdf.kind === "available" ? pdf.url : null}>
+        <section className="ppg-abstract" aria-labelledby="ppg-abstract-heading">
+          <h2 id="ppg-abstract-heading" className="ppg-section-title">
+            Abstract
+          </h2>
+          <p className="ppg-abstract-body">
+            {paper.abstract.trim() !== ""
+              ? paper.abstract
+              : "This version has no abstract."}
+          </p>
+        </section>
 
-      {paragraphs.length > 0 ? (
-        <ReadingText
-          paperId={shortId}
-          version={version}
-          versionCid={paper.versionCid}
-          paragraphs={paragraphs}
-        />
-      ) : (
-        <p className="ppg-reading-note" role={reading.ok ? undefined : "status"}>
-          {reading.ok
-            ? "The text of this version is not available to read here. Open the PDF to read it."
-            : reading.error}
-        </p>
-      )}
+        {paragraphs.length > 0 ? (
+          <ReadingText
+            paperId={shortId}
+            version={version}
+            versionCid={paper.versionCid}
+            paragraphs={paragraphs}
+          />
+        ) : (
+          <p className="ppg-reading-note" role={reading.ok ? undefined : "status"}>
+            {reading.ok
+              ? "The text of this version is not available to read here. Open the PDF to read it."
+              : reading.error}
+          </p>
+        )}
+      </ReadingViews>
     </section>
   );
 }

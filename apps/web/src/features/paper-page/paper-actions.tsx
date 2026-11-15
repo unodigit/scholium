@@ -5,15 +5,18 @@
  * Each one is a real link, so the row works before any JavaScript runs and is
  * reachable by keyboard like any other link:
  *
- * - **PDF** opens the version's PDF file, served by the node, in a new tab.
- *   What the browser then does with it (show it or save it) is the node's
+ * - **PDF** is the version's PDF file, served by the node. As a plain link it
+ *   opens in a new tab (what the browser then does with it is the node's
  *   content endpoint's call: it serves every file inert, as a sandboxed,
- *   unsniffed download, because uploads are untrusted. Reading the PDF on the
- *   page itself is a later feature (a PDF.js view). When the PDF cannot be
- *   opened (no PDF, still being scanned, scan failed) the word stays and says
- *   why, in text, rather than becoming a button that does nothing.
- * - **HTML** is the rendition the page is already showing, so it is marked as
- *   the current view and jumps to the reading column.
+ *   unsniffed download, because uploads are untrusted). Once the page runs, a
+ *   plain click shows the PDF in the reading column instead, drawn by PDF.js
+ *   (`reading-view.tsx`); a modified click, or a phone, still gets the file.
+ *   When the PDF cannot be opened (no PDF, still being scanned, scan failed)
+ *   the word stays and says why, in text, rather than becoming a button that
+ *   does nothing.
+ * - **HTML** is the rendition the page starts on, so it is marked as the
+ *   current view and jumps to the reading column; following it from the PDF
+ *   view brings the HTML back.
  * - **Cite** opens the BibTeX of this exact version.
  * - **Download** saves the paper's archive.
  *
@@ -21,11 +24,14 @@
  * copy) and the Download menu are a later feature that replaces these two
  * elements and keeps the endpoints.
  *
- * Server-safe: no hooks, no state.
+ * Server-safe: no hooks, no state of its own. The PDF and HTML links are client
+ * islands that read which view is showing; everything they render first is the
+ * same markup the server sends.
  */
 
 import type { PdfAccess } from "./paper-facts";
 import { READING_ID } from "./paper-links";
+import { ReadingViewLink } from "./reading-view";
 
 export interface PaperActionsProps {
   /** Whether, and where, the PDF can be opened. */
@@ -41,15 +47,9 @@ export function PaperActions({ pdf, citeUrl, archiveUrl }: PaperActionsProps) {
     <div className="ppg-actions-block">
       <div className="ppg-actions" role="group" aria-label="Read, cite and download">
         {pdf.kind === "available" ? (
-          <a
-            className="ppg-action"
-            href={pdf.url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <ReadingViewLink view="pdf" className="ppg-action" href={pdf.url}>
             PDF
-            <span className="ppg-visually-hidden"> (opens in a new tab)</span>
-          </a>
+          </ReadingViewLink>
         ) : (
           // A link with no destination: announced as a disabled link, and the
           // reason is on the page below, not only in a tooltip.
@@ -62,9 +62,9 @@ export function PaperActions({ pdf, citeUrl, archiveUrl }: PaperActionsProps) {
             PDF
           </a>
         )}
-        <a className="ppg-action" href={`#${READING_ID}`} aria-current="true">
+        <ReadingViewLink view="html" className="ppg-action" href={`#${READING_ID}`}>
           HTML
-        </a>
+        </ReadingViewLink>
         <a
           className="ppg-action"
           href={citeUrl}
