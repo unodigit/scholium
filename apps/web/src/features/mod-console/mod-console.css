@@ -693,3 +693,265 @@
 .mc-published-reason .mc-preview-reason {
   margin-bottom: 0;
 }
+
+/* ---- Flags and appeals --------------------------------------------------- */
+
+/* The sections sit beneath the queue in the same shell. */
+.mc-cases {
+  display: grid;
+  gap: calc(var(--space-unit) * 12);
+  margin-top: calc(var(--space-unit) * 12);
+}
+
+.mc-section {
+  min-width: 0;
+}
+
+.mc-section-title {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-title);
+  font-weight: var(--weight-title);
+}
+
+.mc-section-lede {
+  margin: 0 0 calc(var(--space-unit) * 6);
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* An expected condition, said plainly: accent marks the edge, ink carries the
+   words, so it reads as information rather than as a fault. */
+.mc-note {
+  box-sizing: border-box;
+  margin: 0 0 calc(var(--space-unit) * 4);
+  max-width: var(--measure-reading);
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-inline-start: 4px solid var(--accent);
+  border-radius: var(--corner-card);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.mc-case-list {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mc-case {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+}
+
+.mc-case-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+}
+
+.mc-case-heading {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.mc-case-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  overflow-wrap: anywhere;
+}
+
+.mc-case-meta {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.mc-case-facts {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+  margin: calc(var(--space-unit) * 4) 0 0;
+}
+
+.mc-case-facts dt {
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mc-case-facts dd {
+  margin: calc(var(--space-unit) * 1) 0 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+/* Grounds and reasons are the author's and the panel's own words: line breaks
+   they typed are kept. */
+.mc-case-text {
+  white-space: pre-wrap;
+}
+
+.mc-case-reason {
+  display: block;
+  margin-top: calc(var(--space-unit) * 1);
+  color: var(--ink-2);
+}
+
+.mc-case-strong {
+  font-weight: 500;
+}
+
+/* Record ids are long and unbroken. */
+.mc-case-id {
+  overflow-wrap: anywhere;
+}
+
+.mc-case-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  margin-top: calc(var(--space-unit) * 4);
+}
+
+.mc-case-links .mc-button {
+  margin-top: 0;
+}
+
+/* ---- Panel vote and panel decision --------------------------------------- */
+
+.mc-vote,
+.mc-verdict {
+  margin-top: calc(var(--space-unit) * 5);
+  padding-top: calc(var(--space-unit) * 5);
+  border-top: 1px solid var(--rule);
+}
+
+.mc-vote-title {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* A recorded vote is a check beside words, never the check alone. */
+.mc-vote-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--verified);
+}
+
+.mc-vote-lede {
+  margin: calc(var(--space-unit) * 2) 0 calc(var(--space-unit) * 4);
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* "You hold no seat" is information, not a fault: a neutral icon. */
+.mc-vote--note {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.mc-vote--note .mc-form-error-icon {
+  color: var(--ink-2);
+}
+
+.mc-verdict-outcome {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+}
+
+.mc-verdict-reason {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  max-width: var(--measure-reading);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  white-space: pre-wrap;
+}
+
+/* ---- Open a flag by its id ----------------------------------------------- */
+
+.mc-lookup {
+  margin-top: calc(var(--space-unit) * 8);
+}
+
+/* The form is a reading-width control; the card it opens is not. */
+.mc-lookup > .mc-label,
+.mc-lookup-row,
+.mc-lookup > .mc-form-error {
+  max-width: var(--measure-reading);
+}
+
+.mc-lookup-row {
+  display: flex;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.mc-lookup-row .mc-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mc-lookup-row .mc-button {
+  flex: none;
+  margin-top: 0;
+}
+
+.mc-lookup-result {
+  margin-top: calc(var(--space-unit) * 4);
+}
+
+@media (max-width: 40rem) {
+  .mc-case {
+    padding: calc(var(--space-unit) * 5);
+  }
+
+  .mc-lookup-row {
+    flex-direction: column;
+  }
+}

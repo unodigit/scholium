@@ -40,4 +40,23 @@ describe("mod route (server render)", () => {
   it("titles the page for the browser tab", () => {
     expect(metadata.title).toBe("Moderation console · Scholium");
   });
+
+  it("describes flags and appeals as well as the queue", () => {
+    expect(metadata.description).toContain("flags");
+    expect(metadata.description).toContain("appeals");
+  });
+
+  it("holds a place for flags and appeals but fetches neither on the server", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const html = renderToStaticMarkup(<ModRoutePage />);
+
+    // The session is only readable in the browser, so the server HTML is a
+    // loading line: no flag, appeal or vote form can be in it.
+    expect(html).toContain("Loading flags and appeals…");
+    expect(html).not.toContain("Cast my vote");
+    expect(html).not.toContain("Open a flag by its id");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

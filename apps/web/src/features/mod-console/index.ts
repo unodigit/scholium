@@ -12,8 +12,9 @@
  * <ModConsole />
  * ```
  *
- * Later console views (flags and appeals) are added to this feature and link
- * from the queue rows or the detail view.
+ * Flags and appeals sit beneath the queue on the same page (`ModCases`): the
+ * appeals are read from the public log, each open one carries the panel vote
+ * form, and the API alone decides who holds a seat.
  */
 
 export {
@@ -106,3 +107,91 @@ export {
   type LoadPaper,
   type ModDetailProps,
 } from "./mod-detail";
+
+export {
+  LOG_PAGE_SIZE,
+  LOG_RECORD_TYPES,
+  MAX_LOG_PAGES,
+  SYNC_RANGE_ENDPOINT,
+  AppealsLoadError,
+  actionLabel,
+  buildAppealCases,
+  describeAppealsError,
+  isAppealOpen,
+  loadAppealCases,
+  outcomeLabel,
+  readLogEntry,
+  type AppealCase,
+  type AppealPaper,
+  type AppealVerdict,
+  type AppealedDecision,
+  type AppealsClient,
+  type AppealsLoad,
+  type LogEntry,
+  type PanelVoteRecord,
+} from "./appeals";
+
+export {
+  DECIDING_VOTES,
+  EMPTY_VOTE_DRAFT,
+  PANEL_RECORD_NOTICE,
+  PANEL_SIZE,
+  VOTE_CHOICES,
+  VoteDraftError,
+  buildVoteBody,
+  castPanelVote,
+  describeVoteError,
+  isVoteOutcome,
+  parseVoteAccepted,
+  validateVoteDraft,
+  voteEndpoint,
+  type VoteAccepted,
+  type VoteBody,
+  type VoteCaster,
+  type VoteClient,
+  type VoteDraft,
+  type VoteField,
+  type VoteFailure,
+  type VoteOutcome,
+  type VoteValidation,
+} from "./panel-vote";
+
+export {
+  FLAGS_ENDPOINT,
+  FlagReadError,
+  classifyFlagsError,
+  flagDecisionHref,
+  flagSignal,
+  formatFlagReason,
+  isFlagOpen,
+  loadFlag,
+  loadFlags,
+  parseFlag,
+  parseFlags,
+  type FlagEntry,
+  type FlagsClient,
+  type FlagsFailure,
+} from "./flags";
+
+export {
+  AppealVoteForm,
+  type AppealVoteFormProps,
+} from "./appeal-vote-form";
+
+export { AppealCard, appealSignal, type AppealCardProps } from "./appeal-card";
+
+export {
+  AppealsSection,
+  type AppealsSectionProps,
+  type LoadAppeals,
+} from "./appeals-section";
+
+export {
+  FlagCard,
+  FlagsSection,
+  type FlagsSectionProps,
+  type LoadFlag,
+  type LoadFlags,
+} from "./flags-section";
+
+export { ModCases, type ModCasesProps } from "./mod-cases";

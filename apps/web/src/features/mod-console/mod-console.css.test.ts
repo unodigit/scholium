@@ -18,6 +18,26 @@ function rulesOf(path: string): string {
   return readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
+/** The bodies of every `@media <query> { … }` block, found by matching braces. */
+function mediaBlocks(css: string, query: string): string[] {
+  const blocks: string[] = [];
+  const opener = `@media ${query}`;
+  let from = css.indexOf(opener);
+  while (from !== -1) {
+    const open = css.indexOf("{", from);
+    let depth = 1;
+    let end = open + 1;
+    while (depth > 0 && end < css.length) {
+      if (css[end] === "{") depth += 1;
+      if (css[end] === "}") depth -= 1;
+      end += 1;
+    }
+    blocks.push(css.slice(open + 1, end - 1));
+    from = css.indexOf(opener, end);
+  }
+  return blocks;
+}
+
 const feature = rulesOf(join(here, "mod-console.css"));
 const shell = rulesOf(join(here, "../../app/(mod-console)/mod-console.css"));
 
@@ -117,6 +137,53 @@ describe("mod-console.css detail view", () => {
       /\.mc-record-notice\s*\{[^}]*border:\s*1px solid var\(--accent\)/,
     );
     expect(feature).not.toMatch(/\.mc-record-notice[^}]*var\(--(verified|pending|critical)\)/);
+  });
+});
+
+describe("mod-console.css flags and appeals", () => {
+  it("draws a case as a bordered surface, not a shadowed one", () => {
+    expect(feature).toMatch(
+      /\.mc-case\s*\{[^}]*background:\s*var\(--surface\)[^}]*border:\s*1px solid var\(--rule\)/,
+    );
+  });
+
+  it("marks an expected condition with an accent edge, reserving critical for faults", () => {
+    expect(feature).toMatch(/\.mc-note\s*\{[^}]*border-inline-start:\s*4px solid var\(--accent\)/);
+    expect(feature).not.toMatch(/\.mc-note\s*\{[^}]*var\(--critical\)/);
+  });
+
+  it("draws 'you hold no seat' with a neutral icon, not the fault colour", () => {
+    expect(feature).toMatch(
+      /\.mc-vote--note \.mc-form-error-icon\s*\{[^}]*color:\s*var\(--ink-2\)/,
+    );
+  });
+
+  it("puts the recorded-vote tick in the verified colour beside words", () => {
+    expect(feature).toMatch(/\.mc-vote-icon\s*\{[^}]*color:\s*var\(--verified\)/);
+  });
+
+  it("keeps the author's own line breaks in grounds and reasons", () => {
+    expect(feature).toMatch(/\.mc-case-text\s*\{[^}]*white-space:\s*pre-wrap/);
+    expect(feature).toMatch(/\.mc-verdict-reason\s*\{[^}]*white-space:\s*pre-wrap/);
+  });
+
+  it("breaks long record ids instead of scrolling the page sideways", () => {
+    expect(feature).toMatch(/\.mc-case-id\s*\{[^}]*overflow-wrap:\s*anywhere/);
+    expect(feature).toMatch(/\.mc-case-title\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  });
+
+  it("lays the flag id lookup in a row that stacks on a phone", () => {
+    expect(feature).toMatch(/\.mc-lookup-row\s*\{[^}]*display:\s*flex/);
+    const stacks = /\.mc-lookup-row\s*\{[^}]*flex-direction:\s*column/;
+    const narrow = mediaBlocks(feature, "(max-width: 40rem)");
+    // Only inside a narrow-screen block: wide screens keep the row.
+    const topLevel = narrow.reduce((css, block) => css.replace(block, ""), feature);
+    expect(topLevel).not.toMatch(stacks);
+    expect(narrow.some((block) => stacks.test(block))).toBe(true);
+  });
+
+  it("zeroes the button's own top margin inside a row of links", () => {
+    expect(feature).toMatch(/\.mc-case-links \.mc-button\s*\{[^}]*margin-top:\s*0/);
   });
 });
 

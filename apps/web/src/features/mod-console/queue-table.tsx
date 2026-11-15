@@ -24,8 +24,11 @@ import {
 } from "./queue";
 import "./mod-console.css";
 
-/** A signal as it appears in a cell: optional icon, then the words. */
-function SignalCell({ signal }: { signal: Signal }) {
+/**
+ * A signal as it appears in a cell: optional icon, then the words. Shared with
+ * the flags and appeals views, which mark their status the same way.
+ */
+export function SignalCell({ signal }: { signal: Signal }) {
   return (
     <span className={`mc-signal mc-signal--${signal.tone}`}>
       {signal.icon ? (
