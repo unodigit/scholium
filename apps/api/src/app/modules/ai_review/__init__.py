@@ -24,9 +24,21 @@ prompt set is exposed as :func:`prompt_set_hash` for the signed record::
     report.findings, report.prompt_set_hash
     ai_review.prompt_set_hash()
 
+Feature 119 runs the paper's code bundle for the reproducibility agent, in a
+docker sandbox with ``--network none``, a read-only root, CPU and memory
+limits and a 10-minute time limit.  The run's log goes to the agent as the
+``run_log`` block and its lines are the ``log_line`` evidence; when docker (or
+anything else the run needs) is unavailable the report carries a ``not_run``
+finding instead, never an error::
+
+    report = ai_review.run_reproducibility_agent(version_cid, bundle_cid, listed=True)
+    report.run.status      # "completed" | "failed" | "timeout" | "not_run"
+    report.run_log         # the log every log_line finding is checked against
+
 See :mod:`app.modules.ai_review.prompt_set` for how the hash is defined,
-:mod:`app.modules.ai_review.findings` for the finding shape and
-:mod:`app.modules.ai_review.agents` for running an agent.
+:mod:`app.modules.ai_review.findings` for the finding shape,
+:mod:`app.modules.ai_review.agents` for running an agent and
+:mod:`app.modules.ai_review.sandbox` for the sandbox.
 """
 
 from .agent_input import (
@@ -43,6 +55,7 @@ from .agent_input import (
 from .agents import AgentReport, run_agent
 from .errors import (
     AgentOutputError,
+    BundleError,
     PrivateDraftError,
     PromptSetError,
     UnknownAgentError,
@@ -73,12 +86,20 @@ from .providers import (
     OllamaProvider,
     get_provider,
 )
+from .reproducibility import run_reproducibility_agent
+from .sandbox import (
+    NOT_RUN_REASONS,
+    SandboxLimits,
+    SandboxRun,
+    run_bundle,
+)
 
 __all__ = [
     "AGENT_NAMES",
     "AgentOutputError",
     "AgentReport",
     "AnthropicProvider",
+    "BundleError",
     "CONFIDENCES",
     "DEFAULT_INSTRUCTIONS",
     "DataBlock",
@@ -90,6 +111,7 @@ __all__ = [
     "LLMProvider",
     "LLMRequest",
     "LLMResponse",
+    "NOT_RUN_REASONS",
     "OllamaProvider",
     "PROMPTS_DIR",
     "PrivateDraftError",
@@ -97,6 +119,8 @@ __all__ = [
     "REFERENCE_BLOCK_PREFIX",
     "RUN_LOG_BLOCK_ID",
     "SEVERITIES",
+    "SandboxLimits",
+    "SandboxRun",
     "UnknownAgentError",
     "build_agent_input",
     "build_data_blocks",
@@ -110,4 +134,6 @@ __all__ = [
     "prompt_set_hash",
     "reference_blocks",
     "run_agent",
+    "run_bundle",
+    "run_reproducibility_agent",
 ]

@@ -68,6 +68,23 @@ class LLMProvider(ABC):
     hosted: ClassVar[bool] = False
     model: str = ""
 
+    def check_listed(self, listed: bool) -> None:
+        """Refuse an unlisted draft when this provider is hosted.
+
+        Raises:
+            PrivateDraftError: if the provider is hosted and ``listed`` is false.
+
+        Callers that do slow work before they reach :meth:`complete` (the
+        reproducibility agent runs a sandbox first) call this up front so a
+        refusal does not come after the work.
+        """
+        if self.hosted and not listed:
+            raise PrivateDraftError(
+                "PrivateDraftError: hosted provider "
+                f"'{self.name}' cannot process an unlisted draft; unlisted "
+                "drafts may only be processed by self-hosted or fake providers"
+            )
+
     def complete(self, request: LLMRequest) -> LLMResponse:
         """Process ``request``, refusing unlisted drafts on hosted providers.
 
@@ -76,12 +93,7 @@ class LLMProvider(ABC):
         :class:`~app.modules.ai_review.errors.PrivateDraftError` before any
         network call is made.
         """
-        if self.hosted and not request.listed:
-            raise PrivateDraftError(
-                "PrivateDraftError: hosted provider "
-                f"'{self.name}' cannot process an unlisted draft; unlisted "
-                "drafts may only be processed by self-hosted or fake providers"
-            )
+        self.check_listed(request.listed)
         return self._complete(request)
 
     @abstractmethod

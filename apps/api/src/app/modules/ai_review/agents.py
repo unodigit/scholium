@@ -21,7 +21,8 @@ What each agent is given besides the paragraphs and the sanitizer's
 ``reproducibility``
     the sandbox ``run_log`` block, when ``run_log`` is passed, so it can cite a
     ``log_line``.  Without a run log the code was not run, and the agent is
-    told it may report only what the paper text shows.
+    told it may report only what the paper text shows.  Running the code to
+    get that log is :func:`~app.modules.ai_review.run_reproducibility_agent`.
 
 The findings are well-formed, not verified: a span may still be invented and a
 reference id unknown.  The evidence verifier (feature 118) checks them against
@@ -40,6 +41,7 @@ from .findings import Finding, parse_findings
 from .prompt_set import load_prompt, prompt_set_hash
 from .providers import LLMProvider, get_provider
 from .providers.base import DataBlock
+from .sandbox import SandboxRun
 
 __all__ = ["AgentReport", "run_agent"]
 
@@ -63,6 +65,19 @@ class AgentReport:
     model: str
     #: Hash of the prompt set in force when the agent ran.
     prompt_set_hash: str
+    #: The sandbox run behind a reproducibility report (see
+    #: :func:`~app.modules.ai_review.run_reproducibility_agent`); ``None`` for
+    #: every other agent.
+    run: Optional[SandboxRun] = None
+
+    @property
+    def run_log(self) -> Optional[str]:
+        """The run log this report's ``log_line`` evidence is checked against.
+
+        ``None`` when no sandbox was involved.  When the code was not run it is
+        the single line saying so, which the ``not_run`` finding cites.
+        """
+        return self.run.log if self.run is not None else None
 
 
 def run_agent(
