@@ -15,6 +15,8 @@ from scholium_record_core import (
     decode_signature,
 )
 
+from sqlalchemy import update
+
 from app import db
 from app.security import issue_access_token
 
@@ -33,9 +35,11 @@ __all__ = [
     "CHALLENGE_TTL",
     "InvalidDid",
     "InvalidNonce",
+    "InvalidRefreshToken",
     "InvalidSignature",
     "NONCE_BYTES",
     "REFRESH_TOKEN_TTL",
+    "refresh_access",
     "get_active_signing_key",
     "active_signing_key_for",
     "resolve_active_key_for",
@@ -86,6 +90,10 @@ class InvalidNonce(ValueError):
 
 class InvalidSignature(ValueError):
     """The signature does not verify against the did's key."""
+
+
+class InvalidRefreshToken(ValueError):
+    """The refresh token is unknown, expired, or was already rotated out."""
 
 
 def validate_did(did: object) -> str:
@@ -206,6 +214,62 @@ def verify_signin(
     # Persist refresh token.
     raw_refresh = issue_refresh_token(did, now=checked_at)
 
+    return access_token, raw_refresh
+
+
+def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tuple[str, str]:
+    """Rotate a refresh token and return ``(access_token, refresh_token)``.
+
+    The presented token is looked up by its SHA-256 hash in
+    ``refresh_tokens`` and retired atomically (``rotated`` flag), then a
+    fresh refresh token is persisted the same way ``verify_signin`` does.
+    The new access token carries the account's current tier (0 for a DID
+    with no account row, which cannot happen for an issued token but keeps
+    the lookup total).
+
+    Raises:
+        InvalidRefreshToken: the token is unknown, expired, or was already
+            rotated out -- in particular, presenting it a second time.
+    """
+    if not isinstance(refresh_token, str) or not refresh_token:
+        raise InvalidRefreshToken("refresh token must be a non-empty string")
+
+    checked_at = _utcnow() if now is None else _as_naive_utc(now)
+    token_hash = hashlib.sha256(refresh_token.encode("utf-8")).hexdigest()
+
+    ensure_refresh_tokens_table()
+    ensure_account_table()
+
+    with db.SessionLocal() as session:
+        row = session.get(RefreshToken, token_hash)
+        if row is None:
+            raise InvalidRefreshToken("refresh token is invalid")
+        if row.rotated:
+            raise InvalidRefreshToken("refresh token was already used")
+        if row.expires_at <= checked_at:
+            raise InvalidRefreshToken("refresh token has expired")
+        did = row.did
+
+        # Retire the token atomically: the UPDATE only matches while the row
+        # is still unrotated, so two concurrent presentations cannot both win
+        # -- the loser sees rowcount 0 and is refused.
+        result = session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.token_hash == token_hash,
+                RefreshToken.rotated == False,  # noqa: E712 - SQL boolean
+            )
+            .values(rotated=True)
+        )
+        if result.rowcount != 1:
+            raise InvalidRefreshToken("refresh token was already used")
+
+        account = session.get(Account, did)
+        tier = int(account.tier) if account is not None else 0
+        session.commit()
+
+    access_token = issue_access_token(did, tier, now=checked_at)
+    raw_refresh = issue_refresh_token(did, now=checked_at)
     return access_token, raw_refresh
 
 

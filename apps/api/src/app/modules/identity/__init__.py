@@ -27,13 +27,21 @@ from .models import (
     ensure_refresh_tokens_table,
     ensure_table,
 )
+from .refresh import (
+    INVALID_REFRESH_TOKEN_TYPE,
+    RefreshRequest,
+    RefreshResponse,
+    router as refresh_router,
+)
 from .service import (
     CHALLENGE_TTL,
     InvalidDid,
     InvalidNonce,
+    InvalidRefreshToken,
     InvalidSignature,
     NONCE_BYTES,
     REFRESH_TOKEN_TTL,
+    refresh_access,
     active_key_for,
     active_signing_key,
     add_account_key,
@@ -74,6 +82,7 @@ from .verify import (
 router = APIRouter()
 router.include_router(challenge_router)
 router.include_router(document_router)
+router.include_router(refresh_router)
 router.include_router(verify_router)
 
 __all__ = [
@@ -85,13 +94,17 @@ __all__ = [
     "ChallengeResponse",
     "DidDocument",
     "INVALID_DID_TYPE",
+    "INVALID_REFRESH_TOKEN_TYPE",
     "InvalidDid",
     "InvalidNonce",
+    "InvalidRefreshToken",
     "InvalidSignature",
     "KEY_ROTATION_TYPE",
     "KeyRotationEntry",
     "NONCE_BYTES",
     "REFRESH_TOKEN_TTL",
+    "RefreshRequest",
+    "RefreshResponse",
     "RefreshToken",
     "VERIFY_FAILED_TYPE",
     "VerifyRequest",
@@ -100,6 +113,7 @@ __all__ = [
     "ensure_account_table",
     "ensure_refresh_tokens_table",
     "ensure_table",
+    "refresh_access",
     "active_key_for",
     "active_signing_key",
     "add_account_key",
