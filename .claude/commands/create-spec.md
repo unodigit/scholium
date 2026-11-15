@@ -1,0 +1,1980 @@
+---
+description: Interview and write the project's app_spec.xml (features, not bugs) for claw-forge plan
+argument-hint: [what you want to build, or a path to existing docs]
+model: claude-opus-5-5
+---
+
+# Create Project Spec (XML)
+
+Generate an AutoForge-compatible XML project specification for claw-forge. It turns what the
+app does into granular feature bullets, each of which becomes one agent task.
+
+Supports two modes:
+- **Greenfield**: building a new project from scratch → produces `app_spec.txt`
+- **Brownfield**: adding features to an existing project → produces `additions_spec.xml`
+- **Programme** (either mode): a project that is really several subsystems → `umbrella.yaml`
+  plus one subsystem spec per invocation, at its `spec:` path (Phase 3's Programme check)
+
+---
+
+## Brief-Driven Mode (non-interactive)
+
+**Check this before anything else — before the Auto-Detect check below.**
+
+```bash
+test -f spec_brief.yaml && echo "BRIEF" || echo "NO BRIEF"
+```
+
+### No brief → today's behavior, byte-for-byte
+
+If `spec_brief.yaml` does **not** exist, this section does not apply and
+**everything below it runs exactly as written** — the Auto-Detect check, the
+Brownfield Flow, and every interactive phase of the Greenfield Flow including
+Phase 2.5's stack question, Phase 3's Programme check (a documented step of
+the flow itself, with its `[Enter]/[e]/[s]` choice), Phase 3.25 Step 2's
+"Sound right?", Step 3.5's `[p]/[s]`, Phase 3.5 Step 2's `[s]/[k]/[q]`, and
+Phase 5's "Does this look right?".  Nothing is skipped, reworded, or
+defaulted.
+
+This is the **back-compat floor** and it is non-negotiable.  It mirrors
+`<layout>`: a spec that declares none gets `default_layout()` and
+byte-identical legacy behavior.  A change that makes the no-brief path
+diverge from what is documented below has broken this command regardless of
+what it improved.
+
+### Brief present → resolve, never ask
+
+`spec_brief.yaml` is a decision record that was resolved *before* synthesis
+(see `claw-forge brief init | extract | check`).  Its existence means every
+judgment call this command would otherwise stop and ask about **already has
+an answer**.  So:
+
+> **Ask the user nothing that the brief answers.**  No questions, no
+> confirmations, no "sound right?", no `[s]/[k]/[q]` prompt.  Resolve,
+> record, write the files.
+
+This follows the house rule the rest of the harness enforces without
+exception: *a judgment call must never halt an unattended run — default
+conservatively and record it.*  See the runtime invariant ceiling (`observe`,
+never `raise`), `preflight_warnings` ("advisory only, never a liveness
+gate"), and `handle_uncommitted_at_startup: smart` ("never aborts").
+
+**The one exception is the confirm gate**, below — and it is not an
+exception to the rule so much as an application of it.  The gate never
+halts: with `--yes` it does not run at all, and without `--yes` it runs
+only when the brief contains entries the harness is genuinely not
+confident about.  A fully-resolved brief produces an empty gate, and then
+this mode really does ask nothing.
+
+Read the brief first, and check it:
+
+```bash
+claw-forge brief check spec_brief.yaml
+```
+
+`brief check` is **advisory here, not a gate**.  Report what it says and keep
+going: a field the brief got wrong, left empty, or spelled unrecognizably is
+treated as *absent*, which falls through to the policy default and is
+recorded as a `by: defaulted` decision.  Aborting because the decision record
+had a typo would reintroduce exactly the halt this mode exists to remove.
+
+#### What the brief resolves
+
+Greenfield/Brownfield selection is unchanged — run the Auto-Detect check
+below and enter the flow it picks.  Inside that flow, every interactive
+decision point resolves from the brief instead of from the user:
+
+| Interview point | Today's prompt | Resolved from |
+|---|---|---|
+| Phase 1 — identity | project name, one-liner | `identity.name`, `identity.domain` |
+| Phase 2 — quick vs detailed | asks the user | **Quick**, unless this invocation already supplied technical detail (docs, `$ARGUMENTS`, the conversation) |
+| Phase 2.5 — stack & layout | asks the stack | `stack.layout_profile` → the `<layout>` in the table below.  Empty ⇒ emit no `<layout>` (single-package default) |
+| Phase 3 — core features | conversational elicitation | derived from `competency_questions` + `constraints` + whatever this invocation already supplied |
+| Phase 3.25 Step 2 — shape grouping | "Sound right?" | accept the grouping as classified; a feature the classifier cannot place takes `policies.unclassifiable_shape` |
+| Phase 3.25 Step 3.5 — partition | `[Enter] partition (recommended)` / `[s] keep serialized` | `policies.plugin_partitioning` (`partition` \| `keep-serialized`).  Interactive default is **partition** for 4+ feature plugins; the autonomous policy default stays `keep-serialized` |
+| Phase 3.5 Step 2 — overlap | `[s] serialize` / `[k] keep parallel` / `[q] quit` | `policies.overlap_resolution` (`serialize` \| `keep-parallel`).  **`[q] quit` is not representable** — a policy whose value is "abort the run" is the failure mode this table removes |
+| Phase 4 — technical details | asks | `constraints`, plus this invocation's context |
+| Phase 5 — "Does this look right?" | asks before writing | write the files directly |
+
+**Competency questions are where the features come from.**  The brief holds
+*decisions, never content* — there are no feature bullets in it — but
+`competency_questions` are the user's intent in answerable form ("Can a user
+sign up, create a project, and add a task?").  Expand each one into the
+bullets that make it answerable, and keep the unmet ones for the
+`<category name="End-to-End Verification">` journeys Phase 5 would otherwise
+have to invent.
+
+Run Phase 3's **Programme check** first (the brief exists, so with no `umbrella.yaml` it
+drafts one through case 2, and accepts a PROGRAMME verdict without asking, recorded as
+`by: defaulted`), then the **Size check** on the questions before expanding them. Brief mode
+still asks nothing: if the estimate runs past ~400 after a SINGLE, failed or skipped draft,
+write the spec, and put the subsystem-split recommendation first in the end-of-run report.
+
+**A field the brief has no answer for still does not become a question.**
+Take the conservative option, and record it as a decision with
+`by: defaulted`.  That record is the whole point: a run that guessed at
+everything is distinguishable from one that resolved everything only if the
+guesses are written down.
+
+#### A rebuild contract, when one exists
+
+When `docs/rebuild/` and `<state dir>/rebuild/contract.json` both exist (the
+output of `claw-forge rebuild start`, see `/rebuild-extract`), this is a
+rebuild project: pass the `docs/rebuild/` documents (`PRD.md`,
+`ARCHITECTURE.md`, `design/*.md`) to `brief extract` the same way any other
+supplied document is read, through the `--emit-prompts`/`--responses` seam.
+
+Then map the journey contract onto the spec: every journey id in
+`contract.json["journeys"]` becomes `<acceptance>` bullets on the feature(s)
+it exercises, plus one step list in the `End-to-End Verification` category.
+**Every contract journey must appear somewhere in the spec** — a contract
+journey with no feature to attach to still gets its own End-to-End
+Verification entry, never dropped silently. **Never add a journey that is
+not in `contract.json`** — the contract is the one source of truth for what
+counts as the rebuild's acceptance criteria; a journey discovered some other
+way (the running app, a hunch) is not part of it until a human adds it there.
+
+#### The confirm gate — review only what is uncertain
+
+A brief usually resolves everything, and then this mode genuinely asks
+nothing.  But a brief assembled from documents can carry entries the
+harness is *not* confident about — a constraint paraphrased rather than
+quoted, a competency question inferred from the domain template, a layout
+detected somewhere other than the repo root.  The confirm gate shows those
+and **only** those.
+
+```bash
+claw-forge brief gate            # human render
+claw-forge brief gate --json     # the same selection, machine-readable
+```
+
+The selector is `claw_forge.spec.brief.gate_items(brief)` — pure, and the
+single place `policies.confidence_floor` is applied.  An entry is shown
+when it is flagged `needs_review`, or when it carries evidence whose
+confidence is **below** the floor (exactly at the floor passes).  An
+unflagged `defaulted` entry is never shown: its 0.0 is a constant the
+writer stamped, not a measurement, so comparing it to a threshold would
+put all seven policy keys in every gate.  Items sort by priority ascending,
+then confidence ascending — most urgent and least certain first.
+
+**Render the gate items and nothing else.**  Not the confident entries, not
+the policy table, not a summary of the brief.  The whole value of this step
+is that it is four rows instead of fifty questions; a gate that grows to the
+length of the interview it replaces has failed.
+
+Show the header the command prints — `N of M entries need your attention
+(X extracted · Y inferred · Z needs-your-call)` — then the rows, then offer
+exactly three options:
+
+```
+[Enter]  accept the shown defaults — you have read them and they are fine
+[e]      open spec_brief.yaml in $EDITOR, then re-run `claw-forge brief gate`
+[y]      accept everything without reading it, recorded as deferrals
+```
+
+`[Enter]` and `[y]` write the *same values*; what differs is the audit.
+`[Enter]` means a human looked, so each entry is recorded with
+`needs_review: false` and a rationale naming the gate.  `[y]` means nobody
+looked, so each is recorded as a **deferral** — provenance carried through
+unchanged, `needs_review` forced on.  Overwriting `by` with `defaulted`
+would erase how the value actually arrived; what `[y]` adds is only that no
+human read it, which is exactly what the flag already means.
+
+The gate does not write `spec_brief.yaml`.  A confirmed entry keeps its
+`needs_review` flag on disk, so a later run re-gates it — deliberate for
+now: the decision record is the audit, and silently editing the artifact
+the user is reviewing is a bigger change than this step should make.
+
+#### `--yes` — the fully autonomous path
+
+```
+/create-spec --yes
+```
+
+Skip the gate entirely.  Do not render it, do not prompt, accept every
+default, and record **every** gate item as a deferral.  The records come
+from the canonical writer, so they cannot drift from the format below:
+
+```bash
+claw-forge brief gate --deferrals >> spec_decisions.jsonl
+```
+
+That command *prints*; it writes no file.  `spec_decisions.jsonl` keeps
+exactly one writer — this command's synthesis step — and the deferral lines
+are appended alongside the decisions it emits for the table above.
+
+`grep 'deferred by --yes' spec_decisions.jsonl` then answers "what did this
+run skip past?", and it answers it whether the run skipped one entry or
+forty.  That is the point: `--yes` is allowed to be silent, but it is not
+allowed to be *unaccountable*.
+
+#### Emit `spec_decisions.jsonl`
+
+Write it **beside `app_spec.txt`**, at the project root, in the same step
+that writes the spec — appending, so an earlier line (such as the Programme
+check's decision) is kept.  One JSON object per line, no wrapping array:
+
+```json
+{"field": "policies.overlap_resolution", "chosen_value": "serialize", "by": "defaulted", "source": "tier:standard", "confidence": 0.0, "needs_review": false, "rationale": "features 14 and 18 both touch the auth router"}
+{"field": "stack.layout_profile", "chosen_value": "pnpm-monorepo", "by": "detected", "source": "pnpm-workspace.yaml, apps/web, apps/api", "confidence": 1.0, "needs_review": false, "rationale": "markers matched at the repo root"}
+```
+
+Keys, in order: `field`, `chosen_value`, `by`, `source`, `confidence`,
+`span` (omit when there is none), `needs_review`, `rationale`.  `by` is one
+of the five provenance classes — `elicited`, `detected`, `extracted`,
+`inferred`, `defaulted` — and it is **derived from how the value arrived,
+never self-reported**.  The canonical writer and reader for this format are
+`claw_forge.spec.brief.write_decisions` / `read_decisions`; the format is
+defined as whatever `write_decisions` emits.
+
+Record one line per decision point in the table above that you actually
+resolved — including the ones that came out as today's default.  A decision
+record that only lists the surprising choices cannot answer "did anything
+ask a human?", which is the question it exists to answer.
+
+#### Report at the end
+
+Phase 6's next-steps block still applies.  Add one line before it:
+
+```
+📝 Resolved <N> decisions from spec_brief.yaml without asking
+   (<D> defaulted, <R> flagged needs_review) → spec_decisions.jsonl
+```
+
+When the gate ran, or `--yes` skipped it, add its outcome too — a run that
+deferred is not the same as a run that resolved, and the report is where
+that difference is cheapest to notice:
+
+```
+🚦 Confirm gate: <G> of <M> entries shown · <A> confirmed, <F> deferred
+```
+
+Phase 5.5's fresh-reader check (Step 3 skipped in this mode) reports here
+too. Unread findings are deferred, not resolved, so say so:
+
+```
+👀 Fresh-reader check: <X> mismatches, <D> cross-cutting decisions,
+   <K> bullets to fix — unreviewed
+   → .claw-forge/spec-review/paraphrase.md
+   (or: not run (no subagent tool) · <C> categories not checked)
+```
+
+---
+
+## Auto-Detect Mode
+
+**First**: decide whether this directory already contains source code.
+
+```bash
+# Brownfield if a manifest exists (root, or `claw-forge analyze`'s copy), OR the
+# directory already carries a language manifest / the legacy plugin root.
+ls brownfield_manifest.json .claw-forge/analyze/brownfield_manifest.json \
+   pyproject.toml package.json go.mod Cargo.toml \
+   Gemfile build.gradle pom.xml composer.json 2>/dev/null | head -1
+test -d src/plugins && echo src/plugins
+```
+
+- Any output → run the **Brownfield Flow** below
+- No output → run the **Greenfield Flow** below
+
+**Why not just `test -f brownfield_manifest.json`?** That was the old gate, and
+it was wrong in the one case that matters most: a **root**
+`brownfield_manifest.json` is written only by hand or by the post-run hook of a
+completed *greenfield* build (`orchestrator/run_cli.py`); `claw-forge analyze`
+writes its copy under `.claw-forge/analyze/`, never at the root. A project
+claw-forge did not build usually has neither, so every genuinely brownfield
+repo silently took the greenfield flow — the flow that assumes nothing exists
+yet.
+
+**Why not `.git`?** `.git` is in the harness's own `_BROWNFIELD_MARKERS`
+(`spec/validator.py`), but that list is only ever consulted *after* the spec
+has already declared `mode="brownfield"`, so a bare repo costs nothing there.
+Here the detection stands alone, and a greenfield project that ran `git init`
+first — which `claw-forge run` does automatically — would be misrouted into
+the brownfield flow. A repo with no code is greenfield.
+
+---
+
+## Brownfield Flow
+
+> Use when adding features to an existing codebase.
+
+### Step 1: Load the analysis and manifest (if any) + check for hotspot report
+
+**Read `claw-forge analyze`'s output first, when it exists.** Find the manifest
+the way every claw-forge reader does — the root file wins, else the analyze
+copy:
+
+```bash
+ls brownfield_manifest.json .claw-forge/analyze/brownfield_manifest.json 2>/dev/null | head -1
+ls .claw-forge/analyze/analysis.md 2>/dev/null
+```
+
+- If `.claw-forge/analyze/analysis.md` exists, read it. Its verdict decides the
+  path: `compatible` → continue here, and use its suggested `<layout>` block and
+  seam tiers as the starting point for Step 1.5. `fixable` → tell the user the
+  printed `boundaries apply` commands come first. `rebuild` → recommend
+  `/rebuild-extract` (an additions spec on this structure will serialise) and
+  continue only if the user chooses to.
+  `inconclusive` → say what it could not read, then continue.
+- If neither the analysis nor any manifest exists, suggest running
+  `claw-forge analyze` first (offline, read-only, seconds) — then continue
+  either way; it is advice, not a requirement.
+
+If a manifest was found, read it and extract:
+- `stack` (language, framework, database)
+- `test_baseline` (N tests, X% coverage)
+- `conventions` (naming style, patterns, etc.)
+
+**If it does not exist — the normal case for a repo claw-forge did not
+build — derive the same three values instead of stopping.** Never invent a
+`test_baseline`; either measure it or say it is unmeasured.
+
+```bash
+# stack + conventions: read whatever manifests are present
+ls pyproject.toml package.json go.mod Cargo.toml pom.xml build.gradle 2>/dev/null
+# conventions: linters/formatters/type-checkers actually configured
+grep -lE 'ruff|mypy|pytest' pyproject.toml 2>/dev/null
+ls .eslintrc* eslint.config.js biome.json tsconfig.json 2>/dev/null
+```
+
+For `test_baseline`, **run the suite** and record the real numbers — this is
+the value the acceptance gate's own startup probe will independently
+re-measure (`probe_baseline_suite`), so a guess here will be contradicted at
+run time. If you cannot run it, write
+`unmeasured — run the suite before relying on this` rather than a number.
+
+Confirm the derived values with the user before continuing; they are the
+project's owner and will spot a wrong framework guess immediately.
+
+Optionally write the result to `brownfield_manifest.json` so later
+invocations skip this step:
+
+```json
+{
+  "stack": "FastAPI / React / Postgres",
+  "test_baseline": "measured 2026-09-09: 312 passed, 0 failed, 87% coverage",
+  "conventions": "ruff, mypy strict, pytest"
+}
+```
+
+Then check whether `boundaries_report.md` is present in the project root
+(emitted by a prior `claw-forge boundaries audit`).  If it exists and
+contains entries with score >= 5.0, surface them to the user before
+proceeding:
+
+```
+Found a boundaries audit at boundaries_report.md.  These files are
+extension hotspots — adding new features as <feature shape="plugin">
+will collide with them unless they're refactored first:
+
+  cli/main.py        score=8.4  pattern=registry
+  core/router.py     score=6.7  pattern=route_table
+
+Recommended:
+  claw-forge boundaries apply --auto
+
+Refactoring these into plugin-extensible patterns first will let your
+new features land cleanly as plugins.
+
+Proceed anyway?  [y / yes]   Refactor first?  [b / boundaries]
+```
+
+If the user picks `b`, stop the slash command — they'll come back
+after the refactor.  If they pick `y`, record the hotspot list as a
+warning in `<existing_context>` and continue to Step 1.5.
+
+If `boundaries_report.md` doesn't exist, continue to Step 1.5 silently.
+
+### Step 1.5: Determine the layout
+
+**Do this before Step 2**, because the `plugin=` vs `touches_files=`
+answers you collect there only mean something once you know where this
+repo actually keeps its code.
+
+This is the brownfield counterpart of the greenfield flow's Phase 2.5.
+Without it a brownfield spec declares no `<layout>`, every
+`shape="plugin"` feature derives its footprint from the implicit
+`single-package` default — `src/plugins/{plugin}/**` — and on a repo
+claw-forge did not build, that matches **zero files**.  A footprint that
+matches nothing does not merely fail validation: file-claim locking never
+collides, `select_disjoint_footprint_batch` believes every task is
+disjoint, and parallel agents edit the same files.
+
+Detect it with the brief, which already runs the harness's own
+`detect_layout()` — deterministic, offline, no API key, no model call:
+
+```bash
+# Reads spec_brief.yaml if it exists; brief init refuses to overwrite one.
+test -f spec_brief.yaml || claw-forge brief init
+sed -n '/^stack:/,/^competency/p' spec_brief.yaml
+```
+
+### Raising the brief from documents — you answer the prompts
+
+> **You are usually the model — probe before assuming a credential.**
+> Claude Code holds its *own* credential in the session process and does not
+> pass it to tool subprocesses. Unless this machine's shell exports its own
+> `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` (some do — check with
+> `echo ${ANTHROPIC_API_KEY:+SET}${ANTHROPIC_AUTH_TOKEN:+SET}`), a
+> `claw-forge` command you run from here has no credential, and a layer that
+> needs a model will report that it was skipped. That is not a spec defect
+> and not something to work around by hunting for a key — answer the prompt
+> yourself, using the `--emit-prompts` / `--responses` seam below.
+> claw-forge keeps the deterministic half: prompt rendering, span
+> verification, provenance, merging. You supply only the reply. If the
+> probe printed `SET`, the credentialed path just works and the seam is
+> unnecessary.
+
+When the user has PRDs, architecture notes or transcripts, extraction can
+raise the brief's confidence before you ask anything. Emit the prompts,
+answer them, feed them back:
+
+```bash
+mkdir -p .claw-forge
+claw-forge brief extract <docs...> --emit-prompts > .claw-forge/bx-prompts.json
+```
+
+That file holds a `system` string and four passes, each with a `name` and a
+rendered `prompt`. Answer each one using `system` as your instructions, add
+your reply as a `"response"` field on that pass, save the whole object, and:
+
+```bash
+claw-forge brief extract <docs...> --responses .claw-forge/bx-answers.json
+```
+
+Pass the **same documents** both times — span verification re-reads them to
+check every extracted value against a verbatim quote, and that is what
+separates a 0.9-confidence fact from a 0.3 `needs_review` guess. A pass you
+leave unanswered costs only its own fields. `.claw-forge/` is gitignored;
+delete both files when you are done.
+
+Read `stack.layout_profile` and its `_provenance`, then take **one** of
+three branches:
+
+| What the brief says | What it means | Do this |
+|---|---|---|
+| `layout_profile: <name>`, `needs_review: false` | Markers matched at the repo root | Emit `<layout profile="<name>"/>`.  Confirm the profile name with the user in one line. |
+| `layout_profile: <name>`, `needs_review: true` | Markers matched, but **not at the root** — a zoned or polyglot tree | Read the bindings from `_provenance.source` (e.g. `apps/api=uv-workspace, apps/web=pnpm-single-app`) and propose a zoned `<layout>`.  Confirm before writing — a flat profile would be wrong here. |
+| `layout_profile: ''`, `source: no layout marker matched` | No known profile fits this repo | Emit **no** `<layout>`, and require an explicit `touches_files=` on **every** feature in Step 2.  Do not fall back to `plugin=` alone — that is the zero-match case above. |
+
+Profile names map exactly as in the greenfield table further down
+(`pnpm-monorepo`, `pnpm-single-app`, `uv-workspace`, `go-service`,
+`maven-single-module`).  A zoned layout looks like:
+
+```xml
+<layout>
+  <zone root="apps/api" profile="uv-workspace"/>
+  <zone root="apps/web" profile="pnpm-single-app"/>
+</layout>
+```
+
+**Never invent a profile that the brief did not report.** Declaring
+`pnpm-monorepo` on a repo without `pnpm-workspace.yaml` produces
+footprints that are wrong in a *new* way rather than empty, and Gap 15
+will contradict you at validation time.  When nothing matched, explicit
+`touches_files` is the correct answer, not a guess.
+
+### Step 2: Gather addition details
+
+> **Run Phase 3's Programme check first** (Greenfield Flow, before the Size check). When it
+> ends in programme mode, write each subsystem's spec at its `spec:` path in the brownfield
+> dialect (`mode="brownfield"`, Step 3's template) instead of `additions_spec.xml`, one
+> subsystem per invocation, and gather the details below for that subsystem only.
+
+Ask the user (one at a time):
+
+1. **What are you adding?** Give it a name and one-sentence summary.
+   - Example: "Stripe payments — let users subscribe to Pro plan via Stripe Checkout"
+
+2. **Where does it live in the codebase?**
+   - **Plugin** (lives in its own directory): "I'll add `plugins/payments/`
+     for the Stripe code."  Used when the addition is vertical and isolated.
+   - **Core** (cross-cutting): "I'll edit `core/middleware/auth.py` and
+     `core/db/models/user.py`."  Used when the addition modifies shared
+     infrastructure.
+
+   For each feature, record either `plugin="<name>"` (plugin shape) or
+   `touches_files="..."` (core shape).  This populates the new
+   `<feature shape>` attributes in Phase 3 of the parser, which lets
+   the dispatcher schedule for parallel safety.
+
+   **What `plugin="<name>"` alone is worth depends on Step 1.5:**
+
+   - **A layout was detected** — `plugin="payments"` is enough.  The
+     profile's `plugin_roots` expand it into real directories
+     (`apps/api/src/modules/payments/**`, …), so ask only for the plugin
+     slug and let derivation do the rest.
+   - **No layout matched** — `plugin="payments"` derives
+     `src/plugins/payments/**`, which does not exist in this repo.  Ask
+     for the actual directories instead and write them as
+     `touches_files="app/billing/**,app/api/routes/billing.py"`.  Keep
+     `plugin=` too if it names something real; it is the `touches_files`
+     that has to be true.
+
+   Ask for paths **relative to the repo root**, and prefer a directory
+   glob (`app/billing/**`) over a file list — a feature that names five
+   exact files usually turns out to touch a sixth.
+
+3. **What must NOT change?** List any constraints.
+   - Example: "Must not modify auth flow. All 47 existing tests must stay green."
+
+4. **List the features to add in plain English** (one per line, action-verb format):
+   - Example: "User can add a payment method via Stripe Elements"
+   - List every capability the addition needs; there is no target count. If the list runs
+     well past ~400, use the Size check in Phase 3 of the Greenfield Flow before writing.
+
+5. **Break them into implementation phases** (optional — but phases are a
+   dependency barrier, not a cosmetic grouping, so propose them as an ordering
+   and let the user confirm it):
+   - Example: Phase 1: Stripe integration / Phase 2: Subscription UI / Phase 3: Webhooks
+   - Each feature joins the phase whose name shares the most words with its
+     category name.  **Every feature in phase N that omits `depends_on` then
+     waits for every feature of the nearest earlier non-empty phase**, whatever
+     files they touch — disjoint `touches_files` do not lift the barrier
+     (field report 15: nine colour-token features waited ~45 minutes behind
+     static-route features that shared no file with them).
+   - So for each later-phase feature ask: does it really need the whole
+     previous phase?  If it needs nothing, emit `depends_on=""` (a root, never
+     overwritten by inference); if it needs specific features, emit
+     `depends_on="<indices>"` (exactly those, nothing inferred).  Leave the
+     attribute off only where waiting for the whole previous phase is what the
+     user wants.  If the user has no ordering in mind, prefer no
+     `<implementation_steps>` plus explicit `depends_on` over invented phases.
+
+### Step 3: Generate `additions_spec.xml`
+
+Use the brownfield template (`templates/app_spec.brownfield.template.xml`, or the copies the invocation names, when given) and fill in:
+- `<project_name>` from the addition name
+- `<addition_summary>` from the summary
+- `<existing_context>` from `brownfield_manifest.json` (manifest values win)
+- `<layout>` from Step 1.5 — **omit the element entirely** when no profile
+  matched; an omitted `<layout>` is the legitimate single-package default,
+  whereas a guessed one is a wrong answer the validator will contradict
+- `<features_to_add>` from the feature list
+- `<integration_points>` from the code-touch areas
+- `<constraints>` from the "must not change" list
+- `<implementation_steps>` from the phases
+
+`<layout>` is parsed **before** features, so put it above `<features_to_add>`.
+
+Write the file as `additions_spec.xml` in the project root.
+
+Then verify the footprints resolve, before handing the user a spec that
+looks finished:
+
+```bash
+claw-forge validate-spec additions_spec.xml --project-root .
+```
+
+Gap 10 (*footprint matches zero real files*) is an always-ERROR and is the
+check that catches a layout guessed wrong or a `plugin=` that needed
+explicit `touches_files`. A path the feature will **create** belongs in
+`creates="..."` on the `<feature>`, not in `touches_files=` — Gap 10 skips
+declared-new paths while file claims still lock them, so never clear the
+error by dropping a new file's entry. Fix and re-run until it is clean — do
+not present the spec as done while it is red.
+
+Then run **Phase 5.5: Fresh-Reader Check** (in the Greenfield Flow below) on
+`additions_spec.xml`. Reader B's input includes `<existing_context>` and
+`<constraints>` in this mode. If `[f]` changes any bullet, re-run
+`validate-spec` before Step 4.
+
+### Step 4: Show next steps
+
+```
+✅ Brownfield spec created: additions_spec.xml
+
+📊 Summary:
+  Features to add: <N>
+  Phases: <K>
+  Integration points: <M>
+  Constraints: <C>
+  Fresh-reader check: <X> mismatches, <D> cross-cutting decisions, <K> bullets to fix
+    → .claw-forge/spec-review/paraphrase.md   (or: not run)
+
+Next steps:
+  1. Review additions_spec.xml — add/remove features as needed
+  2. Run: claw-forge validate-spec additions_spec.xml --project-root .
+  3. Run: claw-forge plan additions_spec.xml
+  4. Run: claw-forge run --concurrency 3
+
+💡 Tip: Be specific about constraints — agents will treat them as hard rules.
+   "All existing tests must stay green" = agents run tests before committing.
+```
+
+> **Why `plan` and not `add --spec`:** `plan` is what writes tasks into the
+> state DB, and it is also what persists the spec's `<existing_context>`,
+> `<integration_points>` and `<constraints>` into the session manifest so
+> every dispatched agent receives them. `add --spec` parses and reports on a
+> spec but does not create tasks. The tip above about constraints being hard
+> rules is true **on the `plan` → `run` path**.
+>
+> Step 2 is worth running with `--project-root`: with `mode="brownfield"` and
+> real files on disk, validate-spec's filesystem checks (Gaps 5, 10, 15, 16)
+> become active and will catch `touches_files` that match nothing — the most
+> common brownfield spec defect, because plugin footprints otherwise default
+> to `src/plugins/{plugin}/**`.
+
+### Example: Brownfield spec for Stripe payments
+
+```xml
+<project_specification mode="brownfield">
+  <project_name>MyApp — Stripe Payments</project_name>
+  <addition_summary>
+    Add Stripe Checkout integration so users can subscribe to the Pro plan.
+    Handles subscription lifecycle, webhooks, and billing portal access.
+  </addition_summary>
+  <existing_context>
+    <stack>Python / FastAPI / PostgreSQL</stack>
+    <test_baseline>47 tests passing, 87% coverage</test_baseline>
+    <conventions>snake_case, async handlers, pydantic v2 models</conventions>
+  </existing_context>
+  <features_to_add>
+    <category name="Payments">
+      <feature index="1" shape="plugin" plugin="payments">
+        <description>User can add a payment method via Stripe Elements</description>
+      </feature>
+      <feature index="2" shape="plugin" plugin="payments" depends_on="1">
+        <description>User can subscribe to Pro plan via Stripe Checkout</description>
+      </feature>
+      <feature index="3" shape="core"
+               touches_files="src/core/db/models/user.py">
+        <description>Extends User model with stripe_customer_id field</description>
+      </feature>
+    </category>
+  </features_to_add>
+  <integration_points>
+    Extends User model with stripe_customer_id field
+    Adds /payments router alongside existing /auth and /projects routers
+    New StripeService class in services/stripe_service.py
+  </integration_points>
+  <constraints>
+    Must not modify existing auth flow
+    All 47 existing tests must stay green
+    Follow existing async handler pattern in routers/
+  </constraints>
+  <implementation_steps>
+    <phase name="Stripe Integration">
+      User can add a payment method via Stripe Elements
+      System creates Stripe customer on first payment attempt
+    </phase>
+    <phase name="Subscription Flow">
+      User can subscribe to Pro plan via Stripe Checkout
+      Webhook handler processes subscription.created events
+      User can access billing portal to manage subscription
+    </phase>
+  </implementation_steps>
+  <success_criteria>
+    All new features implemented and tested
+    Existing test suite still 100% green
+    Coverage maintained above 87%
+  </success_criteria>
+</project_specification>
+```
+
+---
+
+## Greenfield Flow
+
+> Use when building a new project from scratch.
+
+### Phase 1: Project Identity
+
+Ask the user (one at a time, conversationally):
+
+1. **What are you building?** Get the project name and a 2-3 sentence description.
+2. **Who is it for?** Target audience / users.
+3. **What problem does it solve?** The core value proposition.
+
+Summarize back: "So we're building **X** — a tool that helps **Y** by **Z**. Sound right?"
+
+---
+
+### Phase 2: Quick vs Detailed
+
+Ask the user:
+
+> **How detailed do you want to go?**
+>
+> - **Quick** (5 min): I'll derive the tech stack, database schema, and API from your features.
+>   Good for MVPs.
+> - **Detailed** (15 min): We'll go through tech stack, database design, API structure, and UI
+>   layout together. Better for production apps.
+
+Wait for their choice.
+
+---
+
+### Phase 2.5: Stack & Layout
+
+Once the stack is known (asked here in Quick mode; refined in Phase 4 in
+Detailed mode), pick the **layout profile** — it decides which directories
+`shape="plugin"` footprints expand into and which shared seams the
+harness will guard:
+
+| Stack answer | `<layout>` to emit |
+|---|---|
+| Python/FastAPI/Django single service | *(none — single-package default)* |
+| TS full-stack (decoupled UI + API, pnpm/turbo) | `<layout profile="pnpm-monorepo"/>` |
+| Single TS/React/Next app | `<layout profile="pnpm-single-app"/>` |
+| Python with uv workspace packages | `<layout profile="uv-workspace"/>` |
+| Go service | `<layout profile="go-service"/>` |
+| Java/Kotlin service (Maven) | `<layout profile="maven-single-module"/>` |
+| **Python API + TS web (the AI-app default)** | zones — see below |
+
+Hybrid (polyglot) example — one zone per subtree plus the generated
+API-client contract:
+
+```xml
+<layout>
+  <zone root="apps/api" profile="uv-workspace"/>
+  <zone root="apps/web" profile="pnpm-single-app"/>
+  <contract path="packages/api-client/**"
+            regen="pnpm --filter api-client generate"/>
+</layout>
+```
+
+**Foundation feature (MANDATORY for any declared layout — validator
+Gap 14 ERRORs without it).** Author it as the FIRST feature, depended on
+by every other feature, `shape="core"`, description containing
+"Scaffold the workspace skeleton", `touches_files` covering the
+workspace-root configs. It must scaffold the profile's discovery
+machinery so feature agents never edit shell files:
+
+- `pnpm-monorepo`: `pnpm-workspace.yaml` (apps/* + packages/* globs),
+  `turbo.json`, `tsconfig.base.json`, both app shells, the API
+  module-loader (glob-mounts `modules/*/index.ts`), file-based routing
+  for web, shared test config.
+- `uv-workspace`: `pyproject.toml` `[tool.uv.workspace]`, app factory
+  with a module loader scanning `src/app/modules/*`.
+- `go-service`: `cmd/server/main.go` + the append-only
+  `cmd/server/modules.go` blank-import block + module registry.
+- `maven-single-module`: `pom.xml` (framework BOM/parent + surefire),
+  application entrypoint with component scan over `app.modules`, shared
+  test config.
+- Hybrid: both zones' scaffolds + the contract codegen pipeline.
+
+**The scaffolded test config MUST bound workers and heap.** Write this into
+the foundation feature's description so the config lands before any other
+feature can run a suite.
+
+Every modern test runner sizes itself to the *machine*, which is correct
+alone and wrong under `claw-forge run`. Measured on an 11-CPU / 18 GB box:
+one `vitest run` spawns 10 concurrent forks (`availableParallelism() - 1`)
+and each fork inherits V8's default heap limit of **4288 MB** — because V8
+derives that from total system RAM, with no knowledge that siblings exist.
+That is 42.9 GB of heap entitlement from a *single* suite, a 2.4x
+over-subscription before `--concurrency` (default 5) or the acceptance gate
+running the same suite a second time multiply it.
+
+```ts
+// vitest.config.ts — the foundation task must emit these two lines.
+export default defineConfig({
+  test: {
+    maxWorkers: 2,      // NOT availableParallelism() - 1
+    fileParallelism: true,
+  },
+})
+```
+
+Equivalents: jest `maxWorkers` in `jest.config`, pytest `-n 2` (never
+`-n auto`) in `addopts`, `cargo test -- --test-threads=2`.
+
+This is **not** redundant with the harness's own guard
+(`agent/toolchain.py:apply_node_memory_env`, which caps heap and workers by
+environment on every dispatch path). The two cover different populations:
+the harness guard binds only harness-launched runs, while the committed
+config is what protects CI and a developer's own `npm test` — neither of
+which the harness ever touches. Declare both.
+
+
+Ordered seams (middleware chains, migrations, bundler configs) are
+core-task territory — never put them in a plugin feature's
+`touches_files` (Gap 11 warns and names the seam tier).
+
+Note for Phase 3.25 Step 3.5 (partitioning): in a multi-root layout,
+partition **per root template** — e.g. an 8-feature `tasks` plugin in a
+pnpm-monorepo partitions `apps/api/src/modules/tasks/routes/**` etc.,
+same all-or-nothing granularity rule applied within each root.
+
+---
+
+### Phase 3: Core Features (Conversational)
+
+**Run the Programme check below before asking anything in this phase.** It may put this
+invocation in programme mode (case 1), and then the opening question is about that
+subsystem's `scope:`, not the whole app. Only case 3 needs the interview first: ask the
+opening question, and run case 3 from the Size check once the outline exists.
+
+This is the most important phase. Ask the user to describe their app's main functionality in
+natural language. Guide them through categories:
+
+> **Let's map out what your app does.** Describe the main things a user can do — I'll turn each
+> one into specific, testable feature bullets.
+>
+> Let's start with: **What happens when a user first opens your app?**
+> (Registration, onboarding, landing page?)
+
+#### Programme check — before sizing
+
+Decide **single spec or programme** before you write any bullet. A programme is a project
+that is really several subsystems, each with its own users, features and scope. It runs as
+one spec per subsystem, in sequence against one repository, declared in `umbrella.yaml` at
+the repo root. Either signal is enough: two or more independently scoped subsystems, or an
+estimate past ~400 features (a feature is one bullet, one edit-verify cycle, one agent task).
+
+The decision belongs to `claw-forge umbrella draft`, not to you. It reads the documents and
+the brief, proposes the split, and computes the verdict deterministically from the reply. It
+prints a `Verdict:` line — `Verdict: PROGRAMME`, `Verdict: SINGLE`, `Verdict: DRAFT FAILED`
+or `Verdict: SKIPPED` — followed, on PROGRAMME, by the subsystems table, a `Wrote …` line and
+`Next:` steps. This check is the one producer of a **new** manifest's first draft, whatever
+the input: never write a new `umbrella.yaml` from scratch unless a draft has already run
+and returned SINGLE, DRAFT FAILED or SKIPPED (the Layer 6 scoping manifest in Phase 3.25
+Step 4). Editing an existing `umbrella.yaml` is allowed (adding or adjusting a subsystem entry, or the `[e]` path below),
+and every edit is followed by `claw-forge umbrella check`.
+
+Take the **first** case that applies.
+
+**Case 0 — brief first (only when a draft is about to run).** Before case 2 or case 3 runs
+`umbrella draft`, make sure competency questions exist, because ownership (`owns:`) and each
+subsystem spec's Layer 6 scoping depend on them:
+
+```bash
+test -f spec_brief.yaml || claw-forge brief init
+```
+
+If you just created the brief, raise it from the same documents (in case 3, the outline
+file) through the `brief extract` seam described in "Raising the brief from documents" in
+the Brownfield Flow (`--emit-prompts`, answer, `--responses`). Creating the brief here does
+not switch this invocation into Brief-Driven Mode; that check ran at the start. Skip case 0
+when neither case 2 nor case 3 runs, so a plain single-spec interview creates no brief.
+
+**Case 1 — `umbrella.yaml` exists: programme mode.** Write **one** subsystem's spec, never
+all of them:
+
+1. Read `umbrella.yaml`. Walk the subsystems in `after:` order: a subsystem comes after
+   every subsystem its `after:` names; between subsystems with no order, keep file order.
+2. Skip any subsystem with `authored: manual` (a human writes that spec). Pick the first
+   remaining subsystem whose `spec:` file does not exist yet. If every `spec:` file exists,
+   the manifest has nothing left to write: say so in one line and fall through to the
+   normal flow (one spec, for example a brownfield additions spec). Tell the user that the
+   new spec must be added to `umbrella.yaml` as a subsystem entry (`spec:`, `root:`,
+   `owns:`, `after:`), followed by `claw-forge umbrella check`; until it is, Layer 6 holds
+   the new spec to every question in the brief. Skip steps 3 and 4.
+3. Write only that spec, at exactly its `spec:` path, in place of `app_spec.txt` (create
+   the parent directory if needed). Everything else in this flow applies to it unchanged.
+   - Its `scope:` is the spec's purpose: use it as the `<overview>` and as the boundary of
+     what you enumerate. A capability outside the scope belongs to another subsystem;
+     leave it out.
+   - Expand only the competency questions in its `owns:` list, and tag each feature
+     derived from one with `covers=` those ids (comma-separated, for example
+     `covers="cq-3,cq-9"`). Layer 6 holds this spec to exactly its `owns:` ids.
+   - Keep every footprint (`plugin=` roots, `touches_files=`, `creates=`) inside its
+     `root:` glob. An empty `root:` means the subsystem lives across shared directories:
+     then every feature declares an explicit `touches_files=`.
+   - A foundation subsystem (id `F0`, `F1`, ...) owns the shared contracts: write it with
+     `shape="contracts"` and **a few large features, not many atomic ones** (see Phase
+     3.25 Step 4).
+   - The integration subsystem (`X1`, `terminal: true`) is the end-to-end run, written
+     after every domain spec exists: its features are journeys across the subsystems
+     already built, and a feature that must edit files another subsystem owns is
+     `shape="integration"` (Phase 3.25).
+   - Its `estimate:` is the drafted size. Past ~400, the draft already warned that it
+     needs splitting again: `claw-forge umbrella run` splits it into a nested programme
+     before authoring it, or `claw-forge umbrella draft --subsystem <id>` drafts the split.
+4. In Phase 6, name the spec path and these next steps instead of the generic ones:
+
+   ```
+   claw-forge umbrella check
+   claw-forge validate-spec <spec path> --project-root .
+   claw-forge plan <spec path>
+   claw-forge run
+   ```
+
+   Then say that the next `/create-spec` writes the next subsystem's spec.
+
+**`--subsystem <id>` (unattended authoring).** When this invocation is run as `/create-spec
+--yes --subsystem <id>`, case 1 writes exactly that subsystem's spec — not "the first missing
+one" — and skips the selection in step 2. Everything else in case 1 applies unchanged: skip
+it if `authored: manual`, write only its `spec:` path, tag features with `covers=` from its
+`owns:` list, and keep every footprint inside its `root:`.
+
+An entry may declare `programme: <child manifest>` instead of `spec:`: it is a parent, and
+its subsystems are the entries of that child manifest. `--subsystem` may then name a
+flattened id such as `D1.A` — its entry is `A` inside the child manifest of parent `D1`, not
+the top-level `D1` entry (whose `owns:` is the whole parent's). When the invocation carries a
+programme-context block giving the subsystem's `spec:`, `root:`, `owns:` and `scope:`, those
+values are authoritative.
+
+The dialect is chosen from **the subsystem's own `root:`**, never the repository as a whole:
+code built by an earlier wave of the same programme is not "an existing codebase" for a
+subsystem that has not been written yet.
+
+- If `root:` holds no tracked files, write the greenfield dialect (no `mode="brownfield"`),
+  whatever the rest of the repo contains.
+- If `root:` already holds tracked code (an existing module being extended), run the
+  Brownfield Flow instead, with its Step 2 resolved the same way the Brief-Driven path
+  resolves everything else: from the brief and the documents, defaulting anything unanswered
+  and recording it with `by: defaulted`.
+
+Never write `claw-forge.yaml` under `--subsystem` — append decisions to `spec_decisions.jsonl`
+as usual, but leave the project config alone.
+
+**Case 2 — no manifest, and documents or a brief are available.** Run case 0, then draft
+through the same `--emit-prompts` / `--responses` seam as `brief extract` (you are usually
+the model; probe for a credential as that section says). Draft to
+`.claw-forge/umbrella.draft.yaml`, never to `umbrella.yaml`: nothing may land there before
+the split is accepted, or a rejected split takes over the next run.
+
+```bash
+mkdir -p .claw-forge
+claw-forge umbrella draft <docs...> --emit-prompts > .claw-forge/ud-prompts.json
+```
+
+The payload holds a `system` string and one pass named `decompose` with a rendered
+`prompt`. Answer the prompt using `system` as your instructions, exactly in the JSON shape
+the prompt asks for. Add your reply as a `"response"` field on that pass and save the whole
+object (or save `{"decompose": "<your reply>"}`). Then:
+
+```bash
+claw-forge umbrella draft <docs...> \
+  --responses .claw-forge/ud-answers.json \
+  --output .claw-forge/umbrella.draft.yaml
+```
+
+Pass the **same documents** both times: span verification re-reads them, and a subsystem
+whose span does not verify does not count toward the structural signal. With no documents
+(a brief alone), pass none; the brief is read as a document anyway. If
+`.claw-forge/umbrella.draft.yaml` already exists from an earlier attempt, the command
+refuses to overwrite it: delete it and run the command again. Delete `ud-prompts.json` and
+`ud-answers.json` when you are done.
+
+Act on the verdict:
+
+- **`Verdict: SINGLE`** — one spec is enough. Continue to the Size check.
+- **`Verdict: DRAFT FAILED`** or **`Verdict: SKIPPED`** — no decision was made, and that is
+  not SINGLE. Tell the user in one line that the draft failed or was skipped, and why (quote
+  the reason the command printed), then continue to the Size check. It does not draft again
+  in this invocation (case 3 never runs after case 2).
+- **`Verdict: PROGRAMME`** — show the subsystems table and the estimate the command printed,
+  plus its findings, then:
+  - **Interactive:** offer exactly three choices:
+
+    ```
+    [Enter]  accept — move the draft to umbrella.yaml
+    [e]      edit .claw-forge/umbrella.draft.yaml, move it to umbrella.yaml, then run
+             claw-forge umbrella check on it
+    [s]      one spec anyway — delete the draft
+    ```
+
+    `[Enter]`: `mv -n .claw-forge/umbrella.draft.yaml umbrella.yaml` (`-n` never replaces an
+    existing `umbrella.yaml`; if the draft is still in `.claw-forge/` afterwards, stop and
+    tell the user). `[e]`: let the user edit, move it into place with `mv -n`, and run
+    `claw-forge umbrella check` (it reports the declared spec files as missing until they
+    are written; that is expected). If it reports any other
+    error, fix it in `umbrella.yaml` and re-run the check, or move the file back to
+    `.claw-forge/umbrella.draft.yaml` and let the user decide; go to case 1 only once
+    `umbrella check` reports nothing but missing spec files. `[s]`: delete the draft and
+    continue to the Size check, which does not draft again in this invocation.
+  - **Brief-Driven Mode and `--yes`:** do not ask. Accept with
+    `mv -n .claw-forge/umbrella.draft.yaml umbrella.yaml` (never replacing an existing
+    `umbrella.yaml`; if the draft did not move, report that and stop), and append one decision line to `spec_decisions.jsonl`, in the format
+    of "Emit `spec_decisions.jsonl`" above:
+
+    ```json
+    {"field": "programme.decomposition", "chosen_value": "umbrella.yaml (<N> subsystems)", "by": "defaulted", "source": "claw-forge umbrella draft", "confidence": 0.0, "needs_review": true, "rationale": "PROGRAMME verdict (<S> structural subsystem(s), ~<E> features estimated) accepted without review"}
+    ```
+
+  Then go to case 1 and write the first subsystem's spec.
+
+**Case 3 — no manifest, no documents, no brief.** The interview is the only input, so this
+case runs from inside the Size check below, once its capability outline exists. When the
+outline shows two or more independently scoped sub-apps, or an estimate past ~400, save the
+outline (categories, capability names, estimated cycles) to `.claw-forge/scope-outline.md`
+and run case 2 with that file as the only document: case 0 (the brief is raised from the
+outline), then `umbrella draft .claw-forge/scope-outline.md` through the seam. One rule
+for all of this: **at most one draft per invocation.** Case 3 never runs after case 2, never
+twice, and never after `[s]`. Its verdicts are handled exactly as in case 2.
+
+#### Size check — before writing any bullets
+
+Writing bullets is where this command spends its tokens (roughly 100 per feature, plus
+reasoning), so size the spec first from something cheap.
+
+1. From the user's description — and any docs, `$ARGUMENTS`, or brief already in hand — list
+   the categories and, under each, short capability names (3–6 words, no bullets yet).
+2. Beside each capability, note how many edit-verify cycles rule 6 below would split it into
+   (usually 1–3). The sum is a rough estimate of the bullet count — an estimate, not a target.
+3. Show the user the list and the estimate in a few lines.
+
+- **Estimate up to ~400:** continue. The capability list is the outline for the bullets
+  below, so nothing is wasted.
+- **Estimate past ~400, or two or more independently scoped sub-apps:** before writing any
+  bullets, hand off to the Programme check's **case 3** above: it saves this outline to
+  `.claw-forge/scope-outline.md` and drafts the subsystem specs into `umbrella.yaml` through
+  `claw-forge umbrella draft`. Do not write a new `umbrella.yaml` by hand. Past roughly that size
+  the limit is the run, not the spec: merge catch-up distance, footprint serialisation and
+  the lack of a contract-freeze point all grow with tasks per run.
+  - When a draft already ran in this invocation (case 2 or case 3, whatever its verdict),
+    or the user chose `[s]`, or `umbrella.yaml` already exists (case 1 fell through because
+    every `spec:` file exists), do not draft. Report the estimate, and when it is well
+    past ~400 recommend the split in words (in Brief-Driven Mode, first in the end-of-run
+    report); then continue with one spec.
+
+~400 is where to consider splitting, never a number to reach: a small app gets a small spec.
+
+After each response, derive granular bullets and confirm:
+
+```
+From what you described, I'm generating these features:
+
+**Authentication & User Management (5 bullets)**  →  XML: <category name="Authentication &amp; User Management">
+- User can register with email and password (returns 201 with user_id)
+- User can login with email and password (returns 200 with a JWT access_token)
+- System issues a refresh_token on login (saved to the refresh_tokens table)
+- ...
+
+Does this capture it? Anything to add or change?
+```
+
+The heading name in bold becomes the `name` attribute of a `<category>` element in `<core_features>`.
+Keep a note of each confirmed heading — you will use them verbatim as `name` attributes in Phase 5.
+
+Continue through categories:
+- **Authentication & user management**
+- **Core functionality** (the main thing the app does)
+- **Data management** (CRUD, search, filtering, pagination)
+- **UI/UX** (responsive design, loading states, error handling, notifications)
+- **API layer** (validation, error responses, pagination format)
+- **Admin features** (if applicable)
+- **Integrations** (third-party services, webhooks, notifications)
+
+**There is no target count.** The number of bullets follows from two things: how many
+capabilities the app has, and rule 6 below (one edit-verify cycle per feature). Do not split
+a capability finer than rule 6 asks to make the spec look bigger — every bullet becomes a
+paid agent task.
+
+**Never drop a capability to stay inside a number.** The count is an *output* of how much
+the app does, not a budget the app must fit. Breadth (how many capabilities you enumerate)
+and depth (how finely each one is split) are independent axes, and trading breadth away to
+hold a total is the one failure `claw-forge validate-spec` cannot catch for you: Layers 1-4
+are each a function of the spec, so a capability you never wrote has no checker. If the app
+genuinely does more, write more bullets.
+
+Each bullet should be a testable behavior starting with an action verb:
+- "User can..." / "System returns..." / "API validates..." / "UI displays..."
+
+#### Bullet-writing rules (the validator contract)
+
+`claw-forge validate-spec` runs four layers over every bullet. Write bullets that pass it
+the first time — each rule below maps directly to a check that otherwise emits a WARNING or
+ERROR that `/fix-spec` would have to clean up.
+
+1. **Start with a recognised subject prefix** (Layer 1, WARNING otherwise). The bullet's
+   first word must be one of: `User can` / `User cannot` / `System` / `API` / `UI` / `App` /
+   `Admin` / `Service` / `Backend` / `Frontend` / `Database` / `Agent` / `Webhook` /
+   `Background`. ✗ "Password reset link in email" → ✓ "System sends a password reset link to
+   the user email".
+
+2. **Embed one measurable outcome** (Layer 1, WARNING otherwise). Each bullet must contain a
+   recognised observable result. The validator looks for any of: `returns <NNN>` /
+   `(returns …` / `displays` / `shows` / `redirects to` / `saves to` / `emits` / `sends` /
+   `creates` / `persists` / `prints <thing>` / `outputs <thing>` / `exits <N>` /
+   `writes … to stdout|stderr` / a `snake_case` field name / `HTTP <NNN>` / `<NNN> error` /
+   `error message` / `toast notification`. ✗ "Handle errors appropriately" → ✓ "API returns
+   422 with a field-level errors array when validation fails".
+
+3. **One action per bullet — never compound** (Layer 1; ERROR for bundled actions, WARNING
+   otherwise). Do not join two actions with a connector. The sequence connectors `and then`,
+   `and also`, `and after`, `then login`, `then register` are an **ERROR on any bullet**. The
+   outcome connectors `and receive`, `and redirect`, `and create`, `and send`, `and return to`
+   are an **ERROR only on a user-action bullet** (opens `User can …`, `Admin can …`,
+   `As a X, I …`); on descriptive system behaviour ("System validates the body and sends 201")
+   they are a WARNING. ✗ "User can login and receive a JWT" → split into two bullets: "User
+   can login …" and "System issues a JWT …". (Plain "and" between *nouns* — "email and
+   password" — is fine.)
+
+4. **At least 6 words, no vague filler** (Layer 1, WARNING otherwise). Bullets under 6 words,
+   or containing `etc` / `various` / `multiple` / `some` / `things` / `stuff` / `items`, are
+   flagged. Enumerate instead of summarising.
+
+5. **Cover every table and endpoint** (Layer 3, WARNING otherwise). Each table name in
+   `<database_schema>` and each path in `<api_endpoints_summary>` must appear in at least one
+   bullet. Mention table names verbatim (e.g. a bullet that references the `refresh_tokens`
+   table) so the coverage cross-reference resolves.
+
+6. **One edit-verify cycle** (Layer 4, INFO/WARNING otherwise). A feature should be
+   completable by editing one production file plus its test. If a bullet requires creating
+   or wiring several modules, it is several bullets. This is a **rework budget, not a
+   capability limit**: a feature is the dispatcher's unit of retry, so a failure re-does
+   everything it contained — measured rework cost is flat from 1 to 4 files and rises
+   steeply beyond, and a ten-module retry produced a silent correctness regression.
+   ✗ "System scaffolds the auth plugin and wires it into the router" → split into a
+   skeleton bullet plus one bullet per behaviour. Watch for the words the validator
+   watches for: `scaffold`, `set up`, `wire`, `bootstrap`, `initialise`, `integrate`,
+   `end to end`. **`shape="integration"` features are exempt** — they exist to touch files
+   other features own, so a broad footprint there is correct, not a defect.
+
+---
+
+### Phase 3.25: Architectural Shape
+
+After confirming the feature list with the user (Phase 3) and before
+overlap analysis (Phase 3.5), classify each feature as either a
+**plugin** (vertical, lives in its own directory) or **core**
+(cross-cutting, edits files used by every plugin).  The classification
+ends up in the emitted XML as `<feature shape>` / `<feature plugin>`
+attributes — the dispatcher reads these for parallel-safe scheduling.
+
+#### Step 1 — Group features by likely shape
+
+Read through the confirmed feature list and silently group:
+
+- **Plugin candidates**: features whose description names a single
+  domain noun ("user", "task", "billing", "notifications") and whose
+  acceptance criteria all read like "user can …" or "system returns …
+  for the X resource".  These typically own their own data model,
+  routes, and tests, and can be added or removed without touching
+  sibling plugins.
+- **Core candidates**: features that say "all endpoints …", "every
+  request …", "uniform error format", "shared logging", "global rate
+  limit", "authentication middleware", "database migrations".  These
+  are cross-cutting — they're touched by every plugin's request path.
+
+A feature can be plugin-shape even if it depends on a core concern.
+"User can register" is plugin-shape (lives in `plugins/auth/`) even
+though it relies on the core `core/db/` connection pool.
+
+#### Step 2 — Confirm with the user
+
+Present the grouping back, naming the plugin directories:
+
+```
+Looking at your features, I'd structure them as:
+
+Plugins (parallel-safe — each in its own directory):
+  • plugins/auth/      — registration, login, password reset (5 features)
+  • plugins/profile/   — view/edit profile, avatar upload (4 features)
+  • plugins/tasks/     — CRUD, search, tag filter, pagination (8 features)
+
+Core (cross-cutting — touch every plugin's request path):
+  • core/middleware/   — JWT validation, request logging (2 features)
+  • core/errors/       — RFC7807 error envelope (1 feature)
+  • core/db/           — connection pool, migrations runner (2 features)
+
+Sound right?  Edits welcome:
+  - Reclassify a feature: "move feature 14 to core"
+  - Rename a plugin:      "rename profile to user-profile"
+  - Add a category:       "add plugins/notifications"
+```
+
+The user can:
+- **Accept** → record the classification.
+- **Edit** by line: "move 14 to core", "rename profile to user-profile",
+  "split tasks into tasks-crud and tasks-search".
+- **Skip** → emit the spec without `shape`/`plugin` attributes (legacy
+  behaviour).  Phase 5 emits unchanged.
+
+#### Step 3 — Persist the classification
+
+Build a per-feature dict in memory:
+
+```
+feature_shape[<index>] = {
+    "shape": "plugin" | "core",
+    "plugin": "<plugin_name>" | None,         # set when shape="plugin"
+    "touches_files": ["..."] | None,           # set when shape="core" only
+}
+```
+
+Phase 5 reads this when emitting `<feature>` elements.  Plugin features
+get `shape="plugin" plugin="X"` and the parser auto-derives `touches_files`.
+Core features get `shape="core" touches_files="..."` (the prose from Step
+2 — typically a single file path the user names — becomes the
+`touches_files` value).
+
+#### Step 3.5 — Partition large plugins (throughput)
+
+Count the features per plugin from Step 3.  Any plugin with **4+
+features** would otherwise serialize: they all share the auto-derived
+`src/plugins/<name>/**` footprint, file-claims are exact-string, so the
+dispatcher runs them one at a time — and `validate-spec`'s **Gap 17**
+parallelism advisory flags exactly this group once the sequential steps it
+forces approach the spec's ideal makespan.  Partitioning the plugin into
+disjoint sub-globs is the
+built-in remedy, so for a plugin at or over the threshold **partition by
+default** and confirm the split with the user:
+
+```
+plugins/tasks/ has 8 features — un-partitioned they run one at a time.
+I'll partition by concern for parallelism:
+
+  • src/plugins/tasks/routes/**    — CRUD endpoints (3 features)
+  • src/plugins/tasks/models/**    — schema + queries (2 features)
+  • src/plugins/tasks/search/**    — search + filters (3 features)
+
+[Enter] partition (recommended)   [s] keep serialized
+```
+
+**Autonomous / brief-driven synthesis does not ask** — honor
+`policies.plugin_partitioning` verbatim.  Its default is `keep-serialized`
+in every tier *by design*: an unattended run must not dispatch a split it
+only guessed, because a mis-placed feature collides silently (see the
+disjointness check below).  Partition-by-default is the *interactive*
+posture, where a human validates the split before it ships.
+
+**All-or-nothing rule (CRITICAL):** if you partition, EVERY feature in
+that plugin gets an explicit non-overlapping sub-glob
+(`touches_files="src/plugins/tasks/routes/**"`) — never leave one feature
+on the whole-plugin glob while siblings use sub-globs.  A whole-plugin
+glob is a structural *superset* of every sub-glob, so the claim layer and
+the dispatcher's disjoint-footprint filter detect the overlap and
+**serialize** the mixed features — silently defeating the partition you
+just made, for the same throughput as not partitioning at all.  It does
+**not** corrupt anything (`validate-spec` flags the mix as a Gap 13
+**INFO**, not a warning) — but it wastes the whole exercise.
+
+**Disjointness self-check (before you emit):** the chosen sub-globs must
+be mutually non-overlapping, and each must name a real sub-directory under
+the plugin root — `routes/`, `models/`, `search/`, not two globs that
+share a deeper prefix.  The genuine hazard is **not** the mix above (that
+merely serializes): it is a **mis-placed feature** — one you file under
+`routes/**` that will in fact also write `models/…`.  Two features on
+truly-disjoint sub-globs dispatch in parallel, so a feature writing
+outside its declared bucket collides with the sibling that owns that
+bucket, and **nothing catches it** — the declared globs *are* disjoint.
+So place every feature in exactly one bucket, and confirm it with the
+user.  A feature that genuinely spans two buckets (the plugin's
+`__init__`/wiring feature, a cross-cutting concern) is **not**
+partitionable: emit it first on the whole-plugin glob or a narrow named
+file (e.g. `src/plugins/tasks/__init__.py`) and give the partitioned
+siblings `depends_on` edges to it — it then runs alone in an earlier wave,
+so its structural overlap with the sub-globs never causes a parallel
+collision.
+
+**Safe fallback:** if the features do not fall into a clean set of
+disjoint concern directories, or you cannot confidently place every one of
+them in exactly one bucket, keep the whole-plugin glob for every feature.
+Serialized is always correct; a guessed split that collides at runtime is
+worse than slow.  This is why autonomous synthesis keeps `keep-serialized`
+in every tier — it cannot verify a split it only guessed — and why
+partition-by-default is the interactive posture, where a human validates
+each feature truly lives in one bucket.
+
+**Confirming the remedy:** a correct partition splits one large footprint
+group into N smaller ones, each needing a fraction of the sequential steps,
+so re-running `validate-spec` should show the Gap 17 advisory no longer
+naming this plugin's footprint.
+
+#### Step 4 — Shape rules (the validator contract)
+
+Layer 4 of `validate-spec` is strict by default. Apply these rules while classifying so the
+spec passes without `/fix-spec`:
+
+- **A contracts / shared-types subsystem is `shape="contracts"`, not `core`.** It owns the
+  files every other spec excludes, so it needs an explicit `touches_files`
+  (e.g. `packages/contracts/**`). Write it as a **few large features, not many atomic
+  ones**: every feature shares that one footprint so splitting buys no parallelism, and the
+  contracts must be mutually consistent. `shape="contracts"` is exempt from the Gap 16
+  blast-radius advisory precisely so this stays expressible — do **not** "fix" such a spec
+  by splitting it.
+- **If a `spec_brief.yaml` exists, every feature you derive from a competency question
+  carries `covers="cq-N"`.** Layer 6 checks that each question is covered by at least one
+  feature; an uncovered question with a declared `priority: 1` is an **ERROR** that blocks
+  `plan`. That link is what makes "did we cover the PRD?" answerable — so emit it while
+  authoring, when you still know which question you are expanding.
+  - **Brownfield additions specs in a project with a brief: declare subsystems in
+    `umbrella.yaml` FIRST.** With no umbrella manifest, Layer 6 holds *every* spec to
+    *every* competency question in the brief — a small additions spec adding one
+    capability reports every other subsystem's questions as uncovered ERRORs, and no
+    edit to that spec can ever clear them. The fix is never a stub feature with an
+    unrelated `covers=` (that falsifies traceability for good). Get the manifest through
+    the Programme check (Phase 3): with a brief and no `umbrella.yaml`, case 2 drafts one.
+    If its verdict is SINGLE (or the draft fails) but the brief's questions still belong to
+    other specs, write `umbrella.yaml` by hand: one subsystem entry per spec, each naming
+    its `spec:` path and the question ids it `owns:` (plus `root:` and `after:` where they
+    are known), so Layer 6 narrows each spec's uncovered-question check to exactly its ids.
+    One-time setup per project; every later additions spec is added as one more entry.
+    Run `claw-forge umbrella check` after every edit.
+
+- **Migration / schema work is always `shape="core"`** (Gap 8, **ERROR** otherwise). If a
+  feature description contains any of `migration`, `alembic`, `database schema`, `DDL`,
+  `foreign key`, `primary key`, `create table`, `alter table`, `drop table`, `add column`,
+  `drop column`, `alter column`, `create index`, or `unique constraint`, it mutates alembic's
+  shared revision tree and **must** be emitted as
+  `shape="core" touches_files="migrations/versions/**"`. Never classify a migration feature as
+  a plugin — parallel agents would write colliding revision files.
+
+- **`shape="plugin"` must carry `plugin=`** (Gap 1, **ERROR** otherwise). Every plugin feature
+  needs a `plugin="<slug>"` attribute (or an explicit `touches_files=`). Derive the slug from
+  the category name: lowercase, non-alphanumerics → dashes (e.g. "User Profile" →
+  `plugin="user-profile"`).
+
+- **Keep core `touches_files` narrow** (Gap 3, ERROR in strict). A core feature's
+  `touches_files` glob must not overlap any plugin directory. Use specific paths like
+  `src/core/middleware/auth.py` or `src/core/**`, never a blanket `src/**` that would swallow
+  `src/plugins/<name>/`.
+
+#### Acceptance criteria
+
+A `<feature>` may carry an `<acceptance>` child. `plan` turns it into an independent
+"Acceptance tests: <feature>" task that writes executable tests into `acceptance/<slug>/`
+BEFORE the feature is built; the tests must fail first, the feature's agent cannot edit
+them, and its work is accepted only when they pass. Rules for writing them:
+
+- One observable criterion per `- ` line.
+- Each criterion must be checkable from outside the code: an HTTP status, CLI output,
+  rendered text, a returned value. Never an implementation detail ("uses bcrypt",
+  "calls the helper").
+- Prefer criteria checkable through HTTP requests, CLI invocations or exported functions.
+  Use rendered-UI criteria only when the stack already has a browser test harness (e.g.
+  Playwright). The tests are written before the feature exists, so each criterion must
+  name a surface the feature will expose.
+- That surface must exist within the feature's own `depends_on` closure. The tests run
+  after the feature's dependencies merge and before its dependents exist, so a criterion
+  on an internal module (a recalculation engine, a parser) that only a later feature's
+  route exposes can never pass and strands everything after it. Put such criteria on the
+  first feature whose closure creates the route (the validator WARNs, Gap 18).
+- Keep each criterion on a single line: an `<acceptance>` element with no `- ` bullet is a
+  validator ERROR, and non-bullet lines inside it (e.g. a wrapped continuation) are dropped.
+- Aim for 2-5 per user-facing feature. A criterion the author could not check without
+  reading the source is not a criterion.
+- Skip them for pure scaffolding and `shape="contracts"` features; nothing observable
+  to test.
+- Never put criteria on the first (scaffolding) feature or on any other root feature in
+  a greenfield spec. The acceptance tests are written by a task that runs with the
+  feature's own dependencies, so on a root feature it runs on an empty tree with no test
+  framework and cannot add one. Give the feature `depends_on` the feature that scaffolds
+  the project and its test framework (the validator WARNs on a greenfield root with
+  criteria).
+
+```xml
+<feature index="2" depends_on="1" shape="plugin" plugin="auth" touches_files="src/auth/**">
+  <description>User can log in with email and password</description>
+  <acceptance>
+    - POST /api/auth/login with correct credentials returns 200 and sets a session cookie
+    - A wrong password returns 401 and sets no cookie
+  </acceptance>
+</feature>
+```
+
+Config: `agent.acceptance_criteria: enforce | off` (absent means enforce).
+
+#### Failure modes
+
+- **User skips classification** → emit Phase 5 unchanged; no `shape`
+  attributes.  The legacy parsing path still works; the dispatcher's
+  file-claim layer treats every feature as opt-out (no locking
+  attempted).
+- **A feature can't be classified** (LLM unsure or user says "I don't
+  know") → leave that feature unclassified in `feature_shape`.  Phase 5
+  emits without `shape` for that feature.
+- **User declares a plugin name that conflicts with an existing
+  filesystem path** in brownfield mode → warn but accept (the
+  boundaries-harness can refactor the colliding file later).
+
+---
+
+### Phase 3.5: Overlap Analysis
+
+After confirming the feature list with the user, audit for **merge-conflict risk** between
+features that would be dispatched in parallel. The earlier you serialize known-overlapping
+features, the fewer wasted agent runs you'll have downstream.
+
+#### Step 1 — Run the analysis prompt on the bullet list
+
+Number the confirmed bullets from Phase 3 starting at 1. Then, as the LLM executing
+`/create-spec`, mentally apply the following prompt to that numbered list:
+
+> You are auditing a feature spec for merge-conflict risk. Below are N feature bullets, each
+> numbered. Find pairs where implementing both would force conflicting edits to the same
+> file or function — i.e. they would both modify the same hunks if scheduled in parallel.
+>
+> A pair is overlapping ONLY if changing one without the other would force a merge
+> conflict. Belonging to the same category alone is not overlap.
+>
+> Return JSON only:
+> ```json
+> [{"a": <int>, "b": <int>, "surface": "<file_or_concept>", "rationale": "<one sentence>"}]
+> ```
+> Empty list `[]` if no overlaps. No prose outside the JSON.
+
+#### Step 2 — Resolve each overlap interactively
+
+For every entry returned, present:
+
+```
+Overlap detected:
+  #<a>  <description of feature a>
+  #<b>  <description of feature b>
+  Shared surface: <surface>
+  Rationale: <rationale>
+
+Resolution? [s] serialize (#<b> depends on #<a>)  [k] keep parallel  [q] quit
+```
+
+- **`s`** → record an explicit edge: feature `<b>` will be emitted with `depends_on="<a>"` so
+  the runtime DAG runs `<a>` first and `<b>` only after.
+- **`k`** → record the user's decision to keep parallel; do not flag this pair again on retry.
+- **`q`** → abort `/create-spec` cleanly; do not write any files.
+
+If the user selects `m` (merge), explain that merging is out of scope for this phase — they
+can manually combine the bullets in Phase 3 and re-run, or pick `s` for now.
+
+#### Step 3 — Persist resolutions through Phase 5
+
+In memory, build a list `serialized_pairs: list[tuple[int, int]]` of `(later, earlier)`
+feature numbers from each `s` decision. When Phase 5 emits the XML, every feature that
+appears as `later` in any pair must use the new `<feature>` element form with explicit
+attributes:
+
+```xml
+<core_features>
+  <category name="DSL Compiler">
+    <feature index="14">
+      <description>System displays parse errors on stderr</description>
+    </feature>
+    <feature index="18" depends_on="14">
+      <description>System displays side-by-side diff in terminal</description>
+    </feature>
+  </category>
+</core_features>
+```
+
+Multiple dependencies are comma-separated: `depends_on="14,15,16"`. Features without edges
+may continue using the legacy bullet form; both coexist within the same `<category>`.
+
+`depends_on=""` (empty) is a **third, distinct** declaration: it means "this feature is a
+root". Omitting the attribute leaves the feature open to phase-keyword inference; writing it
+empty freezes it with no predecessors. Use the empty form for anything that must start in
+wave 1.
+
+When Phase 3.25 classification was accepted, combine `shape`/`plugin` with `index` and
+`depends_on` in the same element:
+
+```xml
+<!-- Phase 3.25 + Phase 3.5 combined: plugin-shape + dependency edge -->
+<feature index="14" shape="plugin" plugin="auth">
+  <description>User can register with email and password</description>
+</feature>
+<feature index="18" shape="plugin" plugin="auth" depends_on="14">
+  <description>System sends welcome email after registration</description>
+</feature>
+<feature index="20" shape="core"
+         touches_files="src/core/middleware/auth.py">
+  <description>All endpoints validate JWT on incoming requests</description>
+</feature>
+```
+
+#### Failure modes
+
+- **LLM returns malformed JSON** → re-prompt once with the schema; if still bad, skip the
+  analysis with a one-line warning ("could not analyze overlaps; emitting spec without
+  explicit edges") and continue to Phase 4.
+- **Empty feature list** (Phase 3 produced 0 bullets) → skip Phase 3.5; downstream
+  validation handles the empty-spec case.
+- **No overlaps detected** (`[]`) → skip directly to Phase 4 with one line: "No overlap
+  risk detected — features can run in parallel."
+
+---
+
+### Phase 4: Technical Details (Detailed mode only)
+
+If the user chose **Detailed**, ask about:
+
+1. **Tech stack preferences:**
+   - Frontend: React/Vue/Svelte/Next.js? Styling: Tailwind/CSS modules?
+   - Backend: Python (FastAPI/Django) / Node (Express/Fastify) / Go / Rust?
+   - Database: SQLite/PostgreSQL/MySQL/MongoDB?
+
+2. **Database schema:** Walk through the main tables/collections based on the features.
+
+3. **API structure:** REST vs GraphQL? Authentication method (JWT, session, OAuth)?
+
+4. **UI layout:** Dashboard style? Sidebar navigation? Single page or multi-page?
+
+For **Quick** mode, derive sensible defaults from the features (React + Vite, FastAPI,
+SQLite for dev / PostgreSQL for prod, JWT auth, REST API).
+
+---
+
+### Phase 5: Generate the Spec
+
+Generate two files:
+
+#### `app_spec.txt` (XML format)
+
+Use the template structure from `claw_forge/spec/app_spec.template.xml` (or the copies the invocation names, when given) but filled with the
+user's project details. The XML must include:
+
+- `<project_specification>` root element
+- `<project_name>`, `<overview>`, `<target_audience>`
+- `<layout>` when Phase 2.5 chose a non-default layout (profile sugar or
+  `<zone>` children + `<contract>`), plus its mandatory foundation feature
+  as feature index 1
+- `<technology_stack>` with `<frontend>`, `<backend>`, `<database>`, `<communication>`, `<infrastructure>`
+- `<prerequisites>` with environment setup bullet list
+- `<core_features>` with categorized bullet lists (this is the bulk of the spec).
+- Optionally, a user-facing `<feature>` may carry an `<acceptance>` child (one `- `
+  observable criterion per line; see Phase 3.25 "Acceptance criteria"). Not required.
+- `<database_schema>` with `<tables>` containing `<table name="…">` / `<column>` elements
+- `<api_endpoints_summary>` with `<domain name="…">` sections
+- `<ui_layout>` with main structure
+- `<design_system>` with color palette, typography, animations
+- `<key_interactions>` with `<interaction number="N" name="…">` flows
+- `<implementation_steps>` with `<phase name="…">` elements
+- `<success_criteria>` with `<functionality>`, `<ux>`, and `<technical_quality>`
+
+**Important:** Use `&amp;` for `&` in XML content. Each bullet in `<core_features>` becomes one
+agent task.
+
+**CRITICAL — `<core_features>` element format:**
+Each category group inside `<core_features>` MUST be a `<category name="…">` element with the
+full human-readable name as the `name` attribute. The name becomes the task category shown in the
+Kanban board and used for routing and filtering.
+
+✅ Correct — `<category name="…">` with descriptive names:
+```xml
+<core_features>
+  <category name="Authentication &amp; User Management">
+    - User can register with email and password (returns 201 with user_id)
+    - User can login and receive JWT access_token and refresh_token
+  </category>
+  <category name="Receipt Scanning">
+    - System sends the receipt image to OpenAI Vision API…
+  </category>
+  <category name="API Layer">
+    - API returns consistent JSON envelope: { "data": ..., "error": null }
+  </category>
+</core_features>
+```
+
+❌ Wrong — bare snake_case tags lose display names; generic `<category>` loses all names:
+```xml
+<core_features>
+  <authentication>...</authentication>     <!-- loses "&amp; User Management" -->
+  <category>...</category>                 <!-- BAD: every task becomes "Category" -->
+</core_features>
+```
+
+Use the exact heading confirmed with the user in Phase 3 as the `name` attribute.
+
+**REQUIRED — final `<category name="End-to-End Verification">`:**
+Always end `<core_features>` with an End-to-End Verification category containing
+one `<feature>` per primary user journey, each declared `shape="core"` and
+`touches_files="tests/e2e/**"`. These become the terminal tasks that write and
+run e2e/integration tests against the fully-assembled app — the difference
+between "units pass" and "the app actually runs". List the *real* journeys you
+captured in Phase 3 (signup → core action → result), not a generic placeholder.
+
+```xml
+<core_features>
+  ... feature categories ...
+  <category name="End-to-End Verification">
+    <feature index="40" shape="core" touches_files="tests/e2e/**">
+      <description>System passes an end-to-end test of the primary journey (sign up, create a project, add a task) in which the app boots and the board displays the new task (Playwright/pytest test under tests/e2e/)</description>
+    </feature>
+    <feature index="41" shape="core" touches_files="tests/e2e/**">
+      <description>System passes API integration tests where each documented endpoint returns 200 on the happy path and returns the documented 4xx error on key error cases</description>
+    </feature>
+  </category>
+</core_features>
+```
+
+Why a real task, not prose: e2e steps written only inside `<phase>`/`<success_criteria>`
+text are never materialized as tasks, so no agent writes them and they go
+missing. Declaring them as `shape="core"` features makes them scheduled,
+merge-gated, terminal task nodes. (If you omit this, `claw-forge plan` injects a
+single fallback "End-to-End Verification" task automatically — but authoring the
+specific journeys here is better: they're visible, editable, and split per flow.)
+When `agent.acceptance_gate` is enabled, the project's test command — now
+including these e2e tests — must pass before each task can complete.
+
+**CRITICAL — `<database_schema>` format:**
+Use `<table name="…">` with `<column>` children for each table. Full SQL-style column definitions.
+
+```xml
+<database_schema>
+  <tables>
+    <table name="users">
+      <column>id UUID PRIMARY KEY DEFAULT gen_random_uuid()</column>
+      <column>email VARCHAR(255) UNIQUE NOT NULL</column>
+      <column>password_hash VARCHAR(255) NOT NULL</column>
+      <column>created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()</column>
+    </table>
+    <table name="refresh_tokens">
+      <column>id UUID PRIMARY KEY DEFAULT gen_random_uuid()</column>
+      <column>user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE</column>
+      <column>token_hash VARCHAR(255) NOT NULL UNIQUE</column>
+      <column>expires_at TIMESTAMP WITH TIME ZONE NOT NULL</column>
+    </table>
+  </tables>
+</database_schema>
+```
+
+**CRITICAL — `<api_endpoints_summary>` format:**
+Use `<domain name="…">` sections with plain-text route lines (no bullet prefix needed).
+
+```xml
+<api_endpoints_summary>
+  <domain name="Authentication">
+    POST   /api/auth/register   - Register new user account
+    POST   /api/auth/login      - Log in and receive JWT tokens
+    POST   /api/auth/logout     - Log out and invalidate refresh token
+  </domain>
+  <domain name="Receipts">
+    POST   /api/receipts/upload - Upload image and trigger OCR
+    GET    /api/receipts        - List receipts with filters and pagination
+    GET    /api/receipts/{id}   - Get single receipt with line items
+    PUT    /api/receipts/{id}   - Update receipt fields
+    DELETE /api/receipts/{id}   - Delete receipt and associated file
+  </domain>
+</api_endpoints_summary>
+```
+
+**CRITICAL — `<implementation_steps>` format:**
+Use `<phase name="…">` elements with plain-text task lines inside.
+
+**Phase titles must share a keyword with every category name** (Gap 9, ERROR in strict).
+The validator infers each feature's dependencies from the phase whose title overlaps its
+category name. A feature whose category shares **no word** with any phase title gets no
+inferred deps and is flagged — under strict (the default) that's an ERROR, one per feature.
+Generic titles like "Phase 2: Core Features" share nothing with a category like "Receipt
+Scanning" and trip the whole category. **Derive phase titles from your category names** so
+each category maps onto a phase: name the phase after the category (or include the category's
+key noun). This clears Gap 9 for every feature in the category at once — no `depends_on`
+surgery required.
+
+**Prefer the category's full name in the phase title, not just one of its words.** Matching is
+best-overlap: a category binds to the phase whose title shares the *most* words with it, so
+`Answer Generation` (phase 9) and `Answer Surface` (phase 13) each bind to their own phase even
+though they share "Answer". But a phase title carrying only the shared word (`Phase 9: Answers`)
+ties both categories to it, and a tie goes to the earliest phase — which binds the later
+category to the wrong predecessor. Naming the phase after the full category name makes the
+binding unambiguous.
+
+**But a matching phase title also *enables* inference for that category**, and inference
+makes every feature in phase N depend on every feature in phase N-1 — **whatever files they
+touch**: phase inference never reads `touches_files`, so two features with disjoint footprints
+in consecutive phases still run one after the other. If a feature in that
+category is genuinely a root — foundation work, a shared contract, anything that should start
+in wave 1 — give it `depends_on=""`. An empty declaration is honoured as "runs first" and is
+never overwritten by inference; an *absent* one is not a declaration at all. Skip this and a
+spec that declares three roots plans as a graph one task wide at level 0, and the run opens at
+an effective concurrency of 1 no matter what `--concurrency` says. `claw-forge plan` prints
+tasks-per-wave — check that the first number is not 1.
+
+```xml
+<implementation_steps>
+  <phase name="Phase 1: Authentication &amp; User Management">
+    Implement users and refresh_tokens tables
+    Implement POST /api/auth/register and POST /api/auth/login
+  </phase>
+  <phase name="Phase 2: Receipt Scanning">
+    Implement the receipts table and OCR pipeline
+    Build the receipt review UI
+  </phase>
+  <phase name="Phase N: End-to-End Verification">
+    Write and run the e2e/integration tests for the primary user journeys
+    Confirm the app boots and the happy paths pass end-to-end
+  </phase>
+</implementation_steps>
+```
+
+**Always end with a `End-to-End Verification` phase** whose title matches the
+final `<category name="End-to-End Verification">`. Because phase-N features
+depend on phase-(N-1)'s, the e2e features inherit a dependency on the prior
+phase — and transitively on the whole build — so they dispatch **last**, after
+every feature has merged and the full app is available to test. The shared
+"End-to-End Verification" keyword between the category and this phase also
+clears Gap 9 for the e2e features.
+
+#### `claw-forge.yaml`
+
+```yaml
+providers:
+  - name: claude-oauth
+    type: oauth
+    enabled: true
+    priority: 10
+
+agent:
+  max_concurrent_agents: 5
+  # Two independent retry budgets. A failed task is re-pended and dispatched
+  # again in a later wave with its own error_message in the retry preamble.
+  # `agent` covers "the agent gave up" and "the acceptance gate went red";
+  # `infra` covers a broken box, which no number of agent retries can fix.
+  agent_retry_attempts: 2
+  infra_retry_attempts: 2
+```
+
+Every key here is one claw-forge actually reads — check `claw-forge.yaml`'s
+own scaffolded comments for the full set. The feature list is **not** part of
+this file; `claw-forge plan app_spec.xml` writes it to the state DB.
+
+Show both files to the user and ask: "Does this look right? I'll write these files now."
+
+**Brief-Driven Mode skips this confirmation** — a brief on disk already
+answered it.  Write the files directly and record the choice.
+
+Then write:
+```bash
+# Write app_spec.txt to project root
+# Write claw-forge.yaml to project root
+# Brief-Driven Mode only: append to spec_decisions.jsonl at project root
+```
+
+---
+
+### Phase 5.5: Fresh-Reader Check
+
+You wrote this spec with the whole interview in your head. The agents that
+build it will have none of that. Each dispatched agent gets its category, its
+own feature line and its footprint — `_task_context_directive` tells it "This
+is everything the harness knows about your task" — and it never sees the other
+bullets. A bullet that reads clearly only because you remember the
+conversation, or because the bullet above it explains it, reaches that agent
+with the gap still in it. `validate-spec` cannot find this: Layers 1, 3 and 4
+check structure, and Layers 2 and 5 grade bullet quality. Neither asks "is this
+what the user meant?" or "could someone build this from this line alone?"
+
+This phase answers both, with readers that did **not** take part in the
+interview. It is **advisory**: it never blocks writing the spec, and the user
+decides what to change.
+
+**Skip this phase in programme authoring.** When the invocation came from
+`claw-forge umbrella author` (its prompt has a `## Programme context` section
+and a hard rule to write only the spec file), do not run it and write no
+report. The report would break that rule, and the authoring run re-runs on
+each gate retry, paying for the readers every time. Its own deterministic
+gates judge the spec there.
+
+**Requires a subagent tool** (`Agent` in Claude Code). If you cannot start a
+fresh subagent, **do not paraphrase the spec yourself** — you are the author,
+and your reading is exactly the one this check exists to replace. Record the
+check as `not run (no subagent tool)` and go to Phase 6.
+
+#### Step 1 — Start the readers (in parallel, in one message)
+
+Give each reader **only** the text quoted below plus the files named. Do not
+summarise the interview, explain your intent, or add "for context" notes.
+Anything you add is context an agent will not have.
+
+**Reader A — whole spec (one subagent).** Input: the path of the spec you just
+wrote. Prompt:
+
+> You have just joined this project and know nothing about it beyond the
+> file `<spec path>`. Read it. Then write, in plain English and without
+> quoting it:
+>
+> **What this builds** — 3 to 6 sentences: who uses it, what they can do,
+> and what it is built with.
+> **What does not fit together** — places where two parts of the spec
+> disagree, or where the spec promises something no part of it delivers
+> (for example, the overview names a rule the data model cannot express).
+> Write "nothing" if you found none.
+>
+> Do not list features that apps like this usually have; another check
+> covers that. Do not judge or suggest changes. Describe only.
+
+**Reader B — task view (one subagent per category).** For each category, build
+the input from the spec, one block per feature, in the order the spec lists
+them:
+
+```
+Feature <index>
+- Category: <category name>
+- Feature: <the feature's bullet text, verbatim>
+- Declared footprint: <touches_files / creates, verbatim; omit the line if none>
+```
+
+Put the spec's `<technology_stack>` above the blocks (an agent can read the
+stack from the code its dependencies already merged). In **brownfield** mode,
+also add `<existing_context>` and `<constraints>`, because `plan` stores those
+in the session manifest and every agent receives them. Add nothing else.
+In particular, leave out `<api_endpoints>` and `<database_schema>`: only
+`validate-spec` reads them (Layer 3 coverage). No agent prompt carries them,
+so an endpoint path or a column that is only listed there is one the agent
+must guess.
+Prompt:
+
+> Each block below is one task for a separate coding agent. That agent sees
+> only its own block. It does not see the other blocks or any planning
+> conversation. It can read code that earlier tasks have already merged.
+>
+> For each feature, in one sentence, say what you would build. Then list
+> what you would have to **guess**, but only guesses of these four kinds:
+>
+> - `[behaviour]` — a choice that changes what a user or a test can see
+>   (a status code, who is allowed, what is stored, what is shown), and
+>   the block does not settle it.
+> - `[shared]` — a choice another feature's agent must also make, so two
+>   agents could choose differently (an error format, an ID type, a field
+>   another feature reads, a convention such as 400 vs 422).
+> - `[missing]` — the feature needs something that neither the stack nor
+>   the block provides (an email service, a cache, a job queue).
+> - `[overlap]` — the block asks for work that another block in this file
+>   must already do, so this task may have nothing of its own to build.
+>   Name the other feature.
+>
+> Do **not** report: message wording, names of internal things, styling,
+> where files go inside the footprint, how the feature is registered or
+> wired into the app (the harness tells each agent this), two features
+> editing the same file (the harness runs those one at a time), or
+> anything code from earlier tasks would settle.
+>
+> At most 3 guesses per feature, most important first. "none" is a normal
+> answer for a clear bullet.
+>
+> Format per feature:
+> `Feature <index>: <what I would build>` then
+> `  Guesses: <none | [kind] guess; [kind] guess>`
+
+**Cap: 10 Reader B subagents.** With more than 10 categories, take the 10 with
+the most features and list the others as `not checked`. A category nobody read
+was not checked; it is not a clean result.
+
+A reader that fails or returns nothing gets one retry. If it fails again, its
+status is `not run`. Never report it as "no findings".
+
+#### Step 2 — Compare and write the report
+
+Write `.claw-forge/spec-review/paraphrase.md` (the state directory is
+gitignored, so the run-start sweep leaves it alone). Contents:
+
+1. Reader A's paraphrase, **verbatim**, under its two headings. The user
+   compares it with what they meant. You do not grade it.
+2. A **mismatch list**: the places where Reader A's paraphrase differs from
+   what the user told you in the interview (a wrong audience, a missing core
+   capability, a misread scope). Quote the interview answer next to the
+   paraphrase line it contradicts. Add each item from Reader A's *What does
+   not fit together*.
+3. **Cross-cutting decisions** — read every Reader B result together and
+   group the `[shared]` guesses by the decision they share (the error
+   format; 400 vs 422; integer vs UUID ids). Also group `[behaviour]`
+   guesses that ask the same rule in three or more features (for example,
+   who may edit or delete). Readers saw one category each,
+   so only you can see that a guess in one category is answered by a
+   feature in another. For each group, either name the feature that settles
+   it **and** check that every feature in the group depends on it, directly
+   or through its phase, or propose one. A decision that a later feature
+   makes reaches no earlier one, so "feature 68 does this" is not an answer
+   if feature 33 can merge first. The usual fix is one foundation feature,
+   early in the first phase, that the others depend on. Patching each
+   bullet is not.
+4. Reader B's results, keeping **only** features with at least one guess
+   that is not part of a group in item 3. Under each, put the bullet text
+   and the guesses. Then sort each guess:
+   - **Fix the bullet** — the guess is a real gap; give the exact replacement
+     bullet text.
+   - **Settled elsewhere** — a dependency's merged code or a manifest entry
+     answers it. Name the feature index or the element. "The agent will
+     figure it out" is not a source, and neither is `<api_endpoints>` or
+     `<database_schema>` (no agent receives them; copy the path or column
+     into the bullet instead). If you cannot name a source, it is
+     *Fix the bullet*.
+   - **Leave it** — the guess does not matter to the user (a variable name,
+     an internal helper). Say so in a few words.
+
+   An `[overlap]` guess gets its own answer: **merge the feature** into
+   the one that already does the work, or give it work of its own. A task
+   with nothing to commit ends as an `empty_branch` result. That spends the
+   agent's retries and then fails the task, unless the acceptance gate
+   passed on that same attempt.
+
+   Rules for sorting:
+   - **Do not add text only to satisfy the reader.** Add it when a real
+     agent would otherwise build the wrong thing.
+   - **Do not overrule a guess because you remember the answer.** If the
+     answer is in your memory and not in the spec, the agent does not have
+     it. That is *Fix the bullet*.
+5. A status table: each reader → `completed` / `not run` / `not checked`.
+
+#### Step 3 — Show the user (interactive mode)
+
+Show only: the mismatch list, the cross-cutting decisions, the number of
+*Fix the bullet* items and merges, and the report path. Do not paste Reader
+A's paraphrase or the full report into chat. Then offer:
+
+```
+[f]      apply the proposed edits (bullet fixes, merges, foundation
+         features with their depends_on), then re-run this check once
+[e]      I'll edit the spec myself — re-run this check when I say done
+[Enter]  keep the spec as written
+```
+
+After `[f]` or `[e]`, re-run Step 1 **once**, for Reader A and only the
+categories you changed. If findings remain after that, write them into the
+report as accepted and continue. Do not loop.
+
+**Brief-Driven Mode and `--yes` skip Step 3.** Run Steps 1 and 2, apply
+nothing, ask nothing, and add the outcome line to the end-of-run report (see
+*Report at the end*). The user reads the report later.
+
+#### Failure modes
+
+- **A reader comments on style or suggests features.** Ignore those parts.
+  Use only the paraphrase and the guesses.
+- **Most features have guesses, while Reader A's paraphrase matches.** The
+  whole document holds together, but single bullets depend on their
+  neighbours. This is normal for a first draft. On
+  claw-forge's own reference spec, which passes `validate-spec` with zero
+  warnings, nearly every feature had at least one. Do not show the user a
+  count of features with guesses. Show the cross-cutting decisions: one
+  foundation feature usually clears a dozen guesses at once.
+- **Many `[overlap]` results.** The bullets are cut too thin: a status
+  code or a response shape split off into its own feature. Merge each one
+  back into the feature that does the work. Phase 3's size check does not
+  fix this, because the spec is not too coarse.
+- **Reader B reports something this phase tells it to skip** (file
+  placement, wiring, two features in one file). Drop it. The harness
+  handles those, and reporting them teaches the user to ignore this
+  report.
+
+---
+
+### Phase 6: Next Steps
+
+After writing files, show:
+
+```
+✅ Project spec created!
+
+📊 Summary:
+  Features: <N> across <M> categories
+  Phases: <K> implementation steps
+  Tables: <T> database tables
+  Endpoints: <E> API endpoints
+  Fresh-reader check: <X> mismatches, <D> cross-cutting decisions, <K> bullets to fix
+    → .claw-forge/spec-review/paraphrase.md   (or: not run)
+
+Next steps:
+  1. Review app_spec.txt — add/remove features as needed
+  2. Run: claw-forge validate-spec app_spec.txt
+     → Issues found? Run /fix-spec, then re-run validate-spec until clean
+  3. Run: claw-forge plan app_spec.txt
+  4. Run: claw-forge run --concurrency 5
+
+   validate-spec is strict by default (since v0.8.46): Layer 4 shape gaps
+   3, 5, and 9 are ERRORs, and the migration-shape gap 8 is an ERROR too.
+   Pass --soft-shape only to opt out during a migration on-ramp.
+   /create-spec emits shape-annotated <feature> elements and
+   category-aligned phase titles throughout, so the spec is expected to
+   pass on first run; if it doesn't, /fix-spec will auto-repair the
+   failing elements.
+
+💡 Tip: Each feature bullet = one agent task. More specific bullets = better agent output.
+   The count follows from what the app does; past ~400, consider subsystem specs (umbrella.yaml).
+
+💡 Tip: Features with `shape="plugin"` in your spec can be dispatched
+   in parallel without merge conflicts (their `touches_files` are
+   disjoint by construction).  Within ONE plugin, features share a
+   footprint and serialize — partition big plugins into sub-globs
+   (Phase 3.25 Step 3.5) when wall-clock matters.  Features with
+   `shape="core"` are scheduled by footprint like any other shape:
+   disjoint `touches_files` run in parallel, overlapping ones
+   serialize — keep core footprints narrow.  Only
+   `shape="integration"` runs alone.  See docs/commands.md → "claw-forge run" for
+   parallelism settings.
+```

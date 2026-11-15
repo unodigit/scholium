@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Reference bug spec for `claw-forge plan-bugs`.
+
+  A bug spec is to bugs what app_spec.xml is to features: it declares N units of
+  work, each with an architectural shape, a footprint and dependency edges, and
+  `plan-bugs` turns them into bugfix tasks in the project's EXISTING session.
+  Because they share that session, bug tasks and feature tasks share one
+  file-claim namespace — a bug fix structurally cannot collide with an in-flight
+  feature touching the same files.
+
+  Attributes on <bug>:
+
+    index          1-based. Assigned in document order when omitted.
+    shape          plugin | core | integration. Same meaning as on <feature>:
+                     plugin      → runs in parallel with other plugins
+                     core        → cross-cutting; boundary-aware scheduling
+                     integration → runs ALONE; footprint is advisory
+    plugin         With shape="plugin", derives the footprint from the layout
+                   profile (single-package default: src/plugins/<name>/**).
+    touches_files  Comma-separated globs. REQUIRED for shape="core". Overrides
+                   plugin-derived footprints when both are present.
+    creates        Comma-separated paths the fix is expected to CREATE (they
+                   do not exist yet, so they must not live in touches_files —
+                   the validator would reject them as matching no file on
+                   disk). Unioned into the footprint: file claims lock them
+                   and the post-merge audit expects them. A creates= path
+                   that already exists draws a warning (stale spec, or the
+                   fix already landed).
+    verify         Comma-separated pytest node IDs that PROVE the fix
+                   (tests/x.py::test_y). After the gate, exactly these run with
+                   xfail markers ignored, so a strict xfail left in place cannot
+                   read as fixed. The test file must exist or be in creates=.
+                   Python/pytest only; elsewhere it is reported unrunnable.
+    depends_on     Comma-separated 1-based bug indices. Bug-to-bug only.
+    caused_by      The feature that introduced this bug, by its name as shown in
+                   `claw-forge status` — never a UUID, because a human writes
+                   this file. Resolved at plan time to Task.parent_task_id AND
+                   to a dependency edge: if the parent feature is completed but
+                   not yet merged, its code is not on the target branch, so the
+                   fix must wait for it.
+    severity       critical | high | medium | low (default: medium).
+                   Maps to scheduler priority 1000/900/800/700 — deliberately
+                   above the whole feature range, because a feature's priority
+                   is its spec index and the scheduler sorts descending.
+
+  Run `claw-forge validate-bug-spec bug_spec.xml` before planning.
+-->
+<bug_spec>
+
+  <!-- A vertical bug: lives inside one plugin, so it runs in parallel with
+       fixes to other plugins. The footprint is derived from plugin="auth". -->
+  <bug index="1" shape="plugin" plugin="auth" severity="critical"
+       caused_by="User can reset their password">
+    <title>Password reset rejects addresses containing uppercase letters</title>
+    <symptoms>
+      Reset request returns HTTP 500 instead of sending an email
+      Only affects addresses with at least one uppercase character
+      Roughly 4% of reset attempts
+    </symptoms>
+    <reproduction_steps>
+      Register an account as User@example.com
+      Sign out, then request a password reset for that address
+      Observe a 500 response and no email
+    </reproduction_steps>
+    <expected>A reset email is sent to the registered address</expected>
+    <actual>HTTP 500; the account lookup returns no row</actual>
+    <constraints>
+      <constraint>Do not change the public shape of the auth API</constraint>
+      <constraint>Existing stored addresses must keep working unchanged</constraint>
+    </constraints>
+  </bug>
+
+  <!-- A second vertical bug in a DIFFERENT plugin, so its footprint is disjoint
+       from bug 1 and the two dispatch concurrently. -->
+  <bug index="2" shape="plugin" plugin="billing" severity="high">
+    <title>Invoice totals round down on multi-currency line items</title>
+    <symptoms>
+      Invoice total is one minor unit lower than the sum of its lines
+      Only on invoices mixing two or more currencies
+    </symptoms>
+    <reproduction_steps>
+      Create an invoice with one line in EUR and one in USD
+      Compare the rendered total against the sum of the line amounts
+    </reproduction_steps>
+    <expected>The total equals the sum of the converted line amounts</expected>
+    <actual>The total is short by one minor unit</actual>
+  </bug>
+
+  <!-- A cross-cutting bug. shape="core" REQUIRES touches_files, because the
+       dispatcher fences a task by its declared footprint and there is no
+       directory to derive one from. -->
+  <bug index="3" shape="core" severity="medium"
+       touches_files="src/db/session.py,src/db/pool.py">
+    <title>Database sessions leak under concurrent request load</title>
+    <symptoms>
+      Connection pool exhausts after a few hours of sustained traffic
+      Subsequent requests block until a checkout times out
+    </symptoms>
+    <reproduction_steps>
+      Drive 50 concurrent requests against any read endpoint for ten minutes
+      Watch the pool's in-use count climb and never fall back
+    </reproduction_steps>
+    <expected>Every request returns its session to the pool</expected>
+    <actual>Sessions opened inside a nested scope are never closed</actual>
+    <constraints>Do not change the pool size defaults</constraints>
+  </bug>
+
+  <!-- Depends on bug 3: the session-leak fix changes how a request-scoped
+       session is acquired, and this fix builds on that. Declaring the edge is
+       what stops the two dispatching in the wrong order. -->
+  <bug index="4" shape="core" severity="low" depends_on="3"
+       touches_files="src/db/health.py">
+    <title>Health check reports healthy while the pool is exhausted</title>
+    <symptoms>
+      The readiness endpoint returns 200 while every real request is blocking
+    </symptoms>
+    <reproduction_steps>
+      Exhaust the connection pool, then call the readiness endpoint
+    </reproduction_steps>
+    <expected>Readiness fails when no connection can be checked out</expected>
+    <actual>The check never touches the pool, so it always reports healthy</actual>
+  </bug>
+
+</bug_spec>
