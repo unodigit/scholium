@@ -50,11 +50,14 @@ from app.modules.submissions.state import LISTED
 
 __all__ = [
     "PaperView",
+    "VersionTimeline",
     "latest_listed_version",
     "listed_version_n",
+    "listed_versions",
     "manifest_entries",
     "pick_listed_version",
     "resolve",
+    "resolve_timeline",
     "resolve_version",
 ]
 
@@ -65,6 +68,14 @@ class PaperView:
 
     paper: Paper
     version: PaperVersion
+
+
+@dataclass(frozen=True)
+class VersionTimeline:
+    """A paper and its listed versions, oldest first (never empty)."""
+
+    paper: Paper
+    versions: list[PaperVersion]
 
 
 def listed_version_n(paper_cid: object, n: int) -> Optional[PaperVersion]:
@@ -208,6 +219,45 @@ def resolve_version(paper_id: object, n: object) -> Optional[PaperView]:
         return None
     version = listed_version_n(paper.paper_cid, int(n))
     return None if version is None else PaperView(paper, version)
+
+
+def listed_versions(paper: Paper) -> list[PaperVersion]:
+    """Every *listed* version of ``paper``, oldest first.
+
+    A version that is not (or is no longer) listed -- awaiting consent,
+    scanning, in moderation, held or rejected -- is not part of the public
+    catalog and is left out, so a reader cannot tell it ever existed.
+    """
+    return [
+        version
+        for version in versions_for_paper(paper.paper_cid)
+        if version.state == LISTED
+    ]
+
+
+def resolve_timeline(paper_id: object) -> Optional[VersionTimeline]:
+    """Resolve ``/papers/{paper_id}/versions`` to a paper's listed versions.
+
+    ``paper_id`` is a paper ``sch:`` id or the cid of the paper's
+    ``paper.genesis`` record, the two spellings that name a *paper* rather
+    than one of its versions.  ``None`` covers every case the route answers
+    with ``404``: a malformed id, a paper this node does not hold, and a paper
+    with no listed version (an unlisted paper is invisible, exactly like one
+    that never existed).
+    """
+    if not isinstance(paper_id, str) or not paper_id:
+        return None
+
+    try:
+        paper = get_paper_by_short_id(parse_short_id(paper_id))
+    except ValueError:
+        # Not a ``sch:`` id; the genesis cid names the same paper.
+        paper = get_paper(paper_id)
+    if paper is None:
+        return None
+
+    versions = listed_versions(paper)
+    return VersionTimeline(paper, versions) if versions else None
 
 
 def manifest_entries(version: PaperVersion) -> Optional[list[Mapping[str, Any]]]:

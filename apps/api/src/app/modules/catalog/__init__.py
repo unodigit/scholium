@@ -12,6 +12,13 @@ Feature 79 is implemented here:
   that version (the latest listed one for a paper id) with its title,
   abstract, authors, categories, licence, status, notices and version number.
 
+Feature 80 is implemented here too:
+
+* ``GET /v1/papers/{id}/versions`` -- the version timeline of a paper: each
+  listed version's ``n``, ``cid``, ``change_note`` and ``listed_at`` (oldest
+  first) with its ``anchor`` status, always ``pending`` until the node anchors
+  its log on-chain.
+
 Feature 81 is implemented here too:
 
 * ``GET /v1/papers/{id}/v/{n}/manifest`` -- the files of one listed version:

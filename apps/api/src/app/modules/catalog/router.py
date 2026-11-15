@@ -1,9 +1,10 @@
-"""HTTP routes for reading one paper (plugin: catalog, features 79 and 81).
+"""HTTP routes for reading one paper (plugin: catalog, features 79-82).
 
 The module loader mounts ``router`` under ``/v1``, so this package serves::
 
     GET /v1/papers
     GET /v1/papers/{id}
+    GET /v1/papers/{id}/versions
     GET /v1/papers/{id}/v/{n}/manifest
 
 ``{id}`` is any of the spellings a reader may hold for a paper:
@@ -47,6 +48,42 @@ An unlisted version is not in the public catalog: a malformed id, an id this
 node does not hold, a version in draft/awaiting_consent/scanning/moderation/
 held/rejected, and a paper with no listed version all answer ``404`` problem
 details with the same message.  Reading is public, like reading a record.
+
+Feature 80 -- the version timeline
+----------------------------------
+
+``GET /v1/papers/{id}/versions`` lists the versions of the paper ``{id}`` (a
+paper ``sch:`` id, or the cid of its ``paper.genesis`` record), oldest first::
+
+    {
+      "paper": "sch:xxxx-xxxx-xxxx",
+      "shortId": "sch:xxxx-xxxx-xxxx",
+      "paperCid": "bafyrei...",
+      "versions": [
+        {"n": 1, "version": 1, "cid": "bafyrei...", "versionCid": "bafyrei...",
+         "change_note": null, "changeNote": null,
+         "listed_at": "2026-01-01T00:00:00", "listedAt": "2026-01-01T00:00:00",
+         "anchor": "pending", "anchorStatus": "pending", "anchor_status": "pending"},
+        {"n": 2, "version": 2, "cid": "bafyrei...", "versionCid": "bafyrei...",
+         "change_note": "Fixed the proof of Lemma 2", "changeNote": "...",
+         "listed_at": "2026-02-01T00:00:00", "listedAt": "2026-02-01T00:00:00",
+         "anchor": "pending", "anchorStatus": "pending", "anchor_status": "pending"}
+      ]
+    }
+
+``change_note`` is the signed version's note, ``null`` when it names none, and
+``listed_at`` the instant the version was listed (UTC).  ``anchor`` (also
+``anchorStatus`` / ``anchor_status``) is the version record's public-timestamp
+status: this node does not anchor its log on-chain yet, so it is always
+``pending`` -- a state, not an error, the same token ``POST /v1/records`` and
+``GET /v1/records/{cid}/proof`` report.
+
+Only *listed* versions are on the timeline: a version awaiting consent, being
+scanned or moderated, held or rejected is not in the public catalog and is
+left out.  A malformed id, an id this node does not hold and a paper with no
+listed version answer ``404`` with the same message as ``GET /v1/papers/{id}``.
+Reading is public.  (Unlike the paper page, the timeline names a *paper*: a
+version id or version cid is not accepted here.)
 
 Feature 81 -- the file manifest of one version
 ----------------------------------------------
@@ -132,10 +169,11 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict
 
-from app.modules import content
+from app.modules import content, ledger
 from app.modules.submissions import (
     Authorship,
     Notice,
+    PaperVersion,
     authorship_for,
     notices_for_paper,
 )
@@ -151,6 +189,8 @@ __all__ = [
     "PaperListOut",
     "PaperOut",
     "SCAN_MISSING",
+    "VersionEntryOut",
+    "VersionsOut",
     "router",
 ]
 
@@ -281,6 +321,89 @@ def _paper_out(view: service.PaperView) -> PaperOut:
         licence=version.licence,
         status=paper.status or "preprint",
         notices=[_notice_out(row) for row in notices_for_paper(paper.paper_cid)],
+    )
+
+
+class VersionEntryOut(BaseModel):
+    """One listed version on a paper's timeline."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Version number (1-based).
+    n: int
+    #: Alias of ``n``.
+    version: int
+    #: cid of the ``paper.version`` record.
+    cid: str
+    #: Alias of ``cid``.
+    versionCid: str
+    #: What the author said changed; ``null`` when the signed version names none.
+    change_note: Optional[str] = None
+    #: Alias of ``change_note``.
+    changeNote: Optional[str] = None
+    #: When the version was listed (UTC); ``null`` only if the node never stamped it.
+    listed_at: Optional[datetime] = None
+    #: Alias of ``listed_at``.
+    listedAt: Optional[datetime] = None
+    #: Public-timestamp status of the version's record; ``pending`` until the
+    #: node anchors its log on-chain, which it does not yet do.
+    anchor: str
+    #: Alias of ``anchor``.
+    anchorStatus: str
+    #: Alias of ``anchor`` under snake_case.
+    anchor_status: str
+
+
+class VersionsOut(BaseModel):
+    """The response body of ``GET /v1/papers/{id}/versions``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Canonical paper short id (``sch:xxxx-xxxx-xxxx``).
+    paper: str
+    #: Alias of ``paper``.
+    shortId: str
+    #: cid of the paper's ``paper.genesis`` record.
+    paperCid: str
+    #: The paper's listed versions, oldest first (version 1 first).
+    versions: list[VersionEntryOut]
+
+
+def _version_entry_out(version: PaperVersion) -> VersionEntryOut:
+    """Render one listed version as a timeline row."""
+    return VersionEntryOut(
+        n=int(version.n),
+        version=int(version.n),
+        cid=version.version_cid,
+        versionCid=version.version_cid,
+        change_note=version.change_note,
+        changeNote=version.change_note,
+        listed_at=version.listed_at,
+        listedAt=version.listed_at,
+        anchor=ledger.ANCHOR_PENDING,
+        anchorStatus=ledger.ANCHOR_PENDING,
+        anchor_status=ledger.ANCHOR_PENDING,
+    )
+
+
+# Registered ahead of ``/papers/{paper_id}/v{n}``: that path's ``v{n}`` segment
+# would otherwise match ``versions`` (with ``n="ersions"``) and answer 404.
+@router.get(
+    "/papers/{paper_id}/versions",
+    response_model=VersionsOut,
+    summary="List the listed versions of a paper, oldest first",
+)
+def get_paper_versions(paper_id: str) -> VersionsOut:
+    """Return the version timeline of paper ``paper_id`` when it has listed versions."""
+    timeline = service.resolve_timeline(paper_id)
+    if timeline is None:
+        raise _not_found(paper_id)
+    paper = timeline.paper
+    return VersionsOut(
+        paper=paper.short_id,
+        shortId=paper.short_id,
+        paperCid=paper.paper_cid,
+        versions=[_version_entry_out(version) for version in timeline.versions],
     )
 
 
