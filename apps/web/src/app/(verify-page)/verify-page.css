@@ -1,0 +1,45 @@
+/* ============================================================================
+   Shell for the Verify a file page (`/verify`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame and the page header live here: the global
+   navigation is mounted by the layout, and the page's own styles live with the
+   feature (`features/verify-page/verify-page.css`). Every value is a design
+   token.
+   ============================================================================ */
+
+.vps-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--reading-column) + var(--space-unit) * 8);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .vps-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
+
+.vps-header {
+  margin-block-end: calc(var(--space-unit) * 6);
+}
+
+.vps-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.vps-title {
+  margin: 0;
+}
+
+.vps-lede {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}

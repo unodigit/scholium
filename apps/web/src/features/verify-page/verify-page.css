@@ -1,0 +1,473 @@
+/* ============================================================================
+   VerifyPage — docs/design.md §3 (tokens), §5.3 (verification states), §9
+   (Accessibility), §10 (Responsive behaviour).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work. Rules are
+   prefixed `vp-` (verify page) so nothing leaks into other features.
+
+   Colour rules (src/styles/README.md), the same as the Proof tab's:
+   - Text is --ink or --ink-2. A status colour is carried by an icon or a
+     border, never by a word: --pending on --pending-soft is below 4.5:1 at
+     13 px, and a word must survive greyscale.
+   - Colour is reinforcement. Every state has an icon of its own shape and the
+     words themselves, so nothing depends on telling green from red.
+   - "Checking…" and "Could not check" are both grey: neither is a verdict, and
+     an inability to check must never look like a failure (§5.3). Only a file
+     that does not match is red.
+   - --ai is never used here: AI output must not look like a human verdict.
+
+   Unlayered on purpose, like the other feature stylesheets: a component
+   stylesheet must not re-declare Tailwind's cascade layers, and unlayered
+   rules outrank them, so the base layer's link/button styles cannot restyle
+   the page. No outer margin is set; the route's shell owns the spacing.
+   ============================================================================ */
+
+.vp-page {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 6);
+  box-sizing: border-box;
+  min-inline-size: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- Version id field ---------------------------------------------------- */
+
+.vp-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.vp-label {
+  font-weight: 500;
+}
+
+.vp-input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--ink-2);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
+}
+
+.vp-input::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}
+
+/* A wrong id is shown by the border and the sentence under it, not by colour alone. */
+.vp-input[aria-invalid="true"] {
+  border-color: var(--critical);
+  border-width: 2px;
+}
+
+.vp-help {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.vp-error {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.vp-error__icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 4);
+  block-size: calc(var(--space-unit) * 4);
+  color: var(--critical);
+}
+
+/* ---- Drop zone ----------------------------------------------------------- */
+
+.vp-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 8) calc(var(--space-unit) * 4);
+  /* --ink-2, not --rule: a drop target's edge should be easy to see (3:1 or better). */
+  border: 1px dashed var(--ink-2);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--ink);
+  text-align: center;
+  transition:
+    border-color var(--duration-fast) var(--ease-decel),
+    background-color var(--duration-fast) var(--ease-decel);
+}
+
+.vp-drop[data-dragging="true"] {
+  border-color: var(--accent);
+  border-style: solid;
+  background-color: var(--accent-soft);
+}
+
+.vp-drop__title {
+  max-inline-size: 100%;
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.vp-drop__prompt,
+.vp-drop__privacy,
+.vp-drop__notice {
+  max-inline-size: 40ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  text-wrap: balance;
+}
+
+.vp-drop__notice {
+  color: var(--ink);
+}
+
+/* ---- Buttons ------------------------------------------------------------- */
+
+.vp-button {
+  flex: none;
+  box-sizing: border-box;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+@media (hover: hover) {
+  .vp-button:hover {
+    background-color: color-mix(in srgb, var(--ink) 6%, var(--surface));
+  }
+}
+
+.vp-button:active {
+  background-color: color-mix(in srgb, var(--ink) 10%, var(--surface));
+}
+
+/* ---- Result -------------------------------------------------------------- */
+
+.vp-result {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  min-inline-size: 0;
+}
+
+.vp-verdict {
+  /* Grey by default; the tone rules below override the icon. */
+  --vp-icon: var(--ink-2);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+}
+
+/* The verdict's border carries its colour as well as the icon does. */
+.vp-verdict[data-tone="verified"] {
+  --vp-icon: var(--verified);
+  border-color: var(--verified);
+}
+
+.vp-verdict[data-tone="critical"] {
+  --vp-icon: var(--critical);
+  border-color: var(--critical);
+  border-width: 2px;
+}
+
+/* A hint is not a verdict: no card, just the sentence. */
+.vp-verdict[data-kind="idle"] {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.vp-verdict__line {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  font-weight: 600;
+}
+
+.vp-verdict__icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 6);
+  block-size: calc(var(--space-unit) * 6);
+  color: var(--vp-icon);
+}
+
+.vp-verdict__summary {
+  margin: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.vp-verdict[data-kind="match"] .vp-verdict__summary,
+.vp-verdict[data-kind="mismatch"] .vp-verdict__summary {
+  color: var(--ink);
+}
+
+.vp-verdict__details {
+  margin: 0;
+  padding-inline-start: calc(var(--space-unit) * 4);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.vp-verdict__details li + li {
+  margin-block-start: var(--space-unit);
+}
+
+/* "Checking…": the open ring turns. Transform only, and constant speed: a
+   spinner is a loop, not a UI transition, so --duration-* does not apply. */
+.vp-verdict[data-kind="checking"] .vp-verdict__icon {
+  animation: vp-spin 900ms linear infinite;
+}
+
+@keyframes vp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.vp-progress {
+  inline-size: 100%;
+  block-size: calc(var(--space-unit) * 2);
+  accent-color: var(--accent);
+}
+
+.vp-proof {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.vp-link {
+  color: var(--accent);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+/* ---- Technical details --------------------------------------------------- */
+
+.vp-details__summary {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-block-size: calc(var(--space-unit) * 11);
+  color: var(--ink);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.vp-tech {
+  margin: 0;
+}
+
+.vp-tech__row {
+  display: grid;
+  grid-template-columns: calc(var(--space-unit) * 36) minmax(0, 1fr);
+  column-gap: calc(var(--space-unit) * 3);
+  align-items: center;
+  padding-block: var(--space-unit);
+}
+
+.vp-tech__label {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.vp-tech__value {
+  min-inline-size: 0;
+  margin: 0;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.vp-subhead {
+  margin: calc(var(--space-unit) * 4) 0 var(--space-unit);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.vp-signed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vp-signed__item {
+  padding-block: calc(var(--space-unit) * 2);
+  border-block-start: 1px solid var(--rule);
+}
+
+/* The file that matched is marked by its words and a heavier border, not by colour alone. */
+.vp-signed__item[data-same="true"] {
+  border-inline-start: calc(var(--space-unit) * 1) solid var(--verified);
+  padding-inline-start: calc(var(--space-unit) * 3);
+}
+
+.vp-signed__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.vp-signed__path {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  overflow-wrap: anywhere;
+}
+
+.vp-signed__flag {
+  font-size: var(--type-meta);
+  font-weight: 600;
+}
+
+.vp-signed__meta {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+@media (max-width: 40rem) {
+  .vp-tech__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- Copy control -------------------------------------------------------- */
+
+.vp-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  min-block-size: calc(var(--space-unit) * 6);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.vp-copy__value {
+  min-inline-size: 0;
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
+  overflow-wrap: anywhere;
+}
+
+.vp-copy__icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 4);
+  block-size: calc(var(--space-unit) * 4);
+  color: var(--ink-2);
+}
+
+.vp-copy[data-copied="true"] .vp-copy__icon {
+  color: var(--verified);
+}
+
+@media (hover: hover) {
+  .vp-copy:hover .vp-copy__value {
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
+}
+
+/* Touch targets are at least 44 px (design.md §9). */
+@media (pointer: coarse) {
+  .vp-copy {
+    min-block-size: calc(var(--space-unit) * 11);
+  }
+}
+
+/* Reduced motion: the ring stands still. "Checking…" is still in words. */
+@media (prefers-reduced-motion: reduce) {
+  .vp-drop,
+  .vp-button {
+    transition: none;
+  }
+
+  .vp-verdict[data-kind="checking"] .vp-verdict__icon {
+    animation: none;
+  }
+}
+
+/* Forced colours (Windows High Contrast): the browser drops the tints. Icons
+   follow the text colour, and the verdict, the drop zone and the field keep
+   their borders. */
+@media (forced-colors: active) {
+  .vp-verdict__icon,
+  .vp-error__icon,
+  .vp-copy__icon {
+    color: CanvasText;
+  }
+
+  .vp-link {
+    color: LinkText;
+  }
+
+  .vp-button {
+    border-color: ButtonText;
+  }
+
+  .vp-input,
+  .vp-drop,
+  .vp-verdict {
+    border-color: CanvasText;
+  }
+}
