@@ -18,6 +18,13 @@ are validated by :mod:`scholium_record_core.manifest`.
 Papers and paper versions are addressed by stable ``sch:xxxx-xxxx-xxxx``
 and ``sch:xxxx-xxxx-xxxx/vN`` short ids derived from the genesis record
 CID (see :mod:`scholium_record_core.short_id`).
+
+A whole paper is verified from a set of records by
+:func:`~scholium_record_core.verify.verify_paper`: it follows ``prev``
+links from the newest version to the genesis record, checks every
+signature, every prev hash and a consent from every listed author, applies
+retraction, correction and tombstone supersession, and returns a
+:class:`~scholium_record_core.verify.VerificationReport`.
 """
 
 from .envelope import (
@@ -86,14 +93,46 @@ from .signing import (
     verify_record,
 )
 
+from .verify import (
+    CHECK_NAMES,
+    CONSENT_ACCEPT,
+    CONSENT_DECLINE,
+    CONSENT_TYPE,
+    CORRECTION_TYPE,
+    GENESIS_TYPE,
+    KIND_CORRECTION,
+    KIND_RETRACTION,
+    KIND_TOMBSTONE,
+    MODERATION_TYPE,
+    RETRACTION_TYPE,
+    STATUS_CORRECTED,
+    STATUS_INVALID,
+    STATUS_RETRACTED,
+    STATUS_TOMBSTONED,
+    STATUS_VERIFIED,
+    STATUSES,
+    TOMBSTONE_ACTION,
+    VERSION_TYPE,
+    CheckResult,
+    Supersession,
+    VerificationReport,
+    verify_paper,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
+    "CHECK_NAMES",
     "CID_BASE",
     "CID_CODEC",
     "CID_CODEC_CODE",
     "CID_HASH",
     "CID_VERSION",
+    "CONSENT_ACCEPT",
+    "CONSENT_DECLINE",
+    "CONSENT_TYPE",
+    "CORRECTION_TYPE",
+    "CheckResult",
     "DID_KEY_PREFIX",
     "DID_KEY_SCHEME_PREFIX",
     "ED25519_MULTICODEC",
@@ -102,6 +141,7 @@ __all__ = [
     "ED25519_SIGNATURE_LENGTH",
     "ENVELOPE_FIELDS",
     "EXCLUDED_FIELDS",
+    "FILES_FIELD",
     "FILE_BASE",
     "FILE_CODEC",
     "FILE_CODEC_CODE",
@@ -109,17 +149,32 @@ __all__ = [
     "FILE_HASH",
     "FILE_ID_PREFIX",
     "FILE_ROLES",
-    "FILES_FIELD",
+    "GENESIS_TYPE",
+    "KIND_CORRECTION",
+    "KIND_RETRACTION",
+    "KIND_TOMBSTONE",
     "MANIFEST_TYPE",
     "MAX_FILE_SIZE",
     "MAX_PATH_LENGTH",
     "MAX_VERSION",
+    "MODERATION_TYPE",
+    "RETRACTION_TYPE",
     "SHORT_ID_ALPHABET",
     "SHORT_ID_CHECKSUM_LENGTH",
     "SHORT_ID_GROUP_SIZE",
     "SHORT_ID_PAYLOAD_LENGTH",
     "SHORT_ID_PREFIX",
     "SIG_ENCODING",
+    "STATUSES",
+    "STATUS_CORRECTED",
+    "STATUS_INVALID",
+    "STATUS_RETRACTED",
+    "STATUS_TOMBSTONED",
+    "STATUS_VERIFIED",
+    "Supersession",
+    "TOMBSTONE_ACTION",
+    "VERSION_TYPE",
+    "VerificationReport",
     "VersionId",
     "canonical_envelope",
     "compute_file_cid",
@@ -143,5 +198,6 @@ __all__ = [
     "validate_manifest_body",
     "validate_manifest_entry",
     "verify_envelope",
+    "verify_paper",
     "verify_record",
 ]

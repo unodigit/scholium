@@ -6,11 +6,14 @@ Refreshes the expected outputs of every entry in ``vectors/records.json``
 ``public_key_hex`` and ``did_key``, each vector's ``dag_cbor_hex`` and
 ``sig``), ``vectors/short_ids.json``
 (``digest_hex``, ``short_id`` and ``version_ids``),
-``vectors/file_ids.json`` (``digest_hex`` and ``cid``) and
-``vectors/manifests.json`` (``files``) from the current implementation.
+``vectors/file_ids.json`` (``digest_hex`` and ``cid``),
+``vectors/manifests.json`` (``files``) and ``vectors/verification.json``
+(each key's ``did_key``, each vector's ``records``, ``ids`` and ``call``)
+from the current implementation.
 Inputs (envelopes with their illustrative ``id``/``sig`` members, key
-seeds, genesis CIDs, invalid strings, recipes and bodies) are kept
-verbatim, so a run is idempotent unless the implementation changes.
+seeds, genesis CIDs, invalid strings, recipes, bodies, build steps and
+expected verification reports) are kept verbatim, so a run is idempotent
+unless the implementation changes.
 
 Usage (from ``apps/api``)::
 
@@ -34,6 +37,7 @@ from scholium_record_core.vectors import (
     refresh_short_id_vectors,
     refresh_signature_vectors,
     refresh_vectors,
+    refresh_verification_vectors,
 )
 
 VECTORS_DIR = Path(__file__).resolve().parents[1] / "vectors"
@@ -44,6 +48,7 @@ TARGETS: tuple[tuple[Path, Callable[[dict[str, Any]], dict[str, Any]]], ...] = (
     (VECTORS_DIR / "short_ids.json", refresh_short_id_vectors),
     (VECTORS_DIR / "file_ids.json", refresh_file_id_vectors),
     (VECTORS_DIR / "manifests.json", refresh_manifest_vectors),
+    (VECTORS_DIR / "verification.json", refresh_verification_vectors),
 )
 
 
