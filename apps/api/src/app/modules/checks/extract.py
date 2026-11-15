@@ -4,6 +4,10 @@
 
     paragraphs = extract_paragraphs(pdf_bytes)      # list[Paragraph]
 
+``extract_first_page_text(pdf_bytes)`` returns only page one, whitespace
+collapsed into a single string; the metadata check compares a version's
+signed title against it.
+
 Text comes from pypdf in its default ("plain") mode, which follows the order
 the PDF draws its text in.  For papers that is reading order, including
 two-column layouts, which pypdf's "layout" mode would interleave line by
@@ -41,7 +45,7 @@ from pypdf import PasswordType, PdfReader
 from .errors import PdfTextError
 from .paragraphs import Paragraph, build_paragraphs
 
-__all__ = ["extract_paragraphs"]
+__all__ = ["extract_first_page_text", "extract_paragraphs"]
 
 #: A vertical gap beyond this many usual line pitches starts a paragraph.
 _GAP_FACTOR = 1.3
@@ -97,6 +101,46 @@ def extract_paragraphs(pdf: Union[Buffer, BinaryIO]) -> list[Paragraph]:
         where = f" (page {page_number})" if page_number else ""
         raise PdfTextError(f"cannot read PDF text{where}: {exc}") from exc
     return build_paragraphs(_blocks(pages))
+
+
+def extract_first_page_text(pdf: Union[Buffer, BinaryIO]) -> str:
+    """The text of a PDF's first page, whitespace-collapsed into one string.
+
+    This is what the metadata check compares the signed title against: the
+    title normally sits at the top of page one, and looking only at that page
+    keeps a title quoted in the body of a later page from counting as a match.
+
+    A PDF with no text layer, or with no pages at all, gives ``""`` -- the
+    title cannot appear in text that does not exist, which is a real (false)
+    check result rather than an extraction failure.
+
+    Args:
+        pdf: the PDF's bytes, or a seekable binary file object holding them.
+
+    Returns:
+        The first page's text as a single line (words separated by single
+        spaces), or ``""`` when the page has no text layer.
+
+    Raises:
+        PdfTextError: if ``pdf`` is not a readable PDF, or needs a password.
+    """
+    stream = io.BytesIO(bytes(pdf)) if isinstance(pdf, Buffer) else pdf
+    try:
+        reader = PdfReader(stream)
+        if reader.is_encrypted and reader.decrypt("") == PasswordType.NOT_DECRYPTED:
+            raise PdfTextError("PDF is encrypted with a password")
+        if not reader.pages:
+            return ""
+        text = reader.pages[0].extract_text() or ""
+    except PdfTextError:
+        raise
+    except MemoryError:
+        raise
+    except Exception as exc:
+        # Same contract as extract_paragraphs: pypdf's failures on damaged
+        # input are the file's fault, not the caller's.
+        raise PdfTextError(f"cannot read PDF text (page 1): {exc}") from exc
+    return " ".join(text.split())
 
 
 def _page_lines(page: Any) -> list[_Line]:
