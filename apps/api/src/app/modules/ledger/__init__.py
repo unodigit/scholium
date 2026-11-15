@@ -16,9 +16,11 @@ shared declarative base before ``create_app`` creates tables.
 See :mod:`app.modules.ledger.service` for append and subscription semantics,
 :mod:`app.modules.ledger.hashing` for the hash-chain rule,
 :mod:`app.modules.ledger.origin` for how ``origin_node`` is resolved,
-:mod:`app.modules.ledger.sync_range` for the replay endpoint
-``GET /v1/sync/range?from=&to=`` and :mod:`app.modules.ledger.records` for
-the envelope endpoint ``GET /v1/records/{cid}`` this package serves.
+:mod:`app.modules.ledger.sync_head` for the signed-head endpoint
+``GET /v1/sync/head``, :mod:`app.modules.ledger.sync_range` for the replay
+endpoint ``GET /v1/sync/range?from=&to=`` and
+:mod:`app.modules.ledger.records` for the envelope endpoint
+``GET /v1/records/{cid}`` this package serves.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from .origin import (
     ED25519_MULTICODEC_PREFIX,
     did_key_from_public_key,
     node_did,
+    node_signing_key,
 )
 from .service import (
     WILDCARD,
@@ -59,28 +62,22 @@ from .records import (
     stored_envelope,
 )
 from .records import router as _records_router
-from .service import (
-    WILDCARD,
-    RecordSubscriber,
-    append,
-    append_entry,
-    append_record,
-    clear_subscribers,
-    entries,
-    entry_by_cid,
-    latest,
-    subscribe,
-    subscribed_types,
-    subscriber_count,
-    unsubscribe,
+from .sync_head import (
+    GENESIS_HEAD,
+    NODE_KEY_UNAVAILABLE_TYPE,
+    SyncHead,
+    head_message,
+    signed_head,
 )
+from .sync_head import router as _sync_head_router
 from .sync_range import MAX_PAGE, REVERSED_RANGE_TYPE, SyncEntry
 from .sync_range import router as _sync_router
 
 #: Router the module loader mounts under ``/v1``: every endpoint the ledger
-#: plugin serves, assembled from its per-endpoint routers (``/v1/sync/range``
-#: and ``/v1/records/{cid}``).
+#: plugin serves, assembled from its per-endpoint routers (``/v1/sync/head``,
+#: ``/v1/sync/range`` and ``/v1/records/{cid}``).
 router = APIRouter()
+router.include_router(_sync_head_router)
 router.include_router(_sync_router)
 router.include_router(_records_router)
 
@@ -88,8 +85,10 @@ __all__ = [
     "DEFAULT_ORIGIN_NODE",
     "ED25519_MULTICODEC_PREFIX",
     "EventLog",
+    "GENESIS_HEAD",
     "GENESIS_PREV_HASH",
     "HASH_SIZE",
+    "NODE_KEY_UNAVAILABLE_TYPE",
     "LedgerEntry",
     "MAX_PAGE",
     "RECORD_NOT_FOUND_TYPE",
@@ -97,6 +96,7 @@ __all__ = [
     "RecordEnvelope",
     "RecordSubscriber",
     "SyncEntry",
+    "SyncHead",
     "WILDCARD",
     "append",
     "append_entry",
@@ -107,9 +107,12 @@ __all__ = [
     "ensure_table",
     "entries",
     "entry_by_cid",
+    "head_message",
     "latest",
     "node_did",
+    "node_signing_key",
     "router",
+    "signed_head",
     "stored_envelope",
     "subscribe",
     "subscribed_types",
