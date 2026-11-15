@@ -1,0 +1,22 @@
+/* ============================================================================
+   Shell for the public policy pages (`/policies`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame lives here: the global navigation is mounted by
+   the layout, and the clause list styles live with the feature
+   (`features/policies-page/policies-page.css`). Every value is a design token.
+   ============================================================================ */
+
+.pp-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--reading-column) + var(--space-unit) * 8);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .pp-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}

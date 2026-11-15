@@ -1,0 +1,190 @@
+/*
+ * `/policies` — the public moderation policy clause list.
+ *
+ * Every value is a design token from `src/styles/tokens.css`, so light, dark
+ * and a forced `data-theme` all re-theme the page with no extra classes.
+ * Rules are prefixed `pp-` (policies page) so nothing leaks into other
+ * features. The layout owns the outer width; these rules only style content.
+ */
+
+.pp-page {
+  max-width: var(--reading-column);
+}
+
+.pp-header {
+  margin-bottom: calc(var(--space-unit) * 8);
+  max-width: var(--measure-reading);
+}
+
+.pp-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.pp-title {
+  margin: 0;
+}
+
+.pp-lede {
+  margin-top: calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  max-width: var(--measure-reading);
+}
+
+.pp-count {
+  margin: 0 0 calc(var(--space-unit) * 3);
+}
+
+.pp-loading,
+.pp-empty {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+/* ---- Clause list -------------------------------------------------------- */
+
+.pp-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-clause {
+  /* Anchor targets must clear the 64 px sticky header (components/nav). */
+  scroll-margin-top: calc(64px + 8px);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  padding: calc(var(--space-unit) * 6);
+  transition:
+    border-color var(--duration-fast) var(--ease-decel),
+    background-color var(--duration-fast) var(--ease-decel);
+}
+
+/* Arriving from a decision banner: mark the cited clause without relying on
+   colour alone — the permalink is the clause id, always visible. */
+.pp-clause:target {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pp-clause-body {
+  display: block;
+}
+
+.pp-clause-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  margin-bottom: calc(var(--space-unit) * 2);
+}
+
+.pp-clause-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  font-weight: var(--weight-title);
+}
+
+.pp-clause-text {
+  max-width: var(--measure-reading);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  color: var(--ink);
+}
+
+/* The id doubles as the anchor permalink, so it is always copyable. */
+.pp-permalink {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  color: var(--accent);
+  text-decoration: none;
+  transition:
+    border-color var(--duration-fast) var(--ease-decel),
+    background-color var(--duration-fast) var(--ease-decel);
+}
+
+.pp-permalink:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Touch targets are at least 44 px (docs/design.md §9). */
+@media (pointer: coarse) {
+  .pp-permalink {
+    min-height: 44px;
+  }
+}
+
+/* ---- Error state -------------------------------------------------------- */
+
+.pp-notice {
+  max-width: var(--measure-reading);
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  /* The critical colour marks the edge; the heading is ink, so the state is
+     never conveyed by colour alone (docs/design.md §9). */
+  border-inline-start: 4px solid var(--critical);
+  border-radius: var(--corner-card);
+}
+
+.pp-notice-title {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.pp-notice-text {
+  color: var(--ink-2);
+}
+
+.pp-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: calc(var(--space-unit) * 4);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-control);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-decel);
+}
+
+.pp-button:hover {
+  opacity: 0.9;
+}
+
+/* ---- Responsive --------------------------------------------------------- */
+
+@media (max-width: 40rem) {
+  .pp-clause {
+    padding: calc(var(--space-unit) * 4);
+  }
+
+  .pp-clause-head {
+    align-items: flex-start;
+  }
+}
