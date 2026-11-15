@@ -15,12 +15,15 @@ shared declarative base before ``create_app`` creates tables.
 
 See :mod:`app.modules.ledger.service` for append and subscription semantics,
 :mod:`app.modules.ledger.hashing` for the hash-chain rule,
-:mod:`app.modules.ledger.origin` for how ``origin_node`` is resolved and
+:mod:`app.modules.ledger.origin` for how ``origin_node`` is resolved,
 :mod:`app.modules.ledger.sync_range` for the replay endpoint
-``GET /v1/sync/range?from=&to=`` this package serves.
+``GET /v1/sync/range?from=&to=`` and :mod:`app.modules.ledger.records` for
+the envelope endpoint ``GET /v1/records/{cid}`` this package serves.
 """
 
 from __future__ import annotations
+
+from fastapi import APIRouter
 
 from .hashing import (
     GENESIS_PREV_HASH,
@@ -50,7 +53,36 @@ from .service import (
     subscriber_count,
     unsubscribe,
 )
-from .sync_range import MAX_PAGE, REVERSED_RANGE_TYPE, SyncEntry, router
+from .records import (
+    RECORD_NOT_FOUND_TYPE,
+    RecordEnvelope,
+    stored_envelope,
+)
+from .records import router as _records_router
+from .service import (
+    WILDCARD,
+    RecordSubscriber,
+    append,
+    append_entry,
+    append_record,
+    clear_subscribers,
+    entries,
+    entry_by_cid,
+    latest,
+    subscribe,
+    subscribed_types,
+    subscriber_count,
+    unsubscribe,
+)
+from .sync_range import MAX_PAGE, REVERSED_RANGE_TYPE, SyncEntry
+from .sync_range import router as _sync_router
+
+#: Router the module loader mounts under ``/v1``: every endpoint the ledger
+#: plugin serves, assembled from its per-endpoint routers (``/v1/sync/range``
+#: and ``/v1/records/{cid}``).
+router = APIRouter()
+router.include_router(_sync_router)
+router.include_router(_records_router)
 
 __all__ = [
     "DEFAULT_ORIGIN_NODE",
@@ -60,7 +92,9 @@ __all__ = [
     "HASH_SIZE",
     "LedgerEntry",
     "MAX_PAGE",
+    "RECORD_NOT_FOUND_TYPE",
     "REVERSED_RANGE_TYPE",
+    "RecordEnvelope",
     "RecordSubscriber",
     "SyncEntry",
     "WILDCARD",
@@ -76,6 +110,7 @@ __all__ = [
     "latest",
     "node_did",
     "router",
+    "stored_envelope",
     "subscribe",
     "subscribed_types",
     "subscriber_count",
