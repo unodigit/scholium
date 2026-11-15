@@ -30,7 +30,8 @@ import re
 from collections.abc import Buffer
 from typing import Optional
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app import db
 
@@ -39,12 +40,20 @@ from .errors import BlobConflict, BlobNotFound, InvalidMediaType, InvalidScanSta
 from .models import SCAN_SCANNING, SCAN_STATUSES, Blob, ensure_table
 
 __all__ = [
+    "DENYLIST_TABLE",
     "get_blob",
+    "is_tombstoned",
     "normalize_media_type",
     "set_scan_status",
     "store_bytes",
     "store_stream",
 ]
+
+#: Table in which moderation records tombstoned cids (``app_spec.xml``).  It
+#: is created by the moderation plugin, which depends on this one, so it may
+#: not exist yet: :func:`is_tombstoned` treats its absence as "nothing has
+#: been tombstoned".
+DENYLIST_TABLE = "denylist"
 
 # Mirrors the manifest's rule for ``mediaType`` (scholium_record_core.manifest):
 # a bare lowercase RFC 6838 ``type/subtype``, no parameters, no wildcards.  A
@@ -128,6 +137,30 @@ def get_blob(cid: str) -> Optional[Blob]:
         if blob is not None:
             session.expunge(blob)
         return blob
+
+
+def is_tombstoned(cid: str) -> bool:
+    """Whether moderation has tombstoned ``cid``.
+
+    Tombstoning is recorded in the shared ``denylist`` table by the moderation
+    plugin.  That plugin depends on this one, so the table may not exist at
+    all: absent (or unreadable -- a database problem surfaces on the blob
+    lookup anyway) means ``False``.  A malformed cid is not a cid, so it is
+    not tombstoned either.
+    """
+    if not isinstance(cid, str):
+        return False
+    try:
+        if not inspect(db.engine).has_table(DENYLIST_TABLE):
+            return False
+        with db.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT 1 FROM denylist WHERE cid = :cid LIMIT 1"),
+                {"cid": cid},
+            ).first()
+    except SQLAlchemyError:
+        return False
+    return row is not None
 
 
 def set_scan_status(cid: str, status: str) -> Blob:

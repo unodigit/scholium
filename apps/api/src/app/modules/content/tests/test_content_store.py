@@ -568,17 +568,16 @@ def test_content_dir_follows_settings_changes(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_module_is_discovered_and_registers_blobs_without_adding_routes():
+def test_module_is_discovered_and_registers_blobs_and_the_content_route():
     app = FastAPI()
-    before = len(app.routes)
 
     loaded = module_loader.load_modules(app)
 
     assert content in loaded
     assert "blobs" in db.Base.metadata.tables
-    # Serving bytes is feature 44; this module contributes no router.
-    assert not hasattr(content, "router")
-    assert not any(getattr(r, "path", "").startswith("/v1/content") for r in app.routes[before:])
+    # Feature 44 adds the byte-serving route; the loader mounts it under /v1.
+    assert content.router is not None
+    assert "/v1/content/{cid}" in app.openapi()["paths"]
 
 
 def test_create_app_creates_the_blobs_table():

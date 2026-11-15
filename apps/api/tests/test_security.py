@@ -313,7 +313,9 @@ def test_403_still_names_both_tiers_when_the_scope_has_no_exception_handlers(mon
     response = TestClient(_add_routes(FastAPI())).get("/tier/4", headers=_bearer(issue_access_token(DID, 2)))
 
     assert response.status_code == 403
-    assert response.headers["content-type"] == "application/json"
+    # Without a security-specific handler the app-wide RFC 9457 handler renders
+    # the HTTPException; the tiers must still be named in the detail.
+    assert response.headers["content-type"] == "application/problem+json"
     assert "tier 4 (Moderator)" in response.json()["detail"]
     assert "tier 2 (Author)" in response.json()["detail"]
 
