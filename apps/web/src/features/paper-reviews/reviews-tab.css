@@ -1,0 +1,466 @@
+/* ============================================================================
+   ReviewsTab — docs/design.md §5.2 (Reviews margin tab), §3 (tokens), §7
+   (review card), §9 (accessibility), §10 (responsive behaviour).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work. Rules are
+   prefixed `pr-` (paper reviews) so nothing leaks into other features.
+
+   Colour rules (src/styles/README.md):
+   - Text is --ink or --ink-2. A recommendation's family is carried by its
+     icon and tint, never by the word: "Major concerns" is --ink on a
+     --pending-soft fill, and the alert icon is the only tinted part.
+   - --ai is never used here: these are people's reviews, not AI output.
+   - The rubric dots use --accent, a neutral ink blue, not a status colour:
+     a score is not a paper status.
+   - No shadow: only the annotation popover floats (§3).
+
+   Layout: the tab lives in a 360 px margin panel, so everything stacks and
+   every row wraps rather than scrolls. Controls are at least 44 px tall (§9).
+   The summary bar is a set of labelled meters; the dots are decorative and
+   every value is also written beside them.
+
+   Unlayered on purpose, like the other kit stylesheets: a component
+   stylesheet must not re-declare Tailwind's cascade layers. No outer margin
+   is set; the paper page's margin panel owns the spacing.
+   ============================================================================ */
+
+.pr-tab {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- Loading, empty, failed ---------------------------------------------- */
+
+.pr-loading {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.pr-failure {
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+}
+
+.pr-failure__text {
+  margin: 0 0 calc(var(--space-unit) * 3);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.pr-button {
+  min-block-size: 2.75rem;
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pr-button:hover {
+  border-color: var(--accent);
+}
+
+.pr-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Tin summary line and the gate note ---------------------------------- */
+
+.pr-summary-line {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pr-gate {
+  margin: calc(var(--space-unit) * 3) 0 0;
+  padding: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- The median-per-dimension summary bar -------------------------------- */
+
+.pr-summary {
+  margin-block-start: calc(var(--space-unit) * 4);
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+}
+
+.pr-summary__title {
+  margin: 0;
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+}
+
+.pr-summary__note {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pr-summary__rows {
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * 3) 0 0;
+}
+
+.pr-summary__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.pr-summary__label {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.pr-summary__reading {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.pr-meter {
+  display: inline-block;
+  inline-size: 4.5rem;
+  block-size: 0.375rem;
+  overflow: hidden;
+  border-radius: var(--corner-pill);
+  background-color: var(--rule);
+}
+
+.pr-meter__fill {
+  display: block;
+  block-size: 100%;
+  border-radius: var(--corner-pill);
+  background-color: var(--accent);
+}
+
+.pr-summary__value {
+  min-inline-size: 4.5rem;
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  text-align: end;
+  white-space: nowrap;
+}
+
+/* ---- Review cards -------------------------------------------------------- */
+
+.pr-list {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+  margin: calc(var(--space-unit) * 4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pr-list__item {
+  min-inline-size: 0;
+}
+
+.pr-card {
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+}
+
+.pr-card__header {
+  min-inline-size: 0;
+}
+
+.pr-card__label {
+  margin: 0;
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pr-card__meta {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* The recommendation: an icon of its own shape, a tint, and always the word.
+   The icon is the only part that carries the family's status colour. */
+.pr-recommendation {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-unit);
+  margin: calc(var(--space-unit) * 2) 0 0;
+  padding: var(--space-unit) calc(var(--space-unit) * 2);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+}
+
+.pr-recommendation svg {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  flex: none;
+}
+
+.pr-recommendation--supportive {
+  border-color: var(--verified);
+  background-color: var(--verified-soft);
+}
+
+.pr-recommendation--supportive svg {
+  color: var(--verified);
+}
+
+.pr-recommendation--concerned {
+  border-color: var(--pending);
+  background-color: var(--pending-soft);
+}
+
+.pr-recommendation--concerned svg {
+  color: var(--pending);
+}
+
+.pr-recommendation--rejecting {
+  border-color: var(--critical);
+  background-color: var(--critical-soft);
+}
+
+.pr-recommendation--rejecting svg {
+  color: var(--critical);
+}
+
+.pr-recommendation--neutral {
+  border-color: var(--rule);
+  background-color: var(--surface);
+}
+
+.pr-recommendation--neutral svg {
+  color: var(--ink-2);
+}
+
+/* ---- The rubric: dots, and the text that carries the value --------------- */
+
+.pr-rubric {
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * 4) 0 0;
+}
+
+.pr-rubric__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.pr-rubric__label {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.pr-rubric__reading {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.pr-dots {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.pr-dot {
+  display: block;
+  inline-size: 0.4375rem;
+  block-size: 0.4375rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background-color: var(--surface);
+}
+
+.pr-dot--on {
+  border-color: var(--accent);
+  background-color: var(--accent);
+}
+
+.pr-rubric__score {
+  min-inline-size: 4.25rem;
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.pr-rubric__none {
+  margin: calc(var(--space-unit) * 4) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- The expandable report ----------------------------------------------- */
+
+.pr-report {
+  margin-block-start: calc(var(--space-unit) * 4);
+  padding-block-start: calc(var(--space-unit) * 2);
+  border-block-start: 1px solid var(--rule);
+}
+
+.pr-report__summary {
+  display: flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.pr-report__summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pr-report__body {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pr-report__sealed {
+  margin: calc(var(--space-unit) * 4) 0 0;
+  padding: calc(var(--space-unit) * 3);
+  border: 1px dashed var(--rule);
+  border-radius: var(--corner-control);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- Author replies ------------------------------------------------------ */
+
+.pr-replies {
+  margin-block-start: calc(var(--space-unit) * 4);
+  padding-block-start: calc(var(--space-unit) * 3);
+  border-block-start: 1px solid var(--rule);
+}
+
+.pr-replies__title {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+}
+
+.pr-reply {
+  margin-block-start: calc(var(--space-unit) * 3);
+  padding-inline-start: calc(var(--space-unit) * 3);
+  border-inline-start: 2px solid var(--rule);
+}
+
+.pr-reply__meta {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pr-reply__text {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.pr-reply__items {
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * 2) 0 0;
+}
+
+.pr-reply__item {
+  min-inline-size: 0;
+}
+
+.pr-reply__label {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+}
+
+.pr-reply__answer {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Footer -------------------------------------------------------------- */
+
+.pr-footnote {
+  margin: calc(var(--space-unit) * 4) 0 0;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pr-link {
+  color: var(--accent);
+}
+
+/* ---- Narrow panels ------------------------------------------------------- */
+
+@media (max-width: 30rem) {
+  .pr-summary__row,
+  .pr-rubric__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-unit);
+  }
+
+  .pr-summary__value,
+  .pr-rubric__score {
+    min-inline-size: 0;
+    text-align: start;
+  }
+}
+
+/* Reduced motion changes nothing here on purpose: the panel has no animation,
+   because a report opening should follow the reader's own click, not a
+   transition that could be mistaken for content arriving (§9). */

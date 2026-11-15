@@ -1,0 +1,66 @@
+/* ============================================================================
+   Shell for the standalone Reviews page (`/reviews/…`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame and the page header live here: the global
+   navigation is mounted by the layout, and the panel's own styles live with
+   the feature (`features/paper-reviews/reviews-tab.css`). Every value is a
+   design token; no colour is set here.
+   ============================================================================ */
+
+.prs-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--margin-panel) + var(--space-unit) * 16);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .prs-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
+
+.prs-header {
+  margin-block-end: calc(var(--space-unit) * 6);
+}
+
+.prs-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.prs-title {
+  margin: 0;
+}
+
+.prs-lede {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.prs-notice {
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.prs-notice__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.prs-notice__text {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
