@@ -8,7 +8,8 @@
 `SubmitWizard` keeps the Files step mounted while later steps are open, so
 going back finds the same uploads, and it owns the Details draft, the author
 roster and the finished files so stepping back and forward keeps what was
-typed.
+typed. The **New version form** (`/submit/new-version/[ref]`, below) extends a
+paper that already exists instead of starting one.
 
 ## Step 1 — Files
 
@@ -211,6 +212,56 @@ never leaves the device.
 `consent-version.verify-core.test.ts` signs real consents with Ed25519 keys and
 checks the real `verifyPaper` counts them (accept, decline, missing).
 
+## The New version form — `/submit/new-version/[ref]`
+
+Where an author publishes the **next** version of a paper that already exists
+(feature 163). `/submit` signs a `paper.genesis` and starts a paper; this form
+signs exactly one `paper.version` whose envelope **`prev` is the cid of the
+paper's current latest version** and whose `n` is one more — the only pair the
+API's chain check accepts (`apps/api/.../submissions/versions.py` refuses
+anything else with `409`). The route is
+`apps/web/src/app/(submit)/submit/new-version/[ref]/page.tsx`; `[ref]` is the
+paper's `sch:` id (or a record cid), URL-encoded by `newVersionHref` — the
+href the paper page's **Submit a new version** action (`NewVersionLink`) uses.
+
+- **Pre-filled from what was signed, not from a summary.** The form asks
+  `GET /v1/papers/{id}` which version is the latest listed, then reads that
+  version's own record (`GET /v1/records/{versionCid}`) and recomputes its id
+  with verify-core before showing anything — an author edits what the previous
+  version committed to, or they are editing a claim nobody signed (the same
+  rule `/consent` signs under). Title, abstract, categories and licence are
+  filled in and edited through the wizard's own `DetailsStep` ("Continue to
+  the change note").
+- **A change note is required.** The one field a new version must answer:
+  what changed, up to 500 characters, counted beside the field. Signing stays
+  closed until it is written (and the details are complete).
+- **Carried over, and said so.** The byline (names, ORCID iDs, CRediT roles,
+  order) and the file manifest are signed exactly as the previous version
+  signed them; a "Carried over from version N" card says so in words rather
+  than implying files were chosen again. A key that is not on the byline is
+  named in a notice, not hidden; whether it may publish is the server's to
+  say (its rule is a trust tier, not byline membership).
+- **Signing.** `submitNewVersion` signs
+  `paper.version` with `prev = latest version cid`, checks the signed record
+  really is a `paper.version` carrying that `prev` (a broken signer fails on
+  the device rather than forking the timeline on the server), then posts it
+  once to `POST /v1/records`. Afterwards the page shows the same status
+  tracker as the wizard's Sign step — every listed author is asked to consent
+  again — polling `GET /v1/papers/{id}/v/{n}/consents` for the **new** number.
+- **A version that landed first.** Two authors editing at once, or this form
+  opened before another version landed, means a stale `prev`; the server
+  answers `409` and the form says what happened and offers **Load the paper
+  again** — a fresh pre-fill that keeps the change note the author typed,
+  because what they changed is still theirs to say. A dismissed passkey
+  prompt says nothing was sent and can be asked again.
+
+`new-version.test.ts` pins the ref parsing, the checked load, the pre-filled
+draft, the record body (`paper`, `n + 1`, carried byline and manifest,
+trimmed note), the signer checks and every failure sentence;
+`new-version-page.test.tsx` drives the rendered form; and
+`new-version-route.test.tsx` pins the server's first HTML (loading, and
+never a sign button before the browser has checked the paper).
+
 ## For the next steps
 
 `FilesStep` reports the finished files as `SubmitFile[]` — `{ id, path, size,
@@ -255,6 +306,9 @@ for step 5 and the post-submit status page.
 | `use-checks.ts` | polls the report while the node is scanning |
 | `checks-step.tsx` | the Checks step: four results, per-file safety, fix actions, Continue |
 | `use-submitter-did.ts` | the submitter's DID, from this device's key |
+| `new-version.ts` | the New version form's rules, no React: ref parsing, the checked load, the pre-filled draft, the `paper.version` body (`prev` = latest), signing and failures in words |
+| `new-version-page.tsx`, `new-version.css` | `/submit/new-version/[ref]`: the Details step pre-filled, the change note, the carried-over card, sign and the status tracker |
+| `new-version-link.tsx` | the paper page's **Submit a new version** action: a server-safe link to the form |
 | `wizard-rail.tsx`, `wizard-steps.ts`, `submit-wizard.tsx` | the shell, progress rail and step switching |
 | `submit.css` | styles; global design tokens only |
 
@@ -268,15 +322,22 @@ and exposes `Location`, `Upload-Offset` and `Upload-Cid`. The API has no CORS
 configuration yet; the change needed in `apps/api/src/app/main.py` was reported
 to the operator rather than made here.
 
+**The paper page's link to the New version form.** The paper page lives in the
+`search-page` plugin (`apps/web/src/features/search-page/paper-page.tsx`), so
+the one-line edit that renders this feature's `NewVersionLink` there was
+reported to the operator rather than made here; the form itself is reachable
+at `/submit/new-version/{paper id}` meanwhile.
+
 **Signing.** Everything this feature signs goes through `signRecord`
 (`features/web-auth`), which signs the binary **CID bytes**. The API
 (`ingest/service.py` → `verify_envelope`) and verify-core check the signature
 over the canonical **record bytes** (`record_bytes` / `recordBytes`), so a record
 signed by `signRecord` as it stands fails with `401` at `POST /v1/records` — the
-Sign step's records and the consent page's alike. The fix is in
-`web-auth/sign-record.ts` (sign `recordBytes(envelope)`) and was reported to the
-operator rather than made here; the consent page works against a real API once it
-lands. Its tests inject their own signer, so they do not depend on it.
+Sign step's records, the consent page's and the New version form's alike. The
+fix is in `web-auth/sign-record.ts` (sign `recordBytes(envelope)`) and was
+reported to the operator rather than made here; the pages work against a real
+API once it lands. Their tests inject their own signer, so they do not depend
+on it.
 
 Step 4 asks for `GET /v1/papers/{id}/v/{n}/checks`, and the API exposes no such
 route yet: the checks plugin writes `check_results` and the sanitizer writes each

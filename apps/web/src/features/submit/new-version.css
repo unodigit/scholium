@@ -1,0 +1,138 @@
+/* ============================================================================
+   The New version form (/submit/new-version/[ref]).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work. Everything the
+   form shares with the wizard (fields, chips, buttons, notices, the summary
+   card) is styled by submit.css; this sheet adds only what the form alone
+   shows: the carried-over facts, the byline, the loading line and the record
+   line after signing.
+
+   Unlayered on purpose, like the other feature stylesheets.
+   ============================================================================ */
+
+.nv-lede {
+  max-width: var(--reading-column);
+}
+
+.nv-loading {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.nv-back {
+  margin: 0;
+  font-size: var(--type-meta);
+}
+
+.nv-back a {
+  color: var(--accent);
+}
+
+/* The facts of the previous version the form carries over unchanged. */
+.nv-carried {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.nv-facts {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.nv-facts__row {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: calc(var(--space-unit) * 2);
+  align-items: baseline;
+}
+
+.nv-facts__row > dt {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.nv-facts__row > dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.nv-facts__more {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+}
+
+.nv-mono {
+  font-family: var(--family-mono);
+  font-size: var(--type-meta);
+  overflow-wrap: anywhere;
+}
+
+/* The byline, read-only: carried into the signed version as it stands. */
+.nv-byline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-unit);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-byline__author {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: calc(var(--space-unit) * 2);
+  row-gap: calc(var(--space-unit) / 2);
+  align-items: baseline;
+}
+
+.nv-byline__name {
+  font-weight: 600;
+}
+
+.nv-byline__roles {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.nv-carried__note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* The version record line after signing. */
+.nv-record {
+  margin: 0;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.nv-record a {
+  color: var(--accent);
+}
+
+/* An action inside a notice sentence (the stale-chain reload). */
+.nv-inline-action {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.nv-inline-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

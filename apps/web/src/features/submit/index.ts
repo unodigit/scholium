@@ -168,6 +168,43 @@ export { useConsentVersion, type ConsentVersionState } from "./use-consent-versi
 export { useDeviceDid } from "./use-device-did";
 export { useSubmitterDid } from "./use-submitter-did";
 
+export { NewVersionLink, type NewVersionLinkProps } from "./new-version-link";
+export { NewVersionPage, type NewVersionPageProps } from "./new-version-page";
+
+export {
+  CHANGE_NOTE_MAX,
+  NEW_VERSION_RECORD_TYPE,
+  NewVersionPaperError,
+  WrongRecordError,
+  bylineAsDraft,
+  canSignNewVersion,
+  describeNewVersionError,
+  draftFromPaper,
+  fetchNewVersionPaper,
+  loadNewVersionPaper,
+  newVersionBlockers,
+  newVersionBody,
+  newVersionHref,
+  newVersionLoadErrorMessage,
+  parseNewVersionRef,
+  recordAuthorEntries,
+  submitNewVersion,
+  type FetchNewVersionPaper,
+  type LoadNewVersion,
+  type LoadNewVersionOptions,
+  type NewVersionAuthor,
+  type NewVersionDraft,
+  type NewVersionFailure,
+  type NewVersionPaper,
+  type NewVersionPaperErrorCode,
+  type NewVersionSubmitted,
+  type ParsedNewVersionRef,
+  type SignVersionRecord,
+  type SubmitNewVersionOptions,
+  type SubmitVersionRecord,
+  type VersionRecordAccepted,
+} from "./new-version";
+
 export {
   ABSTRACT_MAX_LENGTH,
   CATEGORIES,
