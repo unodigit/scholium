@@ -5,6 +5,12 @@ record, file and log entry for one paper, so a reader can keep and verify a
 copy offline.  See :mod:`app.modules.export.paper_car` for the route and
 :mod:`app.modules.export.paper` for what an archive holds.
 
+Feature 93: ``GET /v1/export/archive.car`` returns the node's complete public
+archive -- every log entry, record and file, rooted at the node-signed log head
+and without tombstoned bytes -- so a third party can keep the whole node and
+rebuild it; see :mod:`app.modules.export.archive_car` for the route and
+:mod:`app.modules.export.archive` for what the archive holds.
+
 Feature 94: ``GET /v1/oai`` is this node's OAI-PMH 2.0 interface.  Every listed
 paper is one record with Dublin Core (``oai_dc``) metadata, so a harvester can
 mirror the public catalog without understanding Scholium's signed records; see
@@ -24,6 +30,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from .archive_car import router as _archive_car_router
 from .cite import router as _cite_router
 from .oai import router as _oai_router
 from .paper_car import router as _paper_car_router
@@ -33,6 +40,7 @@ __all__ = ["router"]
 
 #: Mounted under ``/v1`` by the module loader.  One sub-router per endpoint.
 router = APIRouter()
+router.include_router(_archive_car_router)
 router.include_router(_cite_router)
 router.include_router(_oai_router)
 router.include_router(_paper_car_router)

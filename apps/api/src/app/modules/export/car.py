@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import BinaryIO, Iterable, Sequence
 
 import dag_cbor
 from multiformats import CID
@@ -44,6 +44,7 @@ __all__ = [
     "encode_car",
     "encode_section",
     "encode_varint",
+    "write_car",
 ]
 
 #: The only CAR version this module writes.
@@ -115,3 +116,21 @@ def encode_car(roots: Iterable[CID], blocks: Iterable[Block]) -> bytes:
     return _header(tuple(roots)) + b"".join(
         encode_section(block.cid, block.data) for block in blocks
     )
+
+
+def write_car(out: BinaryIO, roots: Iterable[CID], blocks: Iterable[Block]) -> int:
+    """Write the CARv1 archive of ``blocks`` to ``out``; return its size in bytes.
+
+    The same bytes :func:`encode_car` returns, but each section is written as
+    its block is produced, so ``blocks`` may be a generator and only one block
+    is held in memory at a time -- what an archive of a whole node needs.
+    """
+    written = 0
+    header = _header(tuple(roots))
+    out.write(header)
+    written += len(header)
+    for block in blocks:
+        section = encode_section(block.cid, block.data)
+        out.write(section)
+        written += len(section)
+    return written
