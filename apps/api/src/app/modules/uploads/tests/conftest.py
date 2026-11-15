@@ -3,6 +3,9 @@
 Mirrors apps/api/tests/conftest.py (which only applies to that tree):
 a per-xdist-worker SQLite database, set before ``app`` is imported,
 and a TestClient over the real app assembled by the module loader.
+Every test also gets its own empty ``CONTENT_DIR`` under ``tmp_path``:
+uploads stage their bytes there, and the default (``./data/content``)
+is relative to the working directory and must never be written by tests.
 """
 
 import os
@@ -24,6 +27,15 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
+from app.settings import settings  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def content_root(tmp_path, monkeypatch) -> Path:
+    """Point ``CONTENT_DIR`` at a fresh directory for the duration of a test."""
+    root = tmp_path / "content"
+    monkeypatch.setattr(settings, "CONTENT_DIR", str(root))
+    return root
 
 
 @pytest.fixture

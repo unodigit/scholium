@@ -13,18 +13,36 @@ without touching any shared file.
 
 from __future__ import annotations
 
+import fcntl
+import os
+import re
 import secrets
-from typing import Optional
+from pathlib import Path
+from typing import BinaryIO, Optional
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text, func, update
 from sqlalchemy.orm import Session
 
 from app.db import Base
+from app.settings import settings
 
 #: An upload that has been created but has not yet received all its bytes.
 STATE_PENDING = "pending"
 #: Every declared byte has been received (set when the upload completes).
 STATE_COMPLETED = "completed"
+
+#: Subdirectory of ``CONTENT_DIR`` holding the bytes of uploads in flight.
+#: No CID starts with a dot, so it can never collide with a stored blob, and
+#: sharing the volume lets a finished upload move into the content store
+#: without crossing filesystems.
+STAGING_DIRNAME = ".uploads"
+
+#: What :func:`_new_upload_id` produces (``secrets.token_urlsafe``).
+_UPLOAD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+class UploadBusy(Exception):
+    """Another request is appending to this upload right now."""
 
 
 def _new_upload_id() -> str:
@@ -83,3 +101,84 @@ def create_upload(
 def get_upload(session: Session, upload_id: str) -> Optional[Upload]:
     """Return the upload with ``upload_id``, or ``None`` when it does not exist."""
     return session.get(Upload, upload_id)
+
+
+def advance_offset(
+    session: Session,
+    upload_id: str,
+    *,
+    expected_offset: int,
+    new_offset: int,
+    upload_length: Optional[int] = None,
+) -> bool:
+    """Record that bytes ``expected_offset`` .. ``new_offset`` were received.
+
+    This is a compare-and-swap: the row only moves when its offset is still
+    ``expected_offset``, so a writer that lost a race can never move it
+    backwards or past bytes someone else wrote. Returns whether it moved.
+
+    ``upload_length`` fixes the total size of an upload that was created with
+    ``Upload-Defer-Length``; it is ignored once a length is known. The upload
+    becomes ``completed`` as soon as ``new_offset`` reaches its length.
+    """
+    upload = session.get(Upload, upload_id)
+    if upload is None:
+        return False
+    values: dict[str, object] = {"upload_offset": new_offset}
+    length = upload.upload_length
+    if length is None and upload_length is not None:
+        length = values["upload_length"] = upload_length
+    if length is not None and new_offset == length:
+        values["state"] = STATE_COMPLETED
+    result = session.execute(
+        update(Upload).where(Upload.id == upload_id, Upload.upload_offset == expected_offset).values(**values)
+    )
+    session.commit()
+    return result.rowcount == 1
+
+
+def staging_dir() -> Path:
+    """Where in-flight upload bytes live, from ``settings.CONTENT_DIR`` (read on every call)."""
+    configured = settings.CONTENT_DIR
+    if not configured or not configured.strip():
+        # ``Path("")`` is the current directory: refuse rather than scatter
+        # bytes wherever the process happens to have been started.
+        raise RuntimeError("CONTENT_DIR is not configured")
+    return Path(configured) / STAGING_DIRNAME
+
+
+def staged_path(upload_id: str) -> Path:
+    """Where the bytes received so far for ``upload_id`` live (whether or not any have arrived).
+
+    Raises:
+        ValueError: if ``upload_id`` is not one of our ids, which is what keeps
+            a client-supplied id from naming a path outside the staging directory.
+    """
+    if not _UPLOAD_ID.fullmatch(upload_id):
+        raise ValueError(f"not an upload id: {upload_id!r}")
+    return staging_dir() / upload_id
+
+
+def open_staged(upload_id: str) -> BinaryIO:
+    """Open the staged bytes of ``upload_id`` for reading and writing, exclusively.
+
+    The file is created empty if no bytes have arrived yet. The caller holds an
+    exclusive lock on it until it closes the returned file, so two requests can
+    never interleave their writes into one upload.
+
+    Raises:
+        UploadBusy: if another request holds the upload (it is not waited for:
+            a stalled client must not pin a worker thread).
+    """
+    path = staged_path(upload_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise UploadBusy(upload_id) from None
+        return os.fdopen(fd, "r+b")
+    except BaseException:
+        os.close(fd)
+        raise
