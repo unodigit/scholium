@@ -42,15 +42,15 @@
     {
       "name": "manifest-record",
       "description": "the manifest vector id",
-      "genesis_cid": "bafyreie6ulqlp3667jrwf33u3trxessrmjq6hu3ziflot7vvrblv6mt7am",
+      "genesis_cid": "bafyreidjpnwems6u37wwjmckcpcgjiiq5lfghta2ujf3ogs22kcxws7vli",
       "version_ids": {
-        "1": "sch:t2ro-bn7p-33uf/v1",
-        "2": "sch:t2ro-bn7p-33uf/v2",
-        "10": "sch:t2ro-bn7p-33uf/v10",
-        "999999999": "sch:t2ro-bn7p-33uf/v999999999"
+        "1": "sch:nf5w-yrsl-2tm2/v1",
+        "2": "sch:nf5w-yrsl-2tm2/v2",
+        "10": "sch:nf5w-yrsl-2tm2/v10",
+        "999999999": "sch:nf5w-yrsl-2tm2/v999999999"
       },
-      "digest_hex": "9ea2e0b7efdefa6362ef74dce3724a516261e3d3794156e9feb588575f327f03",
-      "short_id": "sch:t2ro-bn7p-33uf"
+      "digest_hex": "697b6c464bd4dfed64b04a13c464a110eaca63cc1aa24bb71a5ad2857b4bf55a",
+      "short_id": "sch:nf5w-yrsl-2tm2"
     },
     {
       "name": "discussion-record",

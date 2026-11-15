@@ -1,0 +1,751 @@
+{
+  "version": 1,
+  "description": "Cross-language test vectors for Scholium manifest bodies. A manifest body is {\"files\": [...]} where each entry carries exactly path, cid, size, mediaType and role. Every implementation must canonicalize each vector's body into files (entries kept in order, entry fields re-ordered to file_fields) and reject every entry of invalid with the stated error kind: body means the body itself is malformed, path/cid/size/mediaType/role mean that field of some files[i] fails its rule, fields means an entry is missing a field, carries an extra one or is not a mapping.",
+  "manifest": {
+    "record_type": "manifest",
+    "body_fields": [
+      "files"
+    ],
+    "file_fields": [
+      "path",
+      "cid",
+      "size",
+      "mediaType",
+      "role"
+    ],
+    "roles": [
+      "bibliography",
+      "code",
+      "cover",
+      "dataset",
+      "figure",
+      "manuscript",
+      "other",
+      "source",
+      "style",
+      "supplementary",
+      "table"
+    ],
+    "max_file_size": 9007199254740991,
+    "max_path_length": 1024,
+    "files": "a non-empty list; paths must be unique across it",
+    "path": "normalized relative POSIX path: '/' separators, no leading '/', no empty, '.' or '..' components, no backslashes, no control characters, at most max_path_length characters",
+    "cid": "canonical CIDv1 raw sha2-256 base32 file id as pinned by vectors/file_ids.json; record ids and any other CID spelling are rejected",
+    "size": "the file's exact byte length: an integer from 0 to max_file_size (the largest integer every JSON number port represents exactly); booleans and floats are rejected",
+    "mediaType": "bare lowercase RFC 6838 type/subtype, no parameters, no wildcards, no uppercase"
+  },
+  "vectors": [
+    {
+      "name": "single-manuscript",
+      "description": "the smallest valid manifest: one manuscript PDF (the manifest-main-pdf bytes of file_ids.json)",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "files": [
+        {
+          "path": "main.pdf",
+          "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+          "size": 21,
+          "mediaType": "application/pdf",
+          "role": "manuscript"
+        }
+      ]
+    },
+    {
+      "name": "paper-bundle",
+      "description": "the exact body of the manifest-files envelope in records.json: manuscript, figure and a staged dataset whose size above 2**32 is accepted",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          },
+          {
+            "path": "figures/plot.svg",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "image/svg+xml",
+            "role": "figure"
+          },
+          {
+            "path": "data/run0.hdf5",
+            "cid": "bafkreihgh47ygxnovl7l2nfr6hxhw3etpse4klzbhvx3knq3hr7nn3c3xi",
+            "size": 8589934592,
+            "mediaType": "application/x-hdf5",
+            "role": "dataset"
+          }
+        ]
+      },
+      "files": [
+        {
+          "path": "main.pdf",
+          "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+          "size": 21,
+          "mediaType": "application/pdf",
+          "role": "manuscript"
+        },
+        {
+          "path": "figures/plot.svg",
+          "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+          "size": 65,
+          "mediaType": "image/svg+xml",
+          "role": "figure"
+        },
+        {
+          "path": "data/run0.hdf5",
+          "cid": "bafkreihgh47ygxnovl7l2nfr6hxhw3etpse4klzbhvx3knq3hr7nn3c3xi",
+          "size": 8589934592,
+          "mediaType": "application/x-hdf5",
+          "role": "dataset"
+        }
+      ]
+    },
+    {
+      "name": "scrambled-key-order",
+      "description": "the paper-bundle entries with keys in scrambled order; canonical output re-orders entry fields to file_fields while keeping entry order, so the record id is unchanged",
+      "body": {
+        "files": [
+          {
+            "role": "manuscript",
+            "mediaType": "application/pdf",
+            "size": 21,
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "path": "main.pdf"
+          },
+          {
+            "size": 65,
+            "path": "figures/plot.svg",
+            "role": "figure",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "mediaType": "image/svg+xml"
+          },
+          {
+            "mediaType": "application/x-hdf5",
+            "path": "data/run0.hdf5",
+            "role": "dataset",
+            "cid": "bafkreihgh47ygxnovl7l2nfr6hxhw3etpse4klzbhvx3knq3hr7nn3c3xi",
+            "size": 8589934592
+          }
+        ]
+      },
+      "files": [
+        {
+          "path": "main.pdf",
+          "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+          "size": 21,
+          "mediaType": "application/pdf",
+          "role": "manuscript"
+        },
+        {
+          "path": "figures/plot.svg",
+          "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+          "size": 65,
+          "mediaType": "image/svg+xml",
+          "role": "figure"
+        },
+        {
+          "path": "data/run0.hdf5",
+          "cid": "bafkreihgh47ygxnovl7l2nfr6hxhw3etpse4klzbhvx3knq3hr7nn3c3xi",
+          "size": 8589934592,
+          "mediaType": "application/x-hdf5",
+          "role": "dataset"
+        }
+      ]
+    },
+    {
+      "name": "zero-byte-and-unicode-paths",
+      "description": "a zero-byte supplementary file (the empty vector's cid) beside unicode, spaced paths; size 0 is valid",
+      "body": {
+        "files": [
+          {
+            "path": "supplementary/appendix – café/中式附录.md",
+            "cid": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+            "size": 0,
+            "mediaType": "text/markdown",
+            "role": "supplementary"
+          },
+          {
+            "path": "code/analysis.tar.gz",
+            "cid": "bafkreicav7zotuwysixepl6umshgsz2jofmhqx55dwuhbzyrajtl7fciqa",
+            "size": 256,
+            "mediaType": "application/gzip",
+            "role": "code"
+          }
+        ]
+      },
+      "files": [
+        {
+          "path": "supplementary/appendix – café/中式附录.md",
+          "cid": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+          "size": 0,
+          "mediaType": "text/markdown",
+          "role": "supplementary"
+        },
+        {
+          "path": "code/analysis.tar.gz",
+          "cid": "bafkreicav7zotuwysixepl6umshgsz2jofmhqx55dwuhbzyrajtl7fciqa",
+          "size": 256,
+          "mediaType": "application/gzip",
+          "role": "code"
+        }
+      ]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "body-not-a-mapping",
+      "description": "a list is not a manifest body",
+      "body": [],
+      "error": "body"
+    },
+    {
+      "name": "body-missing-files",
+      "description": "no files key",
+      "body": {
+        "entries": []
+      },
+      "error": "body"
+    },
+    {
+      "name": "body-extra-key",
+      "description": "files plus an unknown body key",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ],
+        "note": "not part of a manifest body"
+      },
+      "error": "body"
+    },
+    {
+      "name": "body-empty-files",
+      "description": "a manifest with no files is meaningless",
+      "body": {
+        "files": []
+      },
+      "error": "body"
+    },
+    {
+      "name": "body-files-not-a-list",
+      "description": "files is a string, not a sequence of entries",
+      "body": {
+        "files": "main.pdf"
+      },
+      "error": "body"
+    },
+    {
+      "name": "path-absolute",
+      "description": "a leading slash makes the path absolute",
+      "body": {
+        "files": [
+          {
+            "path": "/etc/paper/main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-parent-escape",
+      "description": ".. escapes the bundle",
+      "body": {
+        "files": [
+          {
+            "path": "../../secret.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-dot-component",
+      "description": "a . component means the path is not normalized",
+      "body": {
+        "files": [
+          {
+            "path": "figures/./plot.svg",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "image/svg+xml",
+            "role": "figure"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-trailing-slash",
+      "description": "a trailing slash leaves an empty component",
+      "body": {
+        "files": [
+          {
+            "path": "figures/",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "image/svg+xml",
+            "role": "figure"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-empty-component",
+      "description": "a doubled separator leaves an empty component",
+      "body": {
+        "files": [
+          {
+            "path": "figures//plot.svg",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "image/svg+xml",
+            "role": "figure"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-backslash",
+      "description": "Windows separators are not POSIX",
+      "body": {
+        "files": [
+          {
+            "path": "figures\\plot.svg",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "image/svg+xml",
+            "role": "figure"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-not-a-string",
+      "description": "an integer path",
+      "body": {
+        "files": [
+          {
+            "path": 5,
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-empty-string",
+      "description": "the empty string is not a path",
+      "body": {
+        "files": [
+          {
+            "path": "",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-too-long",
+      "description": "1025 characters, one past max_path_length",
+      "body": {
+        "files": [
+          {
+            "path": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "path-duplicate",
+      "description": "two entries claiming the same path; the second is blamed with a reference to the first",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          },
+          {
+            "path": "main.pdf",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "path"
+    },
+    {
+      "name": "cid-not-a-string",
+      "description": "null instead of a cid",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": null,
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "cid"
+    },
+    {
+      "name": "cid-undecodable",
+      "description": "a bafkrei-shaped string with bad pad bits (see file_ids.json invalid/bad-padding-bits)",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreiabf3clzqizbyvthhz4yqetd7ab5cimxcj2wvbailc26snnaaw4qey",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "cid"
+    },
+    {
+      "name": "cid-record-id",
+      "description": "a dag-cbor record id is not a file id",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "cid"
+    },
+    {
+      "name": "cid-cidv0",
+      "description": "a CIDv0 dag-pb id is neither CIDv1 nor raw",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "cid"
+    },
+    {
+      "name": "cid-uppercase",
+      "description": "a valid file id spelled in uppercase base32; only the canonical lowercase form is accepted",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "BAFKREIF2SBZ225G2WOO56SAMODLOTNVVGLA7FRWSRSC6DEYBFGNSZZ57RM",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "cid"
+    },
+    {
+      "name": "size-negative",
+      "description": "a file cannot have negative length",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": -1,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "size"
+    },
+    {
+      "name": "size-float",
+      "description": "a fractional length; 12.5 is exactly representable in every port, and still rejected because sizes are integers",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 12.5,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "size"
+    },
+    {
+      "name": "size-string",
+      "description": "a decimal string is not an integer",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": "1024",
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "size"
+    },
+    {
+      "name": "size-boolean",
+      "description": "true is not the integer 1",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": true,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "size"
+    },
+    {
+      "name": "size-above-max",
+      "description": "one past max_file_size (2**53), where JSON number ports stop agreeing",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 9007199254740992,
+            "mediaType": "application/pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "size"
+    },
+    {
+      "name": "mediatype-with-parameters",
+      "description": "parameters do not belong in a manifest",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf; charset=utf-8",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "mediaType"
+    },
+    {
+      "name": "mediatype-uppercase",
+      "description": "media types are canonicalized to lowercase",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "Application/PDF",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "mediaType"
+    },
+    {
+      "name": "mediatype-no-slash",
+      "description": "a bare type without a subtype",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "pdf",
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "mediaType"
+    },
+    {
+      "name": "mediatype-wildcard",
+      "description": "wildcards are for Accept headers, not manifests",
+      "body": {
+        "files": [
+          {
+            "path": "figures/plot.svg",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "image/*",
+            "role": "figure"
+          }
+        ]
+      },
+      "error": "mediaType"
+    },
+    {
+      "name": "mediatype-not-a-string",
+      "description": "an integer media type",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": 7,
+            "role": "manuscript"
+          }
+        ]
+      },
+      "error": "mediaType"
+    },
+    {
+      "name": "role-unknown",
+      "description": "a misspelled figure; the message lists the known roles",
+      "body": {
+        "files": [
+          {
+            "path": "figures/plot.svg",
+            "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu",
+            "size": 65,
+            "mediaType": "image/svg+xml",
+            "role": "figrue"
+          }
+        ]
+      },
+      "error": "role"
+    },
+    {
+      "name": "role-empty",
+      "description": "the empty string is not a role",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": ""
+          }
+        ]
+      },
+      "error": "role"
+    },
+    {
+      "name": "role-not-a-string",
+      "description": "an integer role",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": 1
+          }
+        ]
+      },
+      "error": "role"
+    },
+    {
+      "name": "entry-missing-role",
+      "description": "an entry without its role",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf"
+          }
+        ]
+      },
+      "error": "fields"
+    },
+    {
+      "name": "entry-extra-field",
+      "description": "an entry carrying a checksum key beyond the five fields",
+      "body": {
+        "files": [
+          {
+            "path": "main.pdf",
+            "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm",
+            "size": 21,
+            "mediaType": "application/pdf",
+            "role": "manuscript",
+            "checksum": "sha256:2cf24d"
+          }
+        ]
+      },
+      "error": "fields"
+    },
+    {
+      "name": "entry-not-a-mapping",
+      "description": "a bare string is not a file entry",
+      "body": {
+        "files": [
+          "main.pdf"
+        ]
+      },
+      "error": "fields"
+    }
+  ]
+}

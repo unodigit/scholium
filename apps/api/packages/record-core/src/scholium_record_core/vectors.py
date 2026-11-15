@@ -8,10 +8,17 @@ the record core:
 * ``short_ids.json`` -- every implementation must derive each vector's
   ``short_id`` and ``version_ids`` from its ``genesis_cid`` alone, and
   reject every entry of ``invalid``.
+* ``file_ids.json`` -- every implementation must derive each vector's
+  ``digest_hex`` and ``cid`` from its ``bytes_hex`` alone, and reject
+  every entry of ``invalid``.
+* ``manifests.json`` -- every implementation must canonicalize each
+  vector's ``body`` into ``files``, and reject every entry of
+  ``invalid`` with the stated error kind.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -19,6 +26,8 @@ from typing import Any
 from multiformats import CID
 
 from .envelope import compute_record_id, record_bytes
+from .file_id import compute_file_id
+from .manifest import validate_manifest_body
 from .short_id import derive_short_id, format_version_id
 
 
@@ -52,6 +61,32 @@ def refresh_short_id_vectors(doc: dict[str, Any]) -> dict[str, Any]:
             number: format_version_id(short_id, int(number))
             for number in vector["version_ids"]
         }
+    return doc
+
+
+def refresh_file_id_vectors(doc: dict[str, Any]) -> dict[str, Any]:
+    """Recompute every file id vector's expected outputs in place.
+
+    ``digest_hex`` and ``cid`` are rewritten from ``bytes_hex``; the
+    ``bytes_hex`` inputs and the ``invalid`` inputs are preserved
+    verbatim.
+    """
+    for vector in doc["vectors"]:
+        data = bytes.fromhex(vector["bytes_hex"])
+        vector["digest_hex"] = hashlib.sha256(data).hexdigest()
+        vector["cid"] = compute_file_id(data)
+    return doc
+
+
+def refresh_manifest_vectors(doc: dict[str, Any]) -> dict[str, Any]:
+    """Recompute every manifest vector's canonical ``files`` in place.
+
+    ``files`` is rewritten as :func:`validate_manifest_body` renders the
+    vector's ``body``; the ``body`` inputs (which may carry scrambled
+    key order) and the ``invalid`` inputs are preserved verbatim.
+    """
+    for vector in doc["vectors"]:
+        vector["files"] = validate_manifest_body(vector["body"])["files"]
     return doc
 
 

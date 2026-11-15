@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "description": "Cross-language test vectors for Scholium file ids. A file id is the CIDv1 (raw codec, sha2-256, base32) over a file's exact bytes: the same id IPFS assigns a raw single-block file, always starting bafkrei. Every implementation must derive digest_hex and cid from bytes_hex alone, and reject every entry of invalid: format means the string does not decode as a CID at all, version/codec/hash mean it decodes but is not a CIDv1 raw sha2-256 id, canonical means it is such a CID but not spelled in canonical lowercase base32 (the exact form compute_file_id returns).",
+  "file_id": {
+    "cid_version": 1,
+    "codec": "raw",
+    "codec_code": "0x55",
+    "hash": "sha2-256",
+    "base": "base32",
+    "prefix": "bafkrei",
+    "input": "the file's exact bytes; the empty file is valid",
+    "canonical": "lowercase RFC 4648 base32 with the b multibase prefix, no padding; any other spelling of the same CID is rejected"
+  },
+  "vectors": [
+    {
+      "name": "empty",
+      "description": "the empty file; a manifest may reference zero-byte files",
+      "bytes_hex": "",
+      "digest_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "cid": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+    },
+    {
+      "name": "hello",
+      "description": "the classic cross-implementation pin: bafkreibm6jg3ux5qumhcn2b3flc3tyu6dmlb4xa7u5bf44yegnrjhc4yeq",
+      "bytes_hex": "68656c6c6f",
+      "digest_hex": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      "cid": "bafkreibm6jg3ux5qumhcn2b3flc3tyu6dmlb4xa7u5bf44yegnrjhc4yeq"
+    },
+    {
+      "name": "manifest-main-pdf",
+      "description": "the minimal PDF stub listed as main.pdf in the manifest-files vector of records.json",
+      "bytes_hex": "255044462d312e370a25e2e3cfd30a2525454f460a",
+      "digest_hex": "ba9073ad74dab39ddf480c70d6e9b6b532c1f2c6d28c85e19301299b2ce7bf8b",
+      "cid": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rm"
+    },
+    {
+      "name": "manifest-plot-svg",
+      "description": "the SVG listed as figures/plot.svg in the manifest-files vector of records.json",
+      "bytes_hex": "3c73766720786d6c6e733d22687474703a2f2f7777772e77332e6f72672f323030302f737667222077696474683d22313022206865696768743d223130222f3e0a",
+      "digest_hex": "e480cb0b3325a69805e07b260d6cc032aeece9ad4311af0a755d58901f83e5c5",
+      "cid": "bafkreiheqdfqwmzfu2malyd3eygwzqbsv3wotlkdcgxqu5k5lcib7a7fyu"
+    },
+    {
+      "name": "bytes-0-to-255",
+      "description": "every byte value exactly once, including 0x00 and 0xff",
+      "bytes_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+      "digest_hex": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+      "cid": "bafkreicav7zotuwysixepl6umshgsz2jofmhqx55dwuhbzyrajtl7fciqa"
+    },
+    {
+      "name": "unicode-text",
+      "description": "UTF-8 text echoing the paper.version vector title; multi-byte characters must not be re-encoded before hashing",
+      "bytes_hex": "436166c3a9206dc3a974686f64657320e2809420e4b8ade69687e6a087e9a29820e29ca60a",
+      "digest_hex": "263a43b1e6d64c70b259fc570cea45c752150df6591b03854319aca88e4b06ca",
+      "cid": "bafkreibghjb3dzwwjrylewp4k4gourohkikq35szdmbykqyzvsui4sygzi"
+    },
+    {
+      "name": "one-kibibyte-chain",
+      "description": "1024 bytes from a sha-256 counter chain (h = sha256(h || counter), counter from 0); larger than one hash block, deterministic without carrying binary fixtures",
+      "bytes_hex": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119a7dad140af1592e041b38e267a6a1838eeb635e00bff8816f3890c06b534f39c25beaaac3eb42d97848533928b4d3208e698d9c5d1a5950b11f462c28ed26b2159e58ac30ca15b605826af572a3911ba22af45c12fd6813fe271f31dee1b570a347831b6bec6babaeca1ac6bfac88bc6754f41df6d837d4c9cd5f11a7d97c87a5d913f8f850931ded4dd86ce9b870bf2fe5fedd51f19bd90236c74c8068df469cef340325613ed8f6069fcd9777d51a1b3ae5e702c1b72431513a7f260ea37fb3a6e454ca82447b865b5ce4fbde6fecc74e1c93cb0a8768304b25831692359aa0e86153aa43f0850ba8f1d489398357b272d03c5e52340f956f877fb7b1abcc98010cbe3337feac51c762cfa99519a9fbc4aeb08b9cf1f278878b55be4f9ec456444e45fabf0d1e805d0218e904abcb6b7c5b1b3dff3547b4525124f544b9f6280a03e97e244345859ceb8349e109beb23ff723de4c04227b41fffb6619866dc2a20c9697bad5ac78ae5e752be17c2a95703bc930763d3f53ec3a36f52e78f7708ecab7583d55b62004ff39560101a95dc56c32a0e20f16fcc49a2970b592b2a5fd112103336daa3da2789c9d063811537f47bee7457dc7ea7c811f228e6928e175540167deae16b186b177efd2c6d31ed607ace8ecbbad5e00f422f290e963dc8efc915ea9a76cd8b85ecf7266b628f40cbffed3447951a9636ed7d5a74ade073df180c33b8251ef2535f91aa23b452aefa7533c78f83eae74384e8bac1a0aa985129ee30305386d127cebb856700b4d4e0a1749cd5a54f03b845d695098f6521156541bdd06be52bfcc81588226f8913485dfd9a6778169c4189739461ba6f970cbdab0f47ae8ea90338475b5010182bc683bfa2cfcf8ddf7d9190a85522b6f5b97b7086e6b65d0c4e525416c543b50da35ace67969445496859529fa81d78c3db03378a3491eb80910267f9a09addc2bc6d4c80844e45bc7bd4e1fbbdfbdc6da8379f9bf0c246b81d19ef9d846651a6d9340061e2d5055bbb0958b3370aba3fc3b9c3a2a4465d08a0b4fd7f1607fcc20776057e73f0fbcd212acf692a2db94fdcbb715fe165608270b475dbe023936b9ae940179516ad5bd791580aa1b88cb82ab7aac0b46b9455c2e60e8b864c920e1316a32a1417c45f7902cc31987c71ec08e9ec1b2bf40720edafa4f2338548690c5fe4b8004d4775ab3471087b41c01ef84303ad7710a175210feadd7297604628ef26b67660242b84109ab713da0e1813ab4931539f23193aadf9510f380687a74171be68af2be20127b81a00a080b7ade9b0dbc5662209af6c010d7a19e53b2786431a615aed125effbba2cf1715e507b0cc1cf6f01ca47b3e233ee9aa31ae0f92c058d8771e382aaf8b02557353",
+      "digest_hex": "36b1ed83eae3e0718d7d9b942a5f424e6c5b81640c26ace80bdabd646eebc464",
+      "cid": "bafkreibwwhwyh2xd4byy27m3sqvf6qsonrnyczame2woqc62xvsg526emq"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "not-a-string",
+      "description": "an integer, not a string",
+      "input": 12345,
+      "error": "format"
+    },
+    {
+      "name": "empty-string",
+      "description": "the empty string is not a CID",
+      "input": "",
+      "error": "format"
+    },
+    {
+      "name": "not-a-cid",
+      "description": "plain text",
+      "input": "not-a-cid",
+      "error": "format"
+    },
+    {
+      "name": "truncated-tail",
+      "description": "a valid file id with one character appended no longer decodes",
+      "input": "bafkreif2sbz225g2woo56samodlotnvvgla7frwsrsc6deybfgnszz57rmq",
+      "error": "format"
+    },
+    {
+      "name": "bad-padding-bits",
+      "description": "a bafkrei-shaped string with wrong pad bits; it appeared in early manifests before validators existed",
+      "input": "bafkreiabf3clzqizbyvthhz4yqetd7ab5cimxcj2wvbailc26snnaaw4qey",
+      "error": "format"
+    },
+    {
+      "name": "cidv0-dag-pb",
+      "description": "a CIDv0 dag-pb sha2-256 id: wrong version and wrong codec",
+      "input": "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR",
+      "error": "version"
+    },
+    {
+      "name": "record-id-dag-cbor",
+      "description": "a record id (dag-cbor codec): the kinds must not be confused",
+      "input": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+      "error": "codec"
+    },
+    {
+      "name": "raw-sha2-512",
+      "description": "a CIDv1 raw-codec id with sha2-512 instead of sha2-256",
+      "input": "bafkrgqe3ohjcjplc6n4f3fwunlj6upltggn7xqujbsvnvyw764srszz4u4rshq6ztos4chl4plgg4ffyyxnayrtdi5oc4xb2332g645433aeg",
+      "error": "hash"
+    },
+    {
+      "name": "uppercase-base32",
+      "description": "the hello vector's CID in uppercase base32: same CID, non-canonical spelling",
+      "input": "BAFKREIBM6JG3UX5QUMHCN2B3FLC3TYU6DMLB4XA7U5BF44YEGNRJHC4YEQ",
+      "error": "canonical"
+    },
+    {
+      "name": "base58btc",
+      "description": "the hello vector's CID with the z base58btc multibase prefix: same CID, non-canonical spelling",
+      "input": "zb2rhZfjRh2FHHB2RkHVEvL2vJnCTcu7kwRqgVsf9gpkLgteo",
+      "error": "canonical"
+    }
+  ]
+}

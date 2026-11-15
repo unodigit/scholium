@@ -2,11 +2,13 @@
 """Regenerate the cross-language test vectors.
 
 Refreshes the expected outputs of every entry in ``vectors/records.json``
-(``dag_cbor_hex`` and ``id``) and ``vectors/short_ids.json``
-(``digest_hex``, ``short_id`` and ``version_ids``) from the current
-implementation.  Inputs (envelopes with their illustrative ``id``/``sig``
-members, genesis CIDs, invalid short id strings) are kept verbatim, so a
-run is idempotent unless the implementation changes.
+(``dag_cbor_hex`` and ``id``), ``vectors/short_ids.json``
+(``digest_hex``, ``short_id`` and ``version_ids``),
+``vectors/file_ids.json`` (``digest_hex`` and ``cid``) and
+``vectors/manifests.json`` (``files``) from the current implementation.
+Inputs (envelopes with their illustrative ``id``/``sig`` members, genesis
+CIDs, invalid strings and bodies) are kept verbatim, so a run is
+idempotent unless the implementation changes.
 
 Usage (from ``apps/api``)::
 
@@ -25,6 +27,8 @@ from typing import Any
 from scholium_record_core.vectors import (
     dumps_vectors,
     load_vectors,
+    refresh_file_id_vectors,
+    refresh_manifest_vectors,
     refresh_short_id_vectors,
     refresh_vectors,
 )
@@ -34,6 +38,8 @@ VECTORS_DIR = Path(__file__).resolve().parents[1] / "vectors"
 TARGETS: tuple[tuple[Path, Callable[[dict[str, Any]], dict[str, Any]]], ...] = (
     (VECTORS_DIR / "records.json", refresh_vectors),
     (VECTORS_DIR / "short_ids.json", refresh_short_id_vectors),
+    (VECTORS_DIR / "file_ids.json", refresh_file_id_vectors),
+    (VECTORS_DIR / "manifests.json", refresh_manifest_vectors),
 )
 
 
