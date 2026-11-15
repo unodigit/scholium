@@ -307,6 +307,17 @@ describe("what each tab is given", () => {
     expect(stubs.props.versions.initial).toMatchObject({ versions: expect.any(Array) });
   });
 
+  it("hands Versions the paper page's compare address for the adjacent pair", () => {
+    render(<MarginPanel {...props()} />);
+    fireEvent.click(tab("Versions"));
+
+    const compareHref = stubs.props.versions.compareHref as (
+      from: number,
+      to: number,
+    ) => string;
+    expect(compareHref(1, 2)).toBe("/p/6sel-2dio-orm6/compare/1..2");
+  });
+
   it("hands Files the paper, the version and the file list", () => {
     render(<MarginPanel {...props()} />);
     fireEvent.click(tab("Files"));

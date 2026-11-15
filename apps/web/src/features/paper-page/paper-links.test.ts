@@ -5,6 +5,7 @@ import {
   archiveHref,
   categoryHref,
   citeHref,
+  comparePagePath,
   isMarginTabId,
   tabFromHash,
   tabHash,
@@ -78,6 +79,15 @@ describe("page addresses", () => {
   it("writes a version page without the sch: prefix", () => {
     expect(versionPagePath("sch:6sel-2dio-orm6", 2)).toBe("/p/6sel-2dio-orm6/v2");
     expect(versionPagePath("6sel-2dio-orm6", 1)).toBe("/p/6sel-2dio-orm6/v1");
+  });
+
+  it("writes a compare page with both versions, older first", () => {
+    expect(comparePagePath("sch:6sel-2dio-orm6", 1, 2)).toBe(
+      "/p/6sel-2dio-orm6/compare/1..2",
+    );
+    expect(comparePagePath("6sel-2dio-orm6", 2, 3)).toBe(
+      "/p/6sel-2dio-orm6/compare/2..3",
+    );
   });
 
   it("links a category to its page", () => {

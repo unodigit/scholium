@@ -211,6 +211,44 @@ describe("accessibility (docs/design.md §9)", () => {
   });
 });
 
+describe("the compare view (feature 186)", () => {
+  it("sets diff paragraphs as reading text at the 72-character measure", () => {
+    const text = declarations(page, ".ppg-compare-text");
+    expect(text).toMatch(/font-family:\s*var\(--family-serif\)/);
+    expect(text).toMatch(/font-size:\s*var\(--type-reading\)/);
+    expect(text).toMatch(/line-height:\s*var\(--leading-reading\)/);
+    expect(text).toMatch(/max-inline-size:\s*var\(--measure-reading\)/);
+  });
+
+  it("reinforces added and removed with a border and tint, never colour alone", () => {
+    expect(declarations(page, '.ppg-compare-item[data-kind="added"]')).toMatch(
+      /border-inline-start-color:\s*var\(--verified\)/,
+    );
+    expect(declarations(page, '.ppg-compare-item[data-kind="removed"]')).toMatch(
+      /border-inline-start-color:\s*var\(--critical\)/,
+    );
+    expect(declarations(page, ".ppg-compare-text ins")).toMatch(
+      /background-color:\s*var\(--verified-soft\)/,
+    );
+    expect(declarations(page, ".ppg-compare-text del")).toMatch(
+      /background-color:\s*var\(--critical-soft\)/,
+    );
+    // The words on the tint keep --ink, which clears 4.5:1 in both themes.
+    expect(declarations(page, ".ppg-compare-text ins")).toMatch(
+      /color:\s*var\(--ink\)/,
+    );
+    expect(declarations(page, ".ppg-compare-text del")).toMatch(
+      /color:\s*var\(--ink\)/,
+    );
+  });
+
+  it("gives the back and read links a visible focus ring", () => {
+    expect(declarations(page, ".ppg-compare a:focus-visible")).toMatch(
+      /outline:\s*2px solid var\(--focus-ring\)/,
+    );
+  });
+});
+
 describe("selectors", () => {
   it("all start from a ppg class, so nothing leaks into other features", () => {
     const selectors = blocks(page.rules)

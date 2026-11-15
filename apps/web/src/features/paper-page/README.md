@@ -24,6 +24,7 @@ route files are two lines each; everything they do is in `paper-route.tsx`.
 | --- | --- |
 | `/p/k3f9-q2xz-7mwd` | the newest listed version |
 | `/p/k3f9-q2xz-7mwd/v2` | version 2 |
+| `/p/k3f9-q2xz-7mwd/compare/1..2` | the paragraph diff between versions 1 and 2 |
 
 The `sch:` prefix is optional (`/p/sch%3Ak3f9-…` works), the id is case-insensitive,
 and a record cid is accepted too, because a search hit without a short id links to
@@ -42,7 +43,8 @@ error.
 | Which rendition shows (HTML or PDF); the PDF and HTML actions' state | `reading-view.tsx` | client islands |
 | The PDF, drawn by PDF.js | `pdf-view.tsx` | client island |
 | Margin panel (360 px): badge, tabs | `margin-panel.tsx` | client island |
-| Reads | `paper-page-data.ts` | server |
+| Compare view: both change notes, changed/added/removed paragraphs | `compare-view.tsx` | server |
+| Reads | `paper-page-data.ts`, `compare.ts` | server |
 
 The page is server-rendered, so a shared link shows the title, the byline, the
 abstract and the Reviews tab in the first HTML response, before JavaScript loads.
@@ -200,12 +202,53 @@ Each is a real link, so the row works before any JavaScript runs.
 Cite and Download are plain links for now. The Cite dialog (BibTeX and RIS, copy)
 and the Download menu replace those two elements and keep the endpoints.
 
+## The compare view
+
+The Versions tab offers **Compare v1 with v2** for each adjacent pair
+(`features/paper-meta`'s `compareHref` seam; the paper page supplies
+`comparePagePath`). It opens `/p/{id}/compare/{from}..{to}`: the node's
+paragraph-level diff from `GET /v1/papers/{id}/compare?from=1&to=2`.
+
+```text
+Compare v1 with v2
+Can a Meta-Agent Choose the Safer Branch?          (links to v2)
+1 paragraph changed, 1 paragraph added and 1 paragraph removed between v1 and v2.
+
+Change notes
+  Version 1   First version.
+  Version 2   Names the adversarial baseline in section 3.2.
+
+Changed paragraphs (1)
+  Changed paragraph
+  In v1   Multi-agent systems choose between candidate plans.
+  In v2   Multi-agent systems increasingly choose between candidate plans.
+
+Added in v2 (1)      Removed from v1 (1)
+```
+
+- **The node does the diff.** The page renders its three lists — changed
+  (paired old and new), added and removed — and both change notes. It does not
+  diff text itself, so "changed" means what the node computed.
+- **A reading surface, not a code diff.** Paragraphs use the reading serif at
+  the reading size at the 72-character measure, in one column. Old and new
+  sides are stacked, so a paragraph is never squeezed into half a line.
+- **Words first.** Each section and row says what it is; old text is a real
+  `<del>` and new text a real `<ins>`, with `--critical-soft` /
+  `--verified-soft` tints and a border as reinforcement (docs/design.md §9).
+- **No difference is a result.** Two versions with the same paragraphs say so
+  in one calm sentence, rather than showing an empty page.
+- **The diff decides the page; the title decorates it.** The paper's title is a
+  second, optional read: if it fails, the comparison still renders.
+- **Failures have a way back.** A malformed address, a version the node does
+  not hold, or a node that cannot be reached says so and links to the version or
+  back to search — never a thrown error.
+
 ## Not here (other features)
 
 Status banners above the title (Retracted, Corrected, newer version, content
-removed); the Cite dialog and Download menu; the drawer and bottom sheet; the
-compare view; Invite reviewer. Until the banners land, a retraction or correction
-is shown by the status chip only.
+removed); the Cite dialog and Download menu; the drawer and bottom sheet; Invite
+reviewer. Until the banners land, a retraction or correction is shown by the
+status chip only.
 
 The PDF view has no text layer (no selecting or searching inside the canvas) and no
 zoom of its own; the HTML has the text, and "Open in a new tab" has the browser's
@@ -234,6 +277,8 @@ tokens, the 720/360 widths, focus rings and touch targets.
 | `pdf-render.test.ts` | canvas sizing and the pixel cap, the sentence for each PDF.js failure |
 | `pdf-view.test.tsx` | the viewer against a fake PDF.js (`pdf-fixtures.ts`): lazy drawing, errors, retry, teardown |
 | `reading-view.test.tsx` | the view switch: plain vs modified click, phones, the address, the HTML staying mounted |
+| `compare.test.ts` | the compare body's camelCase/snake_case shapes, dropped rows, the error for "not a diff", the summary's words |
+| `compare-route.test.tsx` | the real compare route: both notes, changed/added/removed paragraphs, the empty comparison, bad addresses and node failures |
 
 jsdom has no canvas and the real PDF.js needs a browser, so the viewer's tests use
 a fake document, and what only a browser can show (the worker loading, pages

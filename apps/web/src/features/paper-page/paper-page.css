@@ -500,6 +500,220 @@
   display: none;
 }
 
+/* ---- Compare view ---------------------------------------------------------- */
+
+/* The paragraph diff between two versions (feature 186). One reading column,
+   the same 72-character measure as the paper, because these are paragraphs to
+   read, not a code diff. */
+.ppg-compare {
+  box-sizing: border-box;
+  max-inline-size: var(--reading-column);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+.ppg-compare-header {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.ppg-compare-back {
+  margin: 0;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.ppg-compare-back a {
+  display: inline-block;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-block: calc(var(--space-unit) * 3);
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.ppg-compare-back a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.ppg-compare-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ppg-compare-paper {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.ppg-compare-paper a {
+  color: var(--accent);
+}
+
+.ppg-compare-summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* The two change notes, each marked by a rule rather than a colour. */
+.ppg-compare-notes {
+  margin-block-start: calc(var(--space-unit) * 8);
+}
+
+.ppg-compare-note-list {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+  margin: 0;
+}
+
+.ppg-compare-note {
+  margin: 0;
+  padding-inline-start: calc(var(--space-unit) * 4);
+  border-inline-start: 2px solid var(--rule);
+}
+
+.ppg-compare-note dt {
+  margin: 0 0 calc(var(--space-unit) * 1);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.ppg-compare-note dd {
+  margin: 0;
+  max-inline-size: var(--measure-reading);
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.ppg-compare-section {
+  margin-block-start: calc(var(--space-unit) * 8);
+}
+
+.ppg-compare-count {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.ppg-compare-list {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A row says what it is in words; the border and tint are reinforcement. */
+.ppg-compare-item {
+  margin: 0;
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-inline-start-width: 3px;
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+}
+
+.ppg-compare-item[data-kind="changed"] {
+  border-inline-start-color: var(--accent);
+}
+
+.ppg-compare-item[data-kind="added"] {
+  border-inline-start-color: var(--verified);
+}
+
+.ppg-compare-item[data-kind="removed"] {
+  border-inline-start-color: var(--critical);
+}
+
+.ppg-compare-item-label {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  font-weight: 600;
+  line-height: var(--leading-meta);
+}
+
+.ppg-compare-side + .ppg-compare-side {
+  margin-block-start: calc(var(--space-unit) * 3);
+}
+
+.ppg-compare-side-label {
+  margin: 0 0 calc(var(--space-unit) * 1);
+  color: var(--ink-2);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
+.ppg-compare-text {
+  margin: 0;
+  max-inline-size: var(--measure-reading);
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  overflow-wrap: anywhere;
+}
+
+/* Removed text is struck through and quiet; added text is underlined. Both
+   carry their tint and keep --ink, so the words stay above 4.5:1. */
+.ppg-compare-text del {
+  background-color: var(--critical-soft);
+  color: var(--ink);
+  text-decoration: line-through;
+}
+
+.ppg-compare-text ins {
+  background-color: var(--verified-soft);
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* No difference is a result, not an error: the same calm sentence as an
+   unchanged paper's empty states. */
+.ppg-compare-empty {
+  margin-block-start: calc(var(--space-unit) * 8);
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.ppg-compare-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 4);
+  margin-block-start: calc(var(--space-unit) * 8);
+  padding-block-start: calc(var(--space-unit) * 4);
+  border-block-start: 1px solid var(--rule);
+}
+
+.ppg-compare-footer a {
+  display: inline-block;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-block: calc(var(--space-unit) * 3);
+  color: var(--accent);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.ppg-compare a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 /* ---- No paper to show ------------------------------------------------------ */
 
 .ppg-notice {

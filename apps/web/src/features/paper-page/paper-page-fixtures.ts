@@ -173,6 +173,55 @@ export const TEXT_BODY = {
   ],
 };
 
+/**
+ * `GET /v1/papers/{id}/compare?from=1&to=2`, in the node's shape: one changed
+ * pair, one added paragraph and one removed paragraph, plus both change notes.
+ */
+export const COMPARE_BODY = {
+  paper: SHORT_ID,
+  shortId: SHORT_ID,
+  from: 1,
+  to: 2,
+  fromChangeNote: null,
+  toChangeNote: "Names the adversarial baseline in section 3.2.",
+  addedCount: 1,
+  removedCount: 1,
+  changedCount: 1,
+  counts: { added: 1, removed: 1, changed: 1 },
+  addedParagraphs: [
+    {
+      paragraph_id: "para-4",
+      paragraphId: "para-4",
+      position: 3,
+      text: "Section 3.2 now names the adversarial baseline and its seed.",
+    },
+  ],
+  removedParagraphs: [
+    {
+      paragraph_id: "para-old",
+      paragraphId: "para-old",
+      position: 2,
+      text: "The baseline was tuned on the test split.",
+    },
+  ],
+  changedParagraphs: [
+    {
+      from: {
+        paragraph_id: "para-1",
+        paragraphId: "para-1",
+        position: 0,
+        text: "Multi-agent systems choose between candidate plans.",
+      },
+      to: {
+        paragraph_id: "para-1b",
+        paragraphId: "para-1b",
+        position: 0,
+        text: "Multi-agent systems increasingly choose between candidate plans.",
+      },
+    },
+  ],
+};
+
 function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -196,6 +245,7 @@ export type Routes = Partial<{
   reviews: () => Response;
   threads: () => Response;
   text: () => Response;
+  compare: (from: number, to: number) => Response;
 }>;
 
 /** What the node answers when every read works. */
@@ -207,6 +257,7 @@ export const HAPPY: Routes = {
   reviews: () => json(REVIEWS_BODY),
   threads: () => json(THREADS_BODY),
   text: () => json(TEXT_BODY),
+  compare: () => json(COMPARE_BODY),
 };
 
 export { json };
@@ -224,6 +275,12 @@ export function stubApi(routes: Routes = HAPPY): ReturnType<typeof vi.fn> {
       return routes.profile !== undefined ? routes.profile(profile[1]) : notFound();
     }
     if (/\/versions$/.test(path)) return (routes.versions ?? notFound)();
+    if (/\/compare$/.test(path)) {
+      return (routes.compare ?? notFound)(
+        Number(url.searchParams.get("from")),
+        Number(url.searchParams.get("to")),
+      );
+    }
     if (/\/manifest$/.test(path)) return (routes.manifest ?? notFound)();
     if (/\/reviews$/.test(path)) return (routes.reviews ?? notFound)();
     if (/\/threads$/.test(path)) return (routes.threads ?? notFound)();

@@ -62,6 +62,7 @@ import type { ReviewsData } from "../paper-reviews/review";
 import { Icon, IdPill, VerifyBadge, type VerifyState } from "../ui-kit";
 import {
   MARGIN_TAB_IDS,
+  comparePagePath,
   tabFromHash,
   tabHash,
   type MarginTabId,
@@ -279,6 +280,7 @@ export function MarginPanel({
                 <VersionsTab
                   paperId={shortId}
                   currentVersion={version}
+                  compareHref={(from, to) => comparePagePath(shortId, from, to)}
                   {...seed(versions)}
                 />
               ) : null}

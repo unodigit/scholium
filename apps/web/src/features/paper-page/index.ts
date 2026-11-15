@@ -22,6 +22,10 @@
  * The reading column shows the version's text as HTML paragraphs (from
  * `GET /v1/papers/{id}/v/{n}/text`) with the math typeset by KaTeX, and the PDF
  * and HTML actions switch it between that and the PDF drawn by PDF.js.
+ *
+ * The Versions tab links to `/p/{id}/compare/{from}..{to}`, the paragraph diff
+ * the node computes for that pair (`GET /v1/papers/{id}/compare`): changed,
+ * added and removed paragraphs plus both versions' change notes.
  */
 
 export {
@@ -69,6 +73,7 @@ export {
   archiveHref,
   categoryHref,
   citeHref,
+  comparePagePath,
   isMarginTabId,
   tabFromHash,
   tabHash,
@@ -85,6 +90,33 @@ export {
   type ReadingParagraph,
   type ReadingText as ReadingTextData,
 } from "./reading";
+
+export {
+  CompareResponseError,
+  comparePath,
+  describeCompareError,
+  describeCompareSummary,
+  loadCompare,
+  parseCompare,
+  type CompareChange,
+  type CompareData,
+  type CompareParagraph,
+} from "./compare";
+
+export {
+  NOT_A_COMPARE_ADDRESS,
+  compareRouteMetadata,
+  parseCompareAddress,
+  renderCompareRoute,
+  type CompareAddress,
+} from "./compare-route";
+
+export {
+  CompareNotice,
+  CompareView,
+  type CompareNoticeProps,
+  type CompareViewProps,
+} from "./compare-view";
 
 export {
   MAX_MATH_LENGTH,

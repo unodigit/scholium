@@ -62,6 +62,18 @@ export function versionPagePath(shortId: string, version: number): string {
   return `/p/${encodeURIComponent(bareId(shortId))}/v${version}`;
 }
 
+/**
+ * `/p/k3f9-q2xz-7mwd/compare/1..2`: the paragraph diff between two versions.
+ * The Versions tab links to the adjacent pair, older first.
+ */
+export function comparePagePath(
+  shortId: string,
+  from: number,
+  to: number,
+): string {
+  return `/p/${encodeURIComponent(bareId(shortId))}/compare/${from}..${to}`;
+}
+
 /** The category a paper is listed in: `/c/cs.AI`. */
 export function categoryHref(category: string): string {
   return categoryPageHref(category);
