@@ -8,3 +8,5 @@ __pycache__/
 *.db
 .demo-keys.json
 .env
+*.tsbuildinfo
+pnpm-lock.yaml
