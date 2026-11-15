@@ -32,9 +32,20 @@ review key sealed a review on the version, the record carries that commit's
 reveal fills in the ``review`` row's revealed columns.  See
 :mod:`app.modules.reviews.reveal`.
 
+Feature 113: ``POST /v1/reviews/{cid}/rating`` records a tier-3 member's
+quality rating of a review in ``review_ratings``.
+
+Feature 114: ``POST /v1/reviews/{cid}/response`` accepts a signed
+``review.response`` from a paper author -- one reply per rubric dimension,
+answering the review point by point -- and saves the replies to
+``review_responses``.  A caller who is not on the paper's byline is refused
+(``403``), and the replies are served with the review by
+``GET /v1/papers/{id}/reviews``.  See :mod:`app.modules.reviews.response`.
+
 The module loader discovers packages under ``app.modules`` automatically, so
 importing this package mounts the router under ``/v1`` and registers the
-``review.commit`` and ``review.formal`` handlers with the ingest pipeline.
+``review.commit``, ``review.formal``, ``review.rating`` and
+``review.response`` handlers with the ingest pipeline.
 """
 
 from __future__ import annotations
@@ -46,12 +57,14 @@ from .errors import (
     REVIEW_COMMITMENT_MISMATCH,
     REVIEW_NOT_AUTHORIZED,
     REVIEW_NOT_COMMITTED,
+    REVIEW_RESPONSE_NOT_AUTHORIZED,
     UNKNOWN_REVIEW_TARGET,
     ReviewAlreadyCommitted,
     ReviewAlreadyRevealed,
     ReviewCommitmentMismatch,
     ReviewNotAuthorized,
     ReviewNotCommitted,
+    ReviewResponseNotAuthorized,
     UnknownReviewTarget,
 )
 from .escrow import (
@@ -62,7 +75,15 @@ from .escrow import (
     seal_identity,
     uniqueness_token,
 )
-from .models import Review, ReviewEscrow, ReviewInvitation, ReviewRating, ensure_table, ensure_tables
+from .models import (
+    Review,
+    ReviewEscrow,
+    ReviewInvitation,
+    ReviewRating,
+    ReviewResponse,
+    ensure_table,
+    ensure_tables,
+)
 from .reveal import (
     CONFIDENCE_LEVELS,
     RECOMMENDATIONS,
@@ -78,6 +99,19 @@ from .reveal import (
     normalise_recommendation,
     persist_review_reveal,
     review_reveal_fields,
+)
+from .response import (
+    ACCEPTED,
+    REVIEW_RESPONSE_MIN_TIER,
+    REVIEW_RESPONSE_TYPE,
+    ReviewResponseFields,
+    apply_review_response,
+    get_review_response,
+    handle_review_response,
+    is_paper_author,
+    list_review_responses,
+    persist_review_response,
+    response_fields,
 )
 from .router import router
 from .service import (
@@ -120,6 +154,7 @@ from .service import (
 )
 
 __all__ = [
+    "ACCEPTED",
     "COI_WINDOW_YEARS",
     "COMMITTED",
     "CONFIDENCE_LEVELS",
@@ -137,6 +172,9 @@ __all__ = [
     "REVIEW_FORMAL_TYPE",
     "REVIEW_NOT_AUTHORIZED",
     "REVIEW_NOT_COMMITTED",
+    "REVIEW_RESPONSE_MIN_TIER",
+    "REVIEW_RESPONSE_NOT_AUTHORIZED",
+    "REVIEW_RESPONSE_TYPE",
     "REVIEW_REVEAL_MIN_TIER",
     "RUBRIC_DIMENSIONS",
     "Review",
@@ -148,10 +186,14 @@ __all__ = [
     "ReviewInvitation",
     "ReviewNotAuthorized",
     "ReviewNotCommitted",
+    "ReviewResponse",
+    "ReviewResponseFields",
+    "ReviewResponseNotAuthorized",
     "ReviewRevealFields",
     "UNKNOWN_REVIEW_TARGET",
     "UnknownReviewTarget",
     "apply_review_commit",
+    "apply_review_response",
     "apply_review_reveal",
     "check_conflicts",
     "commitment_digest",
@@ -168,15 +210,20 @@ __all__ = [
     "get_invitation",
     "get_review",
     "get_review_invitation",
+    "get_review_response",
     "handle_review_commit",
+    "handle_review_response",
     "handle_review_reveal",
     "is_author_or_moderator",
+    "is_paper_author",
     "is_tier3_reviewer",
     "handle_review_rating",
     "is_review_author",
     "is_review_reviewer",
+    "list_review_responses",
     "rating_value_from_body",
     "resolve_review",
+    "response_fields",
     "save_review_rating",
     "list_invitations",
     "list_review_invitations",
@@ -184,6 +231,7 @@ __all__ = [
     "nullifier_bytes",
     "open_identity",
     "persist_review_commit",
+    "persist_review_response",
     "persist_review_reveal",
     "require_not_author",
     "require_unique_reviewer",
@@ -202,15 +250,16 @@ __all__ = [
 
 
 def _install_ledger_subscriber() -> None:
-    """Save every ``review.commit``, and open its review for every ``review.formal``."""
+    """Save every ``review.commit``, response and rating; open every ``review.formal``."""
     from app.modules import ledger
 
     ledger.subscribe(REVIEW_COMMIT_TYPE, persist_review_commit)
     ledger.subscribe(REVIEW_FORMAL_TYPE, persist_review_reveal)
+    ledger.subscribe(REVIEW_RESPONSE_TYPE, persist_review_response)
 
 
 def _register_record_type() -> None:
-    """Register ``review.commit`` and ``review.formal`` with the ingest pipeline.
+    """Register the review record types with the ingest pipeline.
 
     An existing registration is left alone rather than conflicted with, so
     re-importing the package is harmless.
@@ -228,6 +277,12 @@ def _register_record_type() -> None:
             REVIEW_FORMAL_TYPE,
             handle_review_reveal,
             min_tier=REVIEW_REVEAL_MIN_TIER,
+        )
+    if ingest.get(REVIEW_RESPONSE_TYPE) is None:
+        ingest.register(
+            REVIEW_RESPONSE_TYPE,
+            handle_review_response,
+            min_tier=REVIEW_RESPONSE_MIN_TIER,
         )
     from .service import REVIEW_RATING_MIN_TIER, REVIEW_RATING_TYPE
 

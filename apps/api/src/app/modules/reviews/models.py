@@ -35,6 +35,18 @@ what makes a second commitment by the same person on the same paper a
 conflict.  The pseudonymity material (``review_key`` and ``nullifier``) is
 never served by any endpoint; see :mod:`app.modules.profiles.views`.
 
+``review_responses`` (``app_spec.xml``, ``database_schema/review_responses``)::
+
+    review_responses(response_cid TEXT PRIMARY KEY,
+                     review_cid TEXT NOT NULL,
+                     replies JSON NOT NULL)
+
+One row per ``review.response`` record: a paper author's point-by-point
+answer to a formal review.  ``response_cid`` is the record's own cid,
+``review_cid`` the ``review`` row it answers (the ``review.commit`` cid), and
+``replies`` the rubric-dimension-to-reply mapping the record carries.  See
+:mod:`app.modules.reviews.response`.
+
 ``review_escrows`` (``app_spec.xml``, ``database_schema/review_escrows``)::
 
     review_escrows(review_cid TEXT PRIMARY KEY,
@@ -66,6 +78,7 @@ __all__ = [
     "ReviewEscrow",
     "ReviewInvitation",
     "ReviewRating",
+    "ReviewResponse",
     "ensure_table",
     "ensure_tables",
 ]
@@ -159,6 +172,25 @@ class ReviewRating(db.Base):
             f"rater_did={self.rater_did!r} rating={self.rating!r}>"
         )
 
+
+class ReviewResponse(db.Base):
+    """One paper author's point-by-point response to a formal review."""
+
+    __tablename__ = "review_responses"
+
+    #: cid of the ``review.response`` record.
+    response_cid = Column(Text, primary_key=True)
+    #: cid of the ``review`` (``review.commit``) row this response answers.
+    review_cid = Column(Text, nullable=False, index=True)
+    #: ``{rubric dimension: reply text}`` as the record states it.
+    replies = Column(JSON, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"<ReviewResponse response_cid={self.response_cid!r} "
+            f"review_cid={self.review_cid!r}>"
+        )
+
 _table_lock = threading.Lock()
 _table_engine: Optional[Engine] = None
 
@@ -175,6 +207,7 @@ def ensure_table() -> None:
                 Review.__table__,
                 ReviewEscrow.__table__,
                 ReviewRating.__table__,
+                ReviewResponse.__table__,
             ):
                 try:
                     table.create(bind=db.engine, checkfirst=True)

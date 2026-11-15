@@ -23,12 +23,14 @@ __all__ = [
     "REVIEW_COMMITMENT_MISMATCH",
     "REVIEW_NOT_AUTHORIZED",
     "REVIEW_NOT_COMMITTED",
+    "REVIEW_RESPONSE_NOT_AUTHORIZED",
     "UNKNOWN_REVIEW_TARGET",
     "ReviewAlreadyCommitted",
     "ReviewAlreadyRevealed",
     "ReviewCommitmentMismatch",
     "ReviewNotAuthorized",
     "ReviewNotCommitted",
+    "ReviewResponseNotAuthorized",
     "UnknownReviewTarget",
 ]
 
@@ -38,6 +40,7 @@ REVIEW_ALREADY_COMMITTED = "urn:scholium:problem:review-already-committed"
 REVIEW_NOT_COMMITTED = "urn:scholium:problem:review-not-committed"
 REVIEW_COMMITMENT_MISMATCH = "urn:scholium:problem:review-commitment-mismatch"
 REVIEW_ALREADY_REVEALED = "urn:scholium:problem:review-already-revealed"
+REVIEW_RESPONSE_NOT_AUTHORIZED = "urn:scholium:problem:review-response-not-authorized"
 
 _MAX_ECHO = 64
 
@@ -208,5 +211,29 @@ class ReviewAlreadyRevealed(ProblemException, ValueError):
             409,
             message,
             type=REVIEW_ALREADY_REVEALED,
+            review=review_cid,
+        )
+
+
+class ReviewResponseNotAuthorized(ProblemException, PermissionError):
+    """The caller may not answer this review because they did not write the paper: ``403``.
+
+    A ``review.response`` is the paper authors' reply to their reviewers, so
+    the record must be signed by -- and submitted by -- someone on the paper's
+    byline.  Every other signed-in member is refused, reviewers included.
+    """
+
+    def __init__(self, caller: object, review_cid: object) -> None:
+        self.caller = caller
+        self.review_cid = review_cid
+        shown = _clip(caller if isinstance(caller, str) else repr(caller))
+        message = (
+            "Only an author of the paper may respond to its review; "
+            f"{shown} is not listed on this paper's byline."
+        )
+        super().__init__(
+            403,
+            message,
+            type=REVIEW_RESPONSE_NOT_AUTHORIZED,
             review=review_cid,
         )

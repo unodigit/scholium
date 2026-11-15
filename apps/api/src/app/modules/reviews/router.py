@@ -14,6 +14,9 @@ The module loader mounts this router under ``/v1``, so this package serves:
 * ``POST /v1/reviews/reveal`` -- accept a signed ``review.formal`` that opens
   a sealed review: a complete rubric, and content that matches the commitment;
   see :mod:`app.modules.reviews.reveal`.
+* ``POST /v1/reviews/{cid}/response`` -- accept a signed ``review.response``
+  from a paper author with one reply per rubric dimension and save it to
+  ``review_responses``; see :mod:`app.modules.reviews.response`.
 """
 
 from __future__ import annotations
@@ -28,7 +31,8 @@ from app.errors import ProblemException
 from app.modules.ingest.service import ingest
 from app.security import Principal, get_current_principal, require_tier, Tier
 
-from . import coi, reveal, service
+from . import coi, response as responses, reveal, service
+from .errors import ReviewResponseNotAuthorized
 from .models import ensure_table, ensure_tables
 
 __all__ = ["router"]
@@ -280,7 +284,7 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     """
     from app.modules import ledger
     from app.modules.catalog.service import resolve as resolve_listed
-    from .models import Review, ensure_tables
+    from .models import Review, ReviewResponse, ensure_tables
 
     ensure_tables()
     view = resolve_listed(paper_id)
@@ -300,6 +304,22 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
         )
         for row in rows:
             session.expunge(row)
+
+    # The authors' point-by-point replies, keyed by the review they answer.
+    responses_by_review: dict[str, list[ReviewResponse]] = {}
+    review_cids = [row.review_cid for row in rows]
+    if review_cids:
+        with db.SessionLocal() as session:
+            response_rows = (
+                session.query(ReviewResponse)
+                .filter(ReviewResponse.review_cid.in_(review_cids))
+                .order_by(ReviewResponse.response_cid)
+                .all()
+            )
+            for row in response_rows:
+                session.expunge(row)
+        for response_row in response_rows:
+            responses_by_review.setdefault(response_row.review_cid, []).append(response_row)
 
     # Map each review key to its revealed review.formal record (latest wins).
     formal_by_key: dict[str, Any] = {}
@@ -357,6 +377,23 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
             item["reveal_cid"] = getattr(formal, "record_cid", None)
             item["formal_cid"] = getattr(formal, "record_cid", None)
             item["id"] = getattr(formal, "record_cid", None)
+
+        # The paper authors' point-by-point answers to this review.
+        response_items = [
+            {
+                "response_cid": saved.response_cid,
+                "responseCid": saved.response_cid,
+                "cid": saved.response_cid,
+                "id": saved.response_cid,
+                "review_cid": saved.review_cid,
+                "replies": saved.replies,
+            }
+            for saved in responses_by_review.get(row.review_cid, [])
+        ]
+        item["responses"] = response_items
+        if response_items:
+            item["response"] = response_items[0]
+            item["replies"] = response_items[0]["replies"]
 
         # Serve the report body only when the gate is open.
         if gate_open and row.revealed_at is not None:
@@ -473,3 +510,90 @@ def rate_review(
         "rater": principal.did,
         "status": "recorded",
     }
+
+
+@router.post("/reviews/{cid}/response", status_code=201)
+def respond_to_review(
+    cid: str,
+    record: dict[str, Any] = Body(..., description="The signed review.response envelope."),
+    principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    """Accept a paper author's point-by-point ``review.response``.
+
+    ``{cid}`` names the review being answered -- its ``review.commit`` cid or
+    its revealed ``review.formal`` cid.  The record is signed by the author's
+    own key, and the access token must belong to that same author: only
+    someone on the paper's byline may answer its reviews (``403`` otherwise,
+    reviewers and other members included).
+
+    The body carries one reply per rubric dimension in ``items``; the replies
+    are saved to ``review_responses`` and served with the review by
+    ``GET /v1/papers/{id}/reviews``.
+
+    Failures are RFC 9457 problem details: ``401`` for a missing token or a
+    bad signature, ``403`` when the caller is not a paper author (or the record
+    is signed by someone else), ``404`` when ``{cid}`` is no review here, and
+    ``422`` for a malformed response or a body naming a different review.
+    """
+    if record.get("type") != responses.REVIEW_RESPONSE_TYPE:
+        raise ProblemException(
+            422,
+            f"This endpoint accepts {responses.REVIEW_RESPONSE_TYPE!r} records, "
+            f"got {record.get('type')!r}.",
+            errors=[
+                {
+                    "loc": ["body", "type"],
+                    "msg": f"The record must be a {responses.REVIEW_RESPONSE_TYPE}.",
+                    "type": "wrong_record_type",
+                    "input": record.get("type"),
+                }
+            ],
+        )
+
+    ensure_tables()
+    review = service.resolve_review(cid)
+    if review is None:
+        raise ProblemException(404, f"No review {cid!r}.")
+
+    # Shape-check the body, and make sure it answers the review under the path.
+    fields = responses.response_fields(record)
+    named = responses.resolve_response_review(fields)
+    if named.review_cid != review.review_cid:
+        raise ProblemException(
+            422,
+            "The response answers a different review than the one in the path.",
+            errors=[
+                {
+                    "loc": ["body", "review"],
+                    "msg": "The response must answer the review in the path.",
+                    "type": "review_mismatch",
+                    "input": fields.review_cid,
+                }
+            ],
+        )
+
+    # The signed record and the bearer token must name the same paper author.
+    signer = record.get("author")
+    if signer != principal.did or not responses.is_paper_author(principal.did, review):
+        raise ReviewResponseNotAuthorized(principal.did, review.review_cid)
+
+    # The pipeline validates the envelope and body, verifies the signature,
+    # runs the handler (which re-checks the review and its author) and appends.
+    result = ingest(record)
+    # The ledger subscriber normally saved the response as it was appended;
+    # this is a no-op then, and the one that reports a failure when it did not.
+    saved = responses.apply_review_response(record)
+
+    return {
+        "id": result.record_id,
+        "response_cid": saved.response_cid,
+        "responseCid": saved.response_cid,
+        "review_cid": saved.review_cid,
+        "reviewCid": saved.review_cid,
+        "review": saved.review_cid,
+        "replies": saved.replies,
+        "state": result.state,
+        "anchor": result.anchor,
+        "status": "recorded",
+    }
+
