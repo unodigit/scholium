@@ -1,0 +1,30 @@
+/* ============================================================================
+   Shell for the paper page (`/p/{id}` and `/p/{id}/v{n}`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame lives here: the global navigation is mounted by
+   the layout, and everything inside the frame (header, reading column, margin
+   panel) is styled by the feature (`features/paper-page/paper-page.css`).
+   Every value is a design token.
+
+   The frame is as wide as the page's own two columns need and no wider: a
+   reading column (--reading-column, 720 px), the gap, and the margin panel
+   (--margin-panel, 360 px), plus the page's side padding. On narrower screens
+   it shrinks to the viewport and the feature stacks the columns.
+   ============================================================================ */
+
+.ppg-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(
+    var(--reading-column) + var(--margin-panel) + var(--space-unit) * 24
+  );
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .ppg-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
