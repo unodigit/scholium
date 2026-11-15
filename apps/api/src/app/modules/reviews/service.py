@@ -31,7 +31,8 @@ from .errors import (
     ReviewNotAuthorized,
     UnknownReviewTarget,
 )
-from .models import Review, ReviewInvitation, ensure_table, ensure_tables
+from .escrow import seal_identity, uniqueness_token
+from .models import Review, ReviewEscrow, ReviewInvitation, ensure_table, ensure_tables
 
 __all__ = [
     "COMMITTED",
@@ -39,11 +40,15 @@ __all__ = [
     "REVIEW_COMMIT_TYPE",
     "Review",
     "ReviewCommitFields",
+    "ReviewEscrow",
     "ReviewInvitation",
     "apply_review_commit",
     "create_invitation",
     "create_review_invitation",
+    "escrow_review",
+    "find_escrow_by_token",
     "find_review_by_nullifier",
+    "get_escrow",
     "get_invitation",
     "get_review",
     "get_review_invitation",
@@ -55,11 +60,13 @@ __all__ = [
     "nullifier_bytes",
     "persist_review_commit",
     "require_not_author",
+    "require_unique_reviewer",
     "resolve_paper",
     "resolve_review_target",
     "resolve_version",
     "review_commit_fields",
     "save_invitation",
+    "save_review_escrow",
     "save_review_invitation",
 ]
 
@@ -798,6 +805,117 @@ def find_review_by_nullifier(nullifier: bytes) -> Optional[Review]:
         return row
 
 
+# --------------------------------------------------------------------------- #
+# Escrowing the reviewer's identity (feature 108)
+# --------------------------------------------------------------------------- #
+
+
+def get_escrow(review_cid: object) -> Optional[ReviewEscrow]:
+    """The escrow row for this review cid, or ``None``."""
+    if not isinstance(review_cid, str) or not review_cid:
+        return None
+    ensure_tables()
+    with db.SessionLocal() as session:
+        row = session.get(ReviewEscrow, review_cid)
+        if row is not None:
+            session.expunge(row)
+        return row
+
+
+def find_escrow_by_token(reviewer_did: str, paper_cid: str) -> Optional[ReviewEscrow]:
+    """The escrow that already holds this reviewer's slot on this paper, or ``None``.
+
+    The token is the HMAC of the authenticated reviewer DID and the paper cid,
+    so this answers "has this person reviewed this paper?" without a table of
+    DIDs and without trusting the client-supplied nullifier.
+    """
+    token = uniqueness_token(reviewer_did, paper_cid)
+    ensure_tables()
+    with db.SessionLocal() as session:
+        row = (
+            session.query(ReviewEscrow)
+            .filter(ReviewEscrow.uniqueness_token == token)
+            .one_or_none()
+        )
+        if row is not None:
+            session.expunge(row)
+        return row
+
+
+def require_unique_reviewer(reviewer_did: str, paper_cid: str) -> None:
+    """Refuse a second review by this caller on this paper (``409``).
+
+    Runs before the record is appended to the ledger.  The nullifier check
+    catches an honest repeat, but a reviewer could present a fresh nullifier
+    for the same paper; the escrow token is keyed by the *authenticated* DID,
+    so it cannot be dodged that way.
+
+    Raises:
+        ReviewAlreadyCommitted: ``409`` -- this person reviewed this paper.
+    """
+    existing = find_escrow_by_token(reviewer_did, paper_cid)
+    if existing is not None:
+        raise ReviewAlreadyCommitted(paper_cid, existing.review_cid)
+
+
+def save_review_escrow(
+    *,
+    review_cid: str,
+    reviewer_did: str,
+    paper_cid: str,
+) -> ReviewEscrow:
+    """Save the sealed reviewer identity for a committed review; return its row.
+
+    The passed ``reviewer_did`` is the authenticated caller's DID -- never the
+    commit's pseudonymous author -- and it is sealed to the committee public
+    key before it reaches the database.  Idempotent per review cid, like
+    :func:`apply_review_commit`: the endpoint and a retry of the same commit
+    share one row.
+
+    Raises:
+        ReviewAlreadyCommitted: ``409`` -- the UNIQUE uniqueness token says this
+            person already has a review escrowed for this paper (a race the
+            pre-flight :func:`require_unique_reviewer` did not see).
+        CommitteeKeyError: the committee public key is missing or malformed.
+    """
+    existing = get_escrow(review_cid)
+    if existing is not None:
+        return existing
+
+    row = ReviewEscrow(
+        review_cid=review_cid,
+        sealed_identity=seal_identity(reviewer_did),
+        uniqueness_token=uniqueness_token(reviewer_did, paper_cid),
+    )
+    with db.SessionLocal() as session:
+        session.add(row)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            # This very review was escrowed by another writer between the check
+            # above and now; its row is this review's row.
+            saved = session.get(ReviewEscrow, review_cid)
+            if saved is not None:
+                session.expunge(saved)
+                return saved
+            clash = (
+                session.query(ReviewEscrow)
+                .filter(ReviewEscrow.uniqueness_token == row.uniqueness_token)
+                .one_or_none()
+            )
+            if clash is not None:
+                raise ReviewAlreadyCommitted(paper_cid, clash.review_cid)
+            raise
+        session.refresh(row)
+        session.expunge(row)
+    return row
+
+
+#: Alias matching the invitation helpers' naming.
+escrow_review = save_review_escrow
+
+
 def require_not_author(caller_did: object, paper_cid: str) -> None:
     """Refuse unless ``caller_did`` is not an author of the paper (``403``).
 
@@ -882,6 +1000,10 @@ def apply_review_commit(record: Mapping[str, Any]) -> Review:
 
 def persist_review_commit(entry: Any) -> None:
     """Ledger subscriber: save every ``review.commit`` once it is in the log.
+
+    The escrow row is *not* written here: a ``review.commit`` arrives with a
+    pseudonymous author, so only the HTTP endpoint, which has the access
+    token's caller, can seal the reviewer's identity (feature 108).
 
     Failures are logged by the ledger and do not undo the append; the endpoint
     applies the commit again and reports a real failure to its caller.

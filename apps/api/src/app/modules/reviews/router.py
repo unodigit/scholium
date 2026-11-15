@@ -8,8 +8,9 @@ The module loader mounts this router under ``/v1``, so this package serves:
   (not an author, no co-authorship in 3 years, different institution) for the
   calling reviewer; see :mod:`app.modules.reviews.coi`.
 * ``POST /v1/reviews/commit`` -- accept a signed ``review.commit`` from a
-  tier-3 member, once per person and paper; see
-  :mod:`app.modules.reviews.service`.
+  tier-3 member, once per person and paper, and escrow the caller's identity
+  as a sealed box for the committee; see :mod:`app.modules.reviews.service`
+  and :mod:`app.modules.reviews.escrow`.
 """
 
 from __future__ import annotations
@@ -137,7 +138,10 @@ def commit_review(
 
     An accepted commit goes through the standard ingest pipeline (envelope,
     body schema, cid, signature, ledger) and is saved to the ``review`` table
-    with status ``committed``, awaiting ``POST /v1/reviews/reveal``.
+    with status ``committed``, awaiting ``POST /v1/reviews/reveal``.  The
+    caller's DID is saved alongside it in ``review_escrows`` only as a sealed
+    box for the committee, with the HMAC uniqueness token guarding one review
+    per person and paper.
 
     Failures are RFC 9457 problem details: ``401`` for a missing token or a bad
     signature, ``403`` for a caller below tier 3 or listed as an author,
@@ -164,6 +168,10 @@ def commit_review(
     # refuse an author's own review before anything reaches the ledger.
     fields = service.review_commit_fields(record)
     service.require_not_author(principal.did, fields.paper_cid)
+    # The escrow token is keyed by the *authenticated* DID, so it refuses a
+    # second review even when the commit carries a fresh nullifier.  Checked
+    # before the append so a refused repeat writes nothing.
+    service.require_unique_reviewer(principal.did, fields.paper_cid)
 
     # The pipeline validates the envelope and body, verifies the signature,
     # runs the handler (which refuses a second commit), and appends the record.
@@ -171,6 +179,14 @@ def commit_review(
     # The ledger subscriber normally saved the review as it was appended; this
     # is a no-op then, and the one that reports a failure when it did not.
     service.apply_review_commit(record)
+    # The record is pseudonymous; the access token is the only thing that says
+    # who reviewed.  Store that identity sealed for the committee -- never in
+    # plaintext -- under the review it belongs to.
+    service.save_review_escrow(
+        review_cid=fields.review_cid,
+        reviewer_did=principal.did,
+        paper_cid=fields.paper_cid,
+    )
 
     return {
         "id": result.record_id,

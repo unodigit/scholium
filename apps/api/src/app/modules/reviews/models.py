@@ -34,6 +34,20 @@ stored as bytes -- the hex string a client sends is decoded first -- and is
 what makes a second commitment by the same person on the same paper a
 conflict.  The pseudonymity material (``review_key`` and ``nullifier``) is
 never served by any endpoint; see :mod:`app.modules.profiles.views`.
+
+``review_escrows`` (``app_spec.xml``, ``database_schema/review_escrows``)::
+
+    review_escrows(review_cid TEXT PRIMARY KEY,
+                   sealed_identity BLOB NOT NULL,
+                   uniqueness_token TEXT NOT NULL UNIQUE)
+
+One row per committed review, holding the accountability link the node itself
+cannot read.  ``sealed_identity`` is ``Enc(committee_public_key,
+reviewer_did)`` -- a sealed box only the committee's private key opens -- and
+``uniqueness_token`` is an HMAC over the reviewer DID and the paper cid, so a
+second review by the same person on the same paper collides on the UNIQUE
+constraint.  There is deliberately no ``reviewer_did`` column: the plaintext
+mapping is never written.  See :mod:`app.modules.reviews.escrow`.
 """
 
 from __future__ import annotations
@@ -47,7 +61,13 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app import db
 
-__all__ = ["Review", "ReviewInvitation", "ensure_table", "ensure_tables"]
+__all__ = [
+    "Review",
+    "ReviewEscrow",
+    "ReviewInvitation",
+    "ensure_table",
+    "ensure_tables",
+]
 
 
 class ReviewInvitation(db.Base):
@@ -98,6 +118,28 @@ class Review(db.Base):
         )
 
 
+class ReviewEscrow(db.Base):
+    """One review's reviewer identity, sealed for the committee.
+
+    ``sealed_identity`` is a libsodium sealed box of the reviewer DID to the
+    committee public key.  ``uniqueness_token`` is the HMAC that lets the
+    UNIQUE constraint refuse a second review by the same person on the same
+    paper without storing who that person is.
+    """
+
+    __tablename__ = "review_escrows"
+
+    #: cid of the ``review.commit`` this escrow belongs to.
+    review_cid = Column(Text, primary_key=True)
+    #: ``Enc(committee_public_key, reviewer_did)``; never the plaintext DID.
+    sealed_identity = Column(LargeBinary, nullable=False)
+    #: ``HMAC(reviewer_did || paper_cid)``; stable, non-reversible, UNIQUE.
+    uniqueness_token = Column(Text, nullable=False, unique=True, index=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<ReviewEscrow review_cid={self.review_cid!r}>"
+
+
 _table_lock = threading.Lock()
 _table_engine: Optional[Engine] = None
 
@@ -109,7 +151,11 @@ def ensure_table() -> None:
         return
     with _table_lock:
         if _table_engine is not db.engine:
-            for table in (ReviewInvitation.__table__, Review.__table__):
+            for table in (
+                ReviewInvitation.__table__,
+                Review.__table__,
+                ReviewEscrow.__table__,
+            ):
                 try:
                     table.create(bind=db.engine, checkfirst=True)
                 except (OperationalError, ProgrammingError):

@@ -15,6 +15,13 @@ member, saves it to the ``review`` table, and refuses a second review by the
 same person on the same paper (``409``) or an author reviewing their own
 paper (``403``).  See :mod:`app.modules.reviews.service`.
 
+Feature 108: each committed review's reviewer identity -- the authenticated
+caller, not the record's pseudonymous author -- is saved to the
+``review_escrows`` table only as a sealed box ``Enc(committee_public_key,
+reviewer_did)``.  Uniqueness is tracked by an HMAC token over the DID and the
+paper cid, never by a plaintext mapping.  See
+:mod:`app.modules.reviews.escrow`.
+
 The module loader discovers packages under ``app.modules`` automatically, so
 importing this package mounts the router under ``/v1`` and registers the
 ``review.commit`` handler with the ingest pipeline.
@@ -31,7 +38,15 @@ from .errors import (
     ReviewNotAuthorized,
     UnknownReviewTarget,
 )
-from .models import Review, ReviewInvitation, ensure_table, ensure_tables
+from .escrow import (
+    CommitteeKeyError,
+    EscrowDecryptionError,
+    committee_public_key,
+    open_identity,
+    seal_identity,
+    uniqueness_token,
+)
+from .models import Review, ReviewEscrow, ReviewInvitation, ensure_table, ensure_tables
 from .router import router
 from .service import (
     COMMITTED,
@@ -41,7 +56,10 @@ from .service import (
     apply_review_commit,
     create_invitation,
     create_review_invitation,
+    escrow_review,
+    find_escrow_by_token,
     find_review_by_nullifier,
+    get_escrow,
     get_invitation,
     get_review,
     get_review_invitation,
@@ -53,19 +71,23 @@ from .service import (
     nullifier_bytes,
     persist_review_commit,
     require_not_author,
+    require_unique_reviewer,
     resolve_paper,
     resolve_review_target,
     resolve_version,
     review_commit_fields,
     save_invitation,
+    save_review_escrow,
     save_review_invitation,
 )
 
 __all__ = [
     "COI_WINDOW_YEARS",
     "COMMITTED",
+    "CommitteeKeyError",
     "CoiCheck",
     "CoiReport",
+    "EscrowDecryptionError",
     "REVIEW_ALREADY_COMMITTED",
     "REVIEW_COMMIT_MIN_TIER",
     "REVIEW_COMMIT_TYPE",
@@ -73,17 +95,22 @@ __all__ = [
     "Review",
     "ReviewAlreadyCommitted",
     "ReviewCommitFields",
+    "ReviewEscrow",
     "ReviewInvitation",
     "ReviewNotAuthorized",
     "UNKNOWN_REVIEW_TARGET",
     "UnknownReviewTarget",
     "apply_review_commit",
     "check_conflicts",
+    "committee_public_key",
     "create_invitation",
     "create_review_invitation",
     "ensure_table",
     "ensure_tables",
+    "escrow_review",
+    "find_escrow_by_token",
     "find_review_by_nullifier",
+    "get_escrow",
     "get_invitation",
     "get_review",
     "get_review_invitation",
@@ -93,15 +120,20 @@ __all__ = [
     "list_invitations",
     "list_review_invitations",
     "nullifier_bytes",
+    "open_identity",
     "persist_review_commit",
     "require_not_author",
+    "require_unique_reviewer",
     "resolve_paper",
     "resolve_review_target",
     "resolve_version",
     "review_commit_fields",
     "router",
     "save_invitation",
+    "save_review_escrow",
     "save_review_invitation",
+    "seal_identity",
+    "uniqueness_token",
 ]
 
 
