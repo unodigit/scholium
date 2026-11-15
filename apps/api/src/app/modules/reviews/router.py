@@ -7,6 +7,9 @@ The module loader mounts this router under ``/v1``, so this package serves:
 * ``GET /v1/papers/{paper_id}/coi-check`` -- the conflict-of-interest checks
   (not an author, no co-authorship in 3 years, different institution) for the
   calling reviewer; see :mod:`app.modules.reviews.coi`.
+* ``POST /v1/reviews/commit`` -- accept a signed ``review.commit`` from a
+  tier-3 member, once per person and paper; see
+  :mod:`app.modules.reviews.service`.
 """
 
 from __future__ import annotations
@@ -16,7 +19,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends, Response
 
 from app.errors import ProblemException
-from app.security import Principal, get_current_principal, Tier
+from app.modules.ingest.service import ingest
+from app.security import Principal, get_current_principal, require_tier, Tier
 
 from . import coi, service
 from .models import ensure_table, ensure_tables
@@ -115,3 +119,62 @@ def get_coi_check(
     # The answer depends on who asks and on the profiles as they stand now.
     response.headers["Cache-Control"] = "private, no-store"
     return coi.check_conflicts(paper, principal.did).as_dict()
+
+
+@router.post("/reviews/commit", status_code=201)
+def commit_review(
+    record: dict[str, Any] = Body(..., description="The signed review.commit envelope."),
+    principal: Principal = Depends(require_tier(Tier.REVIEWER)),
+) -> dict[str, Any]:
+    """Accept a signed ``review.commit`` from a tier-3 member, once per paper.
+
+    The commitment is signed by the reviewer's pseudonymous per-paper review
+    key, so the record itself says nothing about the caller's identity.  The
+    access token supplies that: only a tier-3 member may commit, an author of
+    the paper may not (``403``), and the nullifier in the body -- the same for
+    this person and this paper every time -- makes a second commitment a
+    ``409``.
+
+    An accepted commit goes through the standard ingest pipeline (envelope,
+    body schema, cid, signature, ledger) and is saved to the ``review`` table
+    with status ``committed``, awaiting ``POST /v1/reviews/reveal``.
+
+    Failures are RFC 9457 problem details: ``401`` for a missing token or a bad
+    signature, ``403`` for a caller below tier 3 or listed as an author,
+    ``409`` for a second review by the same person on the same paper, and
+    ``422`` for an invalid record or a target this node does not hold.
+    """
+    if record.get("type") != service.REVIEW_COMMIT_TYPE:
+        raise ProblemException(
+            422,
+            f"This endpoint accepts {service.REVIEW_COMMIT_TYPE!r} records, "
+            f"got {record.get('type')!r}.",
+            errors=[
+                {
+                    "loc": ["body", "type"],
+                    "msg": f"The record must be a {service.REVIEW_COMMIT_TYPE}.",
+                    "type": "wrong_record_type",
+                    "input": record.get("type"),
+                }
+            ],
+        )
+
+    ensure_tables()
+    # Shape-check before trusting the body enough to name the paper, then
+    # refuse an author's own review before anything reaches the ledger.
+    fields = service.review_commit_fields(record)
+    service.require_not_author(principal.did, fields.paper_cid)
+
+    # The pipeline validates the envelope and body, verifies the signature,
+    # runs the handler (which refuses a second commit), and appends the record.
+    result = ingest(record)
+    # The ledger subscriber normally saved the review as it was appended; this
+    # is a no-op then, and the one that reports a failure when it did not.
+    service.apply_review_commit(record)
+
+    return {
+        "id": result.record_id,
+        "target": fields.version_cid,
+        "state": result.state,
+        "anchor": result.anchor,
+    }

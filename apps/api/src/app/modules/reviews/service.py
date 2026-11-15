@@ -9,9 +9,13 @@ stored in the ``review_invitations`` table with status ``pending``.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.security import Tier
@@ -19,20 +23,42 @@ from app.security import Tier
 from app.modules import submissions
 from app.modules.endorsements import account_tier, can_submit
 from app.modules.identity.models import Account, ensure_account_table
+from app.modules.ingest.errors import InvalidRecord
 from app.modules.ingest.service import PAPER_GENESIS_TYPE, PAPER_VERSION_TYPE
 
-from .models import ReviewInvitation, ensure_table, ensure_tables
+from .errors import (
+    ReviewAlreadyCommitted,
+    ReviewNotAuthorized,
+    UnknownReviewTarget,
+)
+from .models import Review, ReviewInvitation, ensure_table, ensure_tables
 
 __all__ = [
+    "COMMITTED",
+    "REVIEW_COMMIT_MIN_TIER",
+    "REVIEW_COMMIT_TYPE",
+    "Review",
+    "ReviewCommitFields",
     "ReviewInvitation",
+    "apply_review_commit",
     "create_invitation",
     "create_review_invitation",
+    "find_review_by_nullifier",
     "get_invitation",
+    "get_review",
     "get_review_invitation",
+    "handle_review_commit",
+    "is_author_or_moderator",
+    "is_tier3_reviewer",
     "list_invitations",
     "list_review_invitations",
+    "nullifier_bytes",
+    "persist_review_commit",
+    "require_not_author",
     "resolve_paper",
+    "resolve_review_target",
     "resolve_version",
+    "review_commit_fields",
     "save_invitation",
     "save_review_invitation",
 ]
@@ -546,3 +572,322 @@ def parse_payload(payload: Any):
     version_hint = _first(payload, _VERSION_KEYS)
     status = _first(payload, ("status",))
     return reviewer, version_hint, status
+
+
+# --------------------------------------------------------------------------- #
+# Committing a review (feature 107)
+# --------------------------------------------------------------------------- #
+
+#: The record type this plugin owns.
+REVIEW_COMMIT_TYPE = "review.commit"
+
+#: The state an accepted commit reports back to the client.
+COMMITTED = "committed"
+
+#: Lowest *author* tier the ingest registry lets through.  A ``review.commit``
+#: is signed by the reviewer's pseudonymous per-paper key, which has no account
+#: row and therefore reads as tier 0.  Who may review -- a tier-3 *caller* -- is
+#: the endpoint's `require_tier(3)` dependency, not the record author's tier.
+REVIEW_COMMIT_MIN_TIER = 0
+
+
+@dataclass(frozen=True)
+class ReviewCommitFields:
+    """The parts of a ``review.commit`` this plugin acts on, shape-checked."""
+
+    #: cid of the commit record (its ``id``).
+    review_cid: str
+    #: cid of the ``paper.version`` under review (``body.target``).
+    version_cid: str
+    #: cid of that version's paper (its genesis record).
+    paper_cid: str
+    #: The pseudonymous per-paper key the eventual review is signed with.
+    review_key: str
+    #: Hash commitment to the sealed review content.
+    commitment: str
+    #: ``H(secret || paperId)`` as bytes; deterministic per reviewer and paper.
+    nullifier: bytes
+    #: The instant the record is dated (``created``), not when it arrived.
+    committed_at: datetime
+
+
+def nullifier_bytes(value: Any) -> bytes:
+    """Decode a client's nullifier to the bytes the ``review`` table stores.
+
+    A nullifier arrives as the hex digest ``H(secret || paperId)``; hex is
+    decoded so the column holds the 32-byte digest.  Anything that is not
+    hexadecimal is stored as its UTF-8 bytes, so a client using another
+    encoding still gets a stable value to compare against.
+    """
+    text = str(value).strip()
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        return text.encode("utf-8")
+
+
+def _invalid(loc: list[Any], message: str, error_type: str, value: Any = None) -> InvalidRecord:
+    """A ``422`` for one bad field of a ``review.commit``, located at ``loc``."""
+    shown = value if isinstance(value, (str, int, float, bool, type(None))) else None
+    if isinstance(shown, str) and len(shown) > 64:
+        shown = shown[:61] + "..."
+    full = f"The review commit {message}."
+    return InvalidRecord(
+        [{"loc": loc, "msg": full, "type": error_type, "input": shown}],
+        detail=full,
+    )
+
+
+def _created_at(record: Mapping[str, Any]) -> datetime:
+    """The record's ``created`` as naive UTC (a bare timestamp is read as UTC), or ``422``."""
+    value = record.get("created")
+    try:
+        moment = datetime.fromisoformat(value.strip()) if isinstance(value, str) else None
+    except ValueError:
+        moment = None
+    if moment is None:
+        raise _invalid(
+            ["created"],
+            "field 'created' must be an ISO 8601 instant",
+            "invalid_created",
+            value,
+        )
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def resolve_review_target(target: str) -> tuple[str, str]:
+    """Return ``(version_cid, paper_cid)`` for a review's ``body.target``.
+
+    The submissions projection is consulted first; the event log second, so a
+    ``paper.version`` whose handler has not indexed it can still be reviewed.
+
+    Raises:
+        UnknownReviewTarget: ``422`` when ``target`` is not a version here.
+    """
+    version = submissions.get_version(target)
+    if version is not None:
+        return str(version.version_cid), str(version.paper_cid)
+
+    from app.modules import ledger
+
+    entry = ledger.entry_by_cid(target)
+    if entry is not None and getattr(entry, "record_type", None) == PAPER_VERSION_TYPE:
+        body = getattr(entry, "body", None)
+        paper = body.get("paper") if isinstance(body, Mapping) else None
+        if isinstance(paper, str) and paper:
+            return str(target), paper
+    raise UnknownReviewTarget(target)
+
+
+def review_commit_fields(record: Mapping[str, Any]) -> ReviewCommitFields:
+    """Shape-check a ``review.commit`` and return the fields this plugin acts on.
+
+    The ingest pipeline's schema check normally runs first; this re-checks the
+    shape so a direct caller gets ``422`` problem details rather than a
+    ``TypeError`` or a half-written row.
+
+    Raises:
+        InvalidRecord: ``422`` when the body is not an object, ``target`` is
+            missing, neither ``commitment`` nor ``commitmentHash`` is given,
+            ``nullifier`` is missing, or ``created`` is not an instant.
+        UnknownReviewTarget: ``422`` when ``target`` is not a version here.
+    """
+    body = record.get("body")
+    if not isinstance(body, Mapping):
+        raise InvalidRecord(
+            ["the review.commit body must be an object"],
+            detail="The review.commit body must be a JSON object.",
+        )
+
+    review_cid = record.get("id")
+    if not isinstance(review_cid, str) or not review_cid:
+        message = "The review.commit record must carry its cid as a non-empty string in 'id'."
+        raise InvalidRecord(
+            [{"loc": ["body", "id"], "msg": message, "type": "missing_record_id", "input": None}],
+            detail=message,
+        )
+
+    target = body.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise _invalid(
+            ["body", "target"],
+            "needs the cid of the paper version under review in 'target'",
+            "invalid_target",
+            target,
+        )
+    target = target.strip()
+
+    commitment = body.get("commitment")
+    if not isinstance(commitment, str) or not commitment:
+        commitment = body.get("commitmentHash")
+    if not isinstance(commitment, str) or not commitment:
+        raise _invalid(
+            ["body", "commitment"],
+            "needs a non-empty 'commitment' (or 'commitmentHash')",
+            "missing_commitment",
+            body.get("commitment"),
+        )
+
+    nullifier = body.get("nullifier")
+    if not isinstance(nullifier, str) or not nullifier.strip():
+        raise _invalid(
+            ["body", "nullifier"],
+            "needs a non-empty 'nullifier'",
+            "missing_nullifier",
+            nullifier,
+        )
+
+    review_key = body.get("reviewKey")
+    if not isinstance(review_key, str) or not review_key:
+        review_key = body.get("review_key")
+    if not isinstance(review_key, str) or not review_key:
+        # The reviewer's per-paper key signs the commit; the envelope's author
+        # is that key, so it is the natural fallback.
+        review_key = record.get("author")
+    if not isinstance(review_key, str) or not review_key:
+        raise _invalid(
+            ["body", "reviewKey"],
+            "needs the per-paper review key in 'reviewKey'",
+            "missing_review_key",
+            body.get("reviewKey"),
+        )
+
+    version_cid, paper_cid = resolve_review_target(target)
+    return ReviewCommitFields(
+        review_cid=review_cid,
+        version_cid=version_cid,
+        paper_cid=paper_cid,
+        review_key=review_key,
+        commitment=commitment,
+        nullifier=nullifier_bytes(nullifier),
+        committed_at=_created_at(record),
+    )
+
+
+def get_review(review_cid: object) -> Optional[Review]:
+    """The saved review with this cid, or ``None``."""
+    if not isinstance(review_cid, str) or not review_cid:
+        return None
+    ensure_tables()
+    with db.SessionLocal() as session:
+        row = session.get(Review, review_cid)
+        if row is not None:
+            session.expunge(row)
+        return row
+
+
+def find_review_by_nullifier(nullifier: bytes) -> Optional[Review]:
+    """The saved review with this nullifier, or ``None``.
+
+    A nullifier is ``H(secret || paperId)``: one reviewer and one paper give
+    one value, every time, so finding one means this person has reviewed this
+    paper already.  Another reviewer, or the same reviewer on another paper,
+    derives another nullifier.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        row = (
+            session.query(Review)
+            .filter(Review.nullifier == nullifier)
+            .one_or_none()
+        )
+        if row is not None:
+            session.expunge(row)
+        return row
+
+
+def require_not_author(caller_did: object, paper_cid: str) -> None:
+    """Refuse unless ``caller_did`` is not an author of the paper (``403``).
+
+    ``caller_did`` is the access token's subject -- the member asking -- not
+    the commit's pseudonymous author.  Authorship is the definition
+    :func:`app.modules.submissions.paper_authors` gives -- whoever signed the
+    genesis or a version, and everyone listed on a byline -- plus the bylines
+    the event log holds for a paper the submissions handler has not indexed.
+
+    Raises:
+        ReviewNotAuthorized: ``403``.
+    """
+    if isinstance(caller_did, str) and caller_did:
+        if caller_did in _paper_authors_from_ledger(paper_cid):
+            raise ReviewNotAuthorized(caller_did, paper_cid)
+
+
+def handle_review_commit(record: Mapping[str, Any]) -> str:
+    """Validate a ``review.commit``; return the state it will be saved with.
+
+    Runs before the record is appended to the ledger, so a conflict stores
+    nothing.  Nothing is saved here either: the ``review`` row is written by
+    :func:`apply_review_commit` once the record is in the log.
+
+    Raises:
+        InvalidRecord, UnknownReviewTarget: ``422``.
+        ReviewAlreadyCommitted: ``409`` -- this person reviewed this paper.
+    """
+    fields = review_commit_fields(record)
+    existing = find_review_by_nullifier(fields.nullifier)
+    if existing is not None:
+        raise ReviewAlreadyCommitted(fields.paper_cid, existing.review_cid)
+    return COMMITTED
+
+
+def apply_review_commit(record: Mapping[str, Any]) -> Review:
+    """Save the review to the ``review`` table; return its row.
+
+    Idempotent per review cid: a commit that already has its row is returned
+    as it is, so the ledger subscriber and the endpoint may both call this for
+    the same record.  The record is validated again first, so no row exists for
+    a commit the handler would have refused.
+
+    Raises:
+        InvalidRecord, UnknownReviewTarget: ``422``.
+        ReviewAlreadyCommitted: ``409`` -- another review holds the nullifier.
+    """
+    fields = review_commit_fields(record)
+
+    existing = get_review(fields.review_cid)
+    if existing is not None:
+        return existing
+
+    conflict = find_review_by_nullifier(fields.nullifier)
+    if conflict is not None:
+        raise ReviewAlreadyCommitted(fields.paper_cid, conflict.review_cid)
+
+    row = Review(
+        review_cid=fields.review_cid,
+        version_cid=fields.version_cid,
+        review_key=fields.review_key,
+        nullifier=fields.nullifier,
+        committed_at=fields.committed_at,
+    )
+    with db.SessionLocal() as session:
+        session.add(row)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            # This very record was saved by another writer between the check
+            # above and now; its row is this record's row.
+            saved = session.get(Review, fields.review_cid)
+            if saved is not None:
+                session.expunge(saved)
+                return saved
+            raise
+        session.refresh(row)
+        session.expunge(row)
+    return row
+
+
+def persist_review_commit(entry: Any) -> None:
+    """Ledger subscriber: save every ``review.commit`` once it is in the log.
+
+    Failures are logged by the ledger and do not undo the append; the endpoint
+    applies the commit again and reports a real failure to its caller.
+    """
+    if getattr(entry, "record_type", None) != REVIEW_COMMIT_TYPE:
+        return
+    from app.modules import ledger
+
+    apply_review_commit(ledger.stored_envelope(entry).model_dump())
