@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "description": "Cross-language test vectors for Scholium record ids. Each vector carries a full record envelope; the record id is the CIDv1 (dag-cbor codec, sha2-256, base32) over the DAG-CBOR encoding of the envelope fields v, type, author, created, prev, body, proofs — excluding id and sig. dag_cbor_hex is the exact canonical DAG-CBOR byte string that gets hashed. Every implementation of the record core must produce both values from the envelope alone. The id and sig members inside the envelopes are illustrative and take no part in the computation.",
+  "record_id": {
+    "cid_version": 1,
+    "codec": "dag-cbor",
+    "codec_code": "0x71",
+    "hash": "sha2-256",
+    "base": "base32"
+  },
+  "envelope_fields": [
+    "v",
+    "type",
+    "author",
+    "created",
+    "prev",
+    "body",
+    "proofs"
+  ],
+  "excluded_fields": [
+    "id",
+    "sig"
+  ],
+  "vectors": [
+    {
+      "name": "paper-genesis-minimal",
+      "description": "paper.genesis with null prev, empty proofs and a small body",
+      "envelope": {
+        "v": 1,
+        "type": "paper.genesis",
+        "author": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+        "created": "2026-11-14T05:33:00Z",
+        "prev": null,
+        "body": {
+          "seed": "scholium-vector-1",
+          "title": "A Minimal Scholium Paper",
+          "categories": [
+            "mathematics"
+          ],
+          "licence": "CC-BY-4.0"
+        },
+        "proofs": [],
+        "id": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+        "sig": "sig-placeholder-not-part-of-record-id"
+      },
+      "dag_cbor_hex": "a761760164626f6479a46473656564717363686f6c69756d2d766563746f722d31657469746c65781841204d696e696d616c205363686f6c69756d205061706572676c6963656e63656943432d42592d342e306a63617465676f72696573816b6d617468656d61746963736470726576f664747970656d70617065722e67656e6573697366617574686f7278386469643a6b65793a7a364d6b68614b674d7539556234537054335639526274436962366152756d585a59314a64484d7a43435a4b377042626670726f6f667380676372656174656474323032362d31312d31345430353a33333a30305a",
+      "id": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4"
+    },
+    {
+      "name": "paper-version-with-prev",
+      "description": "paper.version chaining prev to the genesis vector's id; unicode, nested objects and lists, bool and null in body",
+      "envelope": {
+        "v": 1,
+        "type": "paper.version",
+        "author": "did:key:z6Mkf5r9oKZXWyScE3fDnsVM3L4X7oaLLrQtLgYgLKxkbPgK",
+        "created": "2026-11-14T09:12:00Z",
+        "prev": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+        "body": {
+          "paper": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+          "n": 2,
+          "title": "Café méthodes — 中文标题 ✦",
+          "abstract": "Cross-language vectors pin the canonical record bytes.",
+          "authors": [
+            {
+              "did": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+              "credit": [
+                "conceptualization",
+                "writing – original draft"
+              ],
+              "corresponding": true,
+              "orcid": null
+            }
+          ],
+          "manifest": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+          "licence": "CC-BY-4.0",
+          "changeNote": "Add the vector appendix."
+        },
+        "proofs": [],
+        "id": "bafyreicincmn5eotnt4a7ik3wq7dohecjikpgxvbikftwgyyrdml6rszey",
+        "sig": "sig-placeholder-not-part-of-record-id"
+      },
+      "dag_cbor_hex": "a761760164626f6479a8616e02657061706572783b62616679726569686b6c6364336669686334747a75786b356c6a75786f366f6f72753436746673703767733670356d6a7172697732356375747a34657469746c657824436166c3a9206dc3a974686f64657320e2809420e4b8ade69687e6a087e9a29820e29ca667617574686f727381a46364696478386469643a6b65793a7a364d6b68614b674d7539556234537054335639526274436962366152756d585a59314a64484d7a43435a4b37704262656f72636964f6666372656469748271636f6e6365707475616c697a6174696f6e781a77726974696e6720e28093206f726967696e616c2064726166746d636f72726573706f6e64696e67f5676c6963656e63656943432d42592d342e30686162737472616374783643726f73732d6c616e677561676520766563746f72732070696e207468652063616e6f6e6963616c207265636f72642062797465732e686d616e6966657374783b62616679626569676479727a74357366703775646d37687537367568377932366e6633656675796c71616266336f636c67747179353566627a64696a6368616e67654e6f746578184164642074686520766563746f7220617070656e6469782e6470726576783b62616679726569686b6c6364336669686334747a75786b356c6a75786f366f6f72753436746673703767733670356d6a7172697732356375747a3464747970656d70617065722e76657273696f6e66617574686f7278386469643a6b65793a7a364d6b663572396f4b5a5857795363453366446e73564d334c3458376f614c4c7251744c6759674c4b786b6250674b6670726f6f667380676372656174656474323032362d31312d31345430393a31323a30305a",
+      "id": "bafyreicincmn5eotnt4a7ik3wq7dohecjikpgxvbikftwgyyrdml6rszey"
+    },
+    {
+      "name": "manifest-files",
+      "description": "manifest body with files[{path, cid, size, mediaType, role}], one size above 2**32",
+      "envelope": {
+        "v": 1,
+        "type": "manifest",
+        "author": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+        "created": "2026-11-14T09:15:30Z",
+        "prev": null,
+        "body": {
+          "files": [
+            {
+              "path": "main.pdf",
+              "cid": "bafkreigh2akiscncdcy3g4y27ndfn7levj4k4gs4wdbpci5qvixvim5dha",
+              "size": 1048576,
+              "mediaType": "application/pdf",
+              "role": "manuscript"
+            },
+            {
+              "path": "figures/plot.svg",
+              "cid": "bafkreiabf3clzqizbyvthhz4yqetd7ab5cimxcj2wvbailc26snnaaw4qey",
+              "size": 8589934592,
+              "mediaType": "image/svg+xml",
+              "role": "figure"
+            }
+          ]
+        },
+        "proofs": [],
+        "id": "bafyreie6ulqlp3667jrwf33u3trxessrmjq6hu3ziflot7vvrblv6mt7am",
+        "sig": "sig-placeholder-not-part-of-record-id"
+      },
+      "dag_cbor_hex": "a761760164626f6479a16566696c657382a563636964783b6261666b726569676832616b6973636e636463793367347932376e64666e376c65766a346b34677334776462706369357176697876696d356468616470617468686d61696e2e70646664726f6c656a6d616e757363726970746473697a651a00100000696d65646961547970656f6170706c69636174696f6e2f706466a563636964783c6261666b72656961626633636c7a71697a6279767468687a3479716574643761623563696d78636a3277766261696c633236736e6e61617734716579647061746870666967757265732f706c6f742e73766764726f6c65666669677572656473697a651b0000000200000000696d65646961547970656d696d6167652f7376672b786d6c6470726576f66474797065686d616e696665737466617574686f7278386469643a6b65793a7a364d6b68614b674d7539556234537054335639526274436962366152756d585a59314a64484d7a43435a4b377042626670726f6f667380676372656174656474323032362d31312d31345430393a31353a33305a",
+      "id": "bafyreie6ulqlp3667jrwf33u3trxessrmjq6hu3ziflot7vvrblv6mt7am"
+    },
+    {
+      "name": "discussion-post-length-first-keys",
+      "description": "body keys z and aa pin DAG-CBOR length-first key sorting: z precedes aa, while a plain bytewise sort would disagree",
+      "envelope": {
+        "v": 1,
+        "type": "discussion.post",
+        "author": "did:key:z6Mkf5r9oKZXWyScE3fDnsVM3L4X7oaLLrQtLgYgLKxkbPgK",
+        "created": "2026-11-15T11:04:00Z",
+        "prev": null,
+        "body": {
+          "target": "bafyreicincmn5eotnt4a7ik3wq7dohecjikpgxvbikftwgyyrdml6rszey",
+          "anchor": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+          "textCid": "bafkreifz4wf62jmlhmbfgbpbv7x3qilixfpqo3m74qhy5rbyxlf6wqoqqq4",
+          "parent": null,
+          "z": "length-first: z sorts before aa in DAG-CBOR",
+          "aa": "plain bytewise order would sort aa first"
+        },
+        "proofs": [],
+        "id": "bafyreic2douy2f6mqt27ff6h24ag2acjdm5igadpkebkc3v32f4nxnekwy",
+        "sig": "sig-placeholder-not-part-of-record-id"
+      },
+      "dag_cbor_hex": "a761760164626f6479a6617a782b6c656e6774682d66697273743a207a20736f727473206265666f726520616120696e204441472d43424f526261617828706c61696e206279746577697365206f7264657220776f756c6420736f727420616120666972737466616e63686f72783b62616679726569686b6c6364336669686334747a75786b356c6a75786f366f6f72753436746673703767733670356d6a7172697732356375747a3466706172656e74f666746172676574783b6261667972656963696e636d6e35656f746e74346137696b33777137646f6865636a696b7067787662696b66747767797972646d6c3672737a65796774657874436964783c6261666b726569667a34776636326a6d6c686d6266676270627637783371696c69786670716f336d373471687935726279786c663677716f717171346470726576f664747970656f64697363757373696f6e2e706f737466617574686f7278386469643a6b65793a7a364d6b663572396f4b5a5857795363453366446e73564d334c3458376f614c4c7251744c6759674c4b786b6250674b6670726f6f667380676372656174656474323032362d31312d31355431313a30343a30305a",
+      "id": "bafyreic2douy2f6mqt27ff6h24ag2acjdm5igadpkebkc3v32f4nxnekwy"
+    },
+    {
+      "name": "endorsement-with-proof-object",
+      "description": "endorsement carrying a W3C VC-shaped object inside proofs",
+      "envelope": {
+        "v": 1,
+        "type": "endorsement",
+        "author": "did:key:z6Mkf5r9oKZXWyScE3fDnsVM3L4X7oaLLrQtLgYgLKxkbPgK",
+        "created": "2026-11-15T12:00:00Z",
+        "prev": null,
+        "body": {
+          "endorsee": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+          "category": "physics",
+          "expiry": "2027-11-14T00:00:00Z"
+        },
+        "proofs": [
+          {
+            "@context": [
+              "https://www.w3.org/ns/credentials/v2"
+            ],
+            "type": "VerifiableCredential",
+            "issuer": "did:key:z6Mkf5r9oKZXWyScE3fDnsVM3L4X7oaLLrQtLgYgLKxkbPgK",
+            "credentialSubject": {
+              "id": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+              "role": "endorser",
+              "category": "physics"
+            },
+            "proof": {
+              "type": "Ed25519Signature2020",
+              "created": "2026-11-01T08:00:00Z",
+              "verificationMethod": "did:key:z6Mkf5r9oKZXWyScE3fDnsVM3L4X7oaLLrQtLgYgLKxkbPgK#0",
+              "proofValue": "z3u2f7y8JcS9qLCmR1hT6nD8bV4xW2aK5eQ7pN0sZ9oI4uB6cE3g"
+            }
+          }
+        ],
+        "id": "bafyreibyta5xjjwixk43jbzqpeej7b6aca2oosp2bayvbtcyl5z46wt7jy",
+        "sig": "sig-placeholder-not-part-of-record-id"
+      },
+      "dag_cbor_hex": "a761760164626f6479a36665787069727974323032372d31312d31345430303a30303a30305a6863617465676f7279677068797369637368656e646f7273656578386469643a6b65793a7a364d6b68614b674d7539556234537054335639526274436962366152756d585a59314a64484d7a43435a4b377042626470726576f664747970656b656e646f7273656d656e7466617574686f7278386469643a6b65793a7a364d6b663572396f4b5a5857795363453366446e73564d334c3458376f614c4c7251744c6759674c4b786b6250674b6670726f6f667381a564747970657456657269666961626c6543726564656e7469616c6570726f6f66a4647479706574456432353531395369676e617475726532303230676372656174656474323032362d31312d30315430383a30303a30305a6a70726f6f6656616c756578347a337532663779384a635339714c436d52316854366e4438625634785732614b35655137704e30735a396f49347542366345336772766572696669636174696f6e4d6574686f64783a6469643a6b65793a7a364d6b663572396f4b5a5857795363453366446e73564d334c3458376f614c4c7251744c6759674c4b786b6250674b23306669737375657278386469643a6b65793a7a364d6b663572396f4b5a5857795363453366446e73564d334c3458376f614c4c7251744c6759674c4b786b6250674b6840636f6e7465787481782468747470733a2f2f7777772e77332e6f72672f6e732f63726564656e7469616c732f76327163726564656e7469616c5375626a656374a362696478386469643a6b65793a7a364d6b68614b674d7539556234537054335639526274436962366152756d585a59314a64484d7a43435a4b3770426264726f6c6568656e646f727365726863617465676f72796770687973696373676372656174656474323032362d31312d31355431323a30303a30305a",
+      "id": "bafyreibyta5xjjwixk43jbzqpeej7b6aca2oosp2bayvbtcyl5z46wt7jy"
+    },
+    {
+      "name": "id-and-sig-excluded-a",
+      "description": "record whose envelope carries id and sig members; both are excluded from the record id",
+      "envelope": {
+        "v": 1,
+        "type": "discussion.post",
+        "author": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+        "created": "2026-11-15T09:00:00Z",
+        "prev": null,
+        "body": {
+          "target": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+          "anchor": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+          "textCid": "bafkreic3q7v4wd4khbfgxen9tv7wdwzvbha2wnyyokmiubmo7dxwymvg4e",
+          "parent": null
+        },
+        "proofs": [],
+        "id": "bafyreigyf4j5zfv3d7bgqkgq6xfskudnwhy5i62mkzi5rf3zcu2x2mgvj4",
+        "sig": "sig-A: excluded from the record id"
+      },
+      "dag_cbor_hex": "a761760164626f6479a466616e63686f72783b62616679726569686b6c6364336669686334747a75786b356c6a75786f366f6f72753436746673703767733670356d6a7172697732356375747a3466706172656e74f666746172676574783b62616679726569686b6c6364336669686334747a75786b356c6a75786f366f6f72753436746673703767733670356d6a7172697732356375747a346774657874436964783b6261666b7265696333713776347764346b6862666778656e397476377764777a7662686132776e79796f6b6d6975626d6f37647877796d766734656470726576f664747970656f64697363757373696f6e2e706f737466617574686f7278386469643a6b65793a7a364d6b68614b674d7539556234537054335639526274436962366152756d585a59314a64484d7a43435a4b377042626670726f6f667380676372656174656474323032362d31312d31355430393a30303a30305a",
+      "id": "bafyreigyf4j5zfv3d7bgqkgq6xfskudnwhy5i62mkzi5rf3zcu2x2mgvj4"
+    },
+    {
+      "name": "id-and-sig-excluded-b",
+      "description": "same seven content fields as id-and-sig-excluded-a with different id and sig members; must yield the same record id",
+      "envelope": {
+        "v": 1,
+        "type": "discussion.post",
+        "author": "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb",
+        "created": "2026-11-15T09:00:00Z",
+        "prev": null,
+        "body": {
+          "target": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+          "anchor": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+          "textCid": "bafkreic3q7v4wd4khbfgxen9tv7wdwzvbha2wnyyokmiubmo7dxwymvg4e",
+          "parent": null
+        },
+        "proofs": [],
+        "id": "bafyreistaleidenvelopevaluenotrecomputed",
+        "sig": "sig-B: also excluded, same record id expected"
+      },
+      "dag_cbor_hex": "a761760164626f6479a466616e63686f72783b62616679726569686b6c6364336669686334747a75786b356c6a75786f366f6f72753436746673703767733670356d6a7172697732356375747a3466706172656e74f666746172676574783b62616679726569686b6c6364336669686334747a75786b356c6a75786f366f6f72753436746673703767733670356d6a7172697732356375747a346774657874436964783b6261666b7265696333713776347764346b6862666778656e397476377764777a7662686132776e79796f6b6d6975626d6f37647877796d766734656470726576f664747970656f64697363757373696f6e2e706f737466617574686f7278386469643a6b65793a7a364d6b68614b674d7539556234537054335639526274436962366152756d585a59314a64484d7a43435a4b377042626670726f6f667380676372656174656474323032362d31312d31355430393a30303a30305a",
+      "id": "bafyreigyf4j5zfv3d7bgqkgq6xfskudnwhy5i62mkzi5rf3zcu2x2mgvj4"
+    }
+  ]
+}
