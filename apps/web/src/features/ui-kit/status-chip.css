@@ -1,0 +1,88 @@
+/* ============================================================================
+   StatusChip — docs/design.md §7 (Components) and §9 (Accessibility).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work.
+
+   Colour rules (src/styles/README.md):
+   - The label is --ink on a soft tint. --pending on --pending-soft is 4.13:1
+     at 13 px, below the 4.5:1 text rule, so the status colour is carried by
+     the icon and the border, never the word.
+   - Colour is reinforcement. Every chip has an icon of its own shape and a
+     word, so nothing depends on telling amber from green.
+   - --ai is never used here: AI output must not look like human review status.
+
+   Unlayered on purpose: a stylesheet imported from a component must not
+   re-declare Tailwind's cascade layers, and unlayered rules outrank them, so
+   the base layer's resets cannot restyle a chip. No margin is set, so a
+   consumer's spacing utilities (ml-2, gap-2 on a parent) still apply.
+   ============================================================================ */
+
+.sch-chip {
+  /* Neutral by default; the tone rules below override these three. */
+  --chip-icon: var(--ink-2);
+  --chip-fill: var(--surface);
+  --chip-edge: var(--rule);
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-unit);
+  box-sizing: border-box;
+  min-height: calc(var(--space-unit) * 6);
+  padding-inline: calc(var(--space-unit) * 2);
+
+  border: 1px solid var(--chip-edge);
+  border-radius: var(--corner-pill);
+  background-color: var(--chip-fill);
+
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.sch-chip[data-tone="verified"] {
+  --chip-icon: var(--verified);
+  --chip-fill: var(--verified-soft);
+  --chip-edge: var(--verified);
+}
+
+.sch-chip[data-tone="pending"] {
+  --chip-icon: var(--pending);
+  --chip-fill: var(--pending-soft);
+  --chip-edge: var(--pending);
+}
+
+.sch-chip[data-tone="critical"] {
+  --chip-icon: var(--critical);
+  --chip-fill: var(--critical-soft);
+  --chip-edge: var(--critical);
+}
+
+.sch-chip__icon {
+  flex: none;
+  width: calc(var(--space-unit) * 4);
+  height: calc(var(--space-unit) * 4);
+  color: var(--chip-icon);
+}
+
+.sch-chip__label {
+  color: var(--ink);
+}
+
+/* Forced colours (Windows High Contrast): the browser drops the tints and
+   recolours border, text and icon to system colours. The border keeps the
+   chip's shape, the icon strokes follow the text colour, and the word is
+   still there, so there is nothing to restore. */
+@media (forced-colors: active) {
+  .sch-chip {
+    border-color: CanvasText;
+  }
+
+  .sch-chip__icon {
+    color: CanvasText;
+  }
+}

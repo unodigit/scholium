@@ -1,0 +1,117 @@
+/* ============================================================================
+   UI-kit gallery shell. Layout only: components bring their own styles, and
+   every colour is a global design token (src/styles/tokens.css), so a
+   `data-theme="dark"` subtree re-themes everything inside it.
+   ============================================================================ */
+
+.uk-shell {
+  box-sizing: border-box;
+  max-width: calc(var(--space-unit) * 64 + var(--reading-column));
+  margin-inline: auto;
+  padding: calc(var(--space-unit) * 8) calc(var(--space-unit) * 4)
+    calc(var(--space-unit) * 16);
+}
+
+.uk-header {
+  margin-bottom: calc(var(--space-unit) * 8);
+}
+
+.uk-crumb {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  color: var(--ink-2);
+}
+
+.uk-lede {
+  margin-top: calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  max-width: var(--measure-reading);
+}
+
+.uk-section {
+  margin-top: calc(var(--space-unit) * 12);
+}
+
+.uk-section > h2 {
+  margin: 0 0 calc(var(--space-unit) * 2);
+}
+
+.uk-note {
+  margin-bottom: calc(var(--space-unit) * 4);
+  color: var(--ink-2);
+  max-width: var(--measure-reading);
+}
+
+.uk-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background: var(--surface);
+}
+
+.uk-table th,
+.uk-table td {
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border-bottom: 1px solid var(--rule);
+  text-align: start;
+  vertical-align: middle;
+}
+
+.uk-table tr:last-child > * {
+  border-bottom: 0;
+}
+
+.uk-table th {
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.uk-table code {
+  color: var(--ink);
+}
+
+.uk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.uk-panel {
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 6);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* A feed row as in docs/design.md §5.1. */
+.uk-row {
+  background: var(--surface);
+}
+
+.uk-row .paper-title {
+  margin: 0;
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.uk-row .meta {
+  margin-top: var(--space-unit);
+}
+
+.uk-row .uk-chips {
+  margin-top: calc(var(--space-unit) * 3);
+}
+
+/* The "never colour alone" demonstration: every colour removed, each chip
+   still reads from its icon shape and its word. */
+.uk-greyscale {
+  filter: grayscale(1);
+}
