@@ -9,6 +9,15 @@ Feature 65: the extracted text of a version's PDF is saved to the
     for p in checks.get_version_text(version_cid):
         p.position, p.paragraph_id, p.text
 
+Feature 66: the version's similarity to every listed paper, as the highest
+word 5-gram shingle Jaccard percentage, is saved to
+``check_results.similarity_pct``::
+
+    checks.save_similarity_check(version_cid)   # corpus: other saved versions
+    checks.save_similarity_check(version_cid, papers=[other_cid, other_text])
+    checks.get_check_result(version_cid).similarity_pct    # 0-100
+    checks.similarity_pct(text_a, text_b)                  # the metric alone
+
 Feature 68: whether the version's signed title appears in the first page text
 is saved to ``check_results.metadata_match``::
 
@@ -42,12 +51,13 @@ different as soon as the words change.  Annotations anchor to these ids and
 version comparison matches by them.  See :mod:`app.modules.checks.paragraphs`
 for the exact rule and :mod:`app.modules.checks.extract` for how a PDF is cut
 into paragraphs.  See :mod:`app.modules.checks.metadata` for how a title is
-matched and :mod:`app.modules.checks.results` for the ``check_results`` row.
+matched, :mod:`app.modules.checks.similarity` for how similarity is measured,
+and :mod:`app.modules.checks.results` for the ``check_results`` row.
 
 This package exposes no ``router``.  The module loader still discovers it,
 which registers the ``VersionText`` and ``CheckResult`` models on the shared
-declarative base before ``create_app`` creates tables.  Later checks of this
-plugin (similarity) share the ``check_results`` row written here.
+declarative base before ``create_app`` creates tables.  Every check of this
+plugin writes its own column of the shared ``check_results`` row.
 """
 
 from __future__ import annotations
@@ -84,20 +94,37 @@ from .results import (
     save_reference_check,
 )
 from .service import get_version_text, save_paragraphs, save_version_text
+from .similarity import (
+    DEFAULT_SHINGLE_SIZE,
+    PaperText,
+    SimilarityCheck,
+    compute_similarity_pct,
+    jaccard_index,
+    jaccard_similarity,
+    save_similarity_check,
+    save_similarity_pct,
+    shingles,
+    similarity_pct,
+    word_shingles,
+)
 
 __all__ = [
     "CheckResult",
     "ChecksError",
     "CrossrefError",
+    "DEFAULT_SHINGLE_SIZE",
     "InvalidVersionCid",
     "MetadataMatchError",
+    "PaperText",
     "Paragraph",
     "PdfTextError",
     "Reference",
     "ReferenceCheck",
+    "SimilarityCheck",
     "VersionText",
     "build_paragraphs",
     "clean_text",
+    "compute_similarity_pct",
     "crossref_enabled",
     "ensure_check_results_table",
     "ensure_table",
@@ -107,6 +134,8 @@ __all__ = [
     "find_doi",
     "get_check_result",
     "get_version_text",
+    "jaccard_index",
+    "jaccard_similarity",
     "metadata_match",
     "normalize_for_match",
     "normalize_paragraph",
@@ -116,5 +145,10 @@ __all__ = [
     "save_metadata_match",
     "save_paragraphs",
     "save_reference_check",
+    "save_similarity_check",
+    "save_similarity_pct",
     "save_version_text",
+    "shingles",
+    "similarity_pct",
+    "word_shingles",
 ]
