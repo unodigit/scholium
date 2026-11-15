@@ -153,6 +153,64 @@ that has not run says **Not run yet**, it does not disappear or turn green.
   names the first problem and where to fix it. With no step 5 to go to in this
   release it stays closed and says so. **Back to Authors** keeps everything.
 
+## The consent page — `/consent/[version]`
+
+Where a co-author reviews a version and signs a `coauthor.consent` to **accept**
+or **decline** authorship. The route is
+`apps/web/src/app/(submit)/consent/[version]/page.tsx`; it only reads the URL and
+renders `ConsentPage`, which runs in the author's browser because the signing key
+never leaves the device.
+
+- **`[version]` is the id of the `paper.version` record** (`bafyrei…`), the link
+  the API's consent notification builds (`notifications/consent.py`). The page
+  reads it with `GET /v1/records/{id}`, then asks
+  `GET /v1/papers/{genesis id}/v/{n}/consents` for who has answered (the
+  report accepts the genesis id in place of the `sch:` id). A link that cannot be
+  a record id is refused before the server is asked anything.
+- **What you read is what you sign.** A consent signs the id from the link, so the
+  page recomputes the id of the record the server sent (verify-core's
+  `computeRecordId`) and shows nothing unless it matches ("Do not sign anything
+  for it" otherwise). The manifest's file list is checked the same way; if it
+  cannot be loaded or checked the version is still shown, with a line saying the
+  list is not.
+- **What is shown.** Title, abstract, categories, licence, what changed, who
+  signed the version and when; the byline as a consent tracker with each author's
+  CRediT roles, Waiting / Signed / Declined chip and a "(you)" marker; the files,
+  each opening through `GET /v1/content/{cid}` (served only once the safety scan
+  has passed); then **Your decision**.
+- **Who is offered buttons.** Only an author who is listed on the signed version
+  (matched by the DID of this device's key), who has not answered, while the
+  version is `awaiting_consent`. Everyone else gets a sentence that says why:
+  *no key on this device* (links to `/signin?next=/consent/…` and `/onboarding`),
+  *key not listed*, *already answered* (the answer, with a link to the record),
+  *version back in draft / past consent*, or *could not read who has signed*
+  (signing stays off rather than guessing, with **Try again now**).
+- **An answer is final.** The page never offers a second one: a consent is a
+  public record, and verify-core counts the first acceptance and every decline,
+  so a change of mind would be ambiguous. After a decline the version is back in
+  draft, and a re-submission gets a new version and a new link.
+- **Decline asks first.** It sends the version back to draft for every author, so
+  **Decline authorship** opens a confirmation (focus moves to it); **Keep
+  reviewing** returns focus to the button. **Accept authorship** goes straight to
+  the passkey prompt, which is the confirmation. An optional public comment
+  (500 characters) goes in either record.
+- **The record.** `signRecord("coauthor.consent", body, null)` with
+  `body = { version, role, decision, comment? }`, then `POST /v1/records`.
+  `prev` is `null`: a consent is not a link in the paper's chain, verifiers find it
+  by `body.version` (which is why the key is `version`, not `versionCid`), and the
+  API's own tests sign it that way. `role` names **every** CRediT role the version
+  lists for the author, joined with `, ` and in the listed order (the schema has
+  one `role` string; naming only one would quietly narrow what they accepted);
+  an author listed with none accepts as `Author`.
+- **Failures are said in words.** A dismissed passkey prompt says nothing was
+  sent; an expired session offers **Sign in**; a refusal is named; when the
+  outcome is unknown (network error, 5xx, 409) the report is read again, and if
+  the answer did land the page shows it. A second press while the passkey prompt
+  is open does nothing.
+
+`consent-version.verify-core.test.ts` signs real consents with Ed25519 keys and
+checks the real `verifyPaper` counts them (accept, decline, missing).
+
 ## For the next steps
 
 `FilesStep` reports the finished files as `SubmitFile[]` — `{ id, path, size,
@@ -189,7 +247,10 @@ for step 5 and the post-submit status page.
 | `authors.ts` | CRediT roles, identifier parsing (DID / ORCID / email), the roster's rules, `recordAuthors` |
 | `authors-step.tsx` | the Authors form: add, roles, order, lookup state, Continue |
 | `consents.ts`, `use-consents.ts` | consent report types and fetch, tracker rows and wording; polling hook |
-| `consent-tracker.tsx`, `icons.tsx` | the Waiting / Signed / Declined tracker and its icons |
+| `consent-tracker.tsx`, `icons.tsx` | the Waiting / Signed / Declined tracker (optionally with roles) and its icons |
+| `consent-version.ts` | `/consent/[version]`'s rules, no React: link parsing, loading and id-checking the version, who may answer (`consentGate`), the consent body, signing and its failures in words |
+| `use-consent-version.ts`, `use-device-did.ts` | load the version; read this device's DID with a "checking" phase (so "no key" and "not looked yet" differ) |
+| `consent-page.tsx`, `consent-page.css` | the page: version, tracker, files, the decision panel |
 | `checks.ts` | the check report's types, wire normalisation, fetch, and the four verdicts and blockers |
 | `use-checks.ts` | polls the report while the node is scanning |
 | `checks-step.tsx` | the Checks step: four results, per-file safety, fix actions, Continue |
@@ -206,6 +267,16 @@ A browser at the web origin can only upload if the API answers CORS preflights
 and exposes `Location`, `Upload-Offset` and `Upload-Cid`. The API has no CORS
 configuration yet; the change needed in `apps/api/src/app/main.py` was reported
 to the operator rather than made here.
+
+**Signing.** Everything this feature signs goes through `signRecord`
+(`features/web-auth`), which signs the binary **CID bytes**. The API
+(`ingest/service.py` → `verify_envelope`) and verify-core check the signature
+over the canonical **record bytes** (`record_bytes` / `recordBytes`), so a record
+signed by `signRecord` as it stands fails with `401` at `POST /v1/records` — the
+Sign step's records and the consent page's alike. The fix is in
+`web-auth/sign-record.ts` (sign `recordBytes(envelope)`) and was reported to the
+operator rather than made here; the consent page works against a real API once it
+lands. Its tests inject their own signer, so they do not depend on it.
 
 Step 4 asks for `GET /v1/papers/{id}/v/{n}/checks`, and the API exposes no such
 route yet: the checks plugin writes `check_results` and the sanitizer writes each

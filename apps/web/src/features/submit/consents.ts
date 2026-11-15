@@ -36,6 +36,10 @@ export interface ConsentAuthorReport {
   creditRoles?: string[] | null;
   /** The role the author's consent names, once they have signed. */
   role?: string | null;
+  /** The raw decision, `accept` or `decline`; `null` while the author is waiting. */
+  decision?: string | null;
+  /** The id of the author's `coauthor.consent` record, once they have answered. */
+  consentCid?: string | null;
 }
 
 /** The response of `GET /v1/papers/{id}/v/{n}/consents`. */
@@ -45,6 +49,8 @@ export interface ConsentReport {
   versionCid: string;
   /** The version's lifecycle state: `awaiting_consent`, `scanning`, `draft`, … */
   state: string;
+  /** The DID of the author who declined and sent the version back to draft, if anyone has. */
+  declinedBy?: string | null;
   count: number;
   waiting: number;
   signed: number;

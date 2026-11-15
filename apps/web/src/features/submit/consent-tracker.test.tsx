@@ -56,6 +56,17 @@ describe("ConsentTracker", () => {
     expect(shapes.size).toBe(3);
   });
 
+  it("names each author's roles only when asked to", () => {
+    const entries = [entry({ key: "a", name: "Mei Chen", roles: ["Software", "Validation"] }), entry({ key: "b", name: "Ada Lovelace", roles: [] })];
+    const { rerender } = render(<ConsentTracker entries={entries} />);
+    expect(document.querySelector(".sw-tracker__roles")).toBeNull();
+
+    rerender(<ConsentTracker entries={entries} showRoles />);
+    const roles = Array.from(document.querySelectorAll(".sw-tracker__roles"));
+    // An author with no roles gets no empty line.
+    expect(roles.map((role) => role.textContent)).toEqual(["Software, Validation"]);
+  });
+
   it("falls back to a person glyph when there is no name to take letters from", () => {
     render(<ConsentTracker entries={[entry({ name: "did:key:z6Mk…", monogram: null })]} />);
     const avatar = document.querySelector(".sw-avatar")!;

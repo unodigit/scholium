@@ -871,7 +871,8 @@
 }
 
 .sw-author__detail,
-.sw-tracker__detail {
+.sw-tracker__detail,
+.sw-tracker__roles {
   color: var(--ink-2);
   font-size: var(--type-meta);
   line-height: var(--leading-meta);

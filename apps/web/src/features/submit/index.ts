@@ -16,6 +16,7 @@
  * <FilesStep onFilesChange={setFiles} /> // just step 1
  * <ChecksStep checksFor={{ paper, version }} /> // just step 4, with live results
  * <ConsentTracker entries={entries} />   // the tracker alone, for step 5 or /consent
+ * <ConsentPage version={versionCid} />   // /consent/[version]: review, then accept or decline
  * ```
  *
  * The export is the plugin's public surface; route files in
@@ -28,6 +29,7 @@ export { ChecksStep, type ChecksStepProps } from "./checks-step";
 export { SignStep, type SignStepProps, type SignResult } from "./sign-step";
 export { StatusTracker, type StatusTrackerProps } from "./status-tracker";
 export { ConsentTracker, type ConsentTrackerProps } from "./consent-tracker";
+export { ConsentPage, type ConsentPageProps } from "./consent-page";
 export { DetailsStep, type DetailsStepProps } from "./details-step";
 export { FilesStep, type FilesStepProps } from "./files-step";
 export { WizardRail } from "./wizard-rail";
@@ -118,6 +120,52 @@ export {
   type VersionRef,
 } from "./consents";
 export { DEFAULT_CONSENT_POLL_MS, useConsents, type ConsentsState, type UseConsentsOptions } from "./use-consents";
+
+export {
+  AWAITING_CONSENT,
+  CONSENT_COMMENT_MAX,
+  CONSENT_RECORD_TYPE,
+  FALLBACK_ROLE,
+  ConsentVersionError,
+  WrongSignerError,
+  closedMessage,
+  consentBody,
+  consentGate,
+  consentRole,
+  consentTrackerEntries,
+  describeConsentError,
+  fetchRecord,
+  fileUrl,
+  formatSigned,
+  loadConsentVersion,
+  manifestFiles,
+  normalizeConsentVersion,
+  parseVersionParam,
+  recordUrl,
+  submitConsent,
+  versionErrorMessage,
+  type ComputeRecordId,
+  type ConsentDecision,
+  type ConsentFailure,
+  type ConsentGate,
+  type ConsentGateInput,
+  type ConsentSubmitted,
+  type ConsentVersion,
+  type ConsentVersionErrorCode,
+  type DeviceIdentity,
+  type FetchRecord,
+  type LoadConsentVersion,
+  type LoadConsentVersionOptions,
+  type ParsedVersionParam,
+  type RecordAccepted,
+  type SignConsent,
+  type SubmitConsent,
+  type SubmitConsentOptions,
+  type VersionAuthor,
+  type VersionFile,
+} from "./consent-version";
+export { useConsentVersion, type ConsentVersionState } from "./use-consent-version";
+export { useDeviceDid } from "./use-device-did";
 export { useSubmitterDid } from "./use-submitter-did";
 
 export {

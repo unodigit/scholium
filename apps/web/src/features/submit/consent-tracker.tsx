@@ -23,6 +23,8 @@ export interface ConsentTrackerProps {
   caption?: ReactNode;
   /** Shown instead of the caption when the last refresh failed. */
   error?: string | null;
+  /** Name each author's CRediT roles under their name (the consent page does). */
+  showRoles?: boolean;
 }
 
 export function ConsentTracker({
@@ -30,6 +32,7 @@ export function ConsentTracker({
   idPrefix = "sw-consents",
   caption,
   error,
+  showRoles = false,
 }: ConsentTrackerProps): ReactElement {
   const counts = countConsents(entries);
   const declined = declineNotice(entries);
@@ -62,6 +65,9 @@ export function ConsentTracker({
                     {entry.isYou && entry.name !== "You" ? <span className="sw-tracker__you"> (you)</span> : null}
                   </span>
                   {entry.detail !== null ? <span className="sw-tracker__detail">{entry.detail}</span> : null}
+                  {showRoles && entry.roles.length > 0 ? (
+                    <span className="sw-tracker__roles">{entry.roles.join(", ")}</span>
+                  ) : null}
                 </span>
                 <span className="sw-chip" data-tone={TONES[entry.status]}>
                   <ConsentIcon status={entry.status} />
