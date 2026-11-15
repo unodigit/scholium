@@ -44,7 +44,7 @@ from app.security import Principal, get_current_principal
 
 from .crypto import ProfileDecryptionError
 from .schemas import ProfileIn, ProfileOut, PublicProfileOut
-from .service import ProfileData, save_profile
+from .service import ProfileData, erase_profile, save_profile
 from .views import public_profile
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
@@ -121,3 +121,12 @@ def put_profile(
     # Personal data: keep it out of shared caches and the browser's history cache.
     response.headers["Cache-Control"] = "no-store"
     return ProfileOut(did=did, name=saved.name, affiliation=saved.affiliation, email=saved.email)
+
+
+@router.delete("/{did}", status_code=202)
+def delete_profile(
+    did: str,
+    _owner: Principal = Depends(require_owner),
+) -> None:
+    """Crypto-shred the owner's profile and record the erasure (returns 202)."""
+    erase_profile(did)

@@ -32,7 +32,7 @@ from app import db
 from .crypto import new_key, open_profile, seal_profile
 from .models import Profile, ProfileKey, ensure_tables
 
-__all__ = ["ProfileData", "read_profile", "save_profile"]
+__all__ = ["ProfileData", "erase_profile", "read_profile", "save_profile"]
 
 
 @dataclass(frozen=True)
@@ -110,4 +110,42 @@ def read_profile(did: str) -> Optional[ProfileData]:
         name=fields.get("name", ""),
         affiliation=fields.get("affiliation", ""),
         email=fields.get("email", ""),
+    )
+
+
+def erase_profile(did: str) -> None:
+    """Crypto-shred ``did``'s profile and record the erasure on the event log.
+
+    Deletes the per-object key that opens ``profile.enc_blob`` (the blob itself
+    is left in place, permanently unreadable) and appends an
+    ``erasure.request`` record authored by ``did``.  A later
+    :func:`save_profile` starts over under a fresh key, which un-erases.
+    """
+    _require_did(did)
+    ensure_tables()
+
+    with db.SessionLocal() as session:
+        profile = session.get(Profile, did)
+        if profile is not None:
+            key_row = session.get(ProfileKey, profile.key_ref)
+            if key_row is not None:
+                session.delete(key_row)
+            session.commit()
+
+    from datetime import datetime, timezone
+
+    from .views import ERASURE_RECORD_TYPE
+
+    from app.modules import ledger
+
+    ledger.append(
+        {
+            "v": 1,
+            "type": ERASURE_RECORD_TYPE,
+            "author": did,
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "prev": None,
+            "body": {"basis": "data-subject-request"},
+            "proofs": [],
+        }
     )

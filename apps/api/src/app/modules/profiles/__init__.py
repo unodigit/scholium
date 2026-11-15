@@ -25,7 +25,7 @@ from .crypto import ProfileDecryptionError, open_profile, seal_profile
 from .models import Profile, ProfileKey, ensure_tables
 from .router import router
 from .schemas import ProfileIn, ProfileOut, PublicProfileOut, PublicReviewOut
-from .service import ProfileData, read_profile, save_profile
+from .service import ProfileData, erase_profile, read_profile, save_profile
 from .views import (
     ERASURE_RECORD_TYPE,
     ORCID_PATTERN,
@@ -51,6 +51,7 @@ __all__ = [
     "PublicReviewOut",
     "SignedReview",
     "ensure_tables",
+    "erase_profile",
     "open_profile",
     "public_profile",
     "read_orcid",
