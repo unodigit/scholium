@@ -3,10 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "test": "cd apps/api && uv run --all-packages pytest && cd ../web && pnpm exec vitest run",
-    "test:e2e": "cd apps/web && pnpm playwright test"
+    "test": "cd apps/api && uv run --all-packages pytest && cd ../.. && npm run test --workspace apps/web",
+    "test:e2e": "npm run test:e2e --workspace apps/web"
   },
-  "dependencies": {
-    "vitest": "^2.1.9"
+  "workspaces": [
+    "apps/web"
+  ],
+  "overrides": {
+    "postcss": "^8.5.33"
   }
 }
