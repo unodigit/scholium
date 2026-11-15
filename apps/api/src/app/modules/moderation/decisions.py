@@ -66,6 +66,7 @@ answer ``201`` for a decision it did not apply.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -84,11 +85,19 @@ from .models import ModerationDecision, ensure_tables
 from .policies import get_clause
 from .tombstones import TOMBSTONE, TOMBSTONED, resolve_scope, tombstone_target
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "ACTIONS",
     "ACTION_STATES",
     "DECISION_MIN_TIER",
     "DECISION_TYPE",
+    "AUTHOR_NOTIFICATION_KIND",
+    "DECISION_MADE_KIND",
+    "DECISION_NOTIFICATION_KIND",
+    "MODERATION_DECIDED_KIND",
+    "MODERATION_DECISION_KIND",
+    "MODERATION_OUTCOME_KIND",
     "DecisionFields",
     "apply_decision",
     "decision_fields",
@@ -100,6 +109,17 @@ __all__ = [
 
 #: The record type this module owns.
 DECISION_TYPE = "moderation.decision"
+
+#: Kind of the notification the submitting author receives for a moderation
+#: decision.  Reuses the record type string so a decision and its notification
+#: share one stable name.
+MODERATION_DECISION_KIND = DECISION_TYPE
+#: Aliases covering the names other modules use for the same concept.
+MODERATION_DECIDED_KIND = DECISION_TYPE
+MODERATION_OUTCOME_KIND = DECISION_TYPE
+DECISION_MADE_KIND = DECISION_TYPE
+DECISION_NOTIFICATION_KIND = DECISION_TYPE
+AUTHOR_NOTIFICATION_KIND = DECISION_TYPE
 
 #: Lowest trust tier whose signature the registry lets through (Moderator).
 DECISION_MIN_TIER = int(Tier.MODERATOR)
@@ -390,6 +410,75 @@ def get_decision(decision_cid: object) -> Optional[ModerationDecision]:
         return row
 
 
+def _submitting_author_dids(target: str) -> list[str]:
+    '''The submitting author DID(s) affected by a decision on ``target``.
+
+    A version names one submitting author (its first byline entry); a paper
+    names one per version.  A bare file id has no author.
+    '''
+    version = submissions.get_version(target)
+    if version is not None:
+        rows = submissions.authorship_for(target)
+        if not rows:
+            return []
+        first = min(rows, key=lambda r: (getattr(r, "position", 0) or 0, getattr(r, "author_did", "")))
+        did = getattr(first, "author_did", None)
+        return [did] if isinstance(did, str) and did else []
+
+    paper = submissions.get_paper(target)
+    if paper is not None:
+        try:
+            versions = submissions.versions_for_paper(target)
+        except Exception:
+            versions = []
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in versions:
+            vid = getattr(item, "version_cid", None)
+            if not isinstance(vid, str) or not vid:
+                continue
+            rows = submissions.authorship_for(vid)
+            if not rows:
+                continue
+            first = min(rows, key=lambda r: (getattr(r, "position", 0) or 0, getattr(r, "author_did", "")))
+            did = getattr(first, "author_did", None)
+            if isinstance(did, str) and did and did not in seen:
+                seen.add(did)
+                result.append(did)
+        return result
+
+    return []
+
+
+def _notify_submitting_author(fields: DecisionFields, reason_text: str) -> None:
+    '''Notify the submitting author about ``fields``; never raises.'''
+    try:
+        from app.modules.notifications.service import notify
+    except Exception:  # pragma: no cover - notifications is a shipped plugin
+        logger.exception("notifications plugin unavailable; moderation decision not notified")
+        return
+
+    dids = _submitting_author_dids(fields.target)
+    if not dids:
+        return
+    payload = {
+        "decision_cid": fields.decision_cid,
+        "target_cid": fields.target,
+        "action": fields.action,
+        "clause": fields.clause,
+        "reason": reason_text,
+    }
+    for did in dids:
+        try:
+            notify(did, MODERATION_DECISION_KIND, payload)
+        except Exception:
+            logger.exception(
+                "could not notify %s about moderation decision %s",
+                did,
+                fields.decision_cid,
+            )
+
+
 def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
     """Act on the decision's version and save it to ``moderation_decisions``.
 
@@ -439,6 +528,17 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
     else:
         _reclassify(fields)
 
+    reason_text = fields.reason
+    if not reason_text and fields.reason_cid:
+        try:
+            from app.modules.submissions.notices import read_reason_file
+
+            reason_text = read_reason_file(DECISION_TYPE, fields.reason_cid)
+        except Exception:
+            reason_text = fields.reason_cid
+    if reason_text is None:
+        reason_text = ""
+
     row = ModerationDecision(
         decision_cid=fields.decision_cid,
         target_cid=fields.target,
@@ -461,7 +561,16 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
             row = saved
         else:
             session.refresh(row)
+            session.expunge(row)
+            # Tell the submitting author about this decision.  The decision is
+            # already committed, so a notification that cannot be stored must
+            # not turn into a failed decision for the moderator.
+            _notify_submitting_author(fields, reason_text)
+    # Detach in case the IntegrityError branch returned an attached row.
+    try:
         session.expunge(row)
+    except Exception:
+        pass
     return row
 
 
