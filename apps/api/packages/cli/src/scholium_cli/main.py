@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from scholium_cli import __version__, rebuild, verify
+from scholium_cli import __version__, rebuild, verify, verify_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +25,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify.add_arguments(verify_parser)
     verify_parser.set_defaults(handler=verify.run)
+
+    verify_file_parser = commands.add_parser(
+        "verify-file",
+        help="check that a file is the one a paper version's signed manifest lists",
+        description="Compute the file id (CID) of a file and print whether it "
+        "matches the signed manifest of a paper version, read from a CARv1 "
+        "archive that is verified first.  Exits 0 on a match, 1 when the file "
+        "does not match or the manifest cannot be verified, 2 when the command "
+        "could not run.",
+    )
+    verify_file.add_arguments(verify_file_parser)
+    verify_file_parser.set_defaults(handler=verify_file.run)
 
     rebuild_parser = commands.add_parser(
         "rebuild",

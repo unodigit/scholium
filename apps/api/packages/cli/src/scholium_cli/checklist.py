@@ -55,6 +55,7 @@ __all__ = [
     "Item",
     "Verdict",
     "build_verdict",
+    "manifest_files",
     "unreadable_verdict",
 ]
 
@@ -154,7 +155,7 @@ def _index(records: tuple[dict[str, Any], ...]) -> dict[str, Mapping[str, Any]]:
     return by_id
 
 
-def _manifest_files(
+def manifest_files(
     report: VerificationReport, archive: Archive
 ) -> list[dict[str, Any]] | None:
     """File entries of the verified version's manifest, or ``None`` if unreadable."""
@@ -178,7 +179,7 @@ def _files_item(report: VerificationReport, archive: Archive) -> Item:
     if not manifests.passed:
         return _item_from_checks("files", None, manifests)
 
-    entries = _manifest_files(report, archive)
+    entries = manifest_files(report, archive)
     if entries is None:  # the manifests check passed, so this should not happen
         return Item("files", FAIL, "The manifest of the verified version cannot be read")
     if not entries:
