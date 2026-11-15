@@ -1,0 +1,26 @@
+/* ============================================================================
+   Shell for the review form (`/review/[id]`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame lives here: the global navigation is mounted by
+   the layout, and the paper and form styles live with the feature
+   (`features/review-form/review-form.css`). Every value is a design token.
+
+   The page is a split view — a 720 px reading column beside a form column — so
+   the frame is wider than the single reading column the paper and policy pages
+   use.
+   ============================================================================ */
+
+.rfs-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 84rem;
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .rfs-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}

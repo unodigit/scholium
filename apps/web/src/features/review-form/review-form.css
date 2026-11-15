@@ -1,0 +1,422 @@
+/*
+ * `/review/[id]` — the paper beside the rubric form.
+ *
+ * Every value is a design token from `src/styles/tokens.css`, so light, dark
+ * and a forced `data-theme` all re-theme the page with no extra classes. Rules
+ * are prefixed `rf-` (review form) so nothing leaks into other features. The
+ * layout (`app/(review-form)`) owns the outer width; these rules style content.
+ *
+ * Status is never colour alone (docs/design.md §9): an error is an icon plus
+ * words, its colour is on the icon and the border, and the words stay in --ink.
+ * `--ai` is reserved for the AI pre-review, so the "I used AI assistance"
+ * declaration is an ordinary checkbox in the ordinary colours.
+ */
+
+.rf-page {
+  width: 100%;
+}
+
+/* ---- Header ------------------------------------------------------------- */
+
+.rf-header {
+  margin-bottom: calc(var(--space-unit) * 6);
+  max-width: 60rem;
+}
+
+.rf-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.rf-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Split view --------------------------------------------------------- */
+
+/* Single column by default: the paper, then the form. */
+.rf-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space-unit) * 8);
+  align-items: start;
+}
+
+/* Side by side once there is room for a reading column and a form. The form
+   column stays in view beside the paper and scrolls on its own, so the rubric
+   is always at hand while the reader moves through the text. The paper scrolls
+   with the page. */
+@media (min-width: 64rem) {
+  .rf-split {
+    grid-template-columns: minmax(0, 1fr) minmax(24rem, 28rem);
+    gap: calc(var(--space-unit) * 12);
+  }
+
+  .rf-side {
+    position: sticky;
+    /* Clear the 64 px sticky global navigation, plus a little air. */
+    top: calc(64px + var(--space-unit) * 4);
+    max-height: calc(100vh - 64px - var(--space-unit) * 8);
+    max-height: calc(100dvh - 64px - var(--space-unit) * 8);
+    overflow-y: auto;
+    /* Room for the focus ring, which would otherwise be clipped at the edge. */
+    padding: 4px;
+    margin: -4px;
+  }
+}
+
+/* ---- The paper ---------------------------------------------------------- */
+
+.rf-paper {
+  min-width: 0;
+}
+
+.rf-paper-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  margin: 0 0 calc(var(--space-unit) * 6);
+}
+
+.rf-paper-section + .rf-paper-section {
+  margin-top: calc(var(--space-unit) * 8);
+}
+
+.rf-pane-heading {
+  margin: 0 0 calc(var(--space-unit) * 3);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rf-abstract {
+  margin: 0;
+}
+
+.rf-paragraph {
+  margin: 0 0 calc(var(--space-unit) * 4);
+  overflow-wrap: anywhere;
+}
+
+.rf-paper-note {
+  margin: 0;
+  padding: calc(var(--space-unit) * 4);
+  max-width: var(--measure-reading);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- The form column ---------------------------------------------------- */
+
+.rf-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+}
+
+/* The anonymity notice: a quiet card. The accent edge is decoration; the
+   headline in bold ink carries the message. */
+.rf-anonymity {
+  padding: calc(var(--space-unit) * 4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-inline-start: 4px solid var(--accent);
+  border-radius: var(--corner-card);
+}
+
+.rf-anonymity-text {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.rf-anonymity-headline {
+  font-weight: 600;
+}
+
+.rf-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  padding: calc(var(--space-unit) * 4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  color: var(--ink);
+}
+
+.rf-form-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  font-weight: 600;
+}
+
+.rf-form-lede {
+  margin: calc(var(--space-unit) * -2) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* A rubric row and the verdict groups are fieldsets: reset the browser frame
+   and give them the same rhythm. */
+.rf-dimension,
+.rf-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rf-dimension {
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.rf-dimension-name,
+.rf-group-legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+/* A legend is drawn *on* its fieldset's top border by default, which would cut
+   the divider above each rubric row. Floating it full width makes it an
+   ordinary line inside the box, below the rule; what follows clears it. */
+.rf-dimension-name,
+.rf-group-legend {
+  float: left;
+  width: 100%;
+}
+
+.rf-dimension-name + *,
+.rf-group-legend + * {
+  clear: both;
+}
+
+.rf-group-legend {
+  margin-bottom: calc(var(--space-unit) * 1);
+}
+
+/* ---- Radios ------------------------------------------------------------- */
+
+.rf-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 calc(var(--space-unit) * 2);
+}
+
+.rf-choices--stacked {
+  flex-direction: column;
+  gap: 0;
+}
+
+/* The whole label is the target: at least 44 px square (docs/design.md §9),
+   so a thumb can hit a "3" without hitting a "2". */
+.rf-choice {
+  /* Anchors the visually hidden "4 of 5" text so it cannot land elsewhere. */
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: calc(var(--space-unit) * 2);
+  cursor: pointer;
+}
+
+.rf-choice input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.rf-choice--score {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Justification ------------------------------------------------------ */
+
+.rf-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  margin-top: calc(var(--space-unit) * 2);
+}
+
+.rf-field-label {
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+}
+
+.rf-required {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.rf-textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: calc(var(--space-unit) * 20);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.rf-textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.rf-textarea[aria-invalid="true"] {
+  border-color: var(--critical);
+}
+
+/* ---- Errors ------------------------------------------------------------- */
+
+.rf-error {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * 1) 0 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.rf-error-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--critical);
+}
+
+/* ---- AI declaration and progress ---------------------------------------- */
+
+.rf-ai {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+  cursor: pointer;
+}
+
+.rf-ai input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: calc(var(--space-unit) * 0.5) 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.rf-ai-hint {
+  color: var(--ink-2);
+}
+
+.rf-progress {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- Notice (no paper to review) ---------------------------------------- */
+
+.rf-notice {
+  max-width: var(--measure-reading);
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  /* The critical colour marks the edge; the heading is ink, so the state is
+     never conveyed by colour alone (docs/design.md §9). */
+  border-inline-start: 4px solid var(--critical);
+  border-radius: var(--corner-card);
+}
+
+.rf-notice-title {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.rf-notice-text {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.rf-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: calc(var(--space-unit) * 4);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-control);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-decel);
+}
+
+.rf-button:hover {
+  opacity: 0.9;
+}
+
+/* Visually hidden, still read by assistive technology. */
+.rf-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Small screens ------------------------------------------------------ */
+
+@media (max-width: 40rem) {
+  .rf-form,
+  .rf-notice {
+    padding: calc(var(--space-unit) * 4);
+  }
+}
