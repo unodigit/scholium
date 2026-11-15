@@ -7,8 +7,9 @@
  */
 
 import { encode, decode } from "@ipld/dag-cbor";
+import { sha256 } from "@noble/hashes/sha256";
 import { CID } from "multiformats/cid";
-import { sha256 } from "multiformats/hashes/sha2";
+import { create as createDigest } from "multiformats/hashes/digest";
 
 /** Envelope fields hashed into the record id, in envelope order. */
 export const ENVELOPE_FIELDS = [
@@ -33,6 +34,7 @@ export const CID_VERSION = 1;
 export const CID_CODEC = "dag-cbor";
 export const CID_CODEC_CODE = 0x71;
 export const CID_HASH = "sha2-256";
+export const CID_HASH_CODE = 0x12;
 export const CID_BASE = "base32";
 
 export interface Envelope {
@@ -125,7 +127,10 @@ export function canonicalEnvelope(envelope: unknown): Record<string, unknown> {
 export function recordBytes(envelope: unknown): Uint8Array {
   const canonical = canonicalEnvelope(envelope);
   try {
-    return encode(canonical);
+    // Copy into this realm's `Uint8Array`: `@ipld/dag-cbor` returns a Node
+    // `Buffer` when one is present, and `@noble/*` rejects a cross-realm
+    // view as "Uint8Array expected".
+    return Uint8Array.from(encode(canonical));
   } catch (exc) {
     throw new Error(`envelope is not DAG-CBOR encodable: ${exc}`);
   }
@@ -133,10 +138,15 @@ export function recordBytes(envelope: unknown): Uint8Array {
 
 /**
  * Return the record id as a CIDv1 dag-cbor object.
+ *
+ * The digest is computed with the synchronous `@noble/hashes` SHA-256.  The
+ * `multiformats/hashes/sha2` subpath resolves to a WebCrypto implementation
+ * in browser builds whose `digest()` is asynchronous, which would break the
+ * synchronous id computation every caller relies on.
  */
 export function computeRecordCid(envelope: unknown): CID {
   const bytes = recordBytes(envelope);
-  const digest = sha256.digest(bytes);
+  const digest = createDigest(CID_HASH_CODE, sha256(bytes));
   return CID.create(CID_VERSION, CID_CODEC_CODE, digest);
 }
 
