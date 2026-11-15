@@ -22,6 +22,12 @@ endpoint ``GET /v1/sync/range?from=&to=`` and
 :mod:`app.modules.ledger.records` for the envelope endpoint
 ``GET /v1/records/{cid}`` and :mod:`app.modules.ledger.proof` for the
 record proof endpoint ``GET /v1/records/{cid}/proof`` this package serves.
+
+:func:`verify_log` (feature 18) recomputes the hash chain over a sequence
+of entries and returns the first broken ``seq`` when any entry was
+rewritten, reordered or removed::
+
+    broken = ledger.verify_log(ledger.entries())
 """
 
 from __future__ import annotations
@@ -75,6 +81,7 @@ from .sync_head import (
 from .sync_head import router as _sync_head_router
 from .sync_range import MAX_PAGE, REVERSED_RANGE_TYPE, SyncEntry
 from .sync_range import router as _sync_router
+from .verify import verify_log
 
 #: Router the module loader mounts under ``/v1``: every endpoint the ledger
 #: plugin serves, assembled from its per-endpoint routers (``/v1/sync/head``,
@@ -126,4 +133,5 @@ __all__ = [
     "subscriber_count",
     "unsubscribe",
     "verify_entry_hash",
+    "verify_log",
 ]

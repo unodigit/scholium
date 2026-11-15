@@ -11,9 +11,9 @@ DAG-CBOR bytes.  The first entry in a chain uses
 convention for hash chains.
 
 Because each hash covers its predecessor's hash, rewriting, reordering or
-removing a row breaks the chain at that ``seq``; :func:`verify_entry` lets a
-reader check individual links while the ledger's ``verify_log`` checks a
-whole sequence.
+removing a row breaks the chain at that ``seq``; :func:`verify_entry_hash`
+lets a reader check individual links while
+:func:`app.modules.ledger.verify.verify_log` checks a whole sequence.
 """
 
 from __future__ import annotations
