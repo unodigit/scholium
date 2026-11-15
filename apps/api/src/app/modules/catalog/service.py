@@ -30,11 +30,14 @@ their query logic.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
-from scholium_record_core import parse_short_id, parse_version_id
+from scholium_record_core import MANIFEST_TYPE, parse_short_id, parse_version_id
 
+from app.modules import ledger
 from app.modules.submissions import (
     Paper,
     PaperVersion,
@@ -45,7 +48,14 @@ from app.modules.submissions import (
 )
 from app.modules.submissions.state import LISTED
 
-__all__ = ["PaperView", "latest_listed_version", "listed_version_n", "resolve"]
+__all__ = [
+    "PaperView",
+    "latest_listed_version",
+    "listed_version_n",
+    "manifest_entries",
+    "resolve",
+    "resolve_version",
+]
 
 
 @dataclass(frozen=True)
@@ -152,3 +162,53 @@ def resolve(identifier: object) -> Optional[PaperView]:
         pass
 
     return _resolve_cid(identifier)
+
+
+#: A version number as it may appear in ``/v/{n}/``: canonical decimal, no sign,
+#: no leading zero, and short enough that no database or parser trips on it.
+_VERSION_NUMBER = re.compile(r"[1-9][0-9]{0,8}")
+
+
+def resolve_version(paper_id: object, n: object) -> Optional[PaperView]:
+    """Resolve ``/papers/{paper_id}/v/{n}`` to a listed version, or ``None``.
+
+    ``paper_id`` is a paper ``sch:`` id or the cid of the paper's
+    ``paper.genesis`` record; ``n`` is the version number as written in the
+    URL.  ``None`` covers every case the route answers with ``404``: a
+    malformed id or number, a paper this node does not hold, a version that
+    does not exist, and a version that is not listed.
+    """
+    if not isinstance(paper_id, str) or not paper_id:
+        return None
+    if not isinstance(n, str) or _VERSION_NUMBER.fullmatch(n) is None:
+        return None
+
+    try:
+        return _resolve_version_id(f"{paper_id}/v{n}")
+    except ValueError:
+        pass
+
+    # Not a ``sch:`` id; the genesis cid names the same paper.
+    paper = get_paper(paper_id)
+    if paper is None:
+        return None
+    version = listed_version_n(paper.paper_cid, int(n))
+    return None if version is None else PaperView(paper, version)
+
+
+def manifest_entries(version: PaperVersion) -> Optional[list[Mapping[str, Any]]]:
+    """The file entries of ``version``'s signed ``manifest`` record.
+
+    The entries are returned exactly as signed, in manifest order.  ``None``
+    means this node holds no usable manifest record for the version: its cid
+    is not in the event log, or the record there is not a ``manifest`` whose
+    ``files`` is a list of objects.
+    """
+    entry = ledger.entry_by_cid(version.manifest_cid)
+    if entry is None or entry.record_type != MANIFEST_TYPE:
+        return None
+    body = entry.body
+    files = body.get("files") if isinstance(body, Mapping) else None
+    if not isinstance(files, list) or not all(isinstance(f, Mapping) for f in files):
+        return None
+    return list(files)

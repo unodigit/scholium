@@ -12,6 +12,13 @@ Feature 79 is implemented here:
   that version (the latest listed one for a paper id) with its title,
   abstract, authors, categories, licence, status, notices and version number.
 
+Feature 81 is implemented here too:
+
+* ``GET /v1/papers/{id}/v/{n}/manifest`` -- the files of one listed version:
+  each file's ``path``, ``cid``, ``size``, ``mediaType`` and ``role`` from the
+  signed ``manifest`` record, the version's ``licence`` and the file's live
+  ``scanStatus`` from the content store.
+
 An unlisted version -- a draft, one still awaiting co-author consent, one
 rejected or held -- is invisible to anonymous readers and answers ``404``,
 as does an id this node does not hold.  Reading is public, like reading a
