@@ -1,2 +1,10 @@
 .uv-cache/
 claw-forge.local.yaml
+.claw-forge/
+node_modules/
+.venv/
+__pycache__/
+.next/
+*.db
+.demo-keys.json
+.env
