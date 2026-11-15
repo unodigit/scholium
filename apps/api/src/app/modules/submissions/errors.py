@@ -14,17 +14,21 @@ wiring.  They are also ordinary Python exceptions (:class:`LookupError` and
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.errors import ProblemException
 
 __all__ = [
     "CATEGORY_NOT_ENDORSED",
+    "GENESIS_RATE_LIMITED",
     "MANIFEST_FILE_NOT_STORED",
     "MANIFEST_FILE_SIZE_MISMATCH",
     "SHORT_ID_COLLISION",
     "CategoryNotEndorsed",
+    "GenesisRateLimited",
     "ManifestFileError",
     "ManifestFileNotStored",
     "ManifestFileSizeMismatch",
@@ -42,6 +46,9 @@ CATEGORY_NOT_ENDORSED = "urn:scholium:problem:category-not-endorsed"
 
 #: A genesis's derived ``sch:`` id is already assigned to a different paper.
 SHORT_ID_COLLISION = "urn:scholium:problem:short-id-collision"
+
+#: A young tier-2 author already started a paper inside the weekly window.
+GENESIS_RATE_LIMITED = "urn:scholium:problem:genesis-rate-limited"
 
 _MAX_ECHO = 64
 
@@ -213,3 +220,59 @@ class ShortIdCollision(ProblemException, ValueError):
             "to a different paper."
         )
         super().__init__(409, message, type=SHORT_ID_COLLISION, short_id=short_id)
+
+
+def _iso(value: datetime) -> str:
+    """``value`` as an ISO 8601 UTC instant with a ``Z`` suffix, as the API writes dates."""
+    moment = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class GenesisRateLimited(ProblemException):
+    """A young tier-2 author already started a paper this week: ``429``.
+
+    ``next_allowed_at`` is the instant the earlier genesis leaves the rolling
+    seven-day window, so it is the first moment another ``paper.genesis`` can
+    be accepted.  The same instant is echoed as ``next_allowed_date`` (the
+    name the spec uses), while ``retry_after`` carries the whole seconds until
+    then -- also sent as the ``Retry-After`` header.
+
+    The refusal happens before the ledger append, so the refused record stores
+    nothing.
+    """
+
+    def __init__(
+        self,
+        next_allowed_at: datetime,
+        *,
+        now: Optional[datetime] = None,
+        limit: int = 1,
+        window_seconds: int = 7 * 24 * 60 * 60,
+    ) -> None:
+        self.next_allowed_at = next_allowed_at
+        self.limit = int(limit)
+        self.window_seconds = int(window_seconds)
+        moment = now if now is not None else datetime.now(timezone.utc)
+        later = (
+            next_allowed_at
+            if next_allowed_at.tzinfo is not None
+            else next_allowed_at.replace(tzinfo=timezone.utc)
+        )
+        earlier = moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+        self.retry_after = max(1, math.ceil((later - earlier).total_seconds()))
+        shown = _iso(next_allowed_at)
+        message = (
+            "A tier-2 account younger than 90 days may start one paper per "
+            f"week; the next paper.genesis is allowed at {shown}."
+        )
+        super().__init__(
+            429,
+            message,
+            type=GENESIS_RATE_LIMITED,
+            headers={"Retry-After": str(self.retry_after)},
+            next_allowed_at=shown,
+            next_allowed_date=shown,
+            retry_after=self.retry_after,
+            limit=self.limit,
+            window_seconds=self.window_seconds,
+        )

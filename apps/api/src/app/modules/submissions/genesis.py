@@ -64,6 +64,7 @@ from app.modules.ingest import (
 from app.security import Tier
 
 from .errors import CategoryNotEndorsed, ShortIdCollision
+from .limits import enforce_genesis_quota
 from .models import DEFAULT_LICENCE, INITIAL_STATUS, Paper, ensure_tables
 
 __all__ = [
@@ -304,7 +305,10 @@ def handle_paper_genesis(record: Mapping[str, Any]) -> str:
        (:class:`~app.modules.ingest.errors.InvalidRecord`);
     3. the author must be endorsed in every category -- ``403``
        (:class:`~.errors.CategoryNotEndorsed`);
-    4. the paper is saved to ``papers`` -- ``409``
+    4. a tier-2 author younger than 90 days may start only one paper a week --
+       ``429`` (:class:`~.errors.GenesisRateLimited`), naming the next allowed
+       instant.  Older and higher-tier accounts are not limited;
+    5. the paper is saved to ``papers`` -- ``409``
        (:class:`~.errors.ShortIdCollision`) if its short id is taken.
 
     Returns ``"accepted"``.
@@ -325,5 +329,6 @@ def handle_paper_genesis(record: Mapping[str, Any]) -> str:
     licence = genesis_licence(body)
 
     require_endorsed(author, categories)
+    enforce_genesis_quota(author, tier, paper_cid=paper_cid)
     save_paper(paper_cid=paper_cid, categories=categories, licence=licence)
     return "accepted"
