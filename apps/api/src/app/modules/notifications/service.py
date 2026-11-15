@@ -27,7 +27,7 @@ from app.settings import settings
 from .emailer import build_email, log_to_outbox, send_email
 from .models import Notification, ensure_table
 
-__all__ = ["notify"]
+__all__ = ["list_notifications", "mark_read", "notify"]
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +83,58 @@ def notify(did: str, kind: str, payload: Optional[Any] = None) -> Notification:
         log_to_outbox(email)
 
     return notification
+
+
+def _require_did(did: str) -> str:
+    """Validate a caller DID the same way :func:`notify` validates its recipient."""
+    if not isinstance(did, str) or not did.strip():
+        raise ValueError("a non-empty did is required")
+    return did
+
+
+def list_notifications(did: str) -> list[Notification]:
+    """Return every notification addressed to ``did``, oldest first.
+
+    Both unread and read rows come back, ordered by ``id`` (insertion order),
+    so the caller can render an inbox and count the unread ones itself.
+    """
+    _require_did(did)
+    ensure_table()
+
+    with db.SessionLocal() as session:
+        return (
+            session.query(Notification)
+            .filter(Notification.did == did)
+            .order_by(Notification.id)
+            .all()
+        )
+
+
+def mark_read(did: str, notification_id: int) -> Optional[Notification]:
+    """Mark one of ``did``'s notifications read; return None if there is no such row.
+
+    Only rows addressed to ``did`` are matched, so one account can neither see
+    nor flip another account's notification, and a missing row and somebody
+    else's row are indistinguishable (both None -- the router answers 404).
+    Marking an already-read notification is a successful no-op.
+    """
+    _require_did(did)
+    ensure_table()
+
+    session = db.SessionLocal()
+    # Keep attribute values readable after commit/close; the router serialises
+    # the returned row into its response.
+    session.expire_on_commit = False
+    try:
+        notification = (
+            session.query(Notification)
+            .filter(Notification.id == notification_id, Notification.did == did)
+            .one_or_none()
+        )
+        if notification is None or notification.read:
+            return notification
+        notification.read = True
+        session.commit()
+        return notification
+    finally:
+        session.close()
