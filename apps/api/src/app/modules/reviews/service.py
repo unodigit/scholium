@@ -698,6 +698,56 @@ def resolve_review_target(target: str) -> tuple[str, str]:
     raise UnknownReviewTarget(target)
 
 
+def version_number(version_cid: object) -> Optional[int]:
+    """The ``n`` of a ``paper.version`` this node holds, or ``None``.
+
+    Read like :func:`resolve_review_target`: the submissions projection first,
+    the event log second.
+    """
+    if not isinstance(version_cid, str) or not version_cid:
+        return None
+    version = submissions.get_version(version_cid)
+    if version is not None:
+        return int(version.n)
+
+    from app.modules import ledger
+
+    entry = ledger.entry_by_cid(version_cid)
+    if entry is None or getattr(entry, "record_type", None) != PAPER_VERSION_TYPE:
+        return None
+    body = getattr(entry, "body", None)
+    n = body.get("n") if isinstance(body, Mapping) else None
+    return n if isinstance(n, int) and not isinstance(n, bool) else None
+
+
+def find_review_on_paper(review_key: str, paper_cid: str) -> Optional[Review]:
+    """The review this key sealed on *any* version of this paper, or ``None``.
+
+    A review key is per paper and a person commits once per paper, so a key
+    and a paper name one review -- the one a reviewer's updates, made against
+    newer versions, all belong to.  If the rows ever say otherwise, the
+    earliest commit holds the slot.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Review)
+            .filter(Review.review_key == review_key)
+            .order_by(Review.committed_at, Review.review_cid)
+            .all()
+        )
+        for row in rows:
+            session.expunge(row)
+    for row in rows:
+        try:
+            _, row_paper = resolve_review_target(row.version_cid)
+        except UnknownReviewTarget:
+            continue
+        if row_paper == paper_cid:
+            return row
+    return None
+
+
 def review_commit_fields(record: Mapping[str, Any]) -> ReviewCommitFields:
     """Shape-check a ``review.commit`` and return the fields this plugin acts on.
 
@@ -1082,7 +1132,51 @@ def resolve_review(review_cid: object) -> Optional[Review]:
         )
         if row is not None:
             session.expunge(row)
-        return row
+            return row
+    # An updated review targets a newer version than the one its reviewer
+    # sealed it on, so there is no row for that pair: it is the same review
+    # the reviewer's earlier ``review.formal`` opened.
+    if entry_prev(entry) is None:
+        return None
+    try:
+        _, paper_cid = resolve_review_target(version_cid)
+    except UnknownReviewTarget:
+        return None
+    return find_review_on_paper(review_key, paper_cid)
+
+
+def formal_entries(review_key: Optional[str] = None) -> list[Any]:
+    """Every ``review.formal`` in the event log, oldest first.
+
+    ``review_key`` narrows it to the ones that key signed -- one reviewer's
+    reviews of a paper, an update chain among them.
+    """
+    from app.modules.ledger.models import EventLog, ensure_table as ensure_ledger_table
+
+    ensure_ledger_table()
+    statement = (
+        select(EventLog)
+        .where(EventLog.record_type == "review.formal")
+        .order_by(EventLog.seq)
+    )
+    if review_key is not None:
+        statement = statement.where(EventLog.author_did == review_key)
+    with db.SessionLocal() as session:
+        rows = list(session.execute(statement).scalars())
+        for row in rows:
+            session.expunge(row)
+    return rows
+
+
+def entry_prev(entry: Any) -> Optional[str]:
+    """The ``prev`` a logged record names, or ``None``."""
+    from app.modules import ledger
+
+    try:
+        prev = ledger.stored_envelope(entry).prev
+    except Exception:
+        return None
+    return prev if isinstance(prev, str) and prev else None
 
 
 def is_review_author(caller_did: str, version_cid: str) -> bool:

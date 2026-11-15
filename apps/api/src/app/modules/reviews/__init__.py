@@ -32,6 +32,12 @@ review key sealed a review on the version, the record carries that commit's
 reveal fills in the ``review`` row's revealed columns.  See
 :mod:`app.modules.reviews.reveal`.
 
+Feature 112: ``POST /v1/reviews/reveal`` also accepts an updated
+``review.formal`` -- its ``prev`` names the reviewer's earlier one and its
+``target`` is a newer version of the paper -- and ``GET /v1/papers/{id}/reviews``
+serves the reviewer's reviews as a ``history``, oldest version first.  See
+:mod:`app.modules.reviews.reveal` and :mod:`app.modules.reviews.history`.
+
 Feature 113: ``POST /v1/reviews/{cid}/rating`` records a tier-3 member's
 quality rating of a review in ``review_ratings``.
 
@@ -54,17 +60,21 @@ from .coi import COI_WINDOW_YEARS, CoiCheck, CoiReport, check_conflicts
 from .errors import (
     REVIEW_ALREADY_COMMITTED,
     REVIEW_ALREADY_REVEALED,
+    REVIEW_ALREADY_UPDATED,
     REVIEW_COMMITMENT_MISMATCH,
     REVIEW_NOT_AUTHORIZED,
     REVIEW_NOT_COMMITTED,
     REVIEW_RESPONSE_NOT_AUTHORIZED,
+    REVIEW_UPDATE_INVALID,
     UNKNOWN_REVIEW_TARGET,
     ReviewAlreadyCommitted,
     ReviewAlreadyRevealed,
+    ReviewAlreadyUpdated,
     ReviewCommitmentMismatch,
     ReviewNotAuthorized,
     ReviewNotCommitted,
     ReviewResponseNotAuthorized,
+    ReviewUpdateInvalid,
     UnknownReviewTarget,
 )
 from .escrow import (
@@ -75,6 +85,7 @@ from .escrow import (
     seal_identity,
     uniqueness_token,
 )
+from .history import Revision, paper_revisions, review_history
 from .models import (
     Review,
     ReviewEscrow,
@@ -166,6 +177,7 @@ __all__ = [
     "REVEALED",
     "REVIEW_ALREADY_COMMITTED",
     "REVIEW_ALREADY_REVEALED",
+    "REVIEW_ALREADY_UPDATED",
     "REVIEW_COMMITMENT_MISMATCH",
     "REVIEW_COMMIT_MIN_TIER",
     "REVIEW_COMMIT_TYPE",
@@ -176,10 +188,12 @@ __all__ = [
     "REVIEW_RESPONSE_NOT_AUTHORIZED",
     "REVIEW_RESPONSE_TYPE",
     "REVIEW_REVEAL_MIN_TIER",
+    "REVIEW_UPDATE_INVALID",
     "RUBRIC_DIMENSIONS",
     "Review",
     "ReviewAlreadyCommitted",
     "ReviewAlreadyRevealed",
+    "ReviewAlreadyUpdated",
     "ReviewCommitFields",
     "ReviewCommitmentMismatch",
     "ReviewEscrow",
@@ -190,6 +204,8 @@ __all__ = [
     "ReviewResponseFields",
     "ReviewResponseNotAuthorized",
     "ReviewRevealFields",
+    "ReviewUpdateInvalid",
+    "Revision",
     "UNKNOWN_REVIEW_TARGET",
     "UnknownReviewTarget",
     "apply_review_commit",
@@ -230,6 +246,7 @@ __all__ = [
     "normalise_recommendation",
     "nullifier_bytes",
     "open_identity",
+    "paper_revisions",
     "persist_review_commit",
     "persist_review_response",
     "persist_review_reveal",
@@ -239,6 +256,7 @@ __all__ = [
     "resolve_review_target",
     "resolve_version",
     "review_commit_fields",
+    "review_history",
     "review_reveal_fields",
     "router",
     "save_invitation",

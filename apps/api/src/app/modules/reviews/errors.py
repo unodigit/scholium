@@ -9,6 +9,11 @@ caller may not be an author of the paper, and one person reviews a paper once.
 Revealing a review adds three more: there must be a sealed review to reveal
 (``422``), the revealed content must be what was sealed (``422``), and a
 review is revealed once (``409``).
+
+Updating a revealed review (a ``review.formal`` whose ``prev`` names the
+reviewer's earlier one, against a newer version) adds two: the ``prev`` link
+must be one the reviewer may make (``422``), and a review is replaced once
+(``409``).
 """
 
 from __future__ import annotations
@@ -20,17 +25,21 @@ from app.errors import ProblemException
 __all__ = [
     "REVIEW_ALREADY_COMMITTED",
     "REVIEW_ALREADY_REVEALED",
+    "REVIEW_ALREADY_UPDATED",
     "REVIEW_COMMITMENT_MISMATCH",
     "REVIEW_NOT_AUTHORIZED",
     "REVIEW_NOT_COMMITTED",
     "REVIEW_RESPONSE_NOT_AUTHORIZED",
+    "REVIEW_UPDATE_INVALID",
     "UNKNOWN_REVIEW_TARGET",
     "ReviewAlreadyCommitted",
     "ReviewAlreadyRevealed",
+    "ReviewAlreadyUpdated",
     "ReviewCommitmentMismatch",
     "ReviewNotAuthorized",
     "ReviewNotCommitted",
     "ReviewResponseNotAuthorized",
+    "ReviewUpdateInvalid",
     "UnknownReviewTarget",
 ]
 
@@ -40,6 +49,8 @@ REVIEW_ALREADY_COMMITTED = "urn:scholium:problem:review-already-committed"
 REVIEW_NOT_COMMITTED = "urn:scholium:problem:review-not-committed"
 REVIEW_COMMITMENT_MISMATCH = "urn:scholium:problem:review-commitment-mismatch"
 REVIEW_ALREADY_REVEALED = "urn:scholium:problem:review-already-revealed"
+REVIEW_UPDATE_INVALID = "urn:scholium:problem:review-update-invalid"
+REVIEW_ALREADY_UPDATED = "urn:scholium:problem:review-already-updated"
 REVIEW_RESPONSE_NOT_AUTHORIZED = "urn:scholium:problem:review-response-not-authorized"
 
 _MAX_ECHO = 64
@@ -212,6 +223,70 @@ class ReviewAlreadyRevealed(ProblemException, ValueError):
             message,
             type=REVIEW_ALREADY_REVEALED,
             review=review_cid,
+        )
+
+
+class ReviewUpdateInvalid(ProblemException, ValueError):
+    """An updated ``review.formal`` links to something it may not: ``422``.
+
+    ``kind`` says what is wrong with the update; ``loc`` is the field it is
+    wrong at (``prev`` unless the fault is the target):
+
+    * ``unknown_prev`` -- ``prev`` names no ``review.formal`` this node holds;
+    * ``prev_not_by_reviewer`` -- ``prev`` names a review signed by another
+      review key, which a reviewer may not replace;
+    * ``prev_other_paper`` -- ``prev`` names a review of a different paper;
+    * ``not_a_newer_version`` -- the update does not target a newer version
+      than the review it replaces.
+    """
+
+    def __init__(
+        self,
+        kind: str,
+        message: str,
+        *,
+        loc: tuple[str, ...] = ("prev",),
+        value: object = None,
+    ) -> None:
+        self.kind = kind
+        super().__init__(
+            422,
+            message,
+            type=REVIEW_UPDATE_INVALID,
+            errors=[
+                {
+                    "loc": list(loc),
+                    "msg": message,
+                    "type": kind,
+                    "input": _clip(value),
+                }
+            ],
+        )
+
+
+class ReviewAlreadyUpdated(ProblemException, ValueError):
+    """The review was already replaced by an update: ``409``.
+
+    A review is replaced once, so the history stays a line.  The cid of the
+    update that holds the slot is carried as the ``update`` extension member,
+    and ``review`` is the cid being replaced; both are public records, so
+    naming them discloses nothing.  The reviewer's next update names the
+    latest review in its ``prev``.
+    """
+
+    def __init__(self, review_cid: object, update_cid: object) -> None:
+        self.review_cid = review_cid
+        self.update_cid = update_cid
+        message = (
+            "This review has already been updated; point 'prev' at the "
+            "reviewer's latest review to update it again."
+        )
+        super().__init__(
+            409,
+            message,
+            type=REVIEW_ALREADY_UPDATED,
+            review=review_cid,
+            update=update_cid,
         )
 
 

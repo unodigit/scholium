@@ -13,7 +13,11 @@ The module loader mounts this router under ``/v1``, so this package serves:
   and :mod:`app.modules.reviews.escrow`.
 * ``POST /v1/reviews/reveal`` -- accept a signed ``review.formal`` that opens
   a sealed review: a complete rubric, and content that matches the commitment;
-  see :mod:`app.modules.reviews.reveal`.
+  or one that updates the reviewer's earlier review against a newer version
+  (``prev`` names it); see :mod:`app.modules.reviews.reveal`.
+* ``GET /v1/papers/{paper_id}/reviews`` -- the reviews of a listed version,
+  each with the reviewer's ``history`` of updates; see
+  :mod:`app.modules.reviews.history`.
 * ``POST /v1/reviews/{cid}/response`` -- accept a signed ``review.response``
   from a paper author with one reply per rubric dimension and save it to
   ``review_responses``; see :mod:`app.modules.reviews.response`.
@@ -229,11 +233,20 @@ def reveal_review(
     body schema, cid, signature, ledger) and fills in the ``review`` row the
     commit created: scores, recommendation, confidence and ``revealed_at``.
 
+    A reviewer may also revise their review against a newer version of the
+    paper: a ``review.formal`` whose ``prev`` is the cid of their earlier one
+    and whose ``target`` is the newer version.  It is the same review, so it
+    needs no new commit and carries no commitment; it must be signed by the
+    same review key, have a complete rubric of its own, and replace a review
+    nobody has replaced yet.  The answer names the same ``review``, and
+    ``GET /v1/papers/{id}/reviews`` serves both reviews in its history.
+
     Failures are RFC 9457 problem details: ``401`` for a missing token or a bad
     signature, ``403`` for a caller below tier 3, ``409`` for a review that was
-    revealed already, and ``422`` for an incomplete rubric, a review that was
-    never sealed, content that does not match its commitment, or a target this
-    node does not hold.
+    revealed (or, for an update, replaced) already, and ``422`` for an
+    incomplete rubric, a review that was never sealed, content that does not
+    match its commitment, a target this node does not hold, or an update whose
+    ``prev`` is not the reviewer's own earlier review of an older version.
     """
     if record.get("type") != reveal.REVIEW_FORMAL_TYPE:
         raise ProblemException(
@@ -269,6 +282,7 @@ def reveal_review(
         "id": result.record_id,
         "target": fields.version_cid,
         "review": review.review_cid,
+        "prev": fields.prev,
         "state": result.state,
         "anchor": result.anchor,
     }
@@ -281,9 +295,19 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     Report bodies stay hidden until two reviews are committed on the version or
     21 days have passed since the first commit; anonymous reviewers are labelled
     ``Reviewer A``, ``Reviewer B`` per paper.
+
+    A reviewer who revised their review against a newer version (a
+    ``review.formal`` whose ``prev`` names their earlier one) is one entry, not
+    two: it shows their latest review as its own scores and recommendation, and
+    carries every review of theirs, oldest version first, in ``history``.  The
+    listing is as of the resolved version, so an older version's listing shows
+    the reviews as they stood then.
     """
-    from app.modules import ledger
-    from app.modules.catalog.service import resolve as resolve_listed
+    from sqlalchemy import and_, or_
+
+    from app.modules import submissions
+    from app.modules.catalog.service import listed_versions, resolve as resolve_listed
+    from . import history
     from .models import Review, ReviewResponse, ensure_tables
 
     ensure_tables()
@@ -294,11 +318,36 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     version = view.version
     version_cid = version.version_cid
 
+    # The listed versions up to this one, by number: the reviews a reader of
+    # this version may see, an update of an earlier review among them.
+    visible = {
+        listed.version_cid: int(listed.n)
+        for listed in listed_versions(view.paper)
+        if int(listed.n) <= int(version.n)
+    }
+    visible[version_cid] = int(version.n)
+    chains = history.paper_revisions(visible)
+    # A reviewer who updated their review to this version is listed here, though
+    # they sealed it on an earlier one.
+    updated_keys = {
+        key
+        for key, chain in chains.items()
+        if any(revision.version_cid == version_cid for revision in chain)
+    }
+    paper_versions = [
+        known.version_cid for known in submissions.versions_for_paper(view.paper.paper_cid)
+    ]
+
     # Committed review rows for this version, in commit order.
+    wanted = [Review.version_cid == version_cid]
+    if updated_keys:
+        wanted.append(
+            and_(Review.review_key.in_(updated_keys), Review.version_cid.in_(paper_versions))
+        )
     with db.SessionLocal() as session:
         rows = (
             session.query(Review)
-            .filter(Review.version_cid == version_cid)
+            .filter(or_(*wanted))
             .order_by(Review.committed_at, Review.review_cid)
             .all()
         )
@@ -321,20 +370,6 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
         for response_row in response_rows:
             responses_by_review.setdefault(response_row.review_cid, []).append(response_row)
 
-    # Map each review key to its revealed review.formal record (latest wins).
-    formal_by_key: dict[str, Any] = {}
-    for entry in ledger.entries():
-        if getattr(entry, "record_type", None) != "review.formal":
-            continue
-        body = getattr(entry, "body", None)
-        if not isinstance(body, dict):
-            continue
-        if body.get("target") != version_cid:
-            continue
-        author = getattr(entry, "author_did", None)
-        if isinstance(author, str) and author:
-            formal_by_key[author] = entry
-
     # Gate: open once two reviews are committed, or 21 days after the first.
     committed_times = [r.committed_at for r in rows if r.committed_at is not None]
     first_commit = min(committed_times) if committed_times else None
@@ -348,12 +383,12 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     for index, row in enumerate(rows):
         letter = chr(ord("A") + index) if index < 26 else str(index + 1)
         label = f"Reviewer {letter}"
-        formal = formal_by_key.get(row.review_key)
-        formal_body: dict[str, Any] = {}
-        if formal is not None:
-            fb = getattr(formal, "body", None)
-            if isinstance(fb, dict):
-                formal_body = fb
+        # The reviewer's reviews of this paper up to this version, oldest first;
+        # the last is the one they stand on.
+        reviewer_history = history.review_history(
+            row, chains.get(row.review_key, []), report_allowed=gate_open
+        )
+        latest = reviewer_history[-1] if reviewer_history else None
 
         item: dict[str, Any] = {
             "review_cid": row.review_cid,
@@ -370,13 +405,30 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
             "scores": row.scores,
             "recommendation": row.recommendation,
             "confidence": row.confidence,
-            "report_cid": row.report_cid or formal_body.get("reportCid") or formal_body.get("report_cid"),
+            "report_cid": row.report_cid,
             "signed_by": row.signed_by,
+            "version_cid": row.version_cid,
+            "versionCid": row.version_cid,
+            "version": visible.get(row.version_cid),
+            "history": reviewer_history,
         }
-        if formal is not None:
-            item["reveal_cid"] = getattr(formal, "record_cid", None)
-            item["formal_cid"] = getattr(formal, "record_cid", None)
-            item["id"] = getattr(formal, "record_cid", None)
+        if latest is not None:
+            # The review the reviewer stands on now: their latest, which is the
+            # first one until they update it against a newer version.
+            for key in (
+                "revealed_at",
+                "scores",
+                "recommendation",
+                "confidence",
+                "report_cid",
+                "version_cid",
+                "versionCid",
+                "version",
+            ):
+                item[key] = latest[key]
+            item["reveal_cid"] = latest["formal_cid"]
+            item["formal_cid"] = latest["formal_cid"]
+            item["id"] = latest["formal_cid"]
 
         # The paper authors' point-by-point answers to this review.
         response_items = [
@@ -395,14 +447,11 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
             item["response"] = response_items[0]
             item["replies"] = response_items[0]["replies"]
 
-        # Serve the report body only when the gate is open.
-        if gate_open and row.revealed_at is not None:
-            report = formal_body.get("report")
-            if isinstance(report, str):
-                item["report"] = report
-            report_cid = item.get("report_cid")
-            # Preserve a possible content-stored body reference only.
-        # When closed, 'report' is deliberately absent.
+        # Serve the report body only when the gate is open (the history left
+        # it out of each review otherwise); when closed, 'report' is
+        # deliberately absent.
+        if latest is not None and "report" in latest:
+            item["report"] = latest["report"]
 
         reviews_out.append(item)
 

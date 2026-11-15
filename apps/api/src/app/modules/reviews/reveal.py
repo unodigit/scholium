@@ -24,6 +24,35 @@ What a reveal must satisfy
   content; checking the content alone would not tie the reveal to its commit.
 * **Once.**  A sealed review is revealed once (``409``).
 
+Updating a revealed review (feature 112)
+----------------------------------------
+
+A paper gets new versions, and a reviewer may revise their review against one.
+The update is a ``review.formal`` whose envelope ``prev`` is the cid of the
+reviewer's earlier ``review.formal`` and whose ``target`` is a newer version of
+the same paper.  It is the same review, not a second one -- a person still
+reviews a paper once -- so nothing is committed again: the sealed review the
+earlier reveal opened stands behind the whole chain.  What an update must
+satisfy:
+
+* the same complete rubric as any reveal (``422``);
+* ``prev`` names a ``review.formal`` signed by the *same review key*; a
+  reviewer cannot replace someone else's review (``422``), and a ``prev`` that
+  names nothing this node holds is refused rather than ignored (``422``);
+* ``target`` is a newer version of the paper the earlier review is of (``422``);
+* the earlier review is replaced once, so the history stays a line (``409``).
+
+An update carries no commitment: the commitment's job is to stop a reviewer
+changing their review after seeing the others', and the review being updated is
+already open.  A ``commitment`` an update does carry is not checked.  A
+``prev`` that names the reviewer's own ``review.commit`` is the ordinary reveal
+linking back to its commit, and is treated as one.
+
+An update writes no row.  The ``review`` row stays as the commit and first
+reveal left it, and the history is read from the signed ``review.formal``
+records themselves (see :mod:`app.modules.reviews.history`), which is also how
+``status.compute`` reads it.
+
 The commitment scheme
 ---------------------
 
@@ -67,11 +96,22 @@ from app.modules.ingest.errors import InvalidRecord
 
 from .errors import (
     ReviewAlreadyRevealed,
+    ReviewAlreadyUpdated,
     ReviewCommitmentMismatch,
     ReviewNotCommitted,
+    ReviewUpdateInvalid,
+    UnknownReviewTarget,
 )
 from .models import Review, ensure_tables
-from .service import _created_at, resolve_review_target
+from .service import (
+    REVIEW_COMMIT_TYPE,
+    _created_at,
+    entry_prev,
+    find_review_on_paper,
+    formal_entries,
+    resolve_review_target,
+    version_number,
+)
 
 __all__ = [
     "CONFIDENCE_LEVELS",
@@ -327,8 +367,12 @@ class ReviewRevealFields:
     paper_cid: str
     #: The review key that signed the record: the sealed review's key.
     review_key: str
-    #: The commitment the record claims to open.
-    commitment: str
+    #: The commitment the record claims to open.  ``None`` when it carries none,
+    #: which only an update of an earlier review may do (see :attr:`prev`).
+    commitment: Optional[str]
+    #: The envelope's ``prev``: the cid of the earlier review this one updates,
+    #: or ``None`` for a first reveal.
+    prev: Optional[str]
     #: The six rubric entries, ``{dimension: {"score": int, "justification": str}}``.
     scores: dict[str, dict[str, Any]]
     #: The verdict, normalised (see :func:`normalise_recommendation`).
@@ -386,8 +430,24 @@ def review_reveal_fields(record: Mapping[str, Any]) -> ReviewRevealFields:
             )
         )
 
+    prev = record.get("prev")
+    if prev is not None and (not isinstance(prev, str) or not prev.strip()):
+        problems.append(
+            _problem(
+                ["prev"],
+                "The review's 'prev' must be null, or the cid of the earlier review it updates.",
+                "invalid_prev",
+                prev,
+            )
+        )
+        prev = None
+
     commitment = body.get("commitment")
-    if not isinstance(commitment, str) or not commitment.strip():
+    has_commitment = isinstance(commitment, str) and bool(commitment.strip())
+    # A first reveal opens a commitment; an update (it has a ``prev``) opens
+    # nothing, its earlier review is open already.  Whether a ``prev`` makes
+    # this an update is for the handler to say once it has looked at it.
+    if not has_commitment and prev is None:
         problems.append(
             _problem(
                 ["body", "commitment"],
@@ -430,7 +490,8 @@ def review_reveal_fields(record: Mapping[str, Any]) -> ReviewRevealFields:
         version_cid=version_cid,
         paper_cid=paper_cid,
         review_key=review_key,
-        commitment=commitment.strip(),
+        commitment=commitment.strip() if has_commitment else None,
+        prev=prev,
         scores=scores,
         recommendation=normalise_recommendation(body["recommendation"]),  # type: ignore[arg-type]
         confidence=_confidence(body["confidence"]),  # type: ignore[arg-type]
@@ -493,6 +554,13 @@ def _check_commitment(record: Mapping[str, Any], fields: ReviewRevealFields, rev
     Two things must hold: the record's ``commitment`` is the commit's, and the
     revealed content hashes to it.
     """
+    if fields.commitment is None:
+        # Only an update may go without one, and it never gets here.
+        message = "A revealed review must carry the commitment from its review.commit in 'commitment'."
+        raise InvalidRecord(
+            [_problem(["body", "commitment"], message, "missing_commitment")],
+            detail=message,
+        )
     sealed = _sealed_commitment(review)
     if sealed is None:
         # The row exists but the log holds no commitment for it: nothing to match.
@@ -510,6 +578,121 @@ def _check_commitment(record: Mapping[str, Any], fields: ReviewRevealFields, rev
 
 
 # --------------------------------------------------------------------------- #
+# Updating a revealed review
+# --------------------------------------------------------------------------- #
+
+
+def _earlier_review(fields: ReviewRevealFields) -> Optional[Any]:
+    """The logged ``review.formal`` this reveal updates, or ``None`` for a first reveal.
+
+    ``prev`` names one of three things.  Nothing: an ordinary reveal.  The
+    reviewer's ``review.commit``: also an ordinary reveal, linked back to the
+    commit it opens.  A ``review.formal``: an update, returned here for
+    :func:`_require_update` to check.  Any other ``prev`` -- a cid this node
+    does not hold, or a record that is not a review -- is refused rather than
+    ignored, since the reviewer meant to link to something.
+
+    Raises:
+        ReviewUpdateInvalid: ``422`` -- ``prev`` is none of those.
+    """
+    if fields.prev is None:
+        return None
+    from app.modules import ledger
+
+    entry = ledger.entry_by_cid(fields.prev)
+    record_type = getattr(entry, "record_type", None)
+    if record_type == REVIEW_FORMAL_TYPE:
+        return entry
+    if record_type == REVIEW_COMMIT_TYPE:
+        return None
+    raise ReviewUpdateInvalid(
+        "unknown_prev",
+        "The review's 'prev' must name the reviewer's earlier review.formal "
+        "that this one updates, or be null; this node holds no such review.",
+        value=fields.prev,
+    )
+
+
+def _replacement(prev: str, review_key: str, own_cid: str) -> Optional[Any]:
+    """The update that already replaced review ``prev``, or ``None``.
+
+    The earliest other ``review.formal`` by this key that names ``prev``.  When
+    ``own_cid`` is in the log already (the ledger subscriber and the endpoint
+    check *after* the append) only an update logged before it counts, so the
+    record that took the slot is never refused for having taken it.
+    """
+    from app.modules import ledger
+
+    own = ledger.entry_by_cid(own_cid)
+    for entry in formal_entries(review_key):
+        if entry.record_cid == own_cid:
+            continue
+        if own is not None and entry.seq > own.seq:
+            continue
+        if entry_prev(entry) == prev:
+            return entry
+    return None
+
+
+def _require_update(fields: ReviewRevealFields, earlier: Any) -> Review:
+    """Check an update against the review it replaces; return the sealed review.
+
+    Raises:
+        ReviewUpdateInvalid: ``422`` -- ``earlier`` is not this reviewer's, is of
+            another paper, or is not of an older version than this review's.
+        ReviewNotCommitted: ``422`` -- this key sealed no review on the paper.
+        ReviewAlreadyUpdated: ``409`` -- ``earlier`` was replaced already.
+    """
+    prev = fields.prev
+    if earlier.author_did != fields.review_key:
+        raise ReviewUpdateInvalid(
+            "prev_not_by_reviewer",
+            "The review it updates was signed by another review key; a "
+            "reviewer can only update their own review.",
+            value=prev,
+        )
+
+    earlier_body = earlier.body if isinstance(earlier.body, Mapping) else {}
+    earlier_target = earlier_body.get("target")
+    try:
+        if not isinstance(earlier_target, str) or not earlier_target.strip():
+            raise UnknownReviewTarget(earlier_target)
+        earlier_version, earlier_paper = resolve_review_target(earlier_target.strip())
+    except UnknownReviewTarget:
+        raise ReviewUpdateInvalid(
+            "unknown_prev",
+            "The review it updates targets a version this node does not hold.",
+            value=prev,
+        ) from None
+    if earlier_paper != fields.paper_cid:
+        raise ReviewUpdateInvalid(
+            "prev_other_paper",
+            "The review it updates is a review of a different paper.",
+            value=prev,
+        )
+
+    new_n = version_number(fields.version_cid)
+    old_n = version_number(earlier_version)
+    if new_n is None or old_n is None or new_n <= old_n:
+        raise ReviewUpdateInvalid(
+            "not_a_newer_version",
+            "An updated review must target a newer version of the paper than "
+            "the review it updates.",
+            loc=("body", "target"),
+            value=fields.version_cid,
+        )
+
+    sealed = find_review_on_paper(fields.review_key, fields.paper_cid)
+    if sealed is None:
+        raise ReviewNotCommitted(fields.review_key, earlier_version)
+
+    replacement = _replacement(prev, fields.review_key, fields.reveal_cid)
+    if replacement is not None:
+        raise ReviewAlreadyUpdated(prev, replacement.record_cid)
+    return sealed
+
+
+# --------------------------------------------------------------------------- #
 # The ingest handler, the projection and the ledger subscriber
 # --------------------------------------------------------------------------- #
 
@@ -521,14 +704,25 @@ def handle_review_reveal(record: Mapping[str, Any]) -> str:
     nothing.  Nothing is saved here either: the ``review`` row is filled in by
     :func:`apply_review_reveal` once the record is in the log.
 
+    A ``review.formal`` whose ``prev`` names the reviewer's earlier one is an
+    update against a newer version, checked by :func:`_require_update` instead
+    of against a commitment.
+
     Raises:
         InvalidRecord, UnknownReviewTarget: ``422`` -- an incomplete rubric or
             another malformed field.
-        ReviewNotCommitted: ``422`` -- this key sealed no review on the version.
+        ReviewNotCommitted: ``422`` -- this key sealed no review on the version
+            (or, for an update, on the paper).
         ReviewAlreadyRevealed: ``409`` -- the sealed review was revealed already.
         ReviewCommitmentMismatch: ``422`` -- not the sealed content.
+        ReviewUpdateInvalid: ``422`` -- an update that links to something it may not.
+        ReviewAlreadyUpdated: ``409`` -- the earlier review was replaced already.
     """
     fields = review_reveal_fields(record)
+    earlier = _earlier_review(fields)
+    if earlier is not None:
+        _require_update(fields, earlier)
+        return REVEALED
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:
         raise ReviewAlreadyRevealed(review.review_cid)
@@ -544,11 +738,20 @@ def apply_review_reveal(record: Mapping[str, Any]) -> Review:
     The record is validated again first -- including its commitment -- so no
     row is filled in for a reveal the handler would have refused.
 
+    An update fills in nothing: the row is the review the reviewer sealed, and
+    the update's content lives in its signed record, which the reviews listing
+    reads.  The row is returned, so an update answers with the same review cid
+    as the review it revises.
+
     Raises:
         InvalidRecord, UnknownReviewTarget, ReviewNotCommitted,
-        ReviewCommitmentMismatch: ``422``, as for :func:`handle_review_reveal`.
+        ReviewCommitmentMismatch, ReviewUpdateInvalid, ReviewAlreadyUpdated:
+        as for :func:`handle_review_reveal`.
     """
     fields = review_reveal_fields(record)
+    earlier = _earlier_review(fields)
+    if earlier is not None:
+        return _require_update(fields, earlier)
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:
         return review
