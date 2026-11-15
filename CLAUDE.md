@@ -5,11 +5,18 @@
 <!-- TODO: describe what this project does -->
 
 ## Stack
-- Language: unknown
-- Framework: unknown
+- API: Python 3.12, FastAPI, SQLAlchemy 2.0, SQLite — `apps/api` (uv workspace; packages in `apps/api/packages/*`)
+- Web: Next.js 15 App Router, TypeScript, Tailwind — `apps/web`
+- Spec: `app_spec.xml`; product docs in `docs/` (`docs/design.md` is the UI authority)
 
 ## Build & Test
-- Add your build/test/lint commands here
+- Install: `npm install` at the repo root (npm workspaces include `apps/web`). Do NOT use pnpm/yarn
+  and never add dependencies to the root `package.json`; add web deps with
+  `npm install <pkg> --workspace apps/web`, API deps in `apps/api/pyproject.toml` (or the owning package).
+- Test everything: `npm test` (api pytest, then web vitest)
+- API only: `cd apps/api && uv run --all-packages pytest`
+- Web only: `npm test --workspace apps/web`
+- Browser journeys: `npm run test:e2e` (Playwright, not part of `npm test`)
 
 <!-- claw-forge:policy start -->
 ## How work reaches claw-forge
