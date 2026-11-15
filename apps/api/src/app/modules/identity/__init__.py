@@ -17,6 +17,11 @@ from .document import (
     resolve_did_document,
     router as document_router,
 )
+from .logout import (
+    LOGOUT_UNAUTHENTICATED_TYPE,
+    LogoutRequest,
+    router as logout_router,
+)
 from .models import (
     Account,
     AccountKey,
@@ -42,6 +47,8 @@ from .service import (
     NONCE_BYTES,
     REFRESH_TOKEN_TTL,
     refresh_access,
+    revoke_refresh_token,
+    revoke_refresh_tokens_for_did,
     active_key_for,
     active_signing_key,
     add_account_key,
@@ -82,6 +89,7 @@ from .verify import (
 router = APIRouter()
 router.include_router(challenge_router)
 router.include_router(document_router)
+router.include_router(logout_router)
 router.include_router(refresh_router)
 router.include_router(verify_router)
 
@@ -101,6 +109,8 @@ __all__ = [
     "InvalidSignature",
     "KEY_ROTATION_TYPE",
     "KeyRotationEntry",
+    "LOGOUT_UNAUTHENTICATED_TYPE",
+    "LogoutRequest",
     "NONCE_BYTES",
     "REFRESH_TOKEN_TTL",
     "RefreshRequest",
@@ -114,6 +124,8 @@ __all__ = [
     "ensure_refresh_tokens_table",
     "ensure_table",
     "refresh_access",
+    "revoke_refresh_token",
+    "revoke_refresh_tokens_for_did",
     "active_key_for",
     "active_signing_key",
     "add_account_key",

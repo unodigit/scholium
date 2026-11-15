@@ -40,6 +40,8 @@ __all__ = [
     "NONCE_BYTES",
     "REFRESH_TOKEN_TTL",
     "refresh_access",
+    "revoke_refresh_token",
+    "revoke_refresh_tokens_for_did",
     "get_active_signing_key",
     "active_signing_key_for",
     "resolve_active_key_for",
@@ -271,6 +273,59 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
     access_token = issue_access_token(did, tier, now=checked_at)
     raw_refresh = issue_refresh_token(did, now=checked_at)
     return access_token, raw_refresh
+
+
+def revoke_refresh_token(refresh_token: str) -> bool:
+    """Retire ``refresh_token`` so it can no longer be refreshed (feature 177).
+
+    The token is looked up by its SHA-256 hash and its ``rotated`` flag is set,
+    exactly the state :func:`refresh_access` refuses.  Revocation is
+    idempotent and deliberately says nothing about whether the token existed:
+    logging out with an unknown or already-revoked token leaves the desired
+    end state in place, so it is not an error.
+
+    Returns ``True`` when a live row was actually revoked, ``False`` when
+    there was nothing left to do.
+    """
+    if not isinstance(refresh_token, str) or not refresh_token:
+        return False
+
+    token_hash = hashlib.sha256(refresh_token.encode("utf-8")).hexdigest()
+    ensure_refresh_tokens_table()
+
+    with db.SessionLocal() as session:
+        result = session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.token_hash == token_hash,
+                RefreshToken.rotated == False,  # noqa: E712 - SQL boolean
+            )
+            .values(rotated=True)
+        )
+        session.commit()
+        return result.rowcount == 1
+
+
+def revoke_refresh_tokens_for_did(did: str) -> int:
+    """Retire every live refresh token belonging to ``did`` (feature 177).
+
+    Used when logout identifies the caller by their access token rather than
+    by a refresh token: every outstanding refresh token for that DID stops
+    working.  Returns how many rows were revoked.
+    """
+    ensure_refresh_tokens_table()
+
+    with db.SessionLocal() as session:
+        result = session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.did == did,
+                RefreshToken.rotated == False,  # noqa: E712 - SQL boolean
+            )
+            .values(rotated=True)
+        )
+        session.commit()
+        return result.rowcount
 
 
 # ---------------------------------------------------------------------------
