@@ -120,6 +120,16 @@ from .providers import (
     get_provider,
 )
 from .reproducibility import run_reproducibility_agent
+from .models import AIReview, ensure_ai_reviews_table
+from .background import (
+    JOB_KIND,
+    JOB_KINDS,
+    run_ai_review,
+    run_ai_review_job,
+    run_pipeline,
+    run_review,
+    review_version,
+)
 from .sandbox import (
     NOT_RUN_REASONS,
     SandboxLimits,
@@ -182,5 +192,14 @@ __all__ = [
     "run_agent",
     "run_bundle",
     "run_reproducibility_agent",
+    "AIReview",
+    "ensure_ai_reviews_table",
+    "JOB_KIND",
+    "JOB_KINDS",
+    "run_ai_review",
+    "run_ai_review_job",
+    "run_pipeline",
+    "run_review",
+    "review_version",
     "verify_findings",
 ]
