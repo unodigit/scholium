@@ -18,8 +18,11 @@ A paper's CAR carries three kinds of block:
 
 * **files** -- raw-codec blocks holding the bytes of a manuscript, figure,
   dataset, ... named by their sha2-256 file id.
-* **anything else** (log entries, ...) -- hash-checked like every block,
-  then ignored by the paper verifier.
+* **log entries** -- DAG-CBOR blocks holding one ``event_log`` row: a map
+  with at least ``seq``, ``record_cid``, ``raw``, ``prev_hash`` and
+  ``entry_hash``.  They are kept for ``scholium rebuild``, which verifies the
+  hash chain over them; ``scholium verify`` ignores them.
+* **anything else** -- hash-checked like every block, then ignored.
 
 Every block is hash-checked.  A block whose bytes do not hash to its CID is
 never used as evidence; it is recorded in :attr:`Archive.corrupt` so the
@@ -37,7 +40,7 @@ from multiformats import CID
 
 from .car import Car, block_problem
 
-__all__ = ["Archive", "load_archive"]
+__all__ = ["LOG_ENTRY_KEYS", "Archive", "load_archive"]
 
 #: Multicodec codes of the blocks the verifier reads.
 _DAG_CBOR = 0x71
@@ -45,6 +48,12 @@ _RAW = 0x55
 
 #: Base a record id is spelled in (the same as ``compute_record_id``).
 _RECORD_ID_BASE = "base32"
+
+#: The fields every event-log entry block carries (the ``event_log`` columns
+#: the chain is computed over).  Anything else the node stores
+#: (``record_type``, ``author_did``, ``body``, ``received_at``,
+#: ``origin_node``) rides along unvalidated.
+LOG_ENTRY_KEYS = ("seq", "record_cid", "raw", "prev_hash", "entry_hash")
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,8 @@ class Archive:
     block_count: int
     records: tuple[dict[str, Any], ...]
     """Envelopes of the intact record blocks, in archive order, each with ``id``."""
+    log_entries: tuple[dict[str, Any], ...] = ()
+    """Decoded event-log entry blocks, in archive order, unvalidated."""
     files: dict[bytes, bytes] = field(default_factory=dict)
     """Intact raw blocks: binary CID -> bytes."""
     corrupt: dict[bytes, str] = field(default_factory=dict)
@@ -87,9 +98,29 @@ def _decode_record(data: bytes) -> dict[str, Any] | None:
     return None
 
 
+def _decode_log_entry(data: bytes) -> dict[str, Any] | None:
+    """Decode an event-log entry block, or ``None`` for anything else.
+
+    Only the map shape is checked here (the five chain fields present, a
+    ``seq`` that is an integer); the field values are validated where they
+    are used, by :mod:`scholium_cli.rebuild`.
+    """
+    try:
+        value = dag_cbor.decode(data)
+    except (CBORDecodingError, ValueError, RecursionError):
+        return None
+    if not isinstance(value, dict) or any(key not in value for key in LOG_ENTRY_KEYS):
+        return None
+    seq = value.get("seq")
+    if isinstance(seq, bool) or not isinstance(seq, int):
+        return None
+    return value
+
+
 def load_archive(car: Car) -> Archive:
     """Sort the blocks of ``car`` and hash-check every one of them."""
     records: list[dict[str, Any]] = []
+    log_entries: list[dict[str, Any]] = []
     files: dict[bytes, bytes] = {}
     corrupt: dict[bytes, str] = {}
     cids: dict[bytes, CID] = {}
@@ -115,9 +146,14 @@ def load_archive(car: Car) -> Archive:
                 if "id" not in record:
                     record["id"] = _label(block.cid)
                 records.append(record)
+                continue
+            entry = _decode_log_entry(block.data)
+            if entry is not None:
+                log_entries.append(entry)
     return Archive(
         block_count=len(car.blocks),
         records=tuple(records),
+        log_entries=tuple(log_entries),
         files=files,
         corrupt=corrupt,
         cids=cids,

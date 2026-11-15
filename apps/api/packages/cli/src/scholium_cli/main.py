@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from scholium_cli import __version__, verify
+from scholium_cli import __version__, rebuild, verify
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +25,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify.add_arguments(verify_parser)
     verify_parser.set_defaults(handler=verify.run)
+
+    rebuild_parser = commands.add_parser(
+        "rebuild",
+        help="rebuild the paper, version and status views from an archive",
+        description="Verify the log chain and every record of a CARv1 "
+        "archive, rebuild the paper, version and status views into a fresh "
+        "SQLite database and print the paper count.  Exits 0 when rebuilt, "
+        "1 when the log chain or any record fails verification, 2 when the "
+        "command could not run.",
+    )
+    rebuild.add_arguments(rebuild_parser)
+    rebuild_parser.set_defaults(handler=rebuild.run)
     return parser
 
 

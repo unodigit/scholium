@@ -87,6 +87,67 @@ def file_block(data: bytes) -> tuple[CID, bytes]:
     return compute_file_cid(data), data
 
 
+# --- event-log entries ---------------------------------------------------
+
+
+#: ``prev_hash`` of the first entry of a log (32 zero bytes).
+GENESIS_PREV = b"\x00" * 32
+
+
+def entry_hash(prev_hash: bytes, record_cid: str, raw: bytes) -> bytes:
+    """The log chain rule: ``sha256(prev_hash || utf8(record_cid) || raw)``."""
+    return hashlib.sha256(prev_hash + record_cid.encode("utf-8") + raw).digest()
+
+
+def log_entry_blocks(records, start_seq=1, mutate=None, received="2026-11-15T09:30:12Z"):
+    """DAG-CBOR blocks for the event-log entries of ``records``, chained from ``start_seq``.
+
+    ``mutate(seq, entry)`` rewrites an entry before it is hashed and encoded,
+    which is how tests craft broken links (a rewritten ``prev_hash`` keeps its
+    own ``entry_hash`` consistent but breaks the link to its predecessor);
+    setting ``entry_hash`` by hand inside ``mutate`` breaks the entry itself.
+    """
+    prev = GENESIS_PREV
+    blocks = []
+    for seq, record in enumerate(records, start=start_seq):
+        entry = {
+            "seq": seq,
+            "record_cid": record["id"],
+            "record_type": record["type"],
+            "author_did": record["author"],
+            "body": record["body"],
+            "raw": record_bytes(record),
+            "prev_hash": prev,
+            "received_at": received,
+            "origin_node": "did:key:z6Mknode",
+        }
+        if mutate is not None:
+            mutate(seq, entry)
+        entry.setdefault(
+            "entry_hash", entry_hash(entry["prev_hash"], entry["record_cid"], entry["raw"])
+        )
+        prev = entry["entry_hash"]
+        data = dag_cbor.encode(entry)
+        blocks.append((dag_cbor_cid(data), data))
+    return blocks
+
+
+def archive_car(papers_or_records, files=()) -> bytes:
+    """A complete public archive: the log, then every record, then every file.
+
+    ``papers_or_records`` is ``Paper`` builders (their every record, in chain
+    order) or plain lists of records; the log entries follow that same order,
+    so the chain is exactly what a node that appended these records holds.
+    """
+    records = []
+    for item in papers_or_records:
+        records.extend(item.records() if isinstance(item, Paper) else item)
+    blocks = log_entry_blocks(records)
+    blocks += [full_record_block(record) for record in records]
+    blocks += [file_block(data) for data in files]
+    return write_car(blocks)
+
+
 # --- signed papers ------------------------------------------------------
 
 
