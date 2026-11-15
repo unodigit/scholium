@@ -5,7 +5,13 @@ description = "Scholium CLI"
 requires-python = ">=3.12"
 dependencies = [
   "httpx",
+  "dag-cbor",
+  "multiformats",
+  "scholium-record-core",
 ]
+
+[tool.uv.sources]
+scholium-record-core = { workspace = true }
 
 [project.scripts]
 scholium = "scholium_cli.main:main"

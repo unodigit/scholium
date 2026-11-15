@@ -822,11 +822,19 @@ name = "scholium-cli"
 version = "0.1.0"
 source = { editable = "packages/cli" }
 dependencies = [
+    { name = "dag-cbor" },
     { name = "httpx" },
+    { name = "multiformats" },
+    { name = "scholium-record-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "httpx" }]
+requires-dist = [
+    { name = "dag-cbor" },
+    { name = "httpx" },
+    { name = "multiformats" },
+    { name = "scholium-record-core", editable = "packages/record-core" },
+]
 
 [[package]]
 name = "scholium-record-core"
