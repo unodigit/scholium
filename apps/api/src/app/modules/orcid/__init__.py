@@ -16,6 +16,10 @@ Feature 33: linking stores the nullifier ``H(issuer || orcid || domain)`` in the
 the same iD is ``409`` problem details (:class:`OrcidAlreadyLinked`).  See
 :mod:`app.modules.orcid.nullifier`.
 
+Feature 34: once a credential is linked and the owner's email is verified,
+linking saves tier 1 (Member) to the ``accounts`` row of an account that is
+still at tier 0.  See :mod:`app.modules.orcid.promotion`.
+
 The module loader discovers packages under ``app.modules`` by scan and mounts
 the ``router`` exported here under ``/v1``; nothing else needs wiring.
 """
@@ -45,6 +49,13 @@ from .router import (
     router,
 )
 from .service import exchange_code, issue_orcid_credential
+from .promotion import (
+    MEMBER_TIER,
+    READER_TIER,
+    has_orcid_credential,
+    promote_if_eligible,
+    promotion_eligible,
+)
 from .present import (
     CREDENTIAL_PRESENTATION_INVALID,
     CREDENTIAL_SIGNATURE_INVALID,
@@ -77,6 +88,7 @@ __all__ = [
     "InvalidCredentialSignature",
     "InvalidCredentialStatus",
     "InvalidState",
+    "MEMBER_TIER",
     "NULLIFIER_DOMAIN",
     "Nullifier",
     "ORCID_ALREADY_LINKED",
@@ -85,6 +97,7 @@ __all__ = [
     "OrcidStartResponse",
     "PRESENT_PATH",
     "PresentationVerified",
+    "READER_TIER",
     "STATE_ALGORITHM",
     "STATE_PURPOSE",
     "STATE_TTL",
@@ -96,9 +109,12 @@ __all__ = [
     "credential_nullifier",
     "ensure_credential_tables",
     "exchange_code",
+    "has_orcid_credential",
     "issue_orcid_credential",
     "normalise_orcid",
     "orcid_base_url",
+    "promote_if_eligible",
+    "promotion_eligible",
     "router",
     "sign_state",
     "verify_presentation",

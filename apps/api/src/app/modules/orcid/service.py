@@ -11,11 +11,18 @@ Issuing also claims the iD's uniqueness nullifier (feature 33,
 row, so one ORCID iD maps to one active DID: linking an iD that is already
 linked raises :class:`~app.modules.orcid.nullifier.OrcidAlreadyLinked` (``409``
 problem details) and writes nothing.
+
+Once the credential is committed, linking is the last onboarding step a Reader
+needs for tier 1: :func:`~app.modules.orcid.promotion.promote_if_eligible`
+saves a Member tier to the account when the owner's email has also been
+verified (feature 34).  That check is best-effort -- the credential stays
+linked even if it fails.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,6 +34,7 @@ from app.settings import settings
 
 from .models import Credential, ensure_tables
 from .nullifier import OrcidAlreadyLinked, claim_nullifier, compute_nullifier
+from .promotion import promote_if_eligible
 from .state import InvalidState, verify_state
 
 # re-export for router convenience
@@ -40,6 +48,8 @@ __all__ = [
 
 from app.modules.ledger.origin import node_signing_key, did_key_from_public_key
 from scholium_record_core import encode_signature
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -146,5 +156,13 @@ def issue_orcid_credential(did: str, orcid_id: str) -> dict:
             )
         )
         session.commit()
+
+    # Both tier-1 conditions now hold only if the email was already verified;
+    # the link itself is a success either way, so a failed check is logged, not
+    # raised (feature 34).
+    try:
+        promote_if_eligible(did)
+    except Exception:
+        logger.exception("could not promote %s to tier 1 after linking an ORCID iD", did)
 
     return credential
