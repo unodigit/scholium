@@ -1,7 +1,7 @@
 """HTTP routes for the appeals plugin.
 
-The module loader mounts this router under ``/v1``, so the route below serves
-``POST /v1/appeals``.
+The module loader mounts this router under ``/v1``, so the routes below serve
+``POST /v1/appeals`` and ``POST /v1/appeals/{cid}/votes``.
 """
 
 from __future__ import annotations
@@ -14,11 +14,12 @@ from pydantic import BaseModel
 from app.errors import ProblemException
 from app.modules import submissions
 from app.modules.ingest import ingest
-from app.security import require_tier
+from app.security import Principal, Tier, require_tier
 
 from .service import APPEAL_TYPE, apply_appeal, resolve_decision
+from .votes import cast_vote, vote_fields
 
-__all__ = ["AppealAccepted", "router"]
+__all__ = ["AppealAccepted", "VoteAccepted", "router"]
 
 router = APIRouter(prefix="/appeals", tags=["appeals"])
 
@@ -96,4 +97,63 @@ def post_appeal(
         target=str(appeal.decision_cid),
         status=str(appeal.status),
         anchor=result.anchor,
+    )
+
+
+class VoteAccepted(BaseModel):
+    """The ``200 OK`` body of ``POST /v1/appeals/{cid}/votes``."""
+
+    #: cid of the appeal that was voted on.
+    appeal: str
+    #: The outcome the caller backed.
+    vote: str
+    #: Always ``True``: the vote was accepted and recorded.
+    counted: bool = True
+    #: How many of the panel's three seats now carry a vote.
+    votes: int
+    #: cid of the ``appeal.decision`` once two seats agree, else ``None``.
+    decision: Optional[str] = None
+    #: The outcome the panel agreed on, when the appeal has been decided.
+    outcome: Optional[str] = None
+
+
+@router.post(
+    "/{cid}/votes",
+    status_code=200,
+    response_model=VoteAccepted,
+    summary="Cast a panel member's vote on an appeal",
+)
+def post_vote(
+    cid: str,
+    body: dict[str, Any] = Body(..., description="The vote: {'vote'|'outcome', 'reasons'}."),
+    principal: Principal = Depends(require_tier(int(Tier.READER))),
+) -> VoteAccepted:
+    """Record the caller's vote on appeal ``cid``; decide it when two seats agree.
+
+    The caller must be one of the three members seated on this appeal's panel;
+    anyone else is a ``403``.  The vote is saved to ``appeal_panels.vote`` and
+    the reasons beside it.  When two members of the three back the same
+    outcome, the node signs and appends an ``appeal.decision`` (``outcome`` and
+    ``reasons``, targeting the appeal) to the public log, retrievable from
+    ``GET /v1/records/{cid}``.
+
+    The outcome may be sent as ``outcome`` or ``vote`` and the reasons as
+    ``reasons`` or ``reason``; a member's latest vote replaces their earlier
+    one, and a vote cast after the decision reports that same decision without
+    producing a second one.
+
+    Failures are RFC 9457 problem details: ``401`` for a missing or invalid
+    token, ``403`` when the caller holds no seat on the panel, ``404`` for an
+    unknown appeal, ``409`` when no panel is seated yet, ``422`` for an unknown
+    outcome, and ``503`` when a majority agreed but the node has no signing key.
+    """
+    outcome, reasons = vote_fields(body)
+    result = cast_vote(cid, principal.did, outcome, reasons)
+    return VoteAccepted(
+        appeal=result.appeal_cid,
+        vote=result.outcome,
+        counted=True,
+        votes=result.votes_cast,
+        decision=result.decision_cid,
+        outcome=result.decided_outcome,
     )

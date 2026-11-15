@@ -1,0 +1,412 @@
+"""Panel votes on an appeal (plugin: appeals, feature 76).
+
+The three members seated for an appeal (feature 75) decide it by voting::
+
+    POST /v1/appeals/{appeal cid}/votes
+    Authorization: Bearer <the panel member's access token>
+
+    {"vote": "overturned",          # or "outcome"; upheld | overturned | ...
+     "reasons": "The paper is in scope of MOD-01."}
+
+The voter is the access token's DID, never anything the body says, and only a
+member with a seat on *this* appeal's panel may vote -- anyone else is refused
+with ``403``.  A member's vote is saved to ``appeal_panels.vote`` (one ``vote``
+per seat), the reasons they give alongside it to ``appeal_vote_reasons``, and
+the vote is counted with the panel's other votes.
+
+When two of the three seats carry the same outcome the panel has decided, and
+the node appends a **node-signed** ``appeal.decision`` record to the public log
+(``GET /v1/records/{cid}``; found by replaying ``GET /v1/sync/range``).  The
+record's ``author`` -- and therefore its signer -- is the node's own ``did:key``,
+and its body carries the appeal it decides (``target``), the agreed ``outcome``
+and the agreeing members' ``reasons``, plus the votes themselves for
+provenance::
+
+    {"target": "<appeal cid>", "appeal": "<appeal cid>",
+     "outcome": "overturned", "reasons": ["...", "..."],
+     "votes": [{"did": "...", "outcome": "overturned", "reasons": "..."}, ...]}
+
+The record is signed with the key at ``NODE_KEY_PATH``
+(:func:`app.modules.ledger.origin.node_signing_key`).  A node without a usable
+key cannot make the decision and answers ``503``; the votes already cast are
+kept, so the decision is made once a key is provisioned and a vote is cast
+again.
+
+Voting twice is harmless: a member's latest vote replaces their earlier one,
+and a vote cast after the decision is recorded without producing a second
+decision.  The whole cast is serialised within the process, so two votes that
+race cannot both see one vote each (and miss the majority) or both append a
+decision.
+"""
+
+from __future__ import annotations
+
+import threading
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from sqlalchemy import select
+
+from scholium_record_core import did_key_from_signing_key, sign_record, validate_body
+
+from app import db
+from app.modules import ledger
+from app.modules.ingest import InvalidRecord
+from app.modules.ledger.models import EventLog
+
+from .errors import AppealNotFound, PanelNotDrawn, VoteNodeKeyUnavailable, VoteNotAuthorized
+from .models import Appeal, AppealPanelMember, AppealVoteReasons, ensure_tables
+from .panel import get_panel
+from .service import get_appeal
+
+__all__ = [
+    "DECIDING_VOTES",
+    "DECISION_TYPE",
+    "VOTE_OUTCOMES",
+    "VoteCast",
+    "cast_vote",
+    "decision_for_appeal",
+    "vote_fields",
+]
+
+#: The record type the panel's decision has.
+DECISION_TYPE = "appeal.decision"
+
+#: Votes of the three that decide an appeal.  Kept in step with
+#: :data:`app.modules.appeals.panel.PANEL_SIZE` in spirit: two of three.
+DECIDING_VOTES = 2
+
+#: Outcomes a member may back.  Every one is an ``appeal.decision`` outcome
+#: (``schemas/appeal.decision.json``), so the vote vocabulary cannot drift from
+#: the record the panel's decision becomes.
+VOTE_OUTCOMES = (
+    "upheld",
+    "overturned",
+    "modified",
+    "remanded",
+    "granted",
+    "grant",
+    "denied",
+    "deny",
+    "allowed",
+    "dismissed",
+)
+
+#: Serialises casting within this process.  The panel read, the vote write and
+#: the majority check are one step, so two concurrent votes cannot both miss a
+#: majority (or append two decisions).
+_vote_lock = threading.Lock()
+
+
+# --------------------------------------------------------------------------- #
+# The request
+# --------------------------------------------------------------------------- #
+
+
+def _invalid(loc: list[Any], message: str, error_type: str, value: Any = None) -> InvalidRecord:
+    """A ``422`` for one bad part of a vote request, located at ``loc``."""
+    shown = value if isinstance(value, (str, int, float, bool, type(None))) else None
+    if isinstance(shown, str) and len(shown) > 64:
+        shown = shown[:61] + "..."
+    full = f"The vote is invalid: {message}."
+    return InvalidRecord(
+        [{"loc": loc, "msg": full, "type": error_type, "input": shown}],
+        detail=full,
+    )
+
+
+def _first(body: Mapping[str, Any], *names: str) -> Any:
+    """The first of ``names`` the body carries with a non-null value."""
+    for name in names:
+        if name in body and body[name] is not None:
+            return body[name]
+    return None
+
+
+def vote_fields(body: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Read an outcome and reasons out of a vote body.
+
+    The body may spell the outcome ``outcome`` (the ``appeal.decision`` field)
+    or ``vote`` (the ``appeal_panels`` column), and the reasons ``reasons`` or
+    ``reason``.  Reasons may be one string or a list of strings.
+
+    Raises:
+        InvalidRecord: ``422`` when the outcome is missing or not one of
+            :data:`VOTE_OUTCOMES`, or the reasons are not text.
+    """
+    if not isinstance(body, Mapping):
+        raise _invalid(["body"], "the request body must be a JSON object", "invalid_body")
+
+    outcome = _first(body, "outcome", "vote")
+    if not isinstance(outcome, str) or not outcome.strip():
+        raise _invalid(
+            ["body", "outcome"],
+            "needs the outcome being backed in 'outcome' (or 'vote')",
+            "missing_outcome",
+            outcome,
+        )
+    outcome = outcome.strip()
+    if outcome not in VOTE_OUTCOMES:
+        raise _invalid(
+            ["body", "outcome"],
+            f"'outcome' must be one of {', '.join(VOTE_OUTCOMES)}",
+            "invalid_outcome",
+            outcome,
+        )
+
+    raw_reasons = _first(body, "reasons", "reason")
+    if raw_reasons is None:
+        return outcome, ()
+    if isinstance(raw_reasons, str):
+        text = raw_reasons.strip()
+        return outcome, (text,) if text else ()
+    if isinstance(raw_reasons, (list, tuple)) and all(isinstance(item, str) for item in raw_reasons):
+        return outcome, tuple(item.strip() for item in raw_reasons if item.strip())
+    raise _invalid(
+        ["body", "reasons"],
+        "'reasons' (or 'reason') must be a string or a list of strings",
+        "invalid_reasons",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Reading votes and decisions
+# --------------------------------------------------------------------------- #
+
+
+def _reasons(appeal_cid: str) -> dict[str, tuple[str, ...]]:
+    """The reasons each seated member gave with their vote, by DID."""
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(AppealVoteReasons)
+            .filter(AppealVoteReasons.appeal_cid == appeal_cid)
+            .all()
+        )
+        return {
+            str(row.member_did): tuple(item for item in (row.reasons or ()) if isinstance(item, str))
+            for row in rows
+        }
+
+
+def _majority(votes: list[AppealPanelMember]) -> Optional[str]:
+    """The outcome backed by at least :data:`DECIDING_VOTES` seats, if any."""
+    counts: dict[str, int] = {}
+    for row in votes:
+        outcome = row.vote
+        if isinstance(outcome, str) and outcome:
+            counts[outcome] = counts.get(outcome, 0) + 1
+            if counts[outcome] >= DECIDING_VOTES:
+                return outcome
+    return None
+
+
+def decision_for_appeal(appeal_cid: object) -> Optional[EventLog]:
+    """The ``appeal.decision`` appended for ``appeal_cid``, or ``None``.
+
+    A panel decides an appeal once: the first decision that targets it is its
+    decision, and every later vote reports that same record.
+    """
+    if not isinstance(appeal_cid, str) or not appeal_cid:
+        return None
+    ledger.ensure_table()
+    statement = select(EventLog).where(EventLog.record_type == DECISION_TYPE).order_by(EventLog.seq)
+    with db.SessionLocal() as session:
+        session.expire_on_commit = False
+        for entry in session.execute(statement).scalars():
+            body = entry.body
+            if isinstance(body, Mapping) and body.get("target") == appeal_cid:
+                session.expunge(entry)
+                return entry
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Casting a vote
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class VoteCast:
+    """What one accepted vote did."""
+
+    appeal_cid: str
+    member_did: str
+    #: The outcome the member backed.
+    outcome: str
+    #: How many of the panel's seats now carry a vote.
+    votes_cast: int
+    #: The decision's cid when the panel has decided the appeal, else ``None``.
+    decision_cid: Optional[str]
+    #: The outcome the panel agreed on, when a decision was made (now or before).
+    decided_outcome: Optional[str]
+
+
+def _timestamp() -> str:
+    """Now as the ``created`` field of a record envelope."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _store_vote(appeal_cid: str, member_did: str, outcome: str, reasons: tuple[str, ...]) -> None:
+    """Save (or replace) ``member_did``'s vote and reasons on ``appeal_cid``."""
+    with db.SessionLocal() as session:
+        row = session.get(AppealPanelMember, (appeal_cid, member_did))
+        if row is None:
+            raise VoteNotAuthorized(member_did, appeal_cid)
+        row.vote = outcome
+        detail = session.get(AppealVoteReasons, (appeal_cid, member_did))
+        if reasons:
+            if detail is None:
+                session.add(
+                    AppealVoteReasons(
+                        appeal_cid=appeal_cid,
+                        member_did=member_did,
+                        reasons=list(reasons),
+                    )
+                )
+            else:
+                detail.reasons = list(reasons)
+        elif detail is not None:
+            session.delete(detail)
+        session.commit()
+
+
+def _build_decision_body(
+    appeal_cid: str,
+    outcome: str,
+    votes: list[AppealPanelMember],
+    reasons: dict[str, tuple[str, ...]],
+) -> dict[str, Any]:
+    """The ``appeal.decision`` body for an agreed outcome, with its reasons."""
+    agreed = [row for row in votes if row.vote == outcome]
+    agreed_reasons = [reason for row in agreed for reason in reasons.get(str(row.member_did), ())]
+    return {
+        "target": appeal_cid,
+        "appeal": appeal_cid,
+        "outcome": outcome,
+        "reasons": agreed_reasons or [f"A majority of the panel agreed to {outcome} the appeal."],
+        "votes": [
+            {
+                "did": str(row.member_did),
+                "outcome": str(row.vote),
+                "reasons": list(reasons.get(str(row.member_did), ())),
+            }
+            for row in votes
+            if isinstance(row.vote, str) and row.vote
+        ],
+    }
+
+
+def _save_decision(
+    appeal_cid: str,
+    outcome: str,
+    votes: list[AppealPanelMember],
+    reasons: dict[str, tuple[str, ...]],
+) -> str:
+    """Sign and append the panel's ``appeal.decision``; return its cid."""
+    key = ledger.node_signing_key()
+    if key is None:
+        raise VoteNodeKeyUnavailable(appeal_cid)
+
+    body = _build_decision_body(appeal_cid, outcome, votes, reasons)
+    errors = validate_body(DECISION_TYPE, body)
+    if errors:  # pragma: no cover - the body is built from the record's own schema
+        raise _invalid(["body"], errors[0], "invalid_appeal_decision")
+
+    record = sign_record(
+        {
+            "v": 1,
+            "type": DECISION_TYPE,
+            "author": did_key_from_signing_key(key),
+            "created": _timestamp(),
+            "prev": None,
+            "body": body,
+            "proofs": [],
+        },
+        key,
+    )
+    ledger.append(record)
+
+    _mark_decided(appeal_cid, outcome)
+    return str(record["id"])
+
+
+def _mark_decided(appeal_cid: str, outcome: str) -> None:
+    """Record the panel's outcome on the appeal's ``status``; never raises.
+
+    The decision is already in the log -- the source of truth -- so a status
+    update that fails must not turn a made decision into a failed vote.
+    """
+    try:
+        with db.SessionLocal() as session:
+            row = session.get(Appeal, appeal_cid)
+            if row is not None:
+                row.status = outcome
+                session.commit()
+    except Exception:  # pragma: no cover - a projection, not the decision
+        pass
+
+
+def cast_vote(
+    appeal_cid: str,
+    member_did: str,
+    outcome: str,
+    reasons: tuple[str, ...] = (),
+) -> VoteCast:
+    """Record ``member_did``'s vote on ``appeal_cid`` and decide if two seats agree.
+
+    ``member_did`` is the access token's DID.  The caller must hold a seat on
+    this appeal's panel; the vote replaces any earlier vote by the same member.
+
+    When :data:`DECIDING_VOTES` seats carry the same outcome, and the appeal has
+    no decision yet, a node-signed ``appeal.decision`` is appended to the log.
+
+    Raises:
+        AppealNotFound: ``404`` -- no such appeal is filed here.
+        PanelNotDrawn: ``409`` -- the appeal has no panel seated.
+        VoteNotAuthorized: ``403`` -- ``member_did`` holds no seat on it.
+        VoteNodeKeyUnavailable: ``503`` -- a majority agreed but the node has no
+            signing key.
+    """
+    ensure_tables()
+    with _vote_lock:
+        if get_appeal(appeal_cid) is None:
+            raise AppealNotFound(appeal_cid)
+
+        votes = get_panel(appeal_cid)
+        if not votes:
+            raise PanelNotDrawn(appeal_cid)
+        if member_did not in {str(row.member_did) for row in votes}:
+            raise VoteNotAuthorized(member_did, appeal_cid)
+
+        _store_vote(appeal_cid, member_did, outcome, reasons)
+        votes = get_panel(appeal_cid)
+        reasons_by_member = _reasons(appeal_cid)
+
+        existing = decision_for_appeal(appeal_cid)
+        if existing is not None:
+            existing_body = existing.body if isinstance(existing.body, Mapping) else {}
+            decided = existing_body.get("outcome")
+            return VoteCast(
+                appeal_cid=appeal_cid,
+                member_did=member_did,
+                outcome=outcome,
+                votes_cast=sum(1 for row in votes if row.vote),
+                decision_cid=str(existing.record_cid),
+                decided_outcome=decided if isinstance(decided, str) else None,
+            )
+
+        agreed = _majority(votes)
+        decision_cid: Optional[str] = None
+        if agreed is not None:
+            decision_cid = _save_decision(appeal_cid, agreed, votes, reasons_by_member)
+
+        return VoteCast(
+            appeal_cid=appeal_cid,
+            member_did=member_did,
+            outcome=outcome,
+            votes_cast=sum(1 for row in votes if row.vote),
+            decision_cid=decision_cid,
+            decided_outcome=agreed,
+        )

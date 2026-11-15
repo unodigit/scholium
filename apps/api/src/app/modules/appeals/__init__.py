@@ -11,6 +11,11 @@ deciding moderator or an author of the paper, drawn deterministically from the
 appeal cid and saved to ``appeal_panels`` (feature 75; see
 :mod:`app.modules.appeals.panel`).
 
+The seated panel decides the appeal by voting: ``POST
+/v1/appeals/{cid}/votes`` records each member's vote, and once two of the three
+agree the node signs and appends an ``appeal.decision`` carrying the outcome
+and reasons (feature 76; see :mod:`app.modules.appeals.votes`).
+
 Importing this package registers the ``appeal`` record type with the ingest
 pipeline and subscribes to the ledger, so an appeal is saved whether it arrives
 here or through ``POST /v1/records``.  See :mod:`app.modules.appeals.service`.
@@ -19,14 +24,22 @@ here or through ``POST /v1/records``.  See :mod:`app.modules.appeals.service`.
 from .errors import (
     APPEAL_ALREADY_FILED,
     APPEAL_NOT_AUTHORIZED,
+    APPEAL_NOT_FOUND,
+    PANEL_NOT_DRAWN,
     PANEL_UNAVAILABLE,
     UNKNOWN_APPEAL_TARGET,
+    VOTE_NODE_KEY_UNAVAILABLE,
+    VOTE_NOT_AUTHORIZED,
     AppealAlreadyFiled,
     AppealNotAuthorized,
+    AppealNotFound,
+    PanelNotDrawn,
     PanelUnavailable,
     UnknownAppealTarget,
+    VoteNodeKeyUnavailable,
+    VoteNotAuthorized,
 )
-from .models import Appeal, AppealPanelMember, ensure_table, ensure_tables
+from .models import Appeal, AppealPanelMember, AppealVoteReasons, ensure_table, ensure_tables
 from .panel import (
     PANEL_SIZE,
     PANEL_TIERS,
@@ -53,27 +66,51 @@ from .service import (
     resolve_decision,
     seat_panel,
 )
+from .votes import (
+    DECIDING_VOTES,
+    DECISION_TYPE,
+    VOTE_OUTCOMES,
+    VoteCast,
+    cast_vote,
+    decision_for_appeal,
+    vote_fields,
+)
 
 __all__ = [
     "APPEAL_ALREADY_FILED",
     "APPEAL_MIN_TIER",
     "APPEAL_NOT_AUTHORIZED",
+    "APPEAL_NOT_FOUND",
     "APPEAL_TYPE",
     "Appeal",
     "AppealAlreadyFiled",
     "AppealFields",
     "AppealNotAuthorized",
+    "AppealNotFound",
     "AppealPanelMember",
+    "AppealVoteReasons",
     "AppealedDecision",
+    "DECIDING_VOTES",
+    "DECISION_TYPE",
+    "PANEL_NOT_DRAWN",
     "PANEL_SIZE",
     "PANEL_TIERS",
     "PANEL_UNAVAILABLE",
     "PENDING",
+    "PanelNotDrawn",
     "PanelUnavailable",
     "UNKNOWN_APPEAL_TARGET",
     "UnknownAppealTarget",
+    "VOTE_NODE_KEY_UNAVAILABLE",
+    "VOTE_NOT_AUTHORIZED",
+    "VOTE_OUTCOMES",
+    "VoteCast",
+    "VoteNodeKeyUnavailable",
+    "VoteNotAuthorized",
     "appeal_fields",
     "apply_appeal",
+    "cast_vote",
+    "decision_for_appeal",
     "draw_panel",
     "eligible_members",
     "ensure_table",
@@ -89,6 +126,7 @@ __all__ = [
     "router",
     "seat_panel",
     "select_panel",
+    "vote_fields",
 ]
 
 

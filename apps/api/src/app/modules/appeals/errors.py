@@ -15,18 +15,30 @@ from app.errors import ProblemException
 __all__ = [
     "APPEAL_ALREADY_FILED",
     "APPEAL_NOT_AUTHORIZED",
+    "APPEAL_NOT_FOUND",
+    "PANEL_NOT_DRAWN",
     "PANEL_UNAVAILABLE",
     "UNKNOWN_APPEAL_TARGET",
+    "VOTE_NODE_KEY_UNAVAILABLE",
+    "VOTE_NOT_AUTHORIZED",
     "AppealAlreadyFiled",
     "AppealNotAuthorized",
+    "AppealNotFound",
+    "PanelNotDrawn",
     "PanelUnavailable",
     "UnknownAppealTarget",
+    "VoteNodeKeyUnavailable",
+    "VoteNotAuthorized",
 ]
 
 UNKNOWN_APPEAL_TARGET = "urn:scholium:problem:unknown-appeal-target"
 APPEAL_NOT_AUTHORIZED = "urn:scholium:problem:appeal-not-authorized"
 APPEAL_ALREADY_FILED = "urn:scholium:problem:appeal-already-filed"
 PANEL_UNAVAILABLE = "urn:scholium:problem:appeal-panel-unavailable"
+APPEAL_NOT_FOUND = "urn:scholium:problem:appeal-not-found"
+PANEL_NOT_DRAWN = "urn:scholium:problem:appeal-panel-not-drawn"
+VOTE_NOT_AUTHORIZED = "urn:scholium:problem:vote-not-authorized"
+VOTE_NODE_KEY_UNAVAILABLE = "urn:scholium:problem:node-key-unavailable"
 
 _MAX_ECHO = 64
 
@@ -139,4 +151,96 @@ class PanelUnavailable(ProblemException, LookupError):
             appeal=appeal_cid,
             eligible=eligible,
             needed=needed,
+        )
+
+
+class AppealNotFound(ProblemException, LookupError):
+    """No appeal this node holds has that cid: ``404``.
+
+    A vote is cast *on* a filed appeal; the panel, and therefore the voters, are
+    named by the appeal's row, so an unknown cid cannot be voted on.
+    """
+
+    def __init__(self, appeal_cid: object) -> None:
+        self.appeal_cid = appeal_cid
+        shown = _clip(appeal_cid if isinstance(appeal_cid, str) else repr(appeal_cid))
+        message = f"No appeal with id {shown!r} is filed on this node."
+        super().__init__(
+            404,
+            message,
+            type=APPEAL_NOT_FOUND,
+            appeal=appeal_cid,
+        )
+
+
+class PanelNotDrawn(ProblemException, LookupError):
+    """The appeal has no panel seated yet: ``409``.
+
+    An appeal filed while the node had too few eligible members has no
+    ``appeal_panels`` rows, so nobody holds a seat to vote from.  The panel is
+    drawn once enough tier-3 or tier-4 members exist (see
+    :func:`~.service.seat_panel`).
+    """
+
+    def __init__(self, appeal_cid: object) -> None:
+        self.appeal_cid = appeal_cid
+        shown = _clip(appeal_cid if isinstance(appeal_cid, str) else repr(appeal_cid))
+        message = (
+            f"Appeal {shown!r} has no panel seated yet, so there are no members "
+            "who may vote on it."
+        )
+        super().__init__(
+            409,
+            message,
+            type=PANEL_NOT_DRAWN,
+            appeal=appeal_cid,
+        )
+
+
+class VoteNotAuthorized(ProblemException, PermissionError):
+    """The caller holds no seat on this appeal's panel: ``403``.
+
+    Only the three members seated for the appeal may vote; being a moderator,
+    the appellant or an eligible member who was not drawn is not enough.  The
+    voter is the access token's DID, so a request cannot name somebody else.
+    """
+
+    def __init__(self, voter: object, appeal_cid: object) -> None:
+        self.voter = voter
+        self.appeal_cid = appeal_cid
+        shown = _clip(voter if isinstance(voter, str) else repr(voter))
+        message = (
+            f"{shown} holds no seat on the panel for appeal "
+            f"{_clip(appeal_cid if isinstance(appeal_cid, str) else repr(appeal_cid))!r}, "
+            "so may not vote on it."
+        )
+        super().__init__(
+            403,
+            message,
+            type=VOTE_NOT_AUTHORIZED,
+            appeal=appeal_cid,
+            voter=voter,
+        )
+
+
+class VoteNodeKeyUnavailable(ProblemException):
+    """The node cannot sign the panel's decision: ``503``.
+
+    A majority of the panel has agreed, but an ``appeal.decision`` must be
+    node-signed, so without a usable Ed25519 key at ``NODE_KEY_PATH`` the
+    decision cannot be made yet.  The votes are still recorded; the decision is
+    made on the next successful vote once the key is available.
+    """
+
+    def __init__(self, appeal_cid: object) -> None:
+        self.appeal_cid = appeal_cid
+        message = (
+            "This node has no usable Ed25519 signing key (NODE_KEY_PATH), so it "
+            "cannot sign the panel's appeal.decision."
+        )
+        super().__init__(
+            503,
+            message,
+            type=VOTE_NODE_KEY_UNAVAILABLE,
+            appeal=appeal_cid,
         )
