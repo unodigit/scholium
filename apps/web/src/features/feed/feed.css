@@ -1,0 +1,352 @@
+/*
+ * `/` — the home feed (docs/design.md §5.1).
+ *
+ * Prefix `fd-` (feed) so nothing leaks into other features. Every colour,
+ * space and type value is a token from `src/styles/tokens.css`, so light, dark
+ * and a forced `data-theme` all re-theme the page; no hex lives here. The
+ * route group owns the outer width (`.fd-shell`); these rules style content.
+ *
+ * Rules from the design system this file keeps:
+ * - the title is serif (Source Serif 4, 600), authors and meta are Inter 13/18;
+ * - the abstract is clamped to two lines;
+ * - no shadows, a 1px `--rule` between rows, 6px radius on controls;
+ * - status is the shared StatusChip (icon + word), never colour alone;
+ * - `--ai` is never used: AI output must not look like human review status;
+ * - targets are at least 44px tall on touch (design.md §9).
+ */
+
+.fd-page {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+}
+
+/* The mock has no visible heading; the page still needs an <h1> to be read. */
+.fd-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Tabs and selectors -------------------------------------------------- */
+
+.fd-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.fd-tabs {
+  display: flex;
+  gap: calc(var(--space-unit) * 1);
+}
+
+.fd-tab {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding-inline: calc(var(--space-unit) * 3);
+  /* The underline sits on the controls' rule, so the active tab joins it. */
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    color var(--duration-fast) var(--ease-decel),
+    border-color var(--duration-fast) var(--ease-decel);
+}
+
+.fd-tab:hover {
+  color: var(--ink);
+}
+
+/* The current tab is told by its underline *and* its darker word, never colour alone. */
+.fd-tab--active,
+.fd-tab[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.fd-selectors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+  padding-bottom: calc(var(--space-unit) * 2);
+}
+
+.fd-select {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.fd-select select,
+.fd-apply {
+  box-sizing: border-box;
+  min-height: 44px;
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  padding-inline: calc(var(--space-unit) * 3);
+}
+
+.fd-select select {
+  max-width: 100%;
+  cursor: pointer;
+}
+
+.fd-select select:hover,
+.fd-apply:hover {
+  border-color: var(--accent);
+}
+
+.fd-apply {
+  cursor: pointer;
+}
+
+/* ---- Rows ---------------------------------------------------------------- */
+
+.fd-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-row {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  padding-block: calc(var(--space-unit) * 5);
+  border-bottom: 1px solid var(--rule);
+}
+
+.fd-row:last-child {
+  border-bottom: 0;
+}
+
+.fd-row-title {
+  margin: 0;
+  max-width: var(--measure-reading);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: calc(var(--space-unit) * 7);
+  font-weight: var(--weight-title);
+  letter-spacing: var(--tracking-title);
+}
+
+/* A title is the row's link, not prose: ink until pointed at. */
+.fd-row-title a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.fd-row-title a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.fd-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.fd-row-authors {
+  color: var(--ink);
+}
+
+/* "·" between the parts of the meta line. It trails the part before it rather
+   than leading the part after it, so when the line wraps the dot stays at the
+   end of the line it separates instead of starting the next one. The alt text
+   after the slash keeps assistive tech from reading the dot aloud; the first
+   declaration is the fallback for browsers without alt-text support. */
+.fd-row-meta {
+  column-gap: calc(var(--space-unit) * 2);
+}
+
+.fd-row-meta > :not(:last-child)::after {
+  content: "·";
+  content: "·" / "";
+  margin-inline-start: calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.fd-row-meta a {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.fd-row-meta a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.fd-row-version,
+.fd-row-age {
+  white-space: nowrap;
+}
+
+.fd-row-age {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two lines, then an ellipsis. The abstract is the paper's own text, so it is
+   set in the reading face at UI size. */
+.fd-row-abstract {
+  margin: 0;
+  max-width: var(--measure-reading);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.fd-row-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- States -------------------------------------------------------------- */
+
+.fd-loading,
+.fd-more-error {
+  margin: 0;
+  padding-block: calc(var(--space-unit) * 6);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.fd-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--critical);
+  border-radius: var(--corner-card);
+  background: var(--critical-soft);
+  color: var(--ink);
+}
+
+.fd-error-message {
+  margin: 0;
+}
+
+.fd-more-error {
+  color: var(--ink);
+  padding-block: calc(var(--space-unit) * 3);
+}
+
+.fd-more {
+  display: flex;
+  justify-content: center;
+  padding-block: calc(var(--space-unit) * 4);
+}
+
+.fd-button {
+  box-sizing: border-box;
+  min-height: 44px;
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-control);
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  padding-inline: calc(var(--space-unit) * 4);
+  transition:
+    background-color var(--duration-fast) var(--ease-decel),
+    border-color var(--duration-fast) var(--ease-decel);
+}
+
+.fd-button:hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--ink));
+  border-color: color-mix(in srgb, var(--accent) 88%, var(--ink));
+}
+
+.fd-button--quiet {
+  border-color: var(--rule);
+  background: transparent;
+  color: var(--accent);
+}
+
+.fd-button--quiet:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.fd-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.fd-empty {
+  margin-block: calc(var(--space-unit) * 8);
+}
+
+/* Narrow screens: the selectors take their own full-width line. */
+@media (max-width: 639px) {
+  .fd-selectors {
+    width: 100%;
+  }
+
+  .fd-select {
+    flex: 1 1 10rem;
+  }
+
+  .fd-select select {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+/* Forced colours: the active tab's underline is a border, so it survives, and
+   its word is still there. */
+@media (forced-colors: active) {
+  .fd-tab--active,
+  .fd-tab[aria-current="page"] {
+    border-bottom-color: Highlight;
+  }
+}

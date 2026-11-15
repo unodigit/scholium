@@ -1,0 +1,18 @@
+/*
+ * The `/` route-group shell. The layout owns the outer width and padding;
+ * `features/feed/feed.css` styles the page itself.
+ */
+
+.fd-shell {
+  width: 100%;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: calc(var(--space-unit) * 4) calc(var(--space-unit) * 4)
+    calc(var(--space-unit) * 16);
+}
+
+@media (min-width: 640px) {
+  .fd-shell {
+    padding-inline: calc(var(--space-unit) * 8);
+  }
+}
