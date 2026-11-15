@@ -350,6 +350,18 @@ describe("/p/{id}: the margin panel", () => {
     expect(margin.contains(screen.getByRole("heading", { level: 1 }))).toBe(false);
   });
 
+  it("leaves the panel in the flow in the first HTML: nothing collapses before the page runs", async () => {
+    stubApi();
+    mount(await page(BARE_ID));
+
+    const margin = screen.getByRole("complementary", { name: "Margin of the paper" });
+    // The drawer and the bottom sheet (docs/design.md §10) need JavaScript: no
+    // toggle is sent, and the styles that put the panel away are not switched on.
+    expect(within(margin).queryByRole("button", { name: "Margin" })).toBeNull();
+    expect(margin.hasAttribute("data-enhanced")).toBe(false);
+    expect(within(margin).getAllByRole("tab")).toHaveLength(6);
+  });
+
   it("never claims a verdict before the browser has checked", async () => {
     stubApi();
     mount(await page(BARE_ID));

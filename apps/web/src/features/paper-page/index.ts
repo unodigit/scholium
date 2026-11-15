@@ -46,6 +46,12 @@ export {
 } from "./paper-page-view";
 
 export { MarginPanel, type MarginPanelProps } from "./margin-panel";
+export {
+  MARGIN_BODY_ID,
+  MARGIN_TOGGLE_LABEL,
+  MarginDrawer,
+  type MarginDrawerProps,
+} from "./margin-drawer";
 export { PaperActions, type PaperActionsProps } from "./paper-actions";
 export { InviteReviewer, type InviteReviewerProps } from "./invite-reviewer";
 export {

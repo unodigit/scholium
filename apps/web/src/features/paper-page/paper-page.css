@@ -9,9 +9,11 @@
    Layout (§5.2): a reading column of at most 720 px (--reading-column) and a
    margin panel of 360 px (--margin-panel). From 1280 px they sit side by side
    and the panel stays in view while the paper scrolls; below that the page is
-   one column and the panel follows the text. (The drawer between 1024 and
-   1279 px and the bottom sheet under 1024 px are a later feature that builds
-   on this stacking.)
+   one column and the panel follows the text until the page runs, and then
+   (§5.2, §10) it is put away: a collapsible drawer on the right edge from 1024
+   to 1279 px, a bottom sheet with the same tabs under 1024 px. Those two apply
+   only to `[data-enhanced="true"]`, which margin-drawer.tsx sets once
+   JavaScript is running, so a page without it keeps the panel in the flow.
 
    Colour rules (src/styles/README.md):
    - Text is --ink or --ink-2. Status is carried by the chip's icon and word,
@@ -594,6 +596,204 @@
     max-block-size: calc(100dvh - var(--space-unit) * 16 - var(--space-unit) * 8);
     max-inline-size: none;
     overflow-y: auto;
+  }
+}
+
+/* ---- Margin panel: drawer (1024–1279 px) and bottom sheet (< 1024 px) ------- */
+
+/* The body wraps the panel. Beside the paper, or before the page runs, it is
+   only a wrapper. */
+.ppg-margin-body {
+  min-inline-size: 0;
+}
+
+/* The toggle is in the page only once it runs, and is shown only where the
+   panel can be put away. */
+.ppg-margin-toggle {
+  display: none;
+}
+
+/* The panel's body arrives: it rises into a sheet and slides into a drawer.
+   Closing is immediate. Reduced motion shortens both to nothing (base.css). */
+@keyframes ppg-margin-rise {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-unit) * 4));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ppg-margin-slide {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--space-unit) * 4));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Shared by the drawer and the sheet: a fixed frame whose bar (the toggle) is
+   always there and whose body is out of the page while collapsed. `display:
+   none` rather than a transform off-screen, so a collapsed panel is not in the
+   tab order and not read out; it stays mounted, so its state survives. */
+@media (width < 80rem) {
+  .ppg-margin[data-enhanced="true"] {
+    position: fixed;
+    /* Under the global nav (40), the record side sheet (50) and the toast (60). */
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ppg-margin[data-enhanced="true"] .ppg-margin-toggle {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space-unit) * 3);
+    inline-size: 100%;
+    min-block-size: calc(var(--space-unit) * 11);
+    margin: 0;
+    padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+    border: 0;
+    background-color: transparent;
+    color: var(--ink);
+    font-family: var(--family-sans);
+    font-size: var(--type-ui);
+    font-weight: 600;
+    line-height: var(--leading-ui);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .ppg-margin[data-enhanced="true"][data-open="true"] .ppg-margin-toggle {
+    border-block-end: 1px solid var(--rule);
+  }
+
+  .ppg-margin[data-enhanced="true"] .ppg-margin-body {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow-y: auto;
+    /* Scrolling to the end of the panel must not carry on into the paper. */
+    overscroll-behavior: contain;
+  }
+
+  .ppg-margin[data-enhanced="true"][data-open="false"] .ppg-margin-body {
+    display: none;
+  }
+
+  .ppg-margin-toggle:hover {
+    background-color: var(--accent-soft);
+  }
+
+  /* Inside a frame that clips (overflow: hidden), so the ring is drawn inward. */
+  .ppg-margin-toggle:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+}
+
+.ppg-margin-toggle-hint {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  font-weight: 400;
+  line-height: var(--leading-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ppg-margin-chevron {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 4);
+  block-size: calc(var(--space-unit) * 4);
+  transition: transform var(--duration-fast) var(--ease-decel);
+}
+
+/* Bottom sheet, under 1024 px: a bar along the bottom edge that rises into a
+   sheet of at most 80% of the screen, as wide as the reading column and no
+   wider. The chevron points up to open it and down to put it away. */
+@media (width < 64rem) {
+  .ppg-margin[data-enhanced="true"] {
+    inset-inline: 0;
+    inset-block-end: 0;
+    margin-inline: auto;
+    max-block-size: 80vh;
+    max-block-size: 80dvh;
+    border-inline-width: 0;
+    border-block-end-width: 0;
+    border-radius: var(--corner-card) var(--corner-card) 0 0;
+  }
+
+  .ppg-margin[data-enhanced="true"][data-open="true"] .ppg-margin-body {
+    animation: ppg-margin-rise var(--duration-base) var(--ease-decel);
+  }
+
+  .ppg-margin[data-open="false"] .ppg-margin-chevron {
+    transform: rotate(180deg);
+  }
+}
+
+/* On a phone the fixed tab bar (components/nav: 56 px plus the home-indicator
+   inset) is at the bottom, so the sheet rests on it. */
+@media (width < 40rem) {
+  .ppg-margin[data-enhanced="true"] {
+    inset-block-end: calc(var(--space-unit) * 14 + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Drawer, from 1024 to 1279 px: fixed to the right edge, level with where the
+   wide layout's panel sits (clear of the 64 px nav), 360 px wide when open. Put
+   away, it is a narrow tab with the word set upright along it; open, the same
+   button is the bar across its top. The chevron points the way it will move. */
+@media (64rem <= width < 80rem) {
+  .ppg-margin[data-enhanced="true"] {
+    inset-block-start: calc(var(--space-unit) * 16 + var(--space-unit) * 4);
+    inset-inline-end: 0;
+    inline-size: var(--margin-panel);
+    max-block-size: calc(100vh - var(--space-unit) * 16 - var(--space-unit) * 8);
+    max-block-size: calc(100dvh - var(--space-unit) * 16 - var(--space-unit) * 8);
+    border-inline-end-width: 0;
+    border-radius: var(--corner-card) 0 0 var(--corner-card);
+  }
+
+  .ppg-margin[data-enhanced="true"][data-open="true"] .ppg-margin-body {
+    animation: ppg-margin-slide var(--duration-base) var(--ease-decel);
+  }
+
+  /* 48 px: the 1 px border takes a little, and the tab must stay above 44 px. */
+  .ppg-margin[data-enhanced="true"][data-open="false"] {
+    inline-size: calc(var(--space-unit) * 12);
+  }
+
+  .ppg-margin[data-enhanced="true"][data-open="false"] .ppg-margin-toggle {
+    flex-direction: column;
+    justify-content: flex-start;
+    padding: calc(var(--space-unit) * 3) 0;
+  }
+
+  .ppg-margin[data-open="false"] .ppg-margin-toggle-label {
+    writing-mode: vertical-rl;
+  }
+
+  .ppg-margin[data-open="false"] .ppg-margin-toggle-hint {
+    display: none;
+  }
+
+  .ppg-margin[data-open="false"] .ppg-margin-chevron {
+    order: -1;
+    transform: rotate(90deg);
+  }
+
+  .ppg-margin[data-open="true"] .ppg-margin-chevron {
+    transform: rotate(-90deg);
   }
 }
 

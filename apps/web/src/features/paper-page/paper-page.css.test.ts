@@ -48,6 +48,67 @@ function declarations(css: { rules: string }, selector: string): string {
     .join("\n");
 }
 
+/**
+ * The text inside every `@media <query> { … }` block, brace-matched, so a rule
+ * can be asserted to live (or not live) at one width. `query` is the text after
+ * `@media `, exactly as written.
+ */
+function inMedia(css: { rules: string }, query: string): string {
+  const inside: string[] = [];
+  const marker = `@media ${query} {`;
+  for (
+    let at = css.rules.indexOf(marker);
+    at !== -1;
+    at = css.rules.indexOf(marker, at + marker.length)
+  ) {
+    const open = at + marker.length - 1;
+    let depth = 0;
+    let end = open;
+    for (; end < css.rules.length; end += 1) {
+      if (css.rules[end] === "{") depth += 1;
+      if (css.rules[end] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    inside.push(css.rules.slice(open + 1, end));
+  }
+  return inside.join("\n");
+}
+
+/** `declarations`, but only the rules written inside one `@media` query. */
+function declarationsIn(css: { rules: string }, query: string, selector: string): string {
+  return declarations({ rules: inMedia(css, query) }, selector);
+}
+
+/** The `@keyframes` rule called `name`, brace-matched. */
+function keyframes(css: { rules: string }, name: string): string {
+  const at = css.rules.indexOf(`@keyframes ${name} {`);
+  if (at === -1) return "";
+  const open = css.rules.indexOf("{", at);
+  let depth = 0;
+  let end = open;
+  for (; end < css.rules.length; end += 1) {
+    if (css.rules[end] === "{") depth += 1;
+    if (css.rules[end] === "}") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  return css.rules.slice(open + 1, end);
+}
+
+/** Below 1280 px: where the margin panel can be put away. */
+const COLLAPSIBLE = "(width < 80rem)";
+/** Under 1024 px: the bottom sheet. */
+const SHEET = "(width < 64rem)";
+/** On a phone, where the fixed tab bar is. */
+const PHONE = "(width < 40rem)";
+/** 1024–1279 px: the drawer. */
+const DRAWER = "(64rem <= width < 80rem)";
+
+const ENHANCED = '.ppg-margin[data-enhanced="true"]';
+
 describe.each([
   ["paper-page.css", page],
   ["paper-page-shell.css", shell],
@@ -308,11 +369,234 @@ describe("the Invite reviewer form (feature 187)", () => {
   });
 });
 
+describe("the margin drawer and bottom sheet (docs/design.md §5.2, §10)", () => {
+  it("is a drawer from 1024 to 1279 px and a sheet under 1024 px, and nothing from 1280 px", () => {
+    // The three queries tile the widths below 1280 px with no gap and no overlap.
+    expect(page.rules).toContain(`@media ${COLLAPSIBLE} {`);
+    expect(page.rules).toContain(`@media ${SHEET} {`);
+    expect(page.rules).toContain(`@media ${DRAWER} {`);
+
+    // Nothing is taken out of the flow except below 1280 px, so the beside-the-paper
+    // layout is exactly what it was.
+    const fixedAnywhere = page.rules.match(/position:\s*fixed/g) ?? [];
+    const fixedBelowWide = inMedia(page, COLLAPSIBLE).match(/position:\s*fixed/g) ?? [];
+    expect(fixedAnywhere.length).toBeGreaterThan(0);
+    expect(fixedAnywhere).toHaveLength(fixedBelowWide.length);
+  });
+
+  it("applies only once the page runs, so a page without JavaScript keeps the panel in the flow", () => {
+    // The plain panel rule never positions or hides anything.
+    const plain = declarations(page, ".ppg-margin");
+    expect(plain).not.toMatch(/position:\s*fixed/);
+    expect(plain).not.toMatch(/display:\s*none/);
+
+    // Every rule that fixes the panel, or puts its body away, asks for data-enhanced.
+    for (const { selector, body } of blocks(inMedia(page, COLLAPSIBLE))) {
+      if (/position:\s*fixed/.test(body) || /display:\s*none/.test(body)) {
+        expect(selector).toContain('[data-enhanced="true"]');
+      }
+    }
+    for (const query of [SHEET, PHONE, DRAWER]) {
+      for (const { selector, body } of blocks(inMedia(page, query))) {
+        if (/^\.ppg-margin\b/.test(selector) && /inset-|inline-size|max-block-size/.test(body)) {
+          expect(selector).toContain('[data-enhanced="true"]');
+        }
+      }
+    }
+  });
+
+  it("does not show the toggle unless the page runs and the panel can be put away", () => {
+    expect(declarations(page, ".ppg-margin-toggle")).toMatch(/display:\s*none/);
+    expect(declarationsIn(page, COLLAPSIBLE, `${ENHANCED} .ppg-margin-toggle`)).toMatch(
+      /display:\s*flex/,
+    );
+  });
+
+  describe("as a bottom sheet (under 1024 px)", () => {
+    it("rests on the bottom edge, as wide as the reading column at most, rounded on top", () => {
+      const sheet = declarationsIn(page, SHEET, ENHANCED);
+      expect(sheet).toMatch(/inset-block-end:\s*0/);
+      expect(sheet).toMatch(/inset-inline:\s*0/);
+      expect(sheet).toMatch(/margin-inline:\s*auto/);
+      expect(sheet).toMatch(
+        /border-radius:\s*var\(--corner-card\) var\(--corner-card\) 0 0/,
+      );
+      // The reading column's width comes from the plain panel rule; the sheet
+      // must not undo it.
+      expect(declarations(page, ".ppg-margin")).toMatch(
+        /max-inline-size:\s*var\(--reading-column\)/,
+      );
+      expect(sheet).not.toMatch(/max-inline-size/);
+    });
+
+    it("rises to no more than 80% of the screen, leaving the paper's top in view", () => {
+      const sheet = declarationsIn(page, SHEET, ENHANCED);
+      expect(sheet).toMatch(/max-block-size:\s*80vh/);
+      expect(sheet).toMatch(/max-block-size:\s*80dvh/);
+    });
+
+    it("rests on the tab bar on a phone, by the bar's own height", () => {
+      const phone = declarationsIn(page, PHONE, ENHANCED);
+      expect(phone).toMatch(
+        /inset-block-end:\s*calc\(var\(--space-unit\) \* 14 \+ env\(safe-area-inset-bottom, 0px\)\)/,
+      );
+
+      // 14 × 4 px is the 56 px of components/nav's bar, so they stay in step.
+      const nav = readFileSync(join(here, "../../components/nav/nav.css"), "utf8");
+      expect(nav).toMatch(/\.gn-tabbar\s*\{[^}]*height:\s*calc\(56px \+ env\(safe-area-inset-bottom/);
+    });
+
+    it("points its arrow up to open it and down to put it away", () => {
+      expect(
+        declarationsIn(page, SHEET, '.ppg-margin[data-open="false"] .ppg-margin-chevron'),
+      ).toMatch(/transform:\s*rotate\(180deg\)/);
+      // Open is the arrow's own direction (down): no rule turns it.
+      expect(
+        declarationsIn(page, SHEET, '.ppg-margin[data-open="true"] .ppg-margin-chevron'),
+      ).toBe("");
+    });
+  });
+
+  describe("as a drawer (1024 to 1279 px)", () => {
+    it("is fixed to the inline end, level with the wide layout's panel, 360 px when open", () => {
+      const drawer = declarationsIn(page, DRAWER, ENHANCED);
+      expect(drawer).toMatch(/inset-inline-end:\s*0/);
+      expect(drawer).toMatch(/inline-size:\s*var\(--margin-panel\)/);
+      // The same offset as the sticky panel from 1280 px: clear of the 64 px nav.
+      expect(drawer).toMatch(
+        /inset-block-start:\s*calc\(var\(--space-unit\) \* 16 \+ var\(--space-unit\) \* 4\)/,
+      );
+      expect(drawer).toMatch(/max-block-size:\s*calc\(100dvh - /);
+      expect(tokens).toMatch(/--margin-panel:\s*22\.5rem/);
+    });
+
+    it("is a narrow tab, wider than a 44 px target, while put away", () => {
+      const away = declarationsIn(
+        page,
+        DRAWER,
+        `${ENHANCED}[data-open="false"]`,
+      );
+      // 12 × 4 px = 48 px: the 1 px border takes a little of it.
+      expect(away).toMatch(/inline-size:\s*calc\(var\(--space-unit\) \* 12\)/);
+      expect(
+        declarationsIn(
+          page,
+          DRAWER,
+          '.ppg-margin[data-open="false"] .ppg-margin-toggle-label',
+        ),
+      ).toMatch(/writing-mode:\s*vertical-rl/);
+    });
+
+    it("points its arrow the way it will move", () => {
+      expect(
+        declarationsIn(page, DRAWER, '.ppg-margin[data-open="false"] .ppg-margin-chevron'),
+      ).toMatch(/transform:\s*rotate\(90deg\)/);
+      expect(
+        declarationsIn(page, DRAWER, '.ppg-margin[data-open="true"] .ppg-margin-chevron'),
+      ).toMatch(/transform:\s*rotate\(-90deg\)/);
+    });
+  });
+
+  describe("collapsing", () => {
+    it("takes the body out of the page rather than moving it aside, so it leaves the tab order", () => {
+      const away = declarationsIn(
+        page,
+        COLLAPSIBLE,
+        `${ENHANCED}[data-open="false"] .ppg-margin-body`,
+      );
+      expect(away).toMatch(/display:\s*none/);
+      // Nothing hides the body at 1280 px and up, whatever the open state.
+      const outside = blocks(page.rules)
+        .filter(({ selector }) => selector.includes(".ppg-margin-body"))
+        .filter(({ body }) => /display:\s*none/.test(body));
+      for (const { selector } of outside) {
+        expect(selector).toContain('[data-open="false"]');
+      }
+      expect(
+        inMedia(page, "(min-width: 80rem)").includes(".ppg-margin-body"),
+      ).toBe(false);
+    });
+
+    it("scrolls the body on its own, so the bar stays and the paper does not move", () => {
+      const body = declarationsIn(page, COLLAPSIBLE, `${ENHANCED} .ppg-margin-body`);
+      expect(body).toMatch(/overflow-y:\s*auto/);
+      expect(body).toMatch(/min-block-size:\s*0/);
+      expect(body).toMatch(/overscroll-behavior:\s*contain/);
+    });
+
+    it("sits under the nav, the record side sheet and the toast", () => {
+      const frame = declarationsIn(page, COLLAPSIBLE, ENHANCED);
+      const z = Number(/z-index:\s*(\d+)/.exec(frame)?.[1]);
+      const nav = readFileSync(join(here, "../../components/nav/nav.css"), "utf8");
+      const navZ = Number(/\.gn-header\s*\{[^}]*z-index:\s*(\d+)/.exec(nav)?.[1]);
+      expect(z).toBeGreaterThan(0);
+      expect(z).toBeLessThan(navZ);
+    });
+  });
+
+  describe("the toggle (docs/design.md §9)", () => {
+    it("is at least 44 px tall", () => {
+      expect(
+        declarationsIn(page, COLLAPSIBLE, `${ENHANCED} .ppg-margin-toggle`),
+      ).toMatch(/min-block-size:\s*calc\(var\(--space-unit\)\s*\*\s*11\)/);
+    });
+
+    it("has a visible 2 px focus ring in the focus colour, drawn inward because the frame clips", () => {
+      const ring = declarationsIn(page, COLLAPSIBLE, ".ppg-margin-toggle:focus-visible");
+      expect(ring).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
+      expect(ring).toMatch(/outline-offset:\s*-2px/);
+    });
+
+    it("marks the open panel by a rule under the bar, not by colour alone", () => {
+      expect(
+        declarationsIn(
+          page,
+          COLLAPSIBLE,
+          `${ENHANCED}[data-open="true"] .ppg-margin-toggle`,
+        ),
+      ).toMatch(/border-block-end:\s*1px solid var\(--rule\)/);
+    });
+
+    it("says what is inside in the quiet text colour, on one line", () => {
+      const hint = declarations(page, ".ppg-margin-toggle-hint");
+      expect(hint).toMatch(/color:\s*var\(--ink-2\)/);
+      expect(hint).toMatch(/white-space:\s*nowrap/);
+      expect(hint).toMatch(/text-overflow:\s*ellipsis/);
+    });
+  });
+
+  describe("motion (docs/design.md §3)", () => {
+    it("rises and slides in over the base duration, ease-out, on opacity and transform only", () => {
+      expect(declarationsIn(page, SHEET, `${ENHANCED}[data-open="true"] .ppg-margin-body`)).toMatch(
+        /animation:\s*ppg-margin-rise var\(--duration-base\) var\(--ease-decel\)/,
+      );
+      expect(
+        declarationsIn(page, DRAWER, `${ENHANCED}[data-open="true"] .ppg-margin-body`),
+      ).toMatch(/animation:\s*ppg-margin-slide var\(--duration-base\) var\(--ease-decel\)/);
+
+      for (const name of ["ppg-margin-rise", "ppg-margin-slide"]) {
+        const frames = keyframes(page, name);
+        expect(frames).not.toBe("");
+        const properties = [...frames.matchAll(/([a-z-]+)\s*:/g)].map((match) => match[1]);
+        expect(new Set(properties)).toEqual(new Set(["opacity", "transform"]));
+      }
+    });
+
+    it("turns the arrow over the fast duration, ease-out", () => {
+      expect(declarations(page, ".ppg-margin-chevron")).toMatch(
+        /transition:\s*transform var\(--duration-fast\) var\(--ease-decel\)/,
+      );
+    });
+  });
+});
+
 describe("selectors", () => {
   it("all start from a ppg class, so nothing leaks into other features", () => {
     const selectors = blocks(page.rules)
       .flatMap(({ selector }) => selector.split(","))
       .map((selector) => selector.trim())
+      // The steps inside an @keyframes rule are not selectors.
+      .filter((selector) => !/^(?:from|to|\d+%)$/.test(selector))
       .filter((selector) => selector !== "");
 
     expect(selectors.length).toBeGreaterThan(0);

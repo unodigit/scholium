@@ -44,6 +44,7 @@ error.
 | Which rendition shows (HTML or PDF); the PDF and HTML actions' state | `reading-view.tsx` | client islands |
 | The PDF, drawn by PDF.js | `pdf-view.tsx` | client island |
 | Margin panel (360 px): badge, tabs | `margin-panel.tsx` | client island |
+| Its frame: beside the paper, a drawer (1024–1279 px) or a bottom sheet (< 1024 px) | `margin-drawer.tsx` | client island |
 | Compare view: both change notes, changed/added/removed paragraphs | `compare-view.tsx` | server |
 | Reads | `paper-page-data.ts`, `compare.ts` | server |
 
@@ -103,10 +104,69 @@ for reviews; that is the calm empty state, not an error.
 | Width | Layout |
 | --- | --- |
 | ≥ 1280 px | reading column (≤ 720 px, `--reading-column`) beside a sticky 360 px margin panel (`--margin-panel`) |
-| below | one column; the panel follows the text |
+| 1024–1279 px | one column; the margin panel is a **collapsible drawer** on the right edge |
+| < 1024 px | one column; the margin panel is a **bottom sheet** with the same six tabs |
+| any width, before the page runs | one column; the panel follows the text |
 
-The drawer between 1024 and 1279 px and the bottom sheet under 1024 px
-(`docs/design.md` §10) are a separate feature that builds on this stacking.
+### The drawer and the bottom sheet
+
+`margin-drawer.tsx` is the frame around the panel (`MarginDrawer`, a client
+component that `PaperPageView` wraps `MarginPanel` in). It holds one piece of
+state, whether the panel is open, and a toggle; everything about *where* the
+panel is comes from `paper-page.css`, by width.
+
+```text
+1024–1279 px, drawer                        < 1024 px, bottom sheet
+
+ put away    open                            put away
+ ┌──┐        ┌──────────────────────┐        ┌────────────────────────────────┐
+ │ ‹│        │ Margin  Reviews…   › │        │ Margin  Reviews, discussion  ⌃ │
+ │ M│        ├──────────────────────┤        └────────────────────────────────┘
+ │ a│        │ ✓ Verified  Details ›│         open
+ │ r│        │ tabs (360 px)        │        ┌────────────────────────────────┐
+ └──┘        │ …the open tab…       │        │ Margin  Reviews, discussion  ⌄ │
+             └──────────────────────┘        ├────────────────────────────────┤
+                                             │ ✓ Verified            Details ›│
+                                             │ tabs, then the open tab        │
+                                             │ (at most 80% of the screen)    │
+                                             └────────────────────────────────┘
+```
+
+- **One panel, restyled.** It is the same `MarginPanel` at every width, never a
+  second copy, so the open tab, a half-written reply and the running Proof check
+  survive a tablet turning or a window being resized. Collapsed, the body is
+  `display: none` (out of the tab order and out of the accessibility tree) but
+  still mounted.
+- **Without JavaScript nothing collapses.** The server renders the panel in the
+  flow, after the text, with no toggle in the HTML. The drawer and sheet styles
+  apply only to `[data-enhanced="true"]`, which the component sets once it is
+  running (`useSyncExternalStore`, so hydration matches the server's HTML).
+- **From 1280 px the toggle is not shown** and the open state means nothing: the
+  panel is beside the paper as before.
+- **It starts collapsed**, so the paper has the screen. The toggle (a disclosure
+  button: `aria-expanded`, `aria-controls`) opens and closes it.
+- **A tab is still an address.** An address that names a tab (`/p/…#files`,
+  `#proof`) opens the panel, on arrival and when a link to one is followed, so a
+  link never lands inside a closed drawer. An address that moves to anywhere else
+  on the page (the HTML or PDF action, a paragraph) puts it away, so what the
+  reader asked to see is not behind it. Opening it with the toggle does not
+  touch the address.
+- **The sheet** rests on the bottom edge (on a phone, on the 56 px tab bar from
+  `components/nav`), is as wide as the reading column at most, rises to 80% of the
+  screen and scrolls inside itself without carrying on into the paper. **The
+  drawer** is level with where the wide layout's panel sits, clear of the nav, 360
+  px wide when open and a 48 px tab (the word set upright) when put away.
+- **Motion** is 200 ms ease-out on opacity and transform when the body opens, and
+  the arrow turns over 150 ms; closing is immediate; reduced motion shortens both
+  to nothing.
+- The three width queries use range syntax (`(width < 64rem)`,
+  `(64rem <= width < 80rem)`) so they tile the widths below 1280 px with no gap.
+  It needs what the app's Tailwind 4 already needs (Chrome 111, Safari 16.4,
+  Firefox 128).
+
+Not done here: closing with `Escape`, a scrim behind the sheet, dragging the
+sheet, and remembering the open state. The panel is a disclosure the reader
+reads beside the paper, not a modal.
 
 ## The reading column
 
@@ -293,8 +353,8 @@ Added in v2 (1)      Removed from v1 (1)
 ## Not here (other features)
 
 Status banners above the title (Retracted, Corrected, newer version, content
-removed); the Cite dialog and Download menu; the drawer and bottom sheet. Until
-the banners land, a retraction or correction is shown by the status chip only.
+removed); the Cite dialog and Download menu. Until the banners land, a retraction
+or correction is shown by the status chip only.
 
 The PDF view has no text layer (no selecting or searching inside the canvas) and no
 zoom of its own; the HTML has the text, and "Open in a new tab" has the browser's
@@ -328,6 +388,15 @@ tokens, the 720/360 widths, focus rings and touch targets.
 | `invitation.test.ts` | who is offered the action, what counts as a DID, the exact request (path, body, bearer token) through the real API client, the `201` body, every failure's sentence |
 | `invite-reviewer.test.tsx` | the disclosure, focus, sending once, the mistakes caught before sending, a refusal shown in the node's words, Sign in when a session has ended |
 | `invite-header.test.tsx` | the header with the real byline, token store and API client: shown to each author, not to a stranger or a signed-out reader, and the POST it makes |
+| `margin-drawer.test.tsx` | the frame: no toggle and no `data-enhanced` in the server's HTML, the toggle's state, collapsing keeping the panel mounted and its state, the address opening and closing it |
+
+`paper-page.css.test.ts` also pins the drawer and sheet by width (which query
+holds which rule, that nothing applies from 1280 px or before the page runs, the
+phone offset matching the nav's tab bar, 44 px targets, the focus ring, the
+motion). What only a browser can show (the real layout at each width, that a
+collapsed panel is out of the tab order, one panel surviving a resize) was
+checked in Chromium against the running app at 1440, 1280, 1279, 1100, 1024, 1023,
+800, 640, 639 and 390 px.
 
 jsdom has no canvas and the real PDF.js needs a browser, so the viewer's tests use
 a fake document, and what only a browser can show (the worker loading, pages

@@ -11,13 +11,18 @@
  *
  * From 1280 px the two sit side by side: a reading column of at most 720 px
  * and a 360 px margin panel that stays in view while the paper scrolls. Below
- * that the page is one column and the margin panel follows the text.
+ * that the page is one column and the margin panel is put away until asked
+ * for: a collapsible drawer from 1024 to 1279 px, a bottom sheet with the same
+ * tabs under 1024 px (`margin-drawer.tsx`). Before JavaScript runs it simply
+ * follows the text.
  *
  * Server-safe, so a shared link shows the title, the byline and the abstract
  * in the first HTML response and works before JavaScript loads. The only
- * client islands are the margin panel and the paragraphs' markers.
+ * client islands are the margin panel (and its frame) and the paragraphs'
+ * markers.
  */
 
+import { MarginDrawer } from "./margin-drawer";
 import { MarginPanel } from "./margin-panel";
 import { pdfAccess } from "./paper-facts";
 import { PaperHeader } from "./paper-header";
@@ -43,7 +48,7 @@ export function PaperPageView({ data }: PaperPageViewProps) {
           <ReadingColumn data={data} />
         </ReadingViewProvider>
       </div>
-      <aside className="ppg-margin" aria-label="Margin of the paper">
+      <MarginDrawer>
         <MarginPanel
           shortId={data.shortId}
           version={data.version}
@@ -54,7 +59,7 @@ export function PaperPageView({ data }: PaperPageViewProps) {
           versions={data.versions}
           manifest={data.manifest}
         />
-      </aside>
+      </MarginDrawer>
     </div>
   );
 }
