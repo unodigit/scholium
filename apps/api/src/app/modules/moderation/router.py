@@ -1,21 +1,26 @@
 """HTTP routes for the moderation plugin.
 
 The module loader mounts this router under ``/v1``, so the routes below serve
-``GET /v1/moderation/policies`` and ``GET /v1/moderation/queue``.
+``GET /v1/moderation/policies``, ``GET /v1/moderation/queue`` and
+``POST /v1/moderation/decisions``.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
+from pydantic import BaseModel
 
 from app import db
+from app.errors import ProblemException
 from app.modules import checks, content, ledger, sanitizer, submissions
 from app.modules.identity.models import Account, ensure_account_table
-from app.security import Principal, require_tier
+from app.modules.ingest import ingest
+from app.security import Principal, Tier, require_tier
 
+from .decisions import DECISION_TYPE, apply_decision, decision_fields
 from .policies import PolicyClause, get_clauses
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
@@ -175,3 +180,90 @@ def list_queue(
     scan result and whether the submitting account is new.
     """
     return _build_queue()
+
+
+class DecisionAccepted(BaseModel):
+    """The ``201 Created`` body of ``POST /v1/moderation/decisions``."""
+
+    #: The decision record's cid (also its ``decision_cid`` in ``moderation_decisions``).
+    id: str
+    #: The version's ``sch:xxxx-xxxx-xxxx/vN`` id, when the paper is indexed.
+    shortId: Optional[str] = None
+    #: cid of the version the decision is about.
+    target: str
+    action: str
+    clause: str
+    #: The version's state once the decision has been applied.
+    state: str
+    #: Public-timestamp status; always ``"pending"`` until anchoring exists.
+    anchor: str = "pending"
+
+
+@router.post(
+    "/decisions",
+    status_code=201,
+    response_model=DecisionAccepted,
+    summary="Submit a signed moderation.decision",
+    dependencies=[Depends(require_tier(int(Tier.MODERATOR)))],
+)
+def post_decision(
+    record: dict[str, Any] = Body(..., description="The signed moderation.decision envelope."),
+) -> DecisionAccepted:
+    """Accept a signed ``moderation.decision`` and apply it to its version.
+
+    The decision goes through the same pipeline as ``POST /v1/records`` --
+    envelope, body schema, cid, signature, the signer's tier -- and then this
+    plugin's checks: the cited ``clause`` must be one served by
+    ``GET /v1/moderation/policies``, a ``reason`` (or ``reasonCid``) is
+    required, and ``target`` must be a version this node holds.  An accepted
+    decision is appended to the public log (``GET /v1/records/{cid}``), saved
+    to ``moderation_decisions`` and sets the version's state:
+
+    * ``list`` -- ``listed``; the paper becomes resolvable by its ``sch:`` id;
+    * ``hold`` -- ``held``;
+    * ``reject`` and ``delist`` -- ``rejected``;
+    * ``reclassify`` -- the state is unchanged and the paper's categories
+      become ``body.category`` / ``body.categories``.
+
+    Failures are RFC 9457 problem details: ``401``/``403`` for a caller or a
+    signer below tier 4 or a bad signature, ``409`` for a repeated decision or
+    a state the version cannot move to, ``422`` for an invalid record, an
+    unknown clause or an unknown target.
+    """
+    if record.get("type") != DECISION_TYPE:
+        raise ProblemException(
+            422,
+            f"This endpoint accepts {DECISION_TYPE!r} records, got {record.get('type')!r}.",
+            errors=[
+                {
+                    "loc": ["body", "type"],
+                    "msg": f"The record must be a {DECISION_TYPE}.",
+                    "type": "wrong_record_type",
+                    "input": record.get("type"),
+                }
+            ],
+        )
+
+    result = ingest(record)
+    # The ledger subscriber normally applied the decision as it was appended;
+    # this is a no-op then, and the one that reports a failure when it did not.
+    decision = apply_decision(record)
+
+    version = submissions.get_version(decision.target_cid)
+    state = str(version.state) if version is not None else result.state
+    short_id: Optional[str] = None
+    if version is not None:
+        paper = submissions.get_paper(version.paper_cid)
+        if paper is not None:
+            short_id = f"{paper.short_id}/v{int(version.n)}"
+
+    fields = decision_fields(record)
+    return DecisionAccepted(
+        id=result.record_id,
+        shortId=short_id,
+        target=fields.target,
+        action=fields.action,
+        clause=fields.clause,
+        state=state,
+        anchor=result.anchor,
+    )
