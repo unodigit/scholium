@@ -42,9 +42,13 @@ What a scan does
    (:data:`CHECK_FILE_MISSING` / :data:`CHECK_FILE_UNREADABLE`).
 4. Every scanned blob's ``scan_status`` is saved as ``passed`` or ``failed``
    in the ``blobs`` table.
-5. A clean version moves to ``moderation``; a version with any failing file
-   is ``held`` with the exact failing check named in the state event's
-   ``reason`` (``"scan failed: javascript"``) and in the returned result.
+5. A clean version gets a node-signed ``rendition`` record listing its
+   sanitized files and the tool versions (feature 64, :mod:`.rendition`),
+   then moves to ``moderation``; a version with any failing file is ``held``
+   with the exact failing check named in the state event's ``reason``
+   (``"scan failed: javascript"``) and in the returned result, and gets no
+   rendition.  A rendition that cannot be signed (no node key) is logged and
+   does not stop the version: ``rendition_cid`` is then ``None``.
 
 The scan never extracts or executes anything.  It is idempotent: re-running
 it for a version already in ``moderation`` or ``held`` is a no-op.
@@ -64,7 +68,9 @@ from app import db, jobs
 from .bundle import detect_bundle_kind, scan_bundle_bytes
 from .models import RESULT_FAILED, RESULT_PASSED
 from .pdf import Finding, scan_pdf_bytes
+from .rendition import create_rendition
 from .reports import record_finding
+from .tools import KIND_BUNDLE, KIND_OTHER, KIND_PDF, tool_versions
 
 __all__ = [
     "CHECK_FILE_MISSING",
@@ -141,6 +147,8 @@ class FileScanResult:
     them (empty for a clean file); ``detail`` is the first finding's detail,
     if any.  ``cid`` is the file id and ``path`` the manifest path, so a held
     version's failing file can be named without reading ``scan_reports``.
+    ``kind`` is how the file was scanned (``"pdf"``, ``"bundle"`` or
+    ``"other"``) -- it decides which tools the version's rendition lists.
     """
 
     cid: str
@@ -148,6 +156,7 @@ class FileScanResult:
     result: str = RESULT_PASSED
     check_names: tuple[str, ...] = ()
     detail: Optional[str] = None
+    kind: str = KIND_OTHER
 
     @property
     def passed(self) -> bool:
@@ -167,6 +176,7 @@ class FileScanResult:
             "result": self.result,
             "check_names": list(self.check_names),
             "detail": self.detail,
+            "kind": self.kind,
         }
 
 
@@ -177,7 +187,10 @@ class VersionScanResult:
     ``skipped`` is true when the version was not in ``scanning`` state, in
     which case nothing was read and no state changed.  When the version was
     scanned, ``state`` is the state it ended in and ``failing_check`` names
-    the first failing check (``None`` for a clean version).
+    the first failing check (``None`` for a clean version).  A clean version
+    also carries ``rendition_cid``, the node-signed ``rendition`` record made
+    for it -- ``None`` when the version was held or skipped, or when the node
+    could not sign one (the failure is logged; the version still moves on).
     """
 
     version_cid: str
@@ -188,6 +201,7 @@ class VersionScanResult:
     failing_cid: Optional[str] = None
     failing_path: Optional[str] = None
     reason: Optional[str] = None
+    rendition_cid: Optional[str] = None
 
     @property
     def failed(self) -> bool:
@@ -209,6 +223,7 @@ class VersionScanResult:
             "failing_cid": self.failing_cid,
             "failing_path": self.failing_path,
             "reason": self.reason,
+            "rendition_cid": self.rendition_cid,
             "files": [result.to_dict() for result in self.files],
         }
 
@@ -341,18 +356,18 @@ def _kind_of(raw: bytes, media_type: object) -> str:
     """
     essence = _media_essence(media_type)
     if essence in _PDF_MEDIA_TYPES:
-        return "pdf"
+        return KIND_PDF
     if raw[:_PDF_HEADER_WINDOW].lstrip().startswith(_PDF_MAGIC):
-        return "pdf"
+        return KIND_PDF
     if essence in _BUNDLE_MEDIA_TYPES:
-        return "bundle"
+        return KIND_BUNDLE
     if raw[:4] in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
-        return "bundle"
+        return KIND_BUNDLE
     if len(raw) >= 262 and raw[257:262] == b"ustar":
-        return "bundle"
+        return KIND_BUNDLE
     if raw[:2] == b"\x1f\x8b" and detect_bundle_kind(raw) != "unknown":
-        return "bundle"
-    return "other"
+        return KIND_BUNDLE
+    return KIND_OTHER
 
 
 def _set_scan_status(cid: str, status: str) -> None:
@@ -368,15 +383,14 @@ def _set_scan_status(cid: str, status: str) -> None:
         logger.warning("no blobs row for %s; scan status not saved", _show(cid))
 
 
-def _scan_bytes(cid: str, raw: bytes, media_type: object) -> tuple[Finding, ...]:
-    """Run the checks that apply to ``raw`` and return their findings.
+def _scan_bytes(cid: str, raw: bytes, kind: str) -> tuple[Finding, ...]:
+    """Run the checks that apply to a file of ``kind`` and return their findings.
 
     The per-type scanners save one ``scan_reports`` row per failed check.
     """
-    kind = _kind_of(raw, media_type)
-    if kind == "pdf":
+    if kind == KIND_PDF:
         return scan_pdf_bytes(raw, cid=cid).findings
-    if kind == "bundle":
+    if kind == KIND_BUNDLE:
         return scan_bundle_bytes(raw, cid=cid).findings
     return ()
 
@@ -438,7 +452,8 @@ def _scan_file(entry: Mapping[str, Any]) -> FileScanResult:
 
     declared = media_type if media_type is not None else getattr(blob, "media_type", None)
     try:
-        findings = _scan_bytes(cid, raw, declared)
+        kind = _kind_of(raw, declared)
+        findings = _scan_bytes(cid, raw, kind)
     except Exception as exc:  # noqa: BLE001 - one bad file must not stop the version
         _set_scan_status(cid, RESULT_FAILED)
         return _failed(
@@ -457,10 +472,11 @@ def _scan_file(entry: Mapping[str, Any]) -> FileScanResult:
             result=RESULT_FAILED,
             check_names=tuple(finding.check_name for finding in findings),
             detail=first.detail,
+            kind=kind,
         )
 
     _set_scan_status(cid, RESULT_PASSED)
-    return FileScanResult(cid=cid, path=path, result=RESULT_PASSED)
+    return FileScanResult(cid=cid, path=path, result=RESULT_PASSED, kind=kind)
 
 
 # --------------------------------------------------------------------------- #
@@ -504,12 +520,72 @@ def _held(
     )
 
 
+def _rendition_files(
+    entries: Sequence[Mapping[str, Any]], files: Sequence[FileScanResult]
+) -> list[dict[str, Any]]:
+    """The ``files`` of a version's rendition: its scanned manifest entries.
+
+    ``entries`` and ``files`` line up one to one (``files`` was scanned from
+    ``entries``).  The size comes from the ``blobs`` row -- the bytes this node
+    holds -- and the media type from the manifest, then the row.
+    """
+    from app.modules import content
+
+    listed: list[dict[str, Any]] = []
+    for entry, result in zip(entries, files, strict=True):
+        item: dict[str, Any] = {"cid": result.cid, "scanStatus": result.result}
+        if result.path is not None:
+            item["path"] = result.path
+        blob = content.get_blob(result.cid)
+        if blob is not None:
+            item["size"] = int(blob.size)
+        media_type = entry.get("mediaType", entry.get("media_type")) or getattr(
+            blob, "media_type", None
+        )
+        if isinstance(media_type, str) and media_type:
+            item["mediaType"] = media_type
+        role = entry.get("role")
+        if isinstance(role, str) and role:
+            item["role"] = role
+        listed.append(item)
+    return listed
+
+
+def _record_rendition(
+    version_cid: str,
+    paper_cid: object,
+    entries: Sequence[Mapping[str, Any]],
+    files: Sequence[FileScanResult],
+) -> Optional[str]:
+    """Sign and append the rendition of a version whose files all passed.
+
+    Returns the record's cid, or ``None`` when the rendition could not be
+    made.  That is logged but never raised: the files did pass, and failing
+    the job would be retried until it gave up with the version still in
+    ``scanning`` and its bytes unserved -- a worse outcome than a missing
+    provenance record.
+    """
+    try:
+        result = create_rendition(
+            version_cid,
+            _rendition_files(entries, files),
+            tool_versions(file.kind for file in files),
+            paper_cid=paper_cid if isinstance(paper_cid, str) else None,
+        )
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.exception("could not create a rendition for version %s", _show(version_cid))
+        return None
+    return result.record_cid
+
+
 def scan_version(version_cid: str) -> VersionScanResult:
     """Scan every file of a version in ``scanning`` state and move it on.
 
-    A clean version moves to ``moderation``; a version with any failing file
-    is held, with the exact failing check named in the state event's
-    ``reason`` and in the returned :class:`VersionScanResult`.
+    A clean version gets a node-signed ``rendition`` record (feature 64, see
+    :mod:`.rendition`) and moves to ``moderation``; a version with any failing
+    file is held, with the exact failing check named in the state event's
+    ``reason`` and in the returned :class:`VersionScanResult`, and gets no
+    rendition.
 
     A version that is not in ``scanning`` state is left exactly as it is
     (``result.skipped`` is true): scanning is only ever started from that
@@ -557,6 +633,11 @@ def scan_version(version_cid: str) -> VersionScanResult:
             files=files,
         )
 
+    # The rendition is signed before the move so a ``moderation`` subscriber
+    # (and a retried job, which finds it and appends nothing) already sees it.
+    rendition_cid = _record_rendition(
+        version_cid, getattr(row, "paper_cid", None), entries, files
+    )
     reason = "all files passed scanning"
     state = _move_version(version_cid, MODERATION, reason)
     return VersionScanResult(
@@ -564,6 +645,7 @@ def scan_version(version_cid: str) -> VersionScanResult:
         files=files,
         state=state,
         reason=reason,
+        rendition_cid=rendition_cid,
     )
 
 

@@ -40,6 +40,20 @@ it automatically.  Each scanned blob's ``scan_status`` is saved to the
 ``blobs`` table, a clean version moves to ``moderation`` and a version with a
 failing file is held with the exact failing check in the event's ``reason``.
 
+Feature 64 signs a ``rendition`` record for a version that passed scanning
+(see :mod:`.rendition` and :mod:`.tools`)::
+
+    result = sanitizer.scan_version(version_cid)
+    result.rendition_cid                          # the node-signed record
+
+    entry = sanitizer.rendition_for(version_cid)  # the event_log entry
+    entry.body["files"]                           # sanitized files (path, cid, ...)
+    entry.body["tools"]                           # [{"name": "pypdf", "version": ...}]
+
+The record is appended to the event log before the version moves to
+``moderation``; a held version gets none.  A node with no signing key logs the
+failure and still moves the version on (``rendition_cid`` is ``None``).
+
 The module exposes no ``router``.  Importing this package registers the
 ``ScanReport`` model on the shared declarative base before ``create_app``
 creates tables, and the module loader discovers it automatically.
@@ -55,7 +69,12 @@ from typing import Optional
 
 from fastapi import FastAPI
 
-from .errors import InvalidScanReport, SanitizerError
+from .errors import (
+    InvalidRendition,
+    InvalidScanReport,
+    RenditionKeyUnavailable,
+    SanitizerError,
+)
 from .models import (
     RESULT_FAILED,
     RESULT_PASSED,
@@ -142,6 +161,13 @@ from .bundle import (
     scan_zip_path,
     scan_zip_stream,
 )
+from .rendition import (
+    RENDITION_TYPE,
+    RenditionResult,
+    build_rendition_body,
+    create_rendition,
+    rendition_for,
+)
 from .reports import (
     delete_reports,
     first_failure,
@@ -149,6 +175,12 @@ from .reports import (
     record_finding,
     record_report,
     reports_for,
+)
+from .tools import (
+    CLAMAV_TOOL,
+    PYPDF_TOOL,
+    SANITIZER_TOOL,
+    tool_versions,
 )
 from .scan_job import (
     CHECK_FILE_MISSING,
@@ -262,6 +294,17 @@ __all__ = [
     "scan_version",
     "scan_version_job",
     "versions_in_scanning_state",
+    "CLAMAV_TOOL",
+    "InvalidRendition",
+    "PYPDF_TOOL",
+    "RENDITION_TYPE",
+    "RenditionKeyUnavailable",
+    "RenditionResult",
+    "SANITIZER_TOOL",
+    "build_rendition_body",
+    "create_rendition",
+    "rendition_for",
+    "tool_versions",
 ]
 
 

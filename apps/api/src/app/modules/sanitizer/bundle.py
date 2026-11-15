@@ -415,18 +415,34 @@ def _analyze_archive_raw(raw: bytes) -> tuple[Finding, ...]:
 # AV scan via clamd
 # ---------------------------------------------------------------------------
 
-def _clamd_scan(socket_path: str, raw: bytes) -> str:
+def _clamd_connect(socket_path: str, timeout: Optional[float] = None) -> socket.socket:
+    """Open a connection to clamd at ``socket_path`` (a unix path or ``host:port``).
+
+    ``timeout`` applies to the connect itself as well as later I/O; ``None``
+    leaves the connect blocking.
+    """
     if "/" in socket_path or os.path.exists(socket_path):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(socket_path)
+        address: Any = socket_path
+    elif ":" in socket_path:
+        host, port = socket_path.rsplit(":", 1)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        address = (host, int(port))
     else:
-        if ":" in socket_path:
-            host, port = socket_path.rsplit(":", 1)
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((host, int(port)))
-        else:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.connect(socket_path)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        address = socket_path
+    try:
+        if timeout is not None:
+            sock.settimeout(timeout)
+        sock.connect(address)
+    except BaseException:
+        sock.close()
+        raise
+    return sock
+
+
+def _clamd_scan(socket_path: str, raw: bytes) -> str:
+    sock = _clamd_connect(socket_path)
     sock.settimeout(60)
     try:
         sock.sendall(b"INSTREAM\n")

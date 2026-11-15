@@ -9,7 +9,12 @@ mistakes in the calling code.
 
 from __future__ import annotations
 
-__all__ = ["InvalidScanReport", "SanitizerError"]
+__all__ = [
+    "InvalidRendition",
+    "InvalidScanReport",
+    "RenditionKeyUnavailable",
+    "SanitizerError",
+]
 
 
 class SanitizerError(Exception):
@@ -18,3 +23,11 @@ class SanitizerError(Exception):
 
 class InvalidScanReport(SanitizerError, ValueError):
     """A scan report is missing its cid, check name or result."""
+
+
+class InvalidRendition(SanitizerError, ValueError):
+    """A rendition's body does not fit the ``rendition`` record schema."""
+
+
+class RenditionKeyUnavailable(SanitizerError, RuntimeError):
+    """This node has no usable signing key, so it cannot sign a rendition."""
