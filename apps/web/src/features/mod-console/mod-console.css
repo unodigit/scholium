@@ -284,3 +284,412 @@
     padding: calc(var(--space-unit) * 4);
   }
 }
+
+/* ---- Detail view -------------------------------------------------------- */
+
+.mc-detail {
+  width: 100%;
+}
+
+.mc-detail-header {
+  margin-bottom: calc(var(--space-unit) * 8);
+  max-width: var(--measure-reading);
+}
+
+.mc-detail-back {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.mc-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.mc-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.mc-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--corner-control);
+}
+
+/* The paper sits beside the form on a wide screen and above it on a phone. */
+.mc-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(20rem, 0.9fr);
+  align-items: start;
+  gap: calc(var(--space-unit) * 6);
+}
+
+.mc-paper-card,
+.mc-decision-card {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+}
+
+.mc-section-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mc-paper-title-lg,
+.mc-decision-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-title);
+  font-weight: var(--weight-title);
+  overflow-wrap: anywhere;
+}
+
+.mc-decision-title {
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.mc-paper-facts,
+.mc-published-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  margin: calc(var(--space-unit) * 5) 0;
+}
+
+.mc-paper-facts div,
+.mc-published-facts div {
+  min-width: 0;
+}
+
+.mc-paper-facts dt,
+.mc-published-facts dt,
+.mc-paper-fact-label {
+  margin: 0 0 var(--space-unit);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+}
+
+.mc-paper-facts dd,
+.mc-published-facts dd {
+  margin: 0;
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.mc-paper-abstract {
+  margin-top: calc(var(--space-unit) * 4);
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.mc-abstract-title {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.mc-abstract-text {
+  margin: 0;
+  max-width: var(--measure-reading);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.mc-paper-muted,
+.mc-paper-change-note {
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.mc-paper-change-note {
+  margin: calc(var(--space-unit) * 4) 0 0;
+  padding-top: calc(var(--space-unit) * 3);
+  border-top: 1px solid var(--rule);
+}
+
+.mc-paper-record {
+  margin-top: calc(var(--space-unit) * 5);
+}
+
+/* ---- Decision form ------------------------------------------------------ */
+
+.mc-decision-lede {
+  margin: calc(var(--space-unit) * 2) 0 calc(var(--space-unit) * 5);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.mc-field {
+  margin-bottom: calc(var(--space-unit) * 5);
+}
+
+.mc-label {
+  display: block;
+  margin-bottom: calc(var(--space-unit) * 1.5);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.mc-required {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 400;
+}
+
+.mc-select,
+.mc-input,
+.mc-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.mc-textarea {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+.mc-select:focus-visible,
+.mc-input:focus-visible,
+.mc-textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* An invalid field is marked by its border and by the words beneath it, not
+   by colour alone. */
+.mc-select[aria-invalid="true"],
+.mc-input[aria-invalid="true"],
+.mc-textarea[aria-invalid="true"] {
+  border-color: var(--critical);
+}
+
+.mc-hint {
+  margin: calc(var(--space-unit) * 1.5) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.mc-field-error {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 1.5);
+  margin: calc(var(--space-unit) * 1.5) 0 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.mc-field-error-icon,
+.mc-form-error-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--critical);
+}
+
+/* ---- Author preview ----------------------------------------------------- */
+
+.mc-author-preview {
+  margin: calc(var(--space-unit) * 6) 0;
+  padding: calc(var(--space-unit) * 4);
+  background: var(--accent-soft);
+  border: 1px solid var(--rule);
+  border-inline-start: 4px solid var(--accent);
+  border-radius: var(--corner-card);
+}
+
+.mc-preview-title {
+  margin: 0 0 calc(var(--space-unit) * 3);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.mc-preview-headline {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  color: var(--ink);
+}
+
+.mc-preview-reason {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mc-preview-policy,
+.mc-preview-appeal,
+.mc-preview-placeholder {
+  margin: calc(var(--space-unit) * 1.5) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- Public-record statement and actions -------------------------------- */
+
+/* The sentence docs/design.md §5.7 requires beside every decision. It is a
+   statement, not a status: accent marks the edge, the words carry it. */
+.mc-record-notice {
+  margin: calc(var(--space-unit) * 5) 0;
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-card);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+}
+
+.mc-form-error {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * 4) 0;
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  background: var(--critical-soft);
+  border: 1px solid var(--rule);
+  border-inline-start: 4px solid var(--critical);
+  border-radius: var(--corner-card);
+}
+
+.mc-form-error-text {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.mc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  margin-top: calc(var(--space-unit) * 4);
+}
+
+.mc-actions .mc-button {
+  margin-top: 0;
+}
+
+.mc-sign-hint {
+  margin: calc(var(--space-unit) * 3) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.mc-decision-card--published .mc-published-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* The title in the queue opens the detail view: keep it reading as the
+   paper's title, and let the underline say it is a link. */
+.mc-paper-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 0.15em;
+}
+
+.mc-paper-link:hover {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+
+.mc-paper-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--corner-control);
+}
+
+@media (max-width: 64rem) {
+  .mc-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mc-paper-card,
+  .mc-decision-card {
+    padding: calc(var(--space-unit) * 5);
+  }
+}
+
+@media (max-width: 40rem) {
+  .mc-paper-facts,
+  .mc-published-facts,
+  .mc-decision-card--published .mc-published-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The reason as published, read back beneath the decision's facts. */
+.mc-published-reason {
+  margin-top: calc(var(--space-unit) * 4);
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.mc-published-reason .mc-preview-reason {
+  margin-bottom: 0;
+}

@@ -15,6 +15,7 @@ import {
   accountSignal,
   formatAge,
   formatCategories,
+  modDetailHref,
   referencesSignal,
   scanSignal,
   similaritySignal,
@@ -40,7 +41,13 @@ function QueueRow({ entry }: { entry: QueueEntry }) {
   return (
     <tr className="mc-row">
       <th scope="row" className="mc-cell mc-cell-paper">
-        <span className="mc-paper-title">{entry.title}</span>
+        {/* The title opens the decision view for this version. */}
+        <a
+          className="mc-paper-title mc-paper-link"
+          href={modDetailHref(entry.versionCid)}
+        >
+          {entry.title}
+        </a>
         {entry.shortId ? (
           <span className="mc-paper-id mono-id">{entry.shortId}</span>
         ) : null}

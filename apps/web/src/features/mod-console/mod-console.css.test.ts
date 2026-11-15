@@ -87,6 +87,39 @@ describe("mod-console.css", () => {
   });
 });
 
+describe("mod-console.css detail view", () => {
+  it("puts the paper and the decision form side by side, stacking on a narrow screen", () => {
+    expect(feature).toMatch(/\.mc-detail-grid\s*\{[^}]*display:\s*grid/);
+    expect(feature).toMatch(/\.mc-detail-grid\s*\{[^}]*grid-template-columns/);
+    expect(feature).toMatch(
+      /@media \(max-width: 64rem\)\s*\{[^}]*\.mc-detail-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    );
+  });
+
+  it("sizes form controls to the 44px touch target and gives them a focus ring", () => {
+    expect(feature).toMatch(
+      /\.mc-select,\s*\.mc-input,\s*\.mc-textarea\s*\{[^}]*min-height:\s*44px/,
+    );
+    expect(feature).toMatch(
+      /\.mc-select:focus-visible,\s*\.mc-input:focus-visible,\s*\.mc-textarea:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--focus-ring\)/,
+    );
+  });
+
+  it("marks validation with words and an icon, not colour alone", () => {
+    expect(feature).toMatch(/\.mc-field-error\s*\{[^}]*color:\s*var\(--ink\)/);
+    expect(feature).toMatch(
+      /\.mc-field-error-icon[^{]*\{[^}]*color:\s*var\(--critical\)/,
+    );
+  });
+
+  it("states the public-record sentence in accent, not in a human status colour", () => {
+    expect(feature).toMatch(
+      /\.mc-record-notice\s*\{[^}]*border:\s*1px solid var\(--accent\)/,
+    );
+    expect(feature).not.toMatch(/\.mc-record-notice[^}]*var\(--(verified|pending|critical)\)/);
+  });
+});
+
 describe("app/(mod-console)/mod-console.css", () => {
   it("gives the seven-column table more room than the reading column", () => {
     expect(shell).toMatch(/\.mc-shell\s*\{[^}]*max-width:\s*72rem/);

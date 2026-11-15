@@ -29,6 +29,21 @@ export const MOD_TITLE = "Moderation console";
 /** Sign-in, returning to the console afterwards (`?next=` is read by /signin). */
 export const SIGNIN_HREF = `/signin?next=${encodeURIComponent(MOD_PATH)}`;
 
+/**
+ * The decision detail view for one version: `/mod/{versionCid}`.
+ *
+ * `encodeURIComponent` keeps the path a single segment whatever the record id
+ * contains; a CIDv1 is already URL-safe, but nothing here assumes it.
+ */
+export function modDetailHref(versionCid: string): string {
+  return `${MOD_PATH}/${encodeURIComponent(versionCid)}`;
+}
+
+/** Sign-in returning to a version's detail view after the prompt. */
+export function modDetailSignInHref(versionCid: string): string {
+  return `/signin?next=${encodeURIComponent(modDetailHref(versionCid))}`;
+}
+
 /** The trust tier the API requires to read the queue. */
 export const MODERATOR_TIER = 4;
 

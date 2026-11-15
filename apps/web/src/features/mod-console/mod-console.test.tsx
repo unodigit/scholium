@@ -113,6 +113,16 @@ describe("ModConsole queue table", () => {
     expect(cells.getByText("New account")).toBeTruthy();
   });
 
+  it("opens a version's decision view from its title", async () => {
+    render(<ModConsole signedIn loadQueue={async () => [entry()]} />);
+
+    await screen.findByRole("table");
+    const link = within(dataRows()[0]).getByRole("link", {
+      name: "Sparse attention without the quadratic cost",
+    });
+    expect(link.getAttribute("href")).toBe("/mod/bafy-version-1");
+  });
+
   it("shows a failed scan, a clean reference count and an established account", async () => {
     render(
       <ModConsole

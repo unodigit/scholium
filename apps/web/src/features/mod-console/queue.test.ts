@@ -12,6 +12,8 @@ import {
   formatCategories,
   formatSimilarity,
   loadQueue,
+  modDetailHref,
+  modDetailSignInHref,
   parseQueue,
   parseScanResult,
   referencesSignal,
@@ -387,5 +389,18 @@ describe("loadQueue", () => {
 describe("SIGNIN_HREF", () => {
   it("sends a visitor to sign in and back to the console", () => {
     expect(SIGNIN_HREF).toBe("/signin?next=%2Fmod");
+  });
+});
+
+describe("modDetailHref", () => {
+  it("addresses one version inside /mod, escaping anything path-unsafe", () => {
+    expect(modDetailHref("bafyversion")).toBe("/mod/bafyversion");
+    expect(modDetailHref("a/b?c")).toBe("/mod/a%2Fb%3Fc");
+  });
+
+  it("sends a visitor back to the same paper after signing in", () => {
+    expect(modDetailSignInHref("bafyversion")).toBe(
+      "/signin?next=%2Fmod%2Fbafyversion",
+    );
   });
 });

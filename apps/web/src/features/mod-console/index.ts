@@ -12,8 +12,8 @@
  * <ModConsole />
  * ```
  *
- * Later console views (the decision detail, flags and appeals) are added to
- * this feature and link from the queue rows.
+ * Later console views (flags and appeals) are added to this feature and link
+ * from the queue rows or the detail view.
  */
 
 export {
@@ -30,6 +30,8 @@ export {
   formatCategories,
   formatSimilarity,
   loadQueue,
+  modDetailHref,
+  modDetailSignInHref,
   parseQueue,
   parseScanResult,
   referencesSignal,
@@ -49,3 +51,58 @@ export {
   type LoadQueue,
   type ModConsoleProps,
 } from "./mod-console";
+
+export {
+  DECISIONS_ENDPOINT,
+  DECISION_ACTIONS,
+  DECISION_ACTION_LABELS,
+  DECISION_RECORD_TYPE,
+  DecisionDraftError,
+  EMPTY_DECISION_DRAFT,
+  ModerationPaperError,
+  PAPER_SIGNED_OUT_FAILURE,
+  PUBLIC_RECORD_NOTICE,
+  RECORDS_ENDPOINT,
+  SIGN_DECISION_REASON,
+  authorPreview,
+  buildDecisionBody,
+  classifyPaperError,
+  describeDecisionError,
+  isDecisionAction,
+  loadDecisionClauses,
+  loadModeratedPaper,
+  parseDecisionAccepted,
+  parseVersionRecord,
+  shortenDid,
+  signModerationDecision,
+  submitModerationDecision,
+  validateDecisionDraft,
+  type AuthorPreview,
+  type DecisionAccepted,
+  type DecisionAction,
+  type DecisionBody,
+  type DecisionClient,
+  type DecisionDraft,
+  type DecisionField,
+  type DecisionSigner,
+  type DecisionSubmitter,
+  type DecisionValidation,
+  type ModeratedPaper,
+  type PaperAuthor,
+  type PaperClient,
+  type PaperFailure,
+} from "./decision";
+
+export {
+  DecisionForm,
+  stateLabel,
+  type DecisionFormProps,
+} from "./decision-form";
+
+export {
+  ModDetail,
+  PaperPane,
+  type LoadClauses,
+  type LoadPaper,
+  type ModDetailProps,
+} from "./mod-detail";
