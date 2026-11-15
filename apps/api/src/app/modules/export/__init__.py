@@ -11,6 +11,11 @@ mirror the public catalog without understanding Scholium's signed records; see
 :mod:`app.modules.export.oai` for the protocol surface and
 :mod:`app.modules.export.records` for what a record describes.
 
+Feature 90: ``GET /v1/papers/{id}/cite?format=bibtex|ris`` returns a citation
+for a paper -- BibTeX or RIS -- that names the ``sch:`` version id and carries a
+retraction note when the paper is retracted; see :mod:`app.modules.export.cite`
+for the route and :mod:`app.modules.export.citation` for what a citation holds.
+
 The module loader discovers packages under ``app.modules`` automatically and
 mounts the ``router`` exported here under ``/v1``.  There is no other wiring.
 """
@@ -19,6 +24,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from .cite import router as _cite_router
 from .oai import router as _oai_router
 from .paper_car import router as _paper_car_router
 from .user_car import router as _user_car_router
@@ -27,6 +33,7 @@ __all__ = ["router"]
 
 #: Mounted under ``/v1`` by the module loader.  One sub-router per endpoint.
 router = APIRouter()
+router.include_router(_cite_router)
 router.include_router(_oai_router)
 router.include_router(_paper_car_router)
 router.include_router(_user_car_router)
