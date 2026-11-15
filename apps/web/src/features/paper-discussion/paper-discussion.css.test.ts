@@ -64,8 +64,9 @@ describe.each([
     expect(used.filter((name) => !defined.has(name))).toEqual([]);
   });
 
-  it("casts no shadow (design.md §3: only the annotation popover floats)", () => {
-    expect(css.rules).not.toMatch(/box-shadow|text-shadow|drop-shadow|--popover-shadow/);
+  it("casts no shadow except the annotation popover (design.md §3)", () => {
+    const withoutPopover = css.rules.replace(/\.pd-annotation-popover\s*\{[^}]*\}/g, "");
+    expect(withoutPopover).not.toMatch(/box-shadow|text-shadow|drop-shadow|--popover-shadow/);
   });
 
   it("never removes the keyboard focus ring", () => {

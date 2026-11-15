@@ -489,3 +489,132 @@
     border-color: CanvasText;
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Margin markers and paragraph annotations (feature 150)                       */
+/* -------------------------------------------------------------------------- */
+
+.pd-annotations {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+}
+
+.pd-reading {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+}
+
+.pd-paragraph-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--space-unit) * 12);
+  gap: calc(var(--space-unit) * 3);
+  align-items: start;
+}
+
+.pd-paragraph {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  color: var(--ink);
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.pd-paragraph--selected {
+  background-color: var(--selection);
+}
+
+.pd-paragraph:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+
+.pd-margin {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  align-items: center;
+  min-block-size: calc(var(--space-unit) * 11);
+}
+
+.pd-margin-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-unit) * 1);
+  min-block-size: calc(var(--space-unit) * 11);
+  min-inline-size: calc(var(--space-unit) * 11);
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background-color: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.pd-margin-marker:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pd-margin-marker__dot {
+  display: inline-block;
+  inline-size: calc(var(--space-unit) * 2);
+  block-size: calc(var(--space-unit) * 2);
+  border-radius: 999px;
+  background-color: var(--accent);
+}
+
+.pd-margin-marker__count {
+  font-family: var(--family-mono);
+  font-size: var(--type-meta);
+}
+
+.pd-annotation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.pd-annotation {
+  margin: 0;
+  padding: calc(var(--space-unit) * 2);
+  border-inline-start: 2px solid var(--rule);
+  color: var(--ink);
+}
+
+.pd-annotation__quote {
+  margin: 0 0 calc(var(--space-unit) * 1);
+  font-style: italic;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.pd-annotation__text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.pd-annotation-popover {
+  position: fixed;
+  inset-block-end: calc(var(--space-unit) * 4);
+  inset-inline-end: calc(var(--space-unit) * 4);
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--popover-shadow);
+  z-index: 50;
+  max-inline-size: calc(var(--space-unit) * 80);
+}
+
+.pd-annotation-popover__label {
+  font-weight: 600;
+}
