@@ -18,12 +18,14 @@ __all__ = [
     "INVALID_RECOVERY_REQUEST_TYPE",
     "RECOVERY_ACCOUNT_NOT_FOUND_TYPE",
     "RECOVERY_GUARDIANS_NOT_SET_TYPE",
+    "RECOVERY_REQUEST_NOT_FOUND_TYPE",
     "guardians_required",
     "invalid_guardians",
     "invalid_key_rotation",
     "invalid_recovery_request",
     "recovery_account_not_found",
     "recovery_guardians_not_set",
+    "recovery_request_not_found",
 ]
 
 #: Problem type for a submission by an account that has not set its guardians.
@@ -43,6 +45,9 @@ RECOVERY_ACCOUNT_NOT_FOUND_TYPE = "urn:scholium:problem:recovery-account-not-fou
 
 #: Problem type for a recovery request against an account with no guardians to ask.
 RECOVERY_GUARDIANS_NOT_SET_TYPE = "urn:scholium:problem:recovery-guardians-not-set"
+
+#: Problem type for a recovery request id that does not exist.
+RECOVERY_REQUEST_NOT_FOUND_TYPE = "urn:scholium:problem:recovery-request-not-found"
 
 
 def guardians_required(required: int) -> Any:
@@ -133,4 +138,15 @@ def recovery_guardians_not_set(required: int) -> Any:
         409,
         f"That account has not set its {required} recovery guardians, so there is nobody to approve a recovery.",
         type=RECOVERY_GUARDIANS_NOT_SET_TYPE,
+    )
+
+
+def recovery_request_not_found() -> Any:
+    """The ``404`` raised when no recovery request has the given id."""
+    from app.errors import ProblemException
+
+    return ProblemException(
+        404,
+        "No recovery request with that id.",
+        type=RECOVERY_REQUEST_NOT_FOUND_TYPE,
     )

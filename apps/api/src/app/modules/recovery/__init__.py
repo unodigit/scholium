@@ -49,6 +49,13 @@ from .opening import (
     normalize_orcid,
     open_recovery_request,
 )
+from .approvals import (
+    APPROVAL_THRESHOLD,
+    CONTEST_WINDOW,
+    ApprovalResult,
+    approve_recovery_request,
+    get_approval_count,
+)
 from .problems import (
     GUARDIANS_REQUIRED_TYPE,
     INVALID_GUARDIANS_TYPE,
@@ -80,6 +87,9 @@ router.include_router(requests_router)
 register(KEY_ROTATION_TYPE, handle_key_rotation, min_tier=0)
 
 __all__ = [
+    "APPROVAL_THRESHOLD",
+    "CONTEST_WINDOW",
+    "ApprovalResult",
     "GUARDIANS_REQUIRED_TYPE",
     "GUARDIAN_COUNT",
     "Guardian",
@@ -102,6 +112,8 @@ __all__ = [
     "RecoveryRequestIn",
     "UnknownAccount",
     "apply_rotation",
+    "approve_recovery_request",
+    "get_approval_count",
     "ensure_guardians_set",
     "ensure_requests_table",
     "ensure_table",

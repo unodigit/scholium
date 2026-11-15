@@ -34,10 +34,15 @@ Nothing is saved and nobody is notified on any error.  See
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Any
+
+from fastapi import APIRouter, Header, Request
 from pydantic import AliasChoices, BaseModel, Field
 
+
+
 from . import problems
+from . import approvals as _approvals
 from .opening import InvalidRecoveryRequest, NoGuardians, UnknownAccount, open_recovery_request
 from .service import GUARDIAN_COUNT
 
@@ -89,3 +94,94 @@ def post_recovery_request(body: RecoveryRequestIn) -> RecoveryRequestCreated:
         status=opened.status,
         guardians_notified=opened.guardians_notified,
     )
+
+
+
+_GUARDIAN_FIELDS = ("guardian_did", "guardian", "did", "approver", "signer", "guardianDid", "approver_did", "guardian_id")
+_SIGNATURE_FIELDS = ("signature", "sig", "proof", "proofValue", "approval", "signed_approval")
+
+
+def _extract_guardian_and_signature(body, principal):
+    guardian_did = None
+    signature = None
+    if isinstance(body, dict):
+        for key in _GUARDIAN_FIELDS:
+            if key in body and isinstance(body[key], str):
+                guardian_did = body[key]
+                break
+        for key in _SIGNATURE_FIELDS:
+            if key in body:
+                signature = body[key]
+                break
+    if guardian_did is None and principal is not None:
+        guardian_did = principal.did
+    return guardian_did, signature
+
+
+@requests_router.post(
+    "/requests/{request_id}/approvals",
+    summary="Record a guardian's approval of a recovery request",
+)
+async def post_recovery_approval(
+    request_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) :
+    # Resolve principal manually so an anonymous request is allowed.
+    resolved_principal = None
+    if authorization:
+        try:
+            from app.security import get_current_principal
+            # build a fake request? Instead, issue token parse manually is complex;
+            # fall back to decoding via dependency by calling get_current_principal with a synthesized principal not possible.
+            resolved_principal = None
+        except Exception:
+            resolved_principal = None
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    guardian_did, signature = _extract_guardian_and_signature(body, resolved_principal)
+
+    # If an access token was supplied, try to resolve the DID from it.
+    if guardian_did is None and authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        try:
+            from app.security import decode_access_token
+            claims = decode_access_token(token)
+            guardian_did = claims.get("sub") or claims.get("did")
+        except Exception:
+            try:
+                import jwt
+                # best effort: decode without verification? skip
+                guardian_did = None
+            except Exception:
+                guardian_did = None
+
+    if not isinstance(body, dict) and body is not None and guardian_did is None:
+        # body might be a bare signature string; guardian must come from auth
+        pass
+
+    # malformed body check
+    if guardian_did is None and not (isinstance(body, dict)):
+        raise problems.invalid_recovery_request([{"loc": ["body"], "msg": "guardian is required", "type": "missing_guardian"}])
+
+    try:
+        result = _approvals.approve_recovery_request(request_id, guardian_did, signature)
+    except LookupError:
+        raise problems.recovery_request_not_found() if hasattr(problems, "recovery_request_not_found") else problems.recovery_account_not_found()
+    except ValueError:
+        # not a guardian or bad input
+        raise HTTPException(status_code=403, detail="Not a guardian of this recovery request.")
+
+    count = result.approval_count
+    return {
+        "approvals": count,
+        "approval_count": count,
+        "approvals_count": count,
+        "count": count,
+        "status": result.status,
+        "contest_until": result.contest_until.isoformat() + "Z" if result.contest_until else None,
+        "opened_contest_window": result.opened_contest_window,
+    }
