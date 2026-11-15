@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/erasure.request.json",
+  "title": "erasure.request record body",
+  "description": "A data-subject erasure request naming the content CIDs to crypto-shred and its legal basis.",
+  "type": "object",
+  "required": ["basis"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["content"]},
+        {"required": ["cids"]}
+      ]
+    }
+  ],
+  "properties": {
+    "content": {
+      "anyOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      ],
+      "description": "Content CIDs covered by the request."
+    },
+    "cids": {
+      "anyOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      ]
+    },
+    "basis": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Legal basis, e.g. GDPR Article 17."
+    },
+    "did": {
+      "type": "string",
+      "pattern": "^did:[a-z0-9]+:.+$"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

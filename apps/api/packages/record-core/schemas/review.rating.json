@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/review.rating.json",
+  "title": "review.rating record body",
+  "description": "A tier-3 member rates the quality of a revealed review from 1 to 5.",
+  "type": "object",
+  "required": ["rating"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["review"]},
+        {"required": ["reviewCid"]}
+      ]
+    }
+  ],
+  "properties": {
+    "review": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the review being rated."
+    },
+    "reviewCid": {
+      "$ref": "#/$defs/cid"
+    },
+    "rating": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "noteCid": {
+      "$ref": "#/$defs/cid"
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

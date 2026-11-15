@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/moderation.decision.json",
+  "title": "moderation.decision record body",
+  "description": "A moderator's public, signed decision on a version. The action must reference a known policy clause and a reason.",
+  "type": "object",
+  "required": ["target", "action", "clause"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["reason"]},
+        {"required": ["reasonCid"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the version or record being decided on."
+    },
+    "action": {
+      "type": "string",
+      "enum": ["list", "hold", "reclassify", "reject", "delist"]
+    },
+    "clause": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Policy clause id from the moderation policy list."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reason shown to the author and published with the decision."
+    },
+    "reasonCid": {
+      "$ref": "#/$defs/cid"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "description": "New category for a reclassify decision."
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

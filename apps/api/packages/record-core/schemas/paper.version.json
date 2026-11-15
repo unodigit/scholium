@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/paper.version.json",
+  "title": "paper.version record body",
+  "description": "A new version of an existing paper. prev points at the previous version and n is its position in the version chain.",
+  "type": "object",
+  "required": [
+    "paper",
+    "n",
+    "title",
+    "abstract",
+    "authors",
+    "manifest",
+    "licence",
+    "changeNote"
+  ],
+  "properties": {
+    "paper": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the paper.genesis record."
+    },
+    "n": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version number, starting at 1."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "abstract": {
+      "type": "string"
+    },
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "anyOf": [
+          {"$ref": "#/$defs/did"},
+          {"$ref": "#/$defs/author"}
+        ]
+      }
+    },
+    "manifest": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the manifest record listing this version's files."
+    },
+    "licence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "changeNote": {
+      "type": "string",
+      "description": "What changed in this version, shown in the version timeline."
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "keywords": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "did": {
+      "type": "string",
+      "pattern": "^did:[a-z0-9]+:.+$"
+    },
+    "author": {
+      "type": "object",
+      "required": ["did"],
+      "properties": {
+        "did": {"$ref": "#/$defs/did"},
+        "name": {"type": "string"},
+        "orcid": {"type": ["string", "null"]},
+        "affiliation": {"type": "string"},
+        "credit": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "creditRoles": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "corresponding": {"type": "boolean"},
+        "position": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "additionalProperties": true
+}

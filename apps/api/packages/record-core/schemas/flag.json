@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/flag.json",
+  "title": "flag record body",
+  "description": "A member flags a paper, post or review for moderation with a reason category.",
+  "type": "object",
+  "required": ["target"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["reason"]},
+        {"required": ["category"]},
+        {"required": ["reasonCategory"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the flagged paper, post, review or version."
+    },
+    "targetType": {
+      "type": "string",
+      "enum": ["paper", "version", "post", "review", "discussion.post"]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reason category, e.g. spam, harassment, plagiarism or copyright."
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reasonCategory": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detail": {
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

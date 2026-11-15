@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/endorsement.json",
+  "title": "endorsement record body",
+  "description": "A tier-3 endorser vouches that a DID may submit in a category until an expiry date.",
+  "type": "object",
+  "required": ["endorsee", "category"],
+  "properties": {
+    "endorsee": {
+      "type": "string",
+      "pattern": "^did:[a-z0-9]+:.+$",
+      "description": "DID being endorsed."
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expiry": {
+      "type": ["string", "null"],
+      "description": "Endorsement expiry as an ISO 8601 timestamp, or null for no expiry."
+    },
+    "statement": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/appeal.json",
+  "title": "appeal record body",
+  "description": "An author or affected party appeals a moderation decision once, stating the grounds.",
+  "type": "object",
+  "required": ["target", "grounds"],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the moderation.decision being appealed."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "decision": {
+      "$ref": "#/$defs/cid"
+    },
+    "grounds": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

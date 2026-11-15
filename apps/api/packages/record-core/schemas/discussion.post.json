@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/discussion.post.json",
+  "title": "discussion.post record body",
+  "description": "A thread post, reply or inline annotation. anchor is either a paper/version record id or a paragraph anchor object.",
+  "type": "object",
+  "required": ["target", "anchor"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["textCid"]},
+        {"required": ["text"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id being discussed: a paper.version for threads or a paper.genesis for general posts."
+    },
+    "anchor": {
+      "anyOf": [
+        {"$ref": "#/$defs/cid"},
+        {
+          "type": "object",
+          "required": ["quote", "offset"],
+          "allOf": [
+            {
+              "anyOf": [
+                {"required": ["version"]},
+                {"required": ["versionCid"]}
+              ]
+            },
+            {
+              "anyOf": [
+                {"required": ["paragraph_id"]},
+                {"required": ["paragraphId"]}
+              ]
+            }
+          ],
+          "properties": {
+            "version": {"$ref": "#/$defs/cid"},
+            "versionCid": {"$ref": "#/$defs/cid"},
+            "paragraph_id": {"type": "string", "minLength": 1},
+            "paragraphId": {"type": "string", "minLength": 1},
+            "quote": {"type": "string"},
+            "offset": {
+              "anyOf": [
+                {"type": "integer", "minimum": 0},
+                {
+                  "type": "object",
+                  "properties": {
+                    "start": {"type": "integer", "minimum": 0},
+                    "end": {"type": "integer", "minimum": 0}
+                  },
+                  "additionalProperties": true
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "textCid": {
+      "$ref": "#/$defs/cid",
+      "description": "Content id of the post body."
+    },
+    "text": {
+      "type": "string",
+      "description": "Inline post body when it is small enough to carry directly."
+    },
+    "parent": {
+      "type": ["string", "null"],
+      "description": "Record id of the parent post, or null for a new thread."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/manifest.json",
+  "title": "manifest record body",
+  "description": "The signed file list of a paper version. Each entry names a path, raw file CID, byte size, media type and role.",
+  "type": "object",
+  "required": ["files"],
+  "properties": {
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "cid", "size", "mediaType", "role"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$",
+            "description": "Relative path inside the submission; no absolute paths or '..' segments."
+          },
+          "cid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Raw-codec CIDv1 of the file bytes."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Byte length of the file."
+          },
+          "mediaType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "description": "manuscript, figure, table, code, data or supplementary."
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

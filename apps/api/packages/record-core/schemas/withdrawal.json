@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/withdrawal.json",
+  "title": "withdrawal record body",
+  "description": "A signed withdrawal notice. The reason is shown alongside every version.",
+  "type": "object",
+  "required": ["target"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["reason"]},
+        {"required": ["reasonCid"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the paper or version being withdrawn."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reasonCid": {
+      "$ref": "#/$defs/cid"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

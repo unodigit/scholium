@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/correction.json",
+  "title": "correction record body",
+  "description": "A signed correction notice shown on every version. replacement optionally points at the corrected version.",
+  "type": "object",
+  "required": ["target"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["reason"]},
+        {"required": ["reasonCid"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the paper or version being corrected."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reasonCid": {
+      "$ref": "#/$defs/cid"
+    },
+    "replacement": {
+      "type": ["string", "null"],
+      "description": "Record id of the corrected version, if any."
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

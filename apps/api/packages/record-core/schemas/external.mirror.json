@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/external.mirror.json",
+  "title": "external.mirror record body",
+  "description": "A node-signed mirror of an external preprint (arXiv or Zenodo), unclaimed until an author signs a paper.version that references it.",
+  "type": "object",
+  "required": ["source", "metadata", "manifest"],
+  "properties": {
+    "source": {
+      "anyOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "properties": {
+            "kind": {"type": "string"},
+            "id": {"type": "string"},
+            "url": {"type": "string"}
+          },
+          "additionalProperties": true
+        }
+      ],
+      "description": "External identifier, e.g. 'arXiv:2401.00001' or {kind, id}."
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "abstract": {"type": "string"},
+        "authors": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {"type": "string"},
+              {"type": "object"}
+            ]
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "doi": {"type": "string"},
+        "arxivId": {"type": "string"},
+        "published": {"type": "string"},
+        "url": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "manifest": {
+      "$ref": "#/$defs/cid"
+    },
+    "claimed": {
+      "type": "boolean",
+      "description": "False until an author claims the import."
+    },
+    "licence": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

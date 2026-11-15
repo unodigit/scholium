@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/review.formal.json",
+  "title": "review.formal record body",
+  "description": "A revealed formal review. Rubric scores for soundness, evidence, reproducibility, novelty, clarity and limitations are mandatory; each may carry a justification.",
+  "type": "object",
+  "required": ["target", "scores", "confidence", "recommendation"],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the reviewed paper.version."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "scores": {
+      "type": "object",
+      "required": [
+        "soundness",
+        "evidence",
+        "reproducibility",
+        "novelty",
+        "clarity",
+        "limitations"
+      ],
+      "properties": {
+        "soundness": {"$ref": "#/$defs/rubricScore"},
+        "evidence": {"$ref": "#/$defs/rubricScore"},
+        "reproducibility": {"$ref": "#/$defs/rubricScore"},
+        "novelty": {"$ref": "#/$defs/rubricScore"},
+        "clarity": {"$ref": "#/$defs/rubricScore"},
+        "limitations": {"$ref": "#/$defs/rubricScore"}
+      },
+      "additionalProperties": true
+    },
+    "confidence": {
+      "anyOf": [
+        {"type": "integer", "minimum": 1, "maximum": 5},
+        {
+          "type": "string",
+          "enum": ["low", "medium", "high", "Low", "Medium", "High"]
+        }
+      ]
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": [
+        "sound",
+        "sound_as_is",
+        "sound as is",
+        "Sound as is",
+        "accept",
+        "accept_as_is",
+        "minor_revisions",
+        "minor_revision",
+        "minor revisions",
+        "Minor revisions",
+        "major_concerns",
+        "major_revision",
+        "major concerns",
+        "Major concerns",
+        "fundamentally_flawed",
+        "fundamentally flawed",
+        "Fundamentally flawed",
+        "reject"
+      ]
+    },
+    "report": {
+      "type": "string",
+      "description": "Review report text, when carried inline."
+    },
+    "reportCid": {
+      "$ref": "#/$defs/cid",
+      "description": "Content id of the review report."
+    },
+    "coi": {
+      "type": ["object", "boolean", "null"],
+      "description": "Conflict-of-interest declaration."
+    },
+    "escrow": {
+      "type": ["object", "string", "null"],
+      "description": "Sealed reviewer identity escrow."
+    },
+    "commitment": {
+      "type": "string",
+      "description": "Commitment from the matching review.commit record."
+    },
+    "signed": {
+      "type": "boolean",
+      "description": "Whether the reviewer signs the review with their name."
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rubricScore": {
+      "anyOf": [
+        {"type": "integer", "minimum": 1, "maximum": 5},
+        {
+          "type": "object",
+          "required": ["score"],
+          "properties": {
+            "score": {"type": "integer", "minimum": 1, "maximum": 5},
+            "justification": {"type": "string"}
+          },
+          "additionalProperties": true
+        }
+      ]
+    }
+  },
+  "additionalProperties": true
+}

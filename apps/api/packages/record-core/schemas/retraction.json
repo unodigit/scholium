@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/retraction.json",
+  "title": "retraction record body",
+  "description": "A signed retraction notice. The reason is shown in a banner on every version; replacement optionally points at a replacement paper or version.",
+  "type": "object",
+  "required": ["target"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["reason"]},
+        {"required": ["reasonCid"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the paper or version being retracted."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reasonCid": {
+      "$ref": "#/$defs/cid"
+    },
+    "replacement": {
+      "type": ["string", "null"],
+      "description": "Record id of the replacement paper or version, if any."
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

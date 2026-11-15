@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/coauthor.consent.json",
+  "title": "coauthor.consent record body",
+  "description": "A listed co-author accepts or declines authorship of a specific paper version.",
+  "type": "object",
+  "required": ["role", "decision"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["version"]},
+        {"required": ["versionCid"]}
+      ]
+    }
+  ],
+  "properties": {
+    "version": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the paper.version being consented to."
+    },
+    "versionCid": {
+      "$ref": "#/$defs/cid"
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The CRediT role the co-author is accepting."
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["accept", "decline"]
+    },
+    "comment": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

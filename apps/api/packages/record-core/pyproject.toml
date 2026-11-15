@@ -17,3 +17,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scholium_record_core"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "scholium_record_core/record_schemas"

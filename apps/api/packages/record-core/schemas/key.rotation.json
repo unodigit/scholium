@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/key.rotation.json",
+  "title": "key.rotation record body",
+  "description": "A key rotation signed by the old key, or a social-recovery rotation carrying guardian approvals.",
+  "type": "object",
+  "required": ["newKey"],
+  "properties": {
+    "oldKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The DID or public key being rotated out."
+    },
+    "newKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The DID or public key becoming active."
+    },
+    "recoveryProof": {
+      "type": ["object", "array", "string"],
+      "description": "Guardian approvals for a social-recovery rotation."
+    },
+    "reason": {
+      "type": "string"
+    },
+    "effectiveAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": true
+}

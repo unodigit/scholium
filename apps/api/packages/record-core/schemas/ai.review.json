@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/ai.review.json",
+  "title": "ai.review record body",
+  "description": "A node-signed advisory AI pre-review: the agents and model versions that ran, the prompt-set hash and evidence-backed findings.",
+  "type": "object",
+  "required": ["target", "agents", "models"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["promptSetHash"]},
+        {"required": ["prompt_set_hash"]}
+      ]
+    },
+    {
+      "anyOf": [
+        {"required": ["findings"]},
+        {"required": ["findingsCid"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the reviewed paper.version."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "anyOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "role": {"type": "string"},
+              "model": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "anyOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "version": {"type": "string"},
+              "provider": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
+    "promptSetHash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "sha256 of the prompt set used for the run."
+    },
+    "prompt_set_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
+    },
+    "findingsCid": {
+      "$ref": "#/$defs/cid"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {"type": "string"},
+          {"type": "object"}
+        ]
+      }
+    },
+    "advisory": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "finding": {
+      "type": "object",
+      "required": ["claim", "evidence"],
+      "properties": {
+        "id": {"type": "string"},
+        "agent": {"type": "string"},
+        "claim": {"type": "string", "minLength": 1},
+        "severity": {
+          "type": "string",
+          "enum": ["info", "low", "medium", "high", "critical"]
+        },
+        "confidence": {
+          "anyOf": [
+            {"type": "number", "minimum": 0, "maximum": 1},
+            {"type": "integer", "minimum": 1, "maximum": 5}
+          ]
+        },
+        "evidence": {
+          "anyOf": [
+            {"type": "string"},
+            {
+              "type": "object",
+              "anyOf": [
+                {"required": ["span"]},
+                {"required": ["reference_id"]},
+                {"required": ["referenceId"]},
+                {"required": ["log_line"]},
+                {"required": ["logLine"]}
+              ],
+              "properties": {
+                "span": {"type": "string"},
+                "paragraph_id": {"type": "string"},
+                "reference_id": {"type": "string"},
+                "referenceId": {"type": "string"},
+                "log_line": {
+                  "anyOf": [{"type": "string"}, {"type": "integer"}]
+                },
+                "logLine": {
+                  "anyOf": [{"type": "string"}, {"type": "integer"}]
+                }
+              },
+              "additionalProperties": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

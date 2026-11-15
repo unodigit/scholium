@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/paper.genesis.json",
+  "title": "paper.genesis record body",
+  "description": "First record of a paper. Establishes the paper seed, title, categories, licence and initial author list; the envelope author signs it.",
+  "type": "object",
+  "required": ["title", "categories", "licence"],
+  "properties": {
+    "seed": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Client-generated seed used to derive the paper id."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "abstract": {
+      "type": "string"
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    "licence": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SPDX-style licence identifier, e.g. CC-BY-4.0."
+    },
+    "keywords": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "anyOf": [
+          {"$ref": "#/$defs/did"},
+          {"$ref": "#/$defs/author"}
+        ]
+      }
+    },
+    "manifest": {
+      "$ref": "#/$defs/cid"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Content identifier of a record or file."
+    },
+    "did": {
+      "type": "string",
+      "pattern": "^did:[a-z0-9]+:.+$"
+    },
+    "author": {
+      "type": "object",
+      "required": ["did"],
+      "properties": {
+        "did": {"$ref": "#/$defs/did"},
+        "name": {"type": "string"},
+        "orcid": {"type": ["string", "null"]},
+        "affiliation": {"type": "string"},
+        "credit": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "creditRoles": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "corresponding": {"type": "boolean"},
+        "position": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "additionalProperties": true
+}

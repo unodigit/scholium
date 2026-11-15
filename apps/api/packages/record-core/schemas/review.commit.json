@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/review.commit.json",
+  "title": "review.commit record body",
+  "description": "A reviewer seals a review before revealing it. The commitment binds the eventual review.formal, the per-paper review key and the reviewer's nullifier.",
+  "type": "object",
+  "required": ["target", "nullifier"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["commitment"]},
+        {"required": ["commitmentHash"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the paper.version under review."
+    },
+    "paper": {
+      "$ref": "#/$defs/cid"
+    },
+    "commitment": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Hash commitment to the sealed review content."
+    },
+    "commitmentHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Public per-paper review key the revealed review is signed with."
+    },
+    "review_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nullifier": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Uniqueness nullifier proving one review per reviewer per paper."
+    },
+    "committedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}

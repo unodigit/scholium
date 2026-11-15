@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scholium.network/schemas/appeal.decision.json",
+  "title": "appeal.decision record body",
+  "description": "A node-signed decision by an appeal panel, with an outcome and reasons.",
+  "type": "object",
+  "required": ["target", "outcome"],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["reasons"]},
+        {"required": ["reason"]}
+      ]
+    }
+  ],
+  "properties": {
+    "target": {
+      "$ref": "#/$defs/cid",
+      "description": "Record id of the appeal being decided."
+    },
+    "appeal": {
+      "$ref": "#/$defs/cid"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "upheld",
+        "overturned",
+        "modified",
+        "remanded",
+        "granted",
+        "grant",
+        "denied",
+        "deny",
+        "allowed",
+        "dismissed"
+      ]
+    },
+    "reasons": {
+      "anyOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      ]
+    },
+    "reason": {
+      "anyOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      ]
+    },
+    "votes": {
+      "type": "array",
+      "items": {"type": "object"}
+    }
+  },
+  "$defs": {
+    "cid": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true
+}
