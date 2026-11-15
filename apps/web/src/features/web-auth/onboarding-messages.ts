@@ -1,0 +1,141 @@
+/**
+ * Plain-language copy for the `/onboarding` page.
+ *
+ * Wording follows `docs/design.md` §8: short sentences, no "token", "hash"
+ * or "CID", and the guardians requirement is stated as a fact to act on
+ * ("required before your first submission"), not an alarm. Step titles and
+ * summaries live with the step model in `onboarding.ts`.
+ */
+
+import { ApiError, NetworkError } from "../../lib/api";
+
+import { GuardianSaveError, OnboardingError } from "./onboarding";
+
+/** Lede under the page title. */
+export const ONBOARDING_LEDE = "A few quick steps and you're ready to read and publish.";
+
+/** Passkey step, done. */
+export const ONBOARDING_PASSKEY_DONE =
+  "Passkey created on this device. Your key never leaves it.";
+
+/** Passkey step, not done (the visitor has not signed in here). */
+export const ONBOARDING_PASSKEY_MISSING =
+  "No passkey on this device yet. Sign in — your first sign-in creates one.";
+
+/** Passkey step, while the device is being checked. */
+export const ONBOARDING_PASSKEY_CHECKING = "Checking this device…";
+
+/** Shown while the passkey step links to `/signin`. */
+export const ONBOARDING_PASSKEY_SIGNIN_ACTION = "Sign in to create your passkey";
+
+/** Link ORCID step, before it starts. */
+export const ORCID_START_ACTION = "Link your ORCID iD";
+
+/** Link ORCID step, started already: send the browser to ORCID again. */
+export const ORCID_CONTINUE_ACTION = "Continue at ORCID";
+
+/** Link ORCID step, while the authorize URL is fetched. */
+export const ORCID_STARTING = "Opening ORCID…";
+
+/** Link ORCID step, started but not confirmed finished. */
+export const ORCID_STARTED_NOTE =
+  "You've started linking. Finish signing in at ORCID, then come back here.";
+
+/** Link ORCID step, done. */
+export const ORCID_LINKED_NOTE = "Your ORCID iD is linked to this account.";
+
+/** Categories step: save the picks. */
+export const CATEGORIES_SAVE_ACTION = "Save categories";
+
+/** Categories step, while saving. */
+export const CATEGORIES_SAVING = "Saving…";
+
+/** Categories step: add a typed-in category. */
+export const CATEGORIES_ADD_ACTION = "Add";
+
+/** Accessible label of the add-a-category input. */
+export const CATEGORIES_ADD_LABEL = "Add another category, like math.CO";
+
+/** Categories step: the typed-in value cannot be a category. */
+export const CATEGORY_INVALID_MESSAGE =
+  "That doesn't look like a category. Try something like cs.AI or stat.ML.";
+
+/** What the step shows once the picks are saved. */
+export function categoriesSavedMessage(categories: readonly string[]): string {
+  return `Following ${categories.join(", ")}.`;
+}
+
+/** Appended when the picks could only be kept on this device. */
+export const CATEGORIES_SAVED_LOCALLY_SUFFIX =
+  " Kept on this device — they'll follow your account once category following is available here.";
+
+/** Guardians step: save the list. */
+export const GUARDIANS_SAVE_ACTION = "Save guardians";
+
+/** Guardians step, while saving. */
+export const GUARDIANS_SAVING = "Saving…";
+
+/** Guardians step, done. */
+export const GUARDIANS_SAVED_NOTE =
+  "Five guardians set. You can change them at any time from Settings.";
+
+/** The requirement, stated where the guardians step is. */
+export const GUARDIANS_REQUIRED_NOTE = "Required before your first submission.";
+
+/** The gentle nag next to the finish gate (design.md §6). */
+export const GUARDIANS_SKIP_NOTE =
+  "You can skip this now and add guardians later from Settings — but five guardians are required before your first submission.";
+
+/** Primary action once the steps are done. */
+export const ONBOARDING_FINISH_ACTION = "Start reading Scholium";
+
+/** The gentle way out while the guardians step is unfinished. */
+export const ONBOARDING_SKIP_ACTION = "Skip for now";
+
+/** Shown for anything unexpected. */
+export const ONBOARDING_FALLBACK_MESSAGE = "That didn't work. Please try again.";
+
+/** The session ended mid-onboarding. */
+export const ONBOARDING_SESSION_EXPIRED_MESSAGE =
+  "Your session has ended. Sign in again to continue.";
+
+/** `n of total steps complete`, for the checklist header. */
+export function onboardingProgressMessage(completed: number, total: number): string {
+  return `${completed} of ${total} steps complete`;
+}
+
+/** Turn an onboarding action failure into one actionable sentence. */
+export function describeOnboardingError(error: unknown): string {
+  if (error instanceof NetworkError) {
+    return "Can't reach Scholium. Check your connection and try again.";
+  }
+
+  if (error instanceof ApiError) {
+    if (error.isUnauthorized) {
+      return ONBOARDING_SESSION_EXPIRED_MESSAGE;
+    }
+    if (error.isRateLimited) {
+      return "Too many attempts. Wait a moment and try again.";
+    }
+    if (error.isServerError) {
+      return "Scholium is having trouble right now. Please try again in a moment.";
+    }
+    if (error.detail && error.detail !== error.title) {
+      return error.detail;
+    }
+    return ONBOARDING_FALLBACK_MESSAGE;
+  }
+
+  if (error instanceof GuardianSaveError) {
+    return error.message;
+  }
+
+  if (error instanceof OnboardingError) {
+    if (error.code === "invalid-response") {
+      return "Scholium sent an unexpected reply. Please try again in a moment.";
+    }
+    return error.message;
+  }
+
+  return ONBOARDING_FALLBACK_MESSAGE;
+}

@@ -5,9 +5,9 @@ persists it in **IndexedDB**, and requires a **WebAuthn passkey assertion**
 before it will sign. The private key never leaves the device: there is no
 code path that exports it.
 
-The `/signin` page (feature 141, below) is built on this module; `/onboarding`
-steps and `/recover` follow in later `web-auth` features. Import from
-`@/features/web-auth`.
+The `/signin` page (feature 141, below) and the `/onboarding` steps
+(feature 142) are built on this module; `/recover` follows in a later
+`web-auth` feature. Import from `@/features/web-auth`.
 
 ## Sign-in page (`/signin`)
 
@@ -44,8 +44,45 @@ POST /v1/auth/verify {did, nonce, signature} -> {access_token, refresh_token}
   rejected sign-in, a malformed reply. Nothing is signed until the key exists,
   and a dismissed prompt stops before any signature leaves the device.
 
-`/onboarding` currently shows a short "Welcome" card so the redirect has a
-destination; the onboarding steps replace it in the next `web-auth` feature.
+`/onboarding` shows the four first-run steps; see the next section.
+
+## Onboarding page (`/onboarding`)
+
+`apps/web/src/app/(web-auth)/onboarding/page.tsx` renders `OnboardingForm`:
+a checklist of the four steps `docs/design.md` §6 fixes, in order —
+
+1. **Create your passkey** — done the moment a device key exists on the
+   device (checked locally with `exists()`); otherwise the step links to
+   `/signin`.
+2. **Link your ORCID iD** — "Link your ORCID iD" calls
+   `GET /v1/auth/orcid/start` and sends the whole browser to the returned
+   authorize URL (the access token is attached, so the signed `state` binds
+   this account's DID). Coming back, the step remembers the attempt, and a
+   best-effort `GET /v1/profiles/{did}` flips it to done once the profile
+   shows a linked iD — a profile that cannot be read leaves the step at
+   "started", never failed.
+3. **Pick categories to follow** — chips (`cs.AI`, …) plus a free input,
+   saved with `PUT /v1/me/follows/{category}` each. Following is not a
+   dependency of onboarding, so a node without the follows routes (404/405/
+   501) does not fail the step: the picks are kept on this device
+   (`scholium.web-auth.onboarding`) and complete it regardless.
+4. **Set recovery guardians** — five DID inputs saved with
+   `PUT /v1/me/guardians`. The API's rules (exactly five canonical
+   Ed25519 `did:key`s, none repeated, none your own) are checked in the
+   browser first, so most mistakes never leave the device; the API's own
+   422 problem details — one `errors` entry per fault — map back onto the
+   input they name.
+
+**Guardians are required before the first submission**: the API answers
+submissions with 403 problem details until they are set, so the page's
+"Start reading Scholium" button stays disabled until that step is done,
+while a gentle "skip for now" link (design.md: "nagged gently until done")
+is always offered.
+
+Progress persists per browser under `scholium.web-auth.onboarding`, so a
+reload — or the round-trip to ORCID — keeps the checklist. Behaviour lives
+in `useOnboarding` (unit-tested via `renderHook`); `onboarding-form.tsx` is
+markup only.
 
 ## Quick start
 
@@ -141,6 +178,11 @@ key").
 | `signIn` | Challenge-response sign-in with the device key (creating it on first run); returns `{ did, isNewAccount, redirectTo, tokens }`. |
 | `safeRedirectPath`, `signInDestination` | Same-site `next` handling and the new-account → `/onboarding` rule. |
 | `describeSignInError` | One plain-language sentence for any sign-in failure. |
+| `ONBOARDING_STEPS` | The four `/onboarding` steps in design order, with title and summary. |
+| `startOrcidLink`, `checkOrcidLink` | Begin the ORCID link (authorize URL + state) and best-effort "is it linked yet?" |
+| `followCategories` | Save category picks (`PUT /v1/me/follows/{category}`), keeping them on-device when the endpoint is absent. |
+| `validateGuardians`, `saveGuardians` | Check (and then save, `PUT /v1/me/guardians`) a five-guardian list; API 422s map onto inputs. |
+| `useOnboarding` | React hook driving the page: step states, actions, the guardians gate on finishing. |
 
 All failures are `DeviceKeyError` with a stable `code`
 (`unsupported`, `storage-unavailable`, `not-found`, `already-exists`,
@@ -161,6 +203,10 @@ All failures are `DeviceKeyError` with a stable `code`
 | `signin-messages.ts` | Progress and failure copy for the sign-in page. |
 | `use-signin.ts` | React hook: one flow at a time, progress, error, navigation. Plain `.ts` so it is unit-testable (see Tests). |
 | `signin-form.tsx` | The `/signin` card (markup only; client component). |
+| `onboarding.ts` | Step model, persisted progress, ORCID start, category follows, guardian validation and save. |
+| `onboarding-messages.ts` | Copy for the `/onboarding` page, including the guardians nag and `describeOnboardingError`. |
+| `use-onboarding.ts` | React hook behind the checklist (step states, actions, finish gate). |
+| `onboarding-form.tsx` | The `/onboarding` checklist (markup only; client component). |
 | `did-key.ts` | Base58btc / `did:key` encoding. |
 | `encoding.ts` | base64url, hex and byte helpers. |
 | `errors.ts` | Typed errors and cancellation detection. |
@@ -175,7 +221,9 @@ The suite uses real Node WebCrypto for key generation and export-refusal
 checks, and a small in-memory IndexedDB fake for persistence. The sign-in
 tests run the whole flow against a fake API that verifies the Ed25519
 signature the way the real one does (key taken from the did, message = nonce
-UTF-8 bytes).
+UTF-8 bytes). The onboarding tests drive the same shape of fake API client
+(plus `MemoryTokenStorage` for the persisted progress) and canonical
+`did:key`s generated exactly the way the API's own tests generate them.
 
 Vitest here cannot transform JSX (`tsconfig.json` sets `jsx: "preserve"`), so
 sign-in behaviour lives in `use-signin.ts` and is tested with `renderHook`;

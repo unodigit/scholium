@@ -32,6 +32,20 @@ describe("web-auth public surface", () => {
       "describeSignInError",
       "ONBOARDING_PATH",
       "SIGNIN_PATH",
+      "ONBOARDING_STEPS",
+      "ONBOARDING_STORAGE_KEY",
+      "GUARDIAN_COUNT",
+      "OnboardingError",
+      "GuardianSaveError",
+      "startOrcidLink",
+      "saveGuardians",
+      "validateGuardians",
+      "followCategories",
+      "normalizeCategory",
+      "loadPersistedOnboarding",
+      "describeOnboardingError",
+      "useOnboarding",
+      "defaultOnboardingServices",
     ]) {
       expect(webAuth).toHaveProperty(name);
     }

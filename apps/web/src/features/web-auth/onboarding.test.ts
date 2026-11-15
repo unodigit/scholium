@@ -1,0 +1,373 @@
+// @vitest-environment node
+import { describe, expect, it, vi } from "vitest";
+
+import { MemoryTokenStorage, apiErrorFrom } from "../../lib/api";
+
+import { isEd25519DidKey } from "./did-key";
+import {
+  GUARDIAN_COUNT,
+  ONBOARDING_CATEGORY_CHOICES,
+  ONBOARDING_STEPS,
+  ONBOARDING_STORAGE_KEY,
+  GuardianSaveError,
+  OnboardingError,
+  checkOrcidLink,
+  countCompletedSteps,
+  emptyPersistedOnboarding,
+  followCategories,
+  followsEndpointUnavailable,
+  guardianProblemsFromApiError,
+  isGuardianSaveError,
+  isOnboardingError,
+  loadPersistedOnboarding,
+  normalizeCategory,
+  onboardingStepCompletion,
+  parseOrcidStart,
+  profileShowsLinkedOrcid,
+  saveGuardians,
+  startOrcidLink,
+  updatePersistedOnboarding,
+  validateGuardians,
+  type OnboardingClient,
+} from "./onboarding";
+
+// Canonical Ed25519 did:keys, generated the same way the API's tests
+// generate theirs (nacl SigningKey → record-core's did_key helper).
+const OWNER = "did:key:z6MkrQDrTkUp4gGH7aUiPNDDT2B2DzAssL2wib7awcqYzKqG";
+const G1 = "did:key:z6MkmHq27QXR7YPRFhKZsCVfKBk5i855vPEuF7nfC7fALpih";
+const G2 = "did:key:z6MkkCCsRVKCouTLfDzdH3irfi2mkRyQLxPHYhkcWYbFvhrm";
+const G3 = "did:key:z6MkmHyqwywLHLJbfhudWDfonpRdQSzNzcRVjPDbHDijN5Yv";
+const G4 = "did:key:z6MkkyvRXrgTtxx4V1xncehSAnT66FATqQtKXsKkEFrHQ26n";
+const G5 = "did:key:z6MkfecoxWGf7w3UuW6NmoYSvUT9eERAgNUvKrDwTSgVHES7";
+const FIVE = [G1, G2, G3, G4, G5];
+
+/** A client whose every call is a mock the test asserts on. */
+function fakeClient(
+  get: (path: string) => unknown = () => ({}),
+  put: (path: string, body?: unknown) => unknown = () => ({}),
+) {
+  return {
+    get: vi.fn(async (path: string) => get(path)),
+    put: vi.fn(async (path: string, body?: unknown) => put(path, body)),
+  } as unknown as OnboardingClient & {
+    get: ReturnType<typeof vi.fn>;
+    put: ReturnType<typeof vi.fn>;
+  };
+}
+
+describe("onboarding step model", () => {
+  it("lists the steps in the order the design fixes", () => {
+    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual([
+      "passkey",
+      "orcid",
+      "categories",
+      "guardians",
+    ]);
+  });
+
+  it("marks a step done only for what has actually happened", () => {
+    expect(onboardingStepCompletion(emptyPersistedOnboarding(), true)).toEqual({
+      passkey: true,
+      orcid: false,
+      categories: false,
+      guardians: false,
+    });
+
+    const persisted = {
+      ...emptyPersistedOnboarding(),
+      orcidLinkedAt: "2026-11-15T00:00:00Z",
+      categories: ["cs.AI"],
+      guardiansSavedAt: "2026-11-15T00:01:00Z",
+      guardians: FIVE,
+    };
+    expect(onboardingStepCompletion(persisted, true)).toEqual({
+      passkey: true,
+      orcid: true,
+      categories: true,
+      guardians: true,
+    });
+    expect(countCompletedSteps(onboardingStepCompletion(persisted, true))).toBe(4);
+  });
+
+  it("an ORCID round-trip that never confirmed does not complete the step", () => {
+    const persisted = { ...emptyPersistedOnboarding(), orcidStartedAt: "2026-11-15T00:00:00Z" };
+    expect(onboardingStepCompletion(persisted, true).orcid).toBe(false);
+  });
+});
+
+describe("persisted onboarding progress", () => {
+  it("round-trips through storage", () => {
+    const storage = new MemoryTokenStorage();
+    expect(loadPersistedOnboarding(storage)).toEqual(emptyPersistedOnboarding());
+
+    const next = updatePersistedOnboarding(storage, {
+      orcidStartedAt: "2026-11-15T00:00:00Z",
+      categories: ["cs.AI", "cs.LG"],
+      guardiansSavedAt: "2026-11-15T00:01:00Z",
+      guardians: FIVE,
+    });
+    expect(loadPersistedOnboarding(storage)).toEqual(next);
+    expect(next.categories).toEqual(["cs.AI", "cs.LG"]);
+  });
+
+  it("reads junk as nothing done", () => {
+    const storage = new MemoryTokenStorage();
+    storage.setItem(ONBOARDING_STORAGE_KEY, "{not json");
+    expect(loadPersistedOnboarding(storage)).toEqual(emptyPersistedOnboarding());
+
+    storage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({ categories: "nope", orcidLinkedAt: 7 }));
+    const loaded = loadPersistedOnboarding(storage);
+    expect(loaded.categories).toEqual([]);
+    expect(loaded.orcidLinkedAt).toBeNull();
+  });
+});
+
+describe("link ORCID", () => {
+  const START_BODY = {
+    authorize_url: "https://sandbox.orcid.org/oauth/authorize?client_id=x",
+    authorization_url: "https://sandbox.orcid.org/oauth/authorize?client_id=x",
+    url: "https://sandbox.orcid.org/oauth/authorize?client_id=x",
+    auth_url: "https://sandbox.orcid.org/oauth/authorize?client_id=x",
+    state: "eyJhbGciOiJIUzI1NiJ9.sig",
+  };
+
+  it("parses the authorize URL and state", () => {
+    expect(parseOrcidStart(START_BODY)).toEqual({
+      authorizeUrl: "https://sandbox.orcid.org/oauth/authorize?client_id=x",
+      state: "eyJhbGciOiJIUzI1NiJ9.sig",
+    });
+  });
+
+  it("accepts the URL under any of the endpoint's spellings", () => {
+    expect(parseOrcidStart({ url: "https://orcid.example/authorize" }).authorizeUrl).toBe(
+      "https://orcid.example/authorize",
+    );
+    expect(parseOrcidStart({ auth_url: "https://orcid.example/authorize" }).authorizeUrl).toBe(
+      "https://orcid.example/authorize",
+    );
+  });
+
+  it("refuses bodies without a usable http(s) URL", () => {
+    expect(() => parseOrcidStart({})).toThrow(OnboardingError);
+    expect(() => parseOrcidStart({ authorize_url: "javascript:alert(1)" })).toThrow(
+      OnboardingError,
+    );
+    expect(() => parseOrcidStart({ authorize_url: "not a url" })).toThrow(OnboardingError);
+    expect(() => parseOrcidStart("https://orcid.example/authorize")).toThrow(OnboardingError);
+    try {
+      parseOrcidStart({});
+      expect.unreachable("parseOrcidStart should have thrown");
+    } catch (error) {
+      expect(isOnboardingError(error)).toBe(true);
+      expect((error as OnboardingError).code).toBe("invalid-response");
+    }
+  });
+
+  it("asks the API where to send the browser", async () => {
+    const client = fakeClient(() => START_BODY);
+    await expect(startOrcidLink(client)).resolves.toEqual({
+      authorizeUrl: START_BODY.authorize_url,
+      state: START_BODY.state,
+    });
+    expect(client.get).toHaveBeenCalledWith("/auth/orcid/start");
+  });
+
+  it("sees a linked iD in a profile under any spelling", () => {
+    expect(profileShowsLinkedOrcid({ orcid: "0000-0002-1825-0097" })).toBe(true);
+    expect(profileShowsLinkedOrcid({ orcid_id: "0000-0002-1825-0097" })).toBe(true);
+    expect(profileShowsLinkedOrcid({ orcidId: "0000-0002-1825-0097" })).toBe(true);
+    expect(profileShowsLinkedOrcid({ orcid: "" })).toBe(false);
+    expect(profileShowsLinkedOrcid({ orcid: null })).toBe(false);
+    expect(profileShowsLinkedOrcid({ name: "Mei" })).toBe(false);
+    expect(profileShowsLinkedOrcid(null)).toBe(false);
+  });
+
+  it("treats a profile probe that fails as 'cannot tell'", async () => {
+    const client = {
+      get: vi.fn(async () => {
+        throw apiErrorFrom(404, { detail: "Not Found" });
+      }),
+      put: vi.fn(async () => undefined),
+    } as unknown as OnboardingClient;
+    await expect(checkOrcidLink(client, OWNER)).resolves.toBe(false);
+    expect(client.get).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(OWNER)}`);
+  });
+});
+
+describe("pick categories to follow", () => {
+  it("normalises typed-in categories", () => {
+    expect(normalizeCategory("cs.AI")).toBe("cs.AI");
+    expect(normalizeCategory("  math.CO ")).toBe("math.CO");
+    expect(normalizeCategory("physics.soc-ph")).toBe("physics.soc-ph");
+    expect(normalizeCategory("cs.ai")).toBe("cs.ai");
+    expect(normalizeCategory("Categories")).toBeNull();
+    expect(normalizeCategory("cs")).toBeNull();
+    expect(normalizeCategory("cs.AI/../../admin")).toBeNull();
+    expect(normalizeCategory("cs.AI papers")).toBeNull();
+    expect(normalizeCategory("")).toBeNull();
+  });
+
+  it("offers preset choices that are all valid", () => {
+    for (const choice of ONBOARDING_CATEGORY_CHOICES) {
+      expect(normalizeCategory(choice)).toBe(choice);
+    }
+  });
+
+  it("follows every pick on the account", async () => {
+    const client = fakeClient();
+    const result = await followCategories(client, ["cs.AI", " cs.LG ", "cs.AI"]);
+    expect(result).toEqual({ categories: ["cs.AI", "cs.LG"], savedToAccount: true });
+    expect(client.put.mock.calls.map(([path]) => path)).toEqual([
+      "/me/follows/cs.AI",
+      "/me/follows/cs.LG",
+    ]);
+  });
+
+  it("keeps the picks on this device when following is not there yet", async () => {
+    const client = fakeClient(undefined, () => {
+      throw apiErrorFrom(404, { detail: "Not Found" });
+    });
+    const result = await followCategories(client, ["cs.AI", "cs.LG"]);
+    expect(result.savedToAccount).toBe(false);
+    expect(result.categories).toEqual(["cs.AI", "cs.LG"]);
+    // The first "not available" answer stops the sync; the missing endpoint
+    // is not hammered once per pick.
+    expect(client.put).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an empty or invalid pick without calling the API", async () => {
+    const client = fakeClient();
+    await expect(followCategories(client, [])).rejects.toMatchObject({
+      code: "invalid-category",
+    });
+    await expect(followCategories(client, ["not a category"])).rejects.toBeInstanceOf(
+      OnboardingError,
+    );
+    expect(client.put).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a real failure from following", async () => {
+    const client = fakeClient(undefined, () => {
+      throw apiErrorFrom(401, { detail: "Not authenticated" });
+    });
+    await expect(followCategories(client, ["cs.AI"])).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("recognises exactly the 'not available' statuses", () => {
+    for (const status of [404, 405, 501]) {
+      expect(followsEndpointUnavailable(apiErrorFrom(status, {}))).toBe(true);
+    }
+    for (const status of [400, 401, 409, 422, 500, 503]) {
+      expect(followsEndpointUnavailable(apiErrorFrom(status, {}))).toBe(false);
+    }
+    expect(followsEndpointUnavailable(new Error("offline"))).toBe(false);
+  });
+});
+
+describe("set recovery guardians", () => {
+  it("accepts the canonical DIDs the rest of the project uses", () => {
+    for (const did of [OWNER, ...FIVE]) {
+      expect(isEd25519DidKey(did)).toBe(true);
+    }
+  });
+
+  it("requires exactly five", () => {
+    expect(validateGuardians(OWNER, [])).toEqual([
+      { index: null, message: `Enter exactly ${GUARDIAN_COUNT} guardian DIDs — you have 0.` },
+    ]);
+    expect(validateGuardians(OWNER, FIVE.slice(0, 4))[0].index).toBeNull();
+  });
+
+  it("reports every faulty input, not just the first", () => {
+    const problems = validateGuardians(OWNER, ["", "did:key:not-a-key", G1, OWNER, G1]);
+    expect(problems.map((problem) => problem.index)).toEqual([0, 1, 3, 4]);
+    expect(problems[1].message).toContain("did:key:z6Mk");
+    expect(problems[2]).toMatchObject({ index: 3 });
+  });
+
+  it("trims before checking", () => {
+    expect(validateGuardians(OWNER, FIVE.map((did) => `  ${did}  `))).toEqual([]);
+  });
+
+  it("accepts a valid list", () => {
+    expect(validateGuardians(OWNER, FIVE)).toEqual([]);
+    expect(validateGuardians(null, FIVE)).toEqual([]);
+  });
+
+  it("saves the list and returns it as the server saved it", async () => {
+    const client = fakeClient(undefined, () => ({ guardians: FIVE }));
+    await expect(saveGuardians(client, OWNER, FIVE)).resolves.toEqual(FIVE);
+    expect(client.put).toHaveBeenCalledWith("/me/guardians", { guardians: FIVE });
+  });
+
+  it("falls back to the sent list when the reply is bare", async () => {
+    const client = fakeClient(undefined, () => undefined);
+    await expect(saveGuardians(client, OWNER, FIVE)).resolves.toEqual(FIVE);
+  });
+
+  it("never sends a list the browser itself rejects", async () => {
+    const client = fakeClient();
+    const values = [G1, G1, G2, G3, G4];
+    await expect(saveGuardians(client, OWNER, values)).rejects.toBeInstanceOf(GuardianSaveError);
+    const error = await saveGuardians(client, OWNER, values).catch((failure) => failure);
+    expect(isGuardianSaveError(error)).toBe(true);
+    expect(error.problems.map((problem: { index: number | null }) => problem.index)).toEqual([1]);
+    expect(client.put).not.toHaveBeenCalled();
+  });
+
+  it("maps the API's 422 problem details back onto the inputs", () => {
+    const error = apiErrorFrom(
+      422,
+      {
+        type: "urn:scholium:problem:invalid-guardians",
+        title: "Unprocessable Content",
+        detail: "The guardian list is not valid.",
+        errors: [
+          { loc: ["body", "guardians", 0], msg: "Guardian 0 is not a canonical did:key.", type: "invalid_did" },
+          { loc: ["body", "guardians"], msg: "Exactly 5 guardians are required, got 4.", type: "guardian_count" },
+        ],
+      },
+    );
+    const problems = guardianProblemsFromApiError(error);
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toEqual({
+      index: 0,
+      message: "Guardian 0 is not a canonical did:key.",
+    });
+    expect(problems[1].index).toBeNull();
+  });
+
+  it("finds the input index in dotted field paths too", () => {
+    const error = apiErrorFrom(422, {
+      detail: "The guardian list is not valid.",
+      errors: [{ field: "body.guardians.3", message: "Guardian 3 repeats guardian 1." }],
+    });
+    expect(guardianProblemsFromApiError(error)).toEqual([
+      { index: 3, message: "Guardian 3 repeats guardian 1." },
+    ]);
+  });
+
+  it("a 422 without field errors becomes one list-level problem", () => {
+    const error = apiErrorFrom(422, { detail: "The guardian list is not valid." });
+    expect(guardianProblemsFromApiError(error)).toEqual([
+      { index: null, message: "The guardian list is not valid." },
+    ]);
+  });
+
+  it("turns the API's 422 into a GuardianSaveError and rethrows anything else", async () => {
+    const rejected = apiErrorFrom(422, {
+      detail: "The guardian list is not valid.",
+      errors: [{ loc: ["body", "guardians", 2], msg: "Guardian 2 is your own DID." }],
+    });
+    const client = fakeClient(undefined, () => {
+      throw rejected;
+    });
+    await expect(saveGuardians(client, OWNER, FIVE)).rejects.toBeInstanceOf(GuardianSaveError);
+
+    const offline = apiErrorFrom(503, { detail: "unavailable" });
+    const down = fakeClient(undefined, () => {
+      throw offline;
+    });
+    await expect(saveGuardians(down, OWNER, FIVE)).rejects.toBe(offline);
+  });
+});

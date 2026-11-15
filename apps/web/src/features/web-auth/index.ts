@@ -152,3 +152,53 @@ export {
   SIGNIN_UNSUPPORTED_MESSAGE,
   describeSignInError,
 } from "./signin-messages";
+
+export {
+  GUARDIAN_COUNT,
+  ONBOARDING_CATEGORY_CHOICES,
+  ONBOARDING_STEPS,
+  ONBOARDING_STORAGE_KEY,
+  GuardianSaveError,
+  OnboardingError,
+  checkOrcidLink,
+  countCompletedSteps,
+  emptyPersistedOnboarding,
+  followCategories,
+  followsEndpointUnavailable,
+  guardianProblemsFromApiError,
+  isGuardianSaveError,
+  isOnboardingError,
+  loadPersistedOnboarding,
+  normalizeCategory,
+  onboardingStepCompletion,
+  parseOrcidStart,
+  profileShowsLinkedOrcid,
+  saveGuardians,
+  savePersistedOnboarding,
+  startOrcidLink,
+  updatePersistedOnboarding,
+  validateGuardians,
+  type FollowCategoriesResult,
+  type GuardianProblem,
+  type OnboardingClient,
+  type OnboardingErrorCode,
+  type OnboardingStepId,
+  type OnboardingStepInfo,
+  type OrcidStartInfo,
+  type PersistedOnboarding,
+} from "./onboarding";
+
+export {
+  GUARDIANS_REQUIRED_NOTE,
+  GUARDIANS_SKIP_NOTE,
+  ONBOARDING_FINISH_ACTION,
+  ONBOARDING_LEDE,
+  describeOnboardingError,
+} from "./onboarding-messages";
+
+export {
+  defaultOnboardingServices,
+  useOnboarding,
+  type OnboardingServices,
+  type UseOnboardingResult,
+} from "./use-onboarding";

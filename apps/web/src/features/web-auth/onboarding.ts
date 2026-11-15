@@ -1,0 +1,577 @@
+/**
+ * The `/onboarding` steps (feature 142).
+ *
+ * Onboarding is four steps, in the order `docs/design.md` §6 fixes:
+ *
+ * ```text
+ * create passkey → link ORCID → pick categories to follow → set recovery guardians
+ * ```
+ *
+ * The passkey exists by the time the user lands here (the first sign-in
+ * created it), so this module is about the remaining three and about showing
+ * where each step stands:
+ *
+ * - **link ORCID** — `GET /v1/auth/orcid/start` (feature 31) returns the
+ *   authorize URL; the browser is sent there whole-page and comes back. The
+ *   start is remembered so the step can say "in progress", and a best-effort
+ *   profile lookup flips it to done once a linked ORCID iD is visible there.
+ * - **pick categories** — each pick is `PUT /v1/me/follows/{category}`
+ *   (feature 179). Following is *not* a dependency of this feature, so when
+ *   the endpoint answers 404/405/501 the picks are still kept (on this
+ *   device) and the step completes; they sync once following exists.
+ * - **set guardians** — `PUT /v1/me/guardians` (feature 36) saves exactly
+ *   five guardian DIDs. The same rules the API enforces are checked here
+ *   first, so most mistakes never leave the browser, and a 422 problem
+ *   document's per-entry `errors` are mapped back onto the inputs.
+ *
+ * Guardians are **required before the first submission**: the API answers any
+ * submission with 403 problem details until they are set, so the UI gates its
+ * finish action on this step (see `use-onboarding.ts`).
+ *
+ * Progress is remembered per browser under
+ * {@link ONBOARDING_STORAGE_KEY} so a reload — or coming back from ORCID —
+ * does not restart the checklist. Everything in this module is plain
+ * functions over injectable clients; the React wiring lives in
+ * `use-onboarding.ts`.
+ */
+
+import { ApiError, apiClient, browserTokenStorage } from "../../lib/api";
+import type { ApiClient, TokenStorage } from "../../lib/api";
+
+import { isEd25519DidKey } from "./did-key";
+
+/** The four steps, in the order the design fixes for them. */
+export type OnboardingStepId = "passkey" | "orcid" | "categories" | "guardians";
+
+/** One entry of the onboarding checklist. */
+export interface OnboardingStepInfo {
+  /** Which step this is. */
+  id: OnboardingStepId;
+  /** Step title as shown on the page. */
+  title: string;
+  /** One line under the title saying what the step is for. */
+  summary: string;
+}
+
+/** The `/onboarding` checklist, in order (design.md §6). */
+export const ONBOARDING_STEPS: readonly OnboardingStepInfo[] = [
+  {
+    id: "passkey",
+    title: "Create your passkey",
+    summary:
+      "Your passkey unlocks the signing key that lives on this device. Scholium never sees your key.",
+  },
+  {
+    id: "orcid",
+    title: "Link your ORCID iD",
+    summary:
+      "Links your account to your ORCID iD, so readers know a real researcher stands behind your work.",
+  },
+  {
+    id: "categories",
+    title: "Pick categories to follow",
+    summary:
+      "New papers in the categories you pick fill your Following feed.",
+  },
+  {
+    id: "guardians",
+    title: "Set recovery guardians",
+    summary:
+      "Five people who can vouch for you and restore your account if this device is lost.",
+  },
+];
+
+/** Browser-storage key for the persisted onboarding progress. */
+export const ONBOARDING_STORAGE_KEY = "scholium.web-auth.onboarding";
+
+/** Onboarding progress as remembered per browser. */
+export interface PersistedOnboarding {
+  /** UTC instant the browser was first sent to ORCID, if ever. */
+  orcidStartedAt: string | null;
+  /** UTC instant a linked ORCID iD was last observed, if ever. */
+  orcidLinkedAt: string | null;
+  /** Categories picked (and saved), in the order they were picked. */
+  categories: string[];
+  /** UTC instant guardians were saved from this browser, if ever. */
+  guardiansSavedAt: string | null;
+  /** The guardian list as last saved, in the order sent. */
+  guardians: string[];
+}
+
+/** A fresh, nothing-done-yet progress record. */
+export function emptyPersistedOnboarding(): PersistedOnboarding {
+  return {
+    orcidStartedAt: null,
+    orcidLinkedAt: null,
+    categories: [],
+    guardiansSavedAt: null,
+    guardians: [],
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return value.every((entry) => typeof entry === "string") ? [...value] : null;
+}
+
+/** Read the persisted progress; junk (or nothing) reads as nothing done. */
+export function loadPersistedOnboarding(
+  storage: TokenStorage = browserTokenStorage,
+): PersistedOnboarding {
+  let raw: string | null = null;
+  try {
+    raw = storage.getItem(ONBOARDING_STORAGE_KEY);
+  } catch {
+    return emptyPersistedOnboarding();
+  }
+  if (!raw) {
+    return emptyPersistedOnboarding();
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return emptyPersistedOnboarding();
+  }
+  if (!isRecord(parsed)) {
+    return emptyPersistedOnboarding();
+  }
+  const base = emptyPersistedOnboarding();
+  const categories = stringArray(parsed.categories);
+  const guardians = stringArray(parsed.guardians);
+  return {
+    orcidStartedAt: typeof parsed.orcidStartedAt === "string" ? parsed.orcidStartedAt : null,
+    orcidLinkedAt: typeof parsed.orcidLinkedAt === "string" ? parsed.orcidLinkedAt : null,
+    categories: categories ?? base.categories,
+    guardians: guardians ?? base.guardians,
+    guardiansSavedAt: typeof parsed.guardiansSavedAt === "string" ? parsed.guardiansSavedAt : null,
+  };
+}
+
+/** Persist progress; storage that throws is ignored (the UI still works). */
+export function savePersistedOnboarding(
+  storage: TokenStorage,
+  value: PersistedOnboarding,
+): void {
+  try {
+    storage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Blocked storage only costs the checklist its memory across visits.
+  }
+}
+
+/** Merge `patch` into the stored progress, persist it, and return the result. */
+export function updatePersistedOnboarding(
+  storage: TokenStorage,
+  patch: Partial<PersistedOnboarding>,
+): PersistedOnboarding {
+  const next = { ...loadPersistedOnboarding(storage), ...patch };
+  savePersistedOnboarding(storage, next);
+  return next;
+}
+
+/** Which steps are complete given the stored progress and the passkey check. */
+export function onboardingStepCompletion(
+  persisted: PersistedOnboarding,
+  passkeyReady: boolean,
+): Record<OnboardingStepId, boolean> {
+  return {
+    passkey: passkeyReady,
+    orcid: persisted.orcidLinkedAt !== null,
+    categories: persisted.categories.length > 0,
+    guardians: persisted.guardiansSavedAt !== null,
+  };
+}
+
+/** How many of the four steps are complete. */
+export function countCompletedSteps(
+  completion: Record<OnboardingStepId, boolean>,
+): number {
+  return ONBOARDING_STEPS.reduce((total, step) => total + (completion[step.id] ? 1 : 0), 0);
+}
+
+/**
+ * Stable failure codes for {@link OnboardingError}.
+ *
+ * - `invalid-response`: the API answered, but not with the shape this
+ *   feature's contract promises.
+ * - `invalid-category`: a category pick cannot be followed as written.
+ */
+export type OnboardingErrorCode = "invalid-response" | "invalid-category";
+
+/** An onboarding action could not proceed (never a device-key or transport failure). */
+export class OnboardingError extends Error {
+  /** Stable code callers can branch on. */
+  readonly code: OnboardingErrorCode;
+
+  constructor(code: OnboardingErrorCode, message: string, options: { cause?: unknown } = {}) {
+    super(message);
+    this.name = "OnboardingError";
+    this.code = code;
+    if (options.cause !== undefined) {
+      this.cause = options.cause;
+    }
+  }
+}
+
+/** Type guard for {@link OnboardingError}. */
+export function isOnboardingError(error: unknown): error is OnboardingError {
+  return error instanceof OnboardingError;
+}
+
+/** The slice of {@link ApiClient} the onboarding actions use. */
+export type OnboardingClient = Pick<ApiClient, "get" | "put">;
+
+// ---------------------------------------------------------------------------
+// Link ORCID
+// ---------------------------------------------------------------------------
+
+/** Where `/v1/auth/orcid/start` sends the browser. */
+export interface OrcidStartInfo {
+  /** The ORCID authorize URL (state parameter included). */
+  authorizeUrl: string;
+  /** The signed state also embedded in the URL, when the server sent it. */
+  state: string;
+}
+
+/** JSON members the start endpoint offers the URL under, in preference order. */
+const ORCID_URL_FIELDS = ["authorize_url", "authorization_url", "url", "auth_url"] as const;
+
+function parseHttpUrl(value: string): URL | null {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Validate a `/v1/auth/orcid/start` body into an {@link OrcidStartInfo}. */
+export function parseOrcidStart(payload: unknown): OrcidStartInfo {
+  const url =
+    isRecord(payload) &&
+    ORCID_URL_FIELDS.map((field) => payload[field]).find(
+      (value): value is string => typeof value === "string" && value !== "",
+    );
+  if (!url || !parseHttpUrl(url)) {
+    throw new OnboardingError(
+      "invalid-response",
+      "The server did not return a usable ORCID sign-in URL",
+    );
+  }
+  const state =
+    isRecord(payload) && typeof payload.state === "string" && payload.state !== ""
+      ? payload.state
+      : "";
+  return { authorizeUrl: url, state };
+}
+
+/**
+ * Ask the API where to send the user to link their ORCID iD.
+ *
+ * The shared client attaches the access token when there is one, which binds
+ * the caller's DID into the signed state the callback later checks.
+ */
+export async function startOrcidLink(client: OnboardingClient = apiClient): Promise<OrcidStartInfo> {
+  return parseOrcidStart(await client.get<unknown>("/auth/orcid/start"));
+}
+
+/** JSON members a profile may carry the linked ORCID iD under. */
+const ORCID_PROFILE_FIELDS = ["orcid", "orcid_id", "orcidId"] as const;
+
+/** True when a profile payload shows a linked ORCID iD. */
+export function profileShowsLinkedOrcid(payload: unknown): boolean {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  return ORCID_PROFILE_FIELDS.some(
+    (field) => typeof payload[field] === "string" && (payload[field] as string).trim() !== "",
+  );
+}
+
+/**
+ * Best-effort check whether the account's ORCID iD is linked yet.
+ *
+ * The profile endpoint is *not* part of this feature's contract (it belongs
+ * to the profiles plugin), so any failure simply means "cannot tell": the
+ * step keeps showing "started" rather than failing the page.
+ */
+export async function checkOrcidLink(client: OnboardingClient, did: string): Promise<boolean> {
+  try {
+    return profileShowsLinkedOrcid(
+      await client.get<unknown>(`/profiles/${encodeURIComponent(did)}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pick categories to follow
+// ---------------------------------------------------------------------------
+
+/** Categories offered before the user has any history to suggest from. */
+export const ONBOARDING_CATEGORY_CHOICES: readonly string[] = [
+  "cs.AI",
+  "cs.CL",
+  "cs.CR",
+  "cs.LG",
+  "cs.MA",
+  "stat.ML",
+];
+
+/** An arXiv-style category identifier: lowercase archive `.` subject (`cs.AI`, `physics.soc-ph`). */
+const CATEGORY_PATTERN = /^[a-z]+(?:-[a-z]+)*\.[A-Za-z][A-Za-z-]*$/;
+
+/** Normalise a typed-in category, or `null` when it cannot be a category. */
+export function normalizeCategory(input: string): string | null {
+  const trimmed = input.trim();
+  return CATEGORY_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+/** What `followCategories` did with the picks. */
+export interface FollowCategoriesResult {
+  /** The categories as saved (trimmed, de-duplicated, in pick order). */
+  categories: string[];
+  /**
+   * False when the follows endpoint is not available on this node yet; the
+   * picks are kept on this device and complete the step regardless.
+   */
+  savedToAccount: boolean;
+}
+
+/** True when an error says the follows endpoint is not mounted (yet). */
+export function followsEndpointUnavailable(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 404 || error.status === 405 || error.status === 501)
+  );
+}
+
+/**
+ * Follow each picked category (`PUT /v1/me/follows/{category}`, feature 179).
+ *
+ * Following is not a dependency of onboarding, so a node without the follows
+ * routes does not fail the step: the first "not available" answer stops the
+ * sync and the picks are reported as saved locally. Any other failure
+ * (expired session, network, server error) is thrown for the caller to show.
+ */
+export async function followCategories(
+  client: OnboardingClient = apiClient,
+  categories: readonly string[] = [],
+): Promise<FollowCategoriesResult> {
+  const list: string[] = [];
+  for (const entry of categories) {
+    const trimmed = typeof entry === "string" ? entry.trim() : "";
+    if (trimmed !== "" && !list.includes(trimmed)) {
+      list.push(trimmed);
+    }
+  }
+  if (list.length === 0) {
+    throw new OnboardingError("invalid-category", "Pick at least one category to follow.");
+  }
+  for (const category of list) {
+    if (!normalizeCategory(category)) {
+      throw new OnboardingError(
+        "invalid-category",
+        `“${category}” is not a category Scholium recognizes (try cs.AI).`,
+      );
+    }
+  }
+
+  let savedToAccount = true;
+  for (const category of list) {
+    try {
+      await client.put(`/me/follows/${encodeURIComponent(category)}`);
+    } catch (error) {
+      if (followsEndpointUnavailable(error)) {
+        savedToAccount = false;
+        break;
+      }
+      throw error;
+    }
+  }
+  return { categories: list, savedToAccount };
+}
+
+// ---------------------------------------------------------------------------
+// Set recovery guardians
+// ---------------------------------------------------------------------------
+
+/** How many guardians an account names (mirrors the API). */
+export const GUARDIAN_COUNT = 5;
+
+/** One thing wrong with a guardian list, tied to an input when it can be. */
+export interface GuardianProblem {
+  /** The guardian input (0-based) the problem belongs to; null for the list. */
+  index: number | null;
+  /** One sentence the user can act on. */
+  message: string;
+}
+
+/**
+ * Check a guardian list the way the API will, before anything is sent.
+ *
+ * Exactly {@link GUARDIAN_COUNT} entries, each a canonical Ed25519
+ * `did:key`, none repeated, none the account itself. Every fault is
+ * reported, not just the first, so the user fixes them in one pass.
+ */
+export function validateGuardians(
+  ownerDid: string | null,
+  values: readonly string[],
+): GuardianProblem[] {
+  const trimmed = values.map((value) => (typeof value === "string" ? value.trim() : ""));
+  const problems: GuardianProblem[] = [];
+  if (trimmed.length !== GUARDIAN_COUNT) {
+    problems.push({
+      index: null,
+      message: `Enter exactly ${GUARDIAN_COUNT} guardian DIDs — you have ${trimmed.length}.`,
+    });
+  }
+
+  const firstSeen = new Map<string, number>();
+  trimmed.forEach((value, index) => {
+    if (value === "") {
+      problems.push({
+        index,
+        message: "Enter your guardian's DID (it looks like did:key:z6Mk…).",
+      });
+      return;
+    }
+    if (!isEd25519DidKey(value)) {
+      problems.push({
+        index,
+        message: "That is not a DID Scholium recognizes. It should start with did:key:z6Mk…",
+      });
+      return;
+    }
+    if (ownerDid !== null && value === ownerDid) {
+      problems.push({
+        index,
+        message: "That is your own DID. Choose someone who could recover your account for you.",
+      });
+      return;
+    }
+    const repeats = firstSeen.get(value);
+    if (repeats !== undefined) {
+      problems.push({
+        index,
+        message: `This repeats guardian ${repeats + 1}. Each guardian must be someone different.`,
+      });
+      return;
+    }
+    firstSeen.set(value, index);
+  });
+  return problems;
+}
+
+/** A guardian list could not be saved; {@link problems} says why, per input. */
+export class GuardianSaveError extends Error {
+  /** Every fault found, client-side or reported by the API. */
+  readonly problems: GuardianProblem[];
+
+  constructor(problems: GuardianProblem[], message = "The guardian list is not valid yet.") {
+    super(message);
+    this.name = "GuardianSaveError";
+    this.problems = problems;
+  }
+}
+
+/** Type guard for {@link GuardianSaveError}. */
+export function isGuardianSaveError(error: unknown): error is GuardianSaveError {
+  return error instanceof GuardianSaveError;
+}
+
+/** The guardian index a problem-details location points at, if any. */
+function guardianIndexFromLocation(fieldError: {
+  loc?: Array<string | number>;
+  field?: string;
+}): number | null {
+  const loc = fieldError.loc;
+  if (Array.isArray(loc)) {
+    const at = loc.indexOf("guardians");
+    for (let i = at >= 0 ? at + 1 : 0; i < loc.length; i += 1) {
+      const part = loc[i];
+      if (typeof part === "number") {
+        return part;
+      }
+    }
+  }
+  if (typeof fieldError.field === "string") {
+    const parts = fieldError.field.split(".");
+    const at = parts.indexOf("guardians");
+    for (let i = at >= 0 ? at + 1 : 0; i < parts.length; i += 1) {
+      const asNumber = Number(parts[i]);
+      if (Number.isInteger(asNumber)) {
+        return asNumber;
+      }
+    }
+  }
+  return null;
+}
+
+/** Map a 422 problem document's `errors` onto guardian inputs. */
+export function guardianProblemsFromApiError(error: ApiError): GuardianProblem[] {
+  const problems: GuardianProblem[] = [];
+  for (const fieldError of error.fieldErrors) {
+    const message =
+      fieldError.message ??
+      (typeof fieldError.msg === "string" && fieldError.msg !== "" ? fieldError.msg : null) ??
+      error.detail;
+    if (message) {
+      problems.push({ index: guardianIndexFromLocation(fieldError), message });
+    }
+  }
+  if (problems.length === 0) {
+    problems.push({ index: null, message: error.detail });
+  }
+  return problems;
+}
+
+/** Read the saved list out of a `PUT /v1/me/guardians` response. */
+function guardiansFromResponse(payload: unknown, fallback: readonly string[]): string[] {
+  return (isRecord(payload) && stringArray(payload.guardians)) || [...fallback];
+}
+
+/**
+ * Save the account's five recovery guardians (`PUT /v1/me/guardians`,
+ * feature 36).
+ *
+ * The list is validated locally first, so a mistake never leaves the
+ * browser. The API's own 422 problem details (which report every fault at
+ * once) are mapped onto the inputs the same way. Any other failure is
+ * thrown as-is for the caller to describe.
+ *
+ * @returns the guardians as saved, in the order sent.
+ */
+export async function saveGuardians(
+  client: OnboardingClient = apiClient,
+  ownerDid: string | null = null,
+  values: readonly string[] = [],
+): Promise<string[]> {
+  const trimmed = values.map((value) => (typeof value === "string" ? value.trim() : ""));
+  const localProblems = validateGuardians(ownerDid, trimmed);
+  if (localProblems.length > 0) {
+    throw new GuardianSaveError(localProblems, "Check the highlighted guardians.");
+  }
+
+  let payload: unknown;
+  try {
+    payload = await client.put<unknown>("/me/guardians", { guardians: trimmed });
+  } catch (error) {
+    if (error instanceof ApiError && error.isValidationError) {
+      throw new GuardianSaveError(
+        guardianProblemsFromApiError(error),
+        "The server rejected this guardian list.",
+      );
+    }
+    throw error;
+  }
+  return guardiansFromResponse(payload, trimmed);
+}
