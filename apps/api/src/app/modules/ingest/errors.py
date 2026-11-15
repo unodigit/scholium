@@ -6,6 +6,7 @@ response with no extra wiring:
 
 * :class:`UnknownRecordType` and :class:`InvalidRecord` and
   :class:`RecordIdMismatch` -- ``422``;
+* :class:`InvalidIdempotencyKey` and :class:`IdempotencyKeyReused` -- ``422``;
 * :class:`InvalidRecordSignature` -- ``401``;
 * :class:`DuplicateRecord` -- ``409``.
 
@@ -25,6 +26,8 @@ INVALID_RECORD = "urn:scholium:problem:invalid-record"
 RECORD_ID_MISMATCH = "urn:scholium:problem:record-id-mismatch"
 INVALID_RECORD_SIGNATURE = "urn:scholium:problem:record-signature-invalid"
 DUPLICATE_RECORD = "urn:scholium:problem:duplicate-record"
+INVALID_IDEMPOTENCY_KEY = "urn:scholium:problem:invalid-idempotency-key"
+IDEMPOTENCY_KEY_REUSED = "urn:scholium:problem:idempotency-key-reused"
 
 _MAX_ECHO = 64
 
@@ -147,3 +150,43 @@ class DuplicateRecord(ProblemException, ValueError):
         self.record_id = record_id
         message = "A record with this id is already in this node's event log."
         super().__init__(409, message, type=DUPLICATE_RECORD)
+
+
+class InvalidIdempotencyKey(ProblemException, ValueError):
+    """The ``Idempotency-Key`` header is blank or too long: ``422`` problem details.
+
+    A header that is present but unusable is refused rather than ignored: a
+    client that sent one expects the retry protection it asked for, and
+    quietly running the request without it would hide the bug.
+    """
+
+    def __init__(self, value: object, message: str) -> None:
+        self.value = value
+        super().__init__(
+            422,
+            message,
+            type=INVALID_IDEMPOTENCY_KEY,
+            errors=[_error(["header", "Idempotency-Key"], message, "invalid_idempotency_key", value)],
+        )
+
+
+class IdempotencyKeyReused(ProblemException, ValueError):
+    """An ``Idempotency-Key`` was already used for a different record: ``422``.
+
+    Replaying the stored response would tell the client its new record was
+    accepted when it never reached the ledger, so the request is refused and
+    nothing is written.  The client should send a fresh key for the new record.
+    """
+
+    def __init__(self, key: object = None) -> None:
+        self.key = key
+        message = (
+            "This Idempotency-Key was already used for a different record. "
+            "Send a new key to submit another record."
+        )
+        super().__init__(
+            422,
+            message,
+            type=IDEMPOTENCY_KEY_REUSED,
+            errors=[_error(["header", "Idempotency-Key"], message, "idempotency_key_reused", key)],
+        )

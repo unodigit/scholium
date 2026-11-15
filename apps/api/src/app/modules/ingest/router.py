@@ -35,6 +35,14 @@ Refusals are RFC 9457 problem details via the app-wide handlers:
 A refused record never reaches the ledger, so ``GET /v1/records/{cid}`` keeps
 answering 404 for it.
 
+Feature 22: an optional ``Idempotency-Key`` header makes the submission safe to
+retry.  The first ``201`` is stored under the key in the ``idempotency_keys``
+table; a repeat with the same key answers that stored ``201`` again (marked
+``Idempotent-Replayed: true``) without running the handler or touching the
+ledger.  A key reused for a *different* record is a ``422``
+(:class:`IdempotencyKeyReused`), and a blank or over-long key is a ``422``
+(:class:`InvalidIdempotencyKey`).  See :mod:`app.modules.ingest.idempotency`.
+
 The endpoint requires an authenticated caller (any tier): the middleware that
 throttles writes keys on the access token, and feature 21 enforces the
 handler's ``min_tier`` against the author's account tier.  The *record's*
@@ -46,11 +54,13 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from app.security import require_tier
 
+from . import idempotency
 from .service import ANCHOR_PENDING, IngestResult, ingest
 
 __all__ = [
@@ -96,6 +106,27 @@ class RecordAccepted(BaseModel):
 )
 def post_record(
     record: dict[str, Any] = Body(..., description="The signed record envelope."),
-) -> RecordAccepted:
+    idempotency_key: Optional[str] = Header(
+        default=None,
+        alias=idempotency.HEADER,
+        description=(
+            "Makes the submission safe to retry: a repeat with the same key "
+            "replays the first 201 instead of failing as a duplicate."
+        ),
+    ),
+) -> Any:
     """Validate, verify and append one signed record; return its cid and state."""
-    return RecordAccepted.from_result(ingest(record))
+    if idempotency_key is None:
+        return RecordAccepted.from_result(ingest(record))
+
+    response, replayed = idempotency.execute(
+        idempotency.normalise_key(idempotency_key),
+        record,
+        lambda: RecordAccepted.from_result(ingest(record)).model_dump(),
+    )
+    if replayed:
+        # The stored body goes back exactly as it was first sent.
+        return JSONResponse(
+            response, status_code=201, headers={idempotency.REPLAYED_HEADER: "true"}
+        )
+    return response
