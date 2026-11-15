@@ -1,0 +1,35 @@
+{
+  "name": "scholium-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "next": "15.0.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "tailwindcss": "4.0.0",
+    "@ipld/dag-cbor": "^9.0.0",
+    "multiformats": "^9.9.0",
+    "@noble/ed25519": "^2.1.0",
+    "@noble/hashes": "^1.4.0",
+    "tus-js-client": "^4.1.0"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "vitest": "^2.1.0",
+    "@testing-library/react": "^16.0.0",
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "postcss": "^8.4.0",
+    "@tailwindcss/postcss": "4.0.0"
+  }
+}

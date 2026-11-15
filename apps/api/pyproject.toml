@@ -1,0 +1,39 @@
+[project]
+name = "scholium-api"
+version = "0.1.0"
+description = "Scholium API"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi",
+  "sqlalchemy",
+  "pydantic",
+  "pyjwt",
+  "cryptography",
+  "pynacl",
+  "dag-cbor",
+  "multiformats",
+  "pypdf",
+  "httpx",
+  "anthropic",
+  "pytest",
+  "pytest-xdist",
+]
+
+[tool.uv]
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.pytest.ini_options]
+addopts = "-n 2"
+testpaths = ["src", "packages", "tests"]
+pythonpath = ["src", "packages", "tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest", "pytest-xdist"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
