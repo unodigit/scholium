@@ -29,6 +29,8 @@ export interface IconShape {
  * - `alert` ⚠ triangle: something is in dispute
  * - `pencil` ✎ pencil: edited after publication
  * - `ban` ⊘ ring with a bar: withdrawn
+ * - `update` ⤒ arrow up to a bar: something newer sits above this one
+ * - `tombstone` ⌢ arch slab: the content is gone, the marker stays
  */
 export const ICON_SHAPES = {
   circle: [{ tag: "circle", attrs: { cx: 8, cy: 8, r: 5.25 } }],
@@ -55,6 +57,15 @@ export const ICON_SHAPES = {
   ban: [
     { tag: "circle", attrs: { cx: 8, cy: 8, r: 5.25 } },
     { tag: "path", attrs: { d: "M4.29 4.29l7.42 7.42" } },
+  ],
+  update: [
+    { tag: "path", attrs: { d: "M3.25 3h9.5" } },
+    { tag: "path", attrs: { d: "M8 12.75V5" } },
+    { tag: "path", attrs: { d: "M4.5 8.5 8 5l3.5 3.5" } },
+  ],
+  tombstone: [
+    { tag: "path", attrs: { d: "M4.5 13.25v-5a3.5 3.5 0 0 1 7 0v5z" } },
+    { tag: "path", attrs: { d: "M6.5 9.75h3" } },
   ],
 } as const satisfies Record<string, readonly IconShape[]>;
 

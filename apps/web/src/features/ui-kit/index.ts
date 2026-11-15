@@ -7,11 +7,12 @@
  * `apps/web/src/app/(ui-kit)/`.
  *
  * ```tsx
- * import { EmptyState, RecordLink, StatusChip, UnderReviewChip } from "@/features/ui-kit";
+ * import { DecisionBanner, EmptyState, RecordLink, StatusChip, UnderReviewChip } from "@/features/ui-kit";
  *
  * <StatusChip status={paper.status} count={paper.reviewers} />
  * <UnderReviewChip count={3} />
  * <RecordLink cid={paper.recordCid} />
+ * <DecisionBanner kind="retracted" recordCid={notice.id} clause="MOD-03" reason={notice.body.reason} />
  * <EmptyState sentence="No reviews yet." action={{ label: "Write a review", href: "/papers/123/review" }} />
  * ```
  */
@@ -64,3 +65,22 @@ export {
   type RecordLinkProps,
   type RecordLoader,
 } from "./record-link";
+
+export {
+  DecisionBanner,
+  type DecisionBannerProps,
+} from "./decision-banner";
+
+export {
+  DECISION_BANNER_SPECS,
+  DECISION_KINDS,
+  decisionDetail,
+  decisionPolicyLabel,
+  decisionVersionLabel,
+  isDecisionKind,
+  normalizeClauseId,
+  type DecisionBannerSpec,
+  type DecisionContext,
+  type DecisionKind,
+  type DecisionTone,
+} from "./decision";

@@ -1,0 +1,156 @@
+/* ============================================================================
+   DecisionBanner — docs/design.md §5.2 (Status banner variants), §7
+   (Components) and §9 (Accessibility).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives
+   here, so light, dark and a scoped `data-theme` subtree all work.
+
+   The banner is full width and sits above the paper's title (§5.2), so it
+   is a quiet card, not an alarm: a soft tone fill, a 1 px rule in the tone
+   colour, the word in --ink. As with a chip, the status colour is carried
+   by the icon and the border, never by the word (§3: --pending on
+   --pending-soft is below 4.5:1 at small sizes), and two of the four kinds
+   are neutral on purpose — a newer version and a legal removal are facts,
+   not fault states.
+
+   The links are quiet, accented and 44 px on touch (§9): "View record"
+   styles itself (see record-link.css); the anchors here match it.
+
+   Unlayered on purpose: a stylesheet imported from a component must not
+   re-declare Tailwind's cascade layers, and unlayered rules outrank them.
+   The root sets no margin, so a consumer's spacing utilities still apply.
+   ============================================================================ */
+
+.sch-decision {
+  /* Neutral by default; the tone rules below override these three. */
+  --banner-icon: var(--ink-2);
+  --banner-fill: var(--surface);
+  --banner-edge: var(--rule);
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+
+  /* Full width, above the title (design.md §5.2): the banner spans the
+     column it is placed in, whatever the column is. */
+  inline-size: 100%;
+  padding: calc(var(--space-unit) * 4) calc(var(--space-unit) * 5);
+
+  border: 1px solid var(--banner-edge);
+  border-radius: var(--corner-card);
+  background-color: var(--banner-fill);
+
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.sch-decision[data-tone="pending"] {
+  --banner-icon: var(--pending);
+  --banner-fill: var(--pending-soft);
+  --banner-edge: var(--pending);
+}
+
+.sch-decision[data-tone="critical"] {
+  --banner-icon: var(--critical);
+  --banner-fill: var(--critical-soft);
+  --banner-edge: var(--critical);
+}
+
+/* ---- The lead: icon, word, sentence -------------------------------------- */
+
+.sch-decision__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+}
+
+.sch-decision__icon {
+  flex: none;
+  width: calc(var(--space-unit) * 5);
+  height: calc(var(--space-unit) * 5);
+  color: var(--banner-icon);
+}
+
+.sch-decision__text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  min-inline-size: 0;
+}
+
+.sch-decision__word {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.sch-decision__detail {
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* ---- The links: the record, the policy clause, the newer version --------- */
+
+.sch-decision__links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 6);
+
+  /* Start where the word starts: past the icon (5 units) and its gap. */
+  padding-inline-start: calc(var(--space-unit) * 8);
+  margin: 0;
+
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sch-decision__links > * {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(var(--space-unit) * 6);
+}
+
+/* The anchors match the record link's trigger, which styles itself
+   (.sch-record-link in record-link.css). */
+.sch-decision__links a {
+  color: var(--accent);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+}
+
+.sch-decision__links a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Touch targets are at least 44 px (design.md §9) while the links keep
+   their compact text look with a mouse. */
+@media (pointer: coarse) {
+  .sch-decision__links > * {
+    min-height: calc(var(--space-unit) * 11);
+  }
+}
+
+/* Forced colours (Windows High Contrast): the browser drops the tints and
+   recolours borders, text and icons to system colours. The border keeps
+   the banner's shape, the icon strokes follow the text colour, and the
+   word and sentence are plain text, so there is nothing to restore. */
+@media (forced-colors: active) {
+  .sch-decision {
+    border-color: CanvasText;
+  }
+
+  .sch-decision__icon {
+    color: CanvasText;
+  }
+
+  .sch-decision__links a {
+    color: LinkText;
+  }
+}

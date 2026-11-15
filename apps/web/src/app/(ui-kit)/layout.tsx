@@ -18,6 +18,7 @@ export default function UiKitLayout({
         <a href="/ui-kit/status-chip">Status chip</a>
         <a href="/ui-kit/record-link">Record link</a>
         <a href="/ui-kit/empty-state">Empty state</a>
+        <a href="/ui-kit/decision-banner">Decision banner</a>
       </nav>
       {children}
     </main>
