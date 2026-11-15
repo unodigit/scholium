@@ -1,0 +1,286 @@
+/*
+ * `/mod` — the moderation console (queue table and its states).
+ *
+ * Every value is a design token from `src/styles/tokens.css`, so light, dark
+ * and a forced `data-theme` all re-theme the console with no extra classes.
+ * Rules are prefixed `mc-` (mod console) so nothing leaks into other
+ * features. The layout owns the outer width; these rules only style content.
+ *
+ * A signal is never colour alone (docs/design.md §9): the status colour sits
+ * on the icon and the border, and the words stay in --ink.
+ */
+
+.mc-page {
+  width: 100%;
+}
+
+.mc-header {
+  margin-bottom: calc(var(--space-unit) * 8);
+  max-width: var(--measure-reading);
+}
+
+.mc-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.mc-title {
+  margin: 0;
+}
+
+.mc-lede {
+  margin-top: calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  max-width: var(--measure-reading);
+}
+
+.mc-loading {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.mc-empty {
+  max-width: var(--measure-reading);
+}
+
+/* Visually hidden, still read by assistive technology. */
+.mc-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Toolbar ------------------------------------------------------------ */
+
+.mc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  margin-bottom: calc(var(--space-unit) * 3);
+}
+
+.mc-count {
+  margin: 0;
+}
+
+/* ---- Queue table -------------------------------------------------------- */
+
+/* The table is wider than a phone: it scrolls inside this focusable frame so
+   the page itself never scrolls sideways. */
+.mc-table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+}
+
+.mc-table-wrap:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.mc-table {
+  width: 100%;
+  min-width: 52rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  color: var(--ink);
+  text-align: start;
+}
+
+.mc-head {
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.mc-cell {
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  font-weight: 400;
+  text-align: start;
+}
+
+/* The last row has no divider: the frame's own border closes the table. */
+.mc-row:last-child .mc-cell {
+  border-bottom: 0;
+}
+
+/* Age and similarity are short values: they never wrap ("2 d 4 h" stays on
+   one line). The table scrolls inside its frame, so there is room to hold. */
+.mc-head-num,
+.mc-cell-num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mc-cell-paper {
+  min-width: 16rem;
+  max-width: 28rem;
+}
+
+.mc-paper-title {
+  display: block;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.mc-paper-id {
+  display: block;
+  margin-top: var(--space-unit);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Signals ------------------------------------------------------------ */
+
+/* A signal is an icon and its words on one line: wrapping would strand the
+   icon away from the word it qualifies (e.g. "Not checked" in a right-aligned
+   column). */
+.mc-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 1.5);
+  max-width: 100%;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.mc-signal-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* A flagged or checked signal is a small pill: status colour on the border
+   and icon, a quiet tint behind, ink for the words. */
+.mc-signal--ok,
+.mc-signal--warn,
+.mc-signal--bad {
+  padding: 2px calc(var(--space-unit) * 2.5) 2px calc(var(--space-unit) * 2);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.mc-signal--ok {
+  background: var(--verified-soft);
+  border-color: var(--verified);
+}
+
+.mc-signal--ok .mc-signal-icon {
+  color: var(--verified);
+}
+
+.mc-signal--warn {
+  background: var(--pending-soft);
+  border-color: var(--pending);
+}
+
+.mc-signal--warn .mc-signal-icon {
+  color: var(--pending);
+}
+
+.mc-signal--bad {
+  background: var(--critical-soft);
+  border-color: var(--critical);
+}
+
+.mc-signal--bad .mc-signal-icon {
+  color: var(--critical);
+}
+
+/* Not known yet: quiet, in the secondary ink. A plain value (`none`) keeps
+   the base ink. */
+.mc-signal--unknown {
+  color: var(--ink-2);
+}
+
+/* ---- Notices and buttons ------------------------------------------------ */
+
+.mc-notice {
+  max-width: var(--measure-reading);
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  /* The critical colour marks the edge; the heading is ink, so the state is
+     never conveyed by colour alone (docs/design.md §9). */
+  border-inline-start: 4px solid var(--critical);
+  border-radius: var(--corner-card);
+}
+
+.mc-notice-title {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.mc-notice-text {
+  color: var(--ink-2);
+}
+
+.mc-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: calc(var(--space-unit) * 4);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-control);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-decel);
+}
+
+.mc-button:hover {
+  opacity: 0.9;
+}
+
+.mc-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The refresh sits in a toolbar, beside the count, not under a notice. */
+.mc-button--quiet {
+  margin-top: 0;
+  background: transparent;
+  color: var(--accent);
+}
+
+/* ---- Responsive --------------------------------------------------------- */
+
+@media (max-width: 40rem) {
+  .mc-notice {
+    padding: calc(var(--space-unit) * 4);
+  }
+}

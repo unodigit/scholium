@@ -1,0 +1,25 @@
+/* ============================================================================
+   Shell for the moderation console (`/mod`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame lives here: the global navigation is mounted by
+   the layout, and the queue styles live with the feature
+   (`features/mod-console/mod-console.css`). Every value is a design token.
+
+   The queue table has seven columns, so the frame is wider than the 720 px
+   reading column the paper and policy pages use.
+   ============================================================================ */
+
+.mc-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .mc-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
