@@ -20,7 +20,8 @@ See :mod:`app.modules.ledger.service` for append and subscription semantics,
 ``GET /v1/sync/head``, :mod:`app.modules.ledger.sync_range` for the replay
 endpoint ``GET /v1/sync/range?from=&to=`` and
 :mod:`app.modules.ledger.records` for the envelope endpoint
-``GET /v1/records/{cid}`` this package serves.
+``GET /v1/records/{cid}`` and :mod:`app.modules.ledger.proof` for the
+record proof endpoint ``GET /v1/records/{cid}/proof`` this package serves.
 """
 
 from __future__ import annotations
@@ -56,6 +57,8 @@ from .service import (
     subscriber_count,
     unsubscribe,
 )
+from .proof import ANCHOR_PENDING, RecordProof, record_proof
+from .proof import router as _proof_router
 from .records import (
     RECORD_NOT_FOUND_TYPE,
     RecordEnvelope,
@@ -75,13 +78,15 @@ from .sync_range import router as _sync_router
 
 #: Router the module loader mounts under ``/v1``: every endpoint the ledger
 #: plugin serves, assembled from its per-endpoint routers (``/v1/sync/head``,
-#: ``/v1/sync/range`` and ``/v1/records/{cid}``).
+#: ``/v1/sync/range``, ``/v1/records/{cid}`` and ``/v1/records/{cid}/proof``).
 router = APIRouter()
 router.include_router(_sync_head_router)
 router.include_router(_sync_router)
 router.include_router(_records_router)
+router.include_router(_proof_router)
 
 __all__ = [
+    "ANCHOR_PENDING",
     "DEFAULT_ORIGIN_NODE",
     "ED25519_MULTICODEC_PREFIX",
     "EventLog",
@@ -94,6 +99,7 @@ __all__ = [
     "RECORD_NOT_FOUND_TYPE",
     "REVERSED_RANGE_TYPE",
     "RecordEnvelope",
+    "RecordProof",
     "RecordSubscriber",
     "SyncEntry",
     "SyncHead",
@@ -111,6 +117,7 @@ __all__ = [
     "latest",
     "node_did",
     "node_signing_key",
+    "record_proof",
     "router",
     "signed_head",
     "stored_envelope",
