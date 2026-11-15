@@ -1,0 +1,415 @@
+/* ============================================================================
+   ProofTab — docs/design.md §5.3 (Verification detail), §3 (tokens), §9
+   (Accessibility), §10 (Responsive behaviour).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work. Rules are
+   prefixed `pt-` (proof tab) so nothing leaks into other features.
+
+   Colour rules (src/styles/README.md):
+   - Text is --ink or --ink-2. The status colour is carried by the icon and the
+     border, never the word: --pending on --pending-soft is below 4.5:1 at
+     13 px.
+   - Colour is reinforcement. Every line has an icon of its own shape and a
+     word (visually hidden on the lines), so nothing depends on telling amber
+     from green.
+   - "Checking…" and "Could not check" are both grey: neither is a verdict, and
+     an inability to check must never look like a failure (§5.3).
+   - --ai is never used here: AI output must not look like a human verdict.
+
+   Unlayered on purpose, like the other kit stylesheets: a component stylesheet
+   must not re-declare Tailwind's cascade layers, and unlayered rules outrank
+   them, so the base layer's link/button styles cannot restyle the tab. No
+   outer margin is set; the paper page's margin panel owns the spacing.
+   ============================================================================ */
+
+.pt-tab {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- Verdict ------------------------------------------------------------- */
+
+.pt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 3);
+  padding-block-end: calc(var(--space-unit) * 3);
+  border-block-end: 1px solid var(--rule);
+}
+
+.pt-verdict {
+  /* Grey by default; the tone rules below override the icon. */
+  --pt-icon: var(--ink-2);
+  flex: 1 1 calc(var(--space-unit) * 40);
+  min-inline-size: 0;
+}
+
+.pt-verdict[data-tone="verified"] {
+  --pt-icon: var(--verified);
+}
+
+.pt-verdict[data-tone="pending"] {
+  --pt-icon: var(--pending);
+}
+
+.pt-verdict[data-tone="critical"] {
+  --pt-icon: var(--critical);
+}
+
+.pt-verdict__line {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  font-weight: 500;
+}
+
+.pt-verdict__icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 5);
+  block-size: calc(var(--space-unit) * 5);
+  color: var(--pt-icon);
+}
+
+.pt-verdict__summary {
+  margin: calc(var(--space-unit) * 1) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+/* "Checking…": the open ring turns. Transform only, and constant speed: a
+   spinner is a loop, not a UI transition, so --duration-* does not apply. */
+.pt-verdict[data-state="checking"] .pt-verdict__icon {
+  animation: pt-spin 900ms linear infinite;
+}
+
+@keyframes pt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Buttons ------------------------------------------------------------- */
+
+.pt-button {
+  flex: none;
+  box-sizing: border-box;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.pt-button:disabled {
+  color: var(--ink-2);
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .pt-button:not(:disabled):hover {
+    background-color: color-mix(in srgb, var(--ink) 6%, var(--surface));
+  }
+}
+
+.pt-button:not(:disabled):active {
+  background-color: color-mix(in srgb, var(--ink) 10%, var(--surface));
+}
+
+/* ---- Checklist ----------------------------------------------------------- */
+
+.pt-checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pt-item {
+  /* Neutral until the state rules below set the icon colour. */
+  --pt-item-icon: var(--ink-2);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--space-unit) * 3);
+  padding-block: calc(var(--space-unit) * 3);
+  border-block-end: 1px solid var(--rule);
+}
+
+.pt-item[data-state="pass"] {
+  --pt-item-icon: var(--verified);
+}
+
+.pt-item[data-state="pending"],
+.pt-item[data-state="warn"] {
+  --pt-item-icon: var(--pending);
+}
+
+.pt-item[data-state="fail"] {
+  --pt-item-icon: var(--critical);
+}
+
+.pt-item__icon {
+  inline-size: calc(var(--space-unit) * 5);
+  block-size: calc(var(--space-unit) * 5);
+  /* Centre the icon on the first line of text. */
+  margin-block-start: calc((var(--leading-ui) - var(--space-unit) * 5) / 2);
+  color: var(--pt-item-icon);
+}
+
+.pt-item__text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pt-item__details {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  padding-inline-start: calc(var(--space-unit) * 4);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.pt-item__details li + li {
+  margin-block-start: var(--space-unit);
+}
+
+.pt-link {
+  color: var(--accent);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  white-space: nowrap;
+}
+
+/* ---- Technical details --------------------------------------------------- */
+
+.pt-details {
+  margin-block-start: calc(var(--space-unit) * 3);
+}
+
+.pt-details__summary {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-block-size: calc(var(--space-unit) * 11);
+  color: var(--ink);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pt-tech {
+  margin: 0;
+}
+
+.pt-tech__row {
+  display: grid;
+  grid-template-columns: calc(var(--space-unit) * 28) minmax(0, 1fr);
+  column-gap: calc(var(--space-unit) * 3);
+  align-items: center;
+  padding-block: var(--space-unit);
+}
+
+.pt-tech__label {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pt-tech__value {
+  min-inline-size: 0;
+  margin: 0;
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  overflow-wrap: anywhere;
+}
+
+.pt-subhead {
+  margin: calc(var(--space-unit) * 4) 0 var(--space-unit);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pt-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pt-check {
+  display: grid;
+  grid-template-columns: calc(var(--space-unit) * 24) calc(var(--space-unit) * 12) minmax(0, 1fr);
+  column-gap: calc(var(--space-unit) * 2);
+  padding-block: var(--space-unit);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pt-check__name {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+}
+
+/* The word ("ok" / "FAILED") carries the result; the weight is the only cue
+   added to it, so it reads the same in greyscale and forced colours. */
+.pt-check[data-passed="false"] .pt-check__result {
+  font-weight: 700;
+}
+
+.pt-check__message {
+  min-inline-size: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 40rem) {
+  .pt-tech__row,
+  .pt-check {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- Copy control -------------------------------------------------------- */
+
+.pt-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  min-block-size: calc(var(--space-unit) * 6);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.pt-copy__value {
+  min-inline-size: 0;
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
+  overflow-wrap: anywhere;
+}
+
+.pt-copy__icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 4);
+  block-size: calc(var(--space-unit) * 4);
+  color: var(--ink-2);
+}
+
+.pt-copy[data-copied="true"] .pt-copy__icon {
+  color: var(--verified);
+}
+
+/* The command is a block: a card with a border, wrapping over lines. */
+.pt-copy[data-block="true"] {
+  display: flex;
+  justify-content: space-between;
+  inline-size: 100%;
+  padding: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+}
+
+@media (hover: hover) {
+  .pt-copy:hover .pt-copy__value {
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
+}
+
+/* ---- Notice (a link that is not a paper id) ------------------------------ */
+
+.pt-notice {
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+}
+
+.pt-notice__title {
+  margin: 0;
+  font-weight: 500;
+}
+
+.pt-notice__text {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Utilities ----------------------------------------------------------- */
+
+/* Words for assistive technology that the icon and layout already say to eyes. */
+.pt-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Touch targets are at least 44 px (design.md §9). */
+@media (pointer: coarse) {
+  .pt-copy {
+    min-block-size: calc(var(--space-unit) * 11);
+  }
+}
+
+/* Reduced motion: the ring stands still. "Checking…" is still in words. */
+@media (prefers-reduced-motion: reduce) {
+  .pt-button {
+    transition: none;
+  }
+
+  .pt-verdict[data-state="checking"] .pt-verdict__icon {
+    animation: none;
+  }
+}
+
+/* Forced colours (Windows High Contrast): the browser drops the tints. Icons
+   follow the text colour and the words are still there. */
+@media (forced-colors: active) {
+  .pt-verdict__icon,
+  .pt-item__icon,
+  .pt-copy__icon {
+    color: CanvasText;
+  }
+
+  .pt-link {
+    color: LinkText;
+  }
+
+  .pt-button {
+    border-color: ButtonText;
+  }
+}

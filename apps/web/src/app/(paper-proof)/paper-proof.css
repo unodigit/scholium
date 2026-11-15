@@ -1,0 +1,45 @@
+/* ============================================================================
+   Shell for the standalone Proof page (`/proof/…`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame and the page header live here: the global
+   navigation is mounted by the layout, and the tab's own styles live with the
+   feature (`features/paper-proof/proof-tab.css`). Every value is a design
+   token.
+   ============================================================================ */
+
+.ppf-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--reading-column) + var(--space-unit) * 8);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .ppf-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
+
+.ppf-header {
+  margin-block-end: calc(var(--space-unit) * 6);
+}
+
+.ppf-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.ppf-title {
+  margin: 0;
+}
+
+.ppf-lede {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
