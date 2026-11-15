@@ -18,6 +18,15 @@ object graph and records what it finds.  A clean PDF writes no rows; an
 unparseable or still-encrypted one records a failed ``pdf_unreadable`` report
 so the file is held rather than served.
 
+Feature 61 adds a ``hidden_text`` check (see :mod:`.hidden_text`) for text a
+reader cannot see -- white or near-white glyphs, text under 2pt, transparent
+or invisible-mode text -- and for instruction-like strings aimed at a
+downstream model (``"ignore previous instructions"``)::
+
+    hits = sanitizer.analyze_hidden_text(pdf_bytes)   # tuple[HiddenTextHit]
+    sanitizer.hidden_text_detail(hits)                # the report's detail
+    result = sanitizer.scan_pdf_bytes(pdf_bytes)      # saves the finding
+
 The module exposes no ``router``.  Importing this package registers the
 ``ScanReport`` model on the shared declarative base before ``create_app``
 creates tables, and the module loader discovers it automatically.
@@ -35,6 +44,18 @@ from .models import (
     RESULTS,
     ScanReport,
     ensure_table,
+)
+from .hidden_text import (
+    CHECK_HIDDEN_TEXT,
+    INSTRUCTION_PATTERNS,
+    NEAR_TRANSPARENT,
+    NEAR_WHITE,
+    TINY_FONT_SIZE,
+    HiddenTextHit,
+    analyze_hidden_text,
+    analyze_hidden_text_reader,
+    detect_hidden_text,
+    hidden_text_detail,
 )
 from .pdf import (
     CHECK_EMBEDDED_FILES,
@@ -114,25 +135,35 @@ from .reports import (
 
 __all__ = [
     "CHECK_EMBEDDED_FILES",
+    "CHECK_HIDDEN_TEXT",
     "CHECK_JAVASCRIPT",
     "CHECK_LAUNCH_ACTION",
     "CHECK_OPEN_ACTION",
     "CHECK_ORDER",
     "CHECK_UNREADABLE",
     "Finding",
+    "HiddenTextHit",
+    "INSTRUCTION_PATTERNS",
     "InvalidScanReport",
+    "NEAR_TRANSPARENT",
+    "NEAR_WHITE",
     "PdfScanResult",
     "RESULT_FAILED",
     "RESULT_PASSED",
     "RESULTS",
     "SanitizerError",
     "ScanReport",
+    "TINY_FONT_SIZE",
+    "analyze_hidden_text",
+    "analyze_hidden_text_reader",
     "analyze_pdf",
     "check_pdf",
     "delete_reports",
+    "detect_hidden_text",
     "ensure_table",
     "first_failure",
     "has_failure",
+    "hidden_text_detail",
     "record_finding",
     "record_report",
     "reports_for",

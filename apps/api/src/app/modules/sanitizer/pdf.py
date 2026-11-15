@@ -19,7 +19,8 @@ A PDF that pypdf cannot parse, or that stays encrypted, records a failed
 held, not served.
 
 The checks are deliberately structural.  We do not execute anything and we do
-not rely on page text; we look for the PDF constructs themselves:
+not rely on page text for the active-content checks; we look for the PDF
+constructs themselves:
 
 * ``javascript`` -- a JavaScript action (``/S /JavaScript`` or any ``/JS``
   key), including document-level JavaScript name trees and additional actions;
@@ -27,6 +28,13 @@ not rely on page text; we look for the PDF constructs themselves:
   ``/EmbeddedFile`` stream, or an ``/EF`` entry;
 * ``launch`` -- a Launch action (``/S /Launch``);
 * ``openaction`` -- an ``/OpenAction`` entry in the document catalog.
+
+One check does read the text layer: ``hidden_text`` (see
+:mod:`.hidden_text`) reports white/near-invisible text, text under 2pt,
+transparent or invisible-mode text, and instruction-like strings aimed at a
+downstream language model ("ignore previous instructions").  It is
+best-effort: a page whose text pypdf cannot extract contributes no hidden
+text finding rather than failing the scan.
 
 Each check produces at most one row per file; the ``detail`` names every
 place the construct was found, so a file with three JavaScript actions still
@@ -45,11 +53,17 @@ from typing import Any, Optional, Protocol, Union
 from pypdf import PdfReader
 from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
 
+from .hidden_text import (
+    CHECK_HIDDEN_TEXT,
+    analyze_hidden_text_reader,
+    hidden_text_detail,
+)
 from .models import RESULT_FAILED, RESULT_PASSED, ScanReport
 from .reports import record_finding
 
 __all__ = [
     "CHECK_EMBEDDED_FILES",
+    "CHECK_HIDDEN_TEXT",
     "CHECK_JAVASCRIPT",
     "CHECK_LAUNCH_ACTION",
     "CHECK_OPEN_ACTION",
@@ -77,12 +91,15 @@ CHECK_OPEN_ACTION = "openaction"
 #: pypdf could not parse the file, or it stayed encrypted.
 CHECK_UNREADABLE = "pdf_unreadable"
 
-#: Stable order for findings and their report rows.
+#: Stable order for findings and their report rows.  ``CHECK_HIDDEN_TEXT``
+#: (imported from :mod:`.hidden_text`) is the one check that reads the text
+#: layer; the rest inspect the PDF object graph.
 CHECK_ORDER = (
     CHECK_JAVASCRIPT,
     CHECK_EMBEDDED_FILES,
     CHECK_LAUNCH_ACTION,
     CHECK_OPEN_ACTION,
+    CHECK_HIDDEN_TEXT,
     CHECK_UNREADABLE,
 )
 
@@ -92,6 +109,7 @@ _LABELS = {
     CHECK_EMBEDDED_FILES: "embedded file",
     CHECK_LAUNCH_ACTION: "Launch action",
     CHECK_OPEN_ACTION: "OpenAction entry",
+    CHECK_HIDDEN_TEXT: "hidden text",
     CHECK_UNREADABLE: "unreadable PDF",
 }
 
@@ -218,7 +236,12 @@ def analyze_pdf(data: Buffer) -> tuple[Finding, ...]:
             return (_unreadable("PDF has no document catalog (/Root)"),)
         collector = _Collector()
         collector.walk(root, "/Root")
-        return collector.findings()
+        findings = list(collector.findings())
+        hidden = _hidden_text_finding(reader)
+        if hidden is not None:
+            findings.append(hidden)
+        findings.sort(key=lambda finding: CHECK_ORDER.index(finding.check_name))
+        return tuple(findings)
     except Exception as exc:  # noqa: BLE001 - pypdf raises many unrelated types
         return (_unreadable(f"PDF could not be parsed with pypdf: {exc}"),)
 
@@ -366,6 +389,21 @@ def _resolve_cid(cid: Optional[str], raw: bytes) -> str:
     if not isinstance(cid, str) or not cid.strip():
         raise ValueError(f"cid must be a non-empty string, got {cid!r}")
     return cid
+
+
+def _hidden_text_finding(reader: PdfReader) -> Optional[Finding]:
+    """One aggregated ``hidden_text`` finding for a parsed PDF, or ``None``.
+
+    Text extraction is best-effort: if it fails, the structural findings
+    still stand and the PDF is not downgraded to ``pdf_unreadable``.
+    """
+    try:
+        hits = analyze_hidden_text_reader(reader)
+    except Exception:  # noqa: BLE001 - never fail the scan over a text layer
+        return None
+    if not hits:
+        return None
+    return Finding(CHECK_HIDDEN_TEXT, hidden_text_detail(hits))
 
 
 def _unreadable(reason: str) -> Finding:
