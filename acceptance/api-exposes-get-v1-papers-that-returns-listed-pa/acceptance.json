@@ -1,0 +1,1 @@
+{"command": "cd apps/api && uv run --all-packages pytest -o python_files='acceptance_*.py' ../../acceptance/api-exposes-get-v1-papers-that-returns-listed-pa"}
