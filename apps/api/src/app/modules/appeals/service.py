@@ -37,10 +37,22 @@ raises is only logged -- the endpoint must not answer ``201`` for an appeal it
 did not save.  It re-runs the checks above, so a row always means a valid
 appeal, and the ``UNIQUE(decision_cid)`` constraint settles two appeals of the
 same decision that race past the handler: one is saved, the other is a ``409``.
+
+Seating the panel
+-----------------
+
+Once the appeal is saved, :func:`seat_panel` draws its 3-member panel into
+``appeal_panels`` (see :mod:`app.modules.appeals.panel` for who is eligible and
+how the draw is seeded from the appeal cid).  It is idempotent too, so the
+subscriber and the endpoint cannot seat two panels.  Too few eligible members is
+not a reason to refuse or unfile an appeal -- the appeal is already in the public
+log -- so :func:`apply_appeal` leaves the panel undrawn and logs it; calling
+:func:`seat_panel` again once the membership has grown draws it then.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -53,8 +65,11 @@ from app.modules import ledger, submissions
 from app.modules.ingest import InvalidRecord
 from app.modules.moderation import DECISION_TYPE, get_decision
 
-from .errors import AppealAlreadyFiled, AppealNotAuthorized, UnknownAppealTarget
-from .models import Appeal, ensure_tables
+from .errors import AppealAlreadyFiled, AppealNotAuthorized, PanelUnavailable, UnknownAppealTarget
+from .models import Appeal, AppealPanelMember, ensure_tables
+from .panel import draw_panel, get_panel
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "APPEAL_MIN_TIER",
@@ -67,9 +82,11 @@ __all__ = [
     "get_appeal",
     "get_appeal_for_decision",
     "handle_appeal",
+    "panel_exclusions",
     "persist_entry",
     "require_appellant",
     "resolve_decision",
+    "seat_panel",
 ]
 
 #: The record type this module owns.
@@ -360,14 +377,65 @@ def handle_appeal(record: Mapping[str, Any]) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def panel_exclusions(appeal: Appeal, decision: AppealedDecision) -> frozenset[str]:
+    """DIDs that may not sit on this appeal's panel.
+
+    The deciding moderator, every author of the paper the decision was about,
+    and the appellant (an author already, but the saved appeal is the authority
+    on who filed it).
+    """
+    return frozenset(
+        {decision.moderator_did, str(appeal.appellant_did)} | set(submissions.paper_authors(decision.paper_cid))
+    )
+
+
+def seat_panel(
+    appeal: Appeal,
+    decision: Optional[AppealedDecision] = None,
+) -> list[AppealPanelMember]:
+    """Draw ``appeal``'s panel into ``appeal_panels`` if it has none; return its seats.
+
+    Idempotent: a drawn panel is returned as it is.  ``decision`` is looked up
+    from the appeal when the caller does not already hold it.
+
+    Raises:
+        UnknownAppealTarget: ``422`` -- the decision can no longer be resolved.
+        PanelUnavailable: ``503`` -- fewer than three eligible members; nothing
+            is saved.
+    """
+    seated = get_panel(appeal.appeal_cid)
+    if seated:
+        return seated
+    if decision is None:
+        decision = resolve_decision(str(appeal.decision_cid))
+    return draw_panel(str(appeal.appeal_cid), excluded=panel_exclusions(appeal, decision))
+
+
+def _seat_or_defer(appeal: Appeal, decision: AppealedDecision) -> None:
+    """Seat the panel, tolerating a membership too small to draw one yet."""
+    try:
+        seat_panel(appeal, decision)
+    except PanelUnavailable as exc:
+        logger.warning(
+            "appeal %s has no panel yet: %d eligible member(s), %d needed",
+            appeal.appeal_cid,
+            exc.eligible,
+            exc.needed,
+        )
+
+
 def apply_appeal(record: Mapping[str, Any]) -> Appeal:
-    """Save the appeal to ``appeals``; return its row.
+    """Save the appeal to ``appeals`` and draw its panel; return its row.
 
     Idempotent per appeal cid: an appeal that already has its row is returned as
     it is, so the ledger subscriber and the endpoint may both call this for the
     same record.  The record is validated again first, so no row exists for an
     appeal the handler would have refused (a record appended to the log by some
     other path, say).
+
+    The panel is seated on every call that finds the appeal saved, so a call
+    that follows a failed draw repairs it.  A membership too small for a panel
+    is not a failure here (see the module docstring).
 
     Raises:
         InvalidRecord, UnknownAppealTarget: ``422``.
@@ -376,11 +444,13 @@ def apply_appeal(record: Mapping[str, Any]) -> Appeal:
             single slot.
     """
     fields, decision = _validated(record)
+    row = get_appeal(fields.appeal_cid) or _save_appeal(fields, decision)
+    _seat_or_defer(row, decision)
+    return row
 
-    existing = get_appeal(fields.appeal_cid)
-    if existing is not None:
-        return existing
 
+def _save_appeal(fields: AppealFields, decision: AppealedDecision) -> Appeal:
+    """Insert the ``appeals`` row for a validated appeal; return it."""
     row = Appeal(
         appeal_cid=fields.appeal_cid,
         decision_cid=decision.decision_cid,
@@ -396,7 +466,7 @@ def apply_appeal(record: Mapping[str, Any]) -> Appeal:
         except IntegrityError:
             session.rollback()
             # Either this very record was saved by another writer between the
-            # check above and now (its row is this record's row), or a different
+            # check in apply_appeal and now (its row is this record's row), or a different
             # appeal took the decision's single slot first.
             saved = session.get(Appeal, fields.appeal_cid)
             if saved is not None:

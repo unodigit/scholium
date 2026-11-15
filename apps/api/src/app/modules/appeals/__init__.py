@@ -6,6 +6,11 @@ it to the ``appeals`` table with status ``pending`` and answers ``201``.  A
 decision can be appealed once: a second appeal of the same decision is a
 ``409``.  Only an author of the paper the decision was about may appeal it.
 
+Saving an appeal also seats its panel: three tier-3 or tier-4 members, never the
+deciding moderator or an author of the paper, drawn deterministically from the
+appeal cid and saved to ``appeal_panels`` (feature 75; see
+:mod:`app.modules.appeals.panel`).
+
 Importing this package registers the ``appeal`` record type with the ingest
 pipeline and subscribes to the ledger, so an appeal is saved whether it arrives
 here or through ``POST /v1/records``.  See :mod:`app.modules.appeals.service`.
@@ -14,12 +19,22 @@ here or through ``POST /v1/records``.  See :mod:`app.modules.appeals.service`.
 from .errors import (
     APPEAL_ALREADY_FILED,
     APPEAL_NOT_AUTHORIZED,
+    PANEL_UNAVAILABLE,
     UNKNOWN_APPEAL_TARGET,
     AppealAlreadyFiled,
     AppealNotAuthorized,
+    PanelUnavailable,
     UnknownAppealTarget,
 )
-from .models import Appeal, ensure_table, ensure_tables
+from .models import Appeal, AppealPanelMember, ensure_table, ensure_tables
+from .panel import (
+    PANEL_SIZE,
+    PANEL_TIERS,
+    draw_panel,
+    eligible_members,
+    get_panel,
+    select_panel,
+)
 from .router import router
 from .service import (
     APPEAL_MIN_TIER,
@@ -32,9 +47,11 @@ from .service import (
     get_appeal,
     get_appeal_for_decision,
     handle_appeal,
+    panel_exclusions,
     persist_entry,
     require_appellant,
     resolve_decision,
+    seat_panel,
 )
 
 __all__ = [
@@ -46,21 +63,32 @@ __all__ = [
     "AppealAlreadyFiled",
     "AppealFields",
     "AppealNotAuthorized",
+    "AppealPanelMember",
     "AppealedDecision",
+    "PANEL_SIZE",
+    "PANEL_TIERS",
+    "PANEL_UNAVAILABLE",
     "PENDING",
+    "PanelUnavailable",
     "UNKNOWN_APPEAL_TARGET",
     "UnknownAppealTarget",
     "appeal_fields",
     "apply_appeal",
+    "draw_panel",
+    "eligible_members",
     "ensure_table",
     "ensure_tables",
     "get_appeal",
     "get_appeal_for_decision",
+    "get_panel",
     "handle_appeal",
+    "panel_exclusions",
     "persist_entry",
     "require_appellant",
     "resolve_decision",
     "router",
+    "seat_panel",
+    "select_panel",
 ]
 
 

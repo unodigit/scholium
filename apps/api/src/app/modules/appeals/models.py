@@ -23,6 +23,20 @@ panel decides it).  ``filed_at`` is the instant the *record* is dated
 (``created``, in UTC), not the instant this node received it, so the table is a
 pure projection of the signed records.
 
+``appeal_panels`` (the 3-member panel drawn for each appeal)::
+
+    appeal_panels(appeal_cid TEXT NOT NULL,
+                  member_did TEXT NOT NULL,
+                  vote TEXT,
+                  PRIMARY KEY (appeal_cid, member_did))
+
+One row per seat: an appeal's panel is the three rows that share its
+``appeal_cid``.  ``member_did`` is a tier-3 or tier-4 member who is neither the
+deciding moderator nor an author of the paper (see
+:mod:`app.modules.appeals.panel`), and ``vote`` stays NULL until that member
+votes.  The composite primary key is what keeps a member from holding two seats
+on one panel, even if the panel is drawn twice.
+
 The model is declared on the application's shared declarative base so
 ``main.create_app`` -- which creates tables after the module loader has
 imported every module package -- registers it in one pass.
@@ -34,7 +48,7 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, Text, inspect
+from sqlalchemy import Column, DateTime, PrimaryKeyConstraint, Text, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
@@ -42,6 +56,7 @@ from app import db
 
 __all__ = [
     "Appeal",
+    "AppealPanelMember",
     "ensure_table",
     "ensure_tables",
 ]
@@ -66,6 +81,24 @@ class Appeal(db.Base):
         )
 
 
+class AppealPanelMember(db.Base):
+    """One seat on an appeal's panel."""
+
+    __tablename__ = "appeal_panels"
+    __table_args__ = (PrimaryKeyConstraint("appeal_cid", "member_did"),)
+
+    appeal_cid = Column(Text, nullable=False)
+    member_did = Column(Text, nullable=False)
+    #: The member's vote; ``None`` until they have voted.
+    vote = Column(Text, nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"<AppealPanelMember appeal_cid={self.appeal_cid!r} "
+            f"member_did={self.member_did!r} vote={self.vote!r}>"
+        )
+
+
 # Self-healing table creation, mirroring the other modules: callers that never
 # build the app (scripts, tests) still get their table on first use.
 _table_lock = threading.Lock()
@@ -80,7 +113,7 @@ def ensure_tables() -> None:
     with _table_lock:
         if _table_engine is db.engine:
             return
-        for table in (Appeal.__table__,):
+        for table in (Appeal.__table__, AppealPanelMember.__table__):
             try:
                 table.create(bind=db.engine, checkfirst=True)
             except (OperationalError, ProgrammingError):

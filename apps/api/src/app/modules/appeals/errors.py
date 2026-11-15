@@ -15,15 +15,18 @@ from app.errors import ProblemException
 __all__ = [
     "APPEAL_ALREADY_FILED",
     "APPEAL_NOT_AUTHORIZED",
+    "PANEL_UNAVAILABLE",
     "UNKNOWN_APPEAL_TARGET",
     "AppealAlreadyFiled",
     "AppealNotAuthorized",
+    "PanelUnavailable",
     "UnknownAppealTarget",
 ]
 
 UNKNOWN_APPEAL_TARGET = "urn:scholium:problem:unknown-appeal-target"
 APPEAL_NOT_AUTHORIZED = "urn:scholium:problem:appeal-not-authorized"
 APPEAL_ALREADY_FILED = "urn:scholium:problem:appeal-already-filed"
+PANEL_UNAVAILABLE = "urn:scholium:problem:appeal-panel-unavailable"
 
 _MAX_ECHO = 64
 
@@ -108,4 +111,32 @@ class AppealAlreadyFiled(ProblemException, ValueError):
             type=APPEAL_ALREADY_FILED,
             decision=decision_cid,
             appeal=appeal_cid,
+        )
+
+
+class PanelUnavailable(ProblemException, LookupError):
+    """Too few eligible members to seat a full panel: ``503``.
+
+    A panel is exactly three members or it is not drawn at all -- a short panel
+    could never reach two matching votes of three.  The shortfall is a state of
+    the node's membership, not a fault in the appeal, so the appeal stays filed
+    and the panel is drawn once :func:`~.service.seat_panel` finds enough
+    tier-3 and tier-4 members who are not excluded.
+    """
+
+    def __init__(self, appeal_cid: object, *, eligible: int, needed: int) -> None:
+        self.appeal_cid = appeal_cid
+        self.eligible = eligible
+        self.needed = needed
+        message = (
+            f"A panel needs {needed} eligible members and only {eligible} "
+            f"{'is' if eligible == 1 else 'are'} available."
+        )
+        super().__init__(
+            503,
+            message,
+            type=PANEL_UNAVAILABLE,
+            appeal=appeal_cid,
+            eligible=eligible,
+            needed=needed,
         )
