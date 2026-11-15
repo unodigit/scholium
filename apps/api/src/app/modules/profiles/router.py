@@ -6,11 +6,21 @@ The module loader mounts this router under ``/v1``:
   affiliation and email.  The fields are encrypted under a per-object key into
   ``profile.enc_blob``; the key lives in ``profile_keys``.  Answers ``200`` with
   the saved profile.  Saving again replaces the earlier profile.
+* ``GET /v1/profiles/{did}`` (feature 29) -- anyone reads the public view of a
+  DID: the decrypted name, affiliation and email, the linked ORCID iD, the
+  trust tier and the public signed reviews, with ``erased`` saying which of
+  the two states the profile is in.  No authentication is required -- a
+  profile is the DID's public face, and signed reviews are shown on it for
+  public credit -- but a token that is *sent* and unusable is still a ``401``,
+  never silently ignored, so a caller who meant to identify themselves finds
+  out (the stance ``GET /v1/auth/orcid/start`` takes).  A usable token changes
+  nothing: the answer is the same for the owner and a stranger.  Personal
+  data makes the response uncacheable (``no-store``), as with the PUT.
 
-Authentication is the caller's access token, and only the owner may write:
-the token's DID must equal ``{did}``.  Any trust tier may save a profile -- an
-email is a precondition for tier 1, so a tier-0 reader has to be able to.
-Failures, all RFC 9457 problem documents:
+Authorization for the PUT is the caller's access token, and only the owner may
+write: the token's DID must equal ``{did}``.  Any trust tier may save a
+profile -- an email is a precondition for tier 1, so a tier-0 reader has to be
+able to.  Failures, all RFC 9457 problem documents:
 
 * No or unusable token: ``401`` with a ``WWW-Authenticate`` challenge.
 * A valid token for a different DID, whatever its tier: ``403``.  Moderators
@@ -24,14 +34,37 @@ from the validation errors and an anonymous caller always sees ``401``.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from dataclasses import asdict
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.security import Principal, get_current_principal
 
-from .schemas import ProfileIn, ProfileOut
+from .crypto import ProfileDecryptionError
+from .schemas import ProfileIn, ProfileOut, PublicProfileOut
 from .service import ProfileData, save_profile
+from .views import public_profile
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
+
+# For the GET: no token is fine, one that is sent must be usable (see above).
+_bearer = HTTPBearer(auto_error=False)
+
+
+def optional_principal(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> Optional[Principal]:
+    """Return the caller named by a bearer token, ``None`` when none was sent.
+
+    A token that is sent but invalid raises the 401 problem details from
+    :func:`app.security.get_current_principal`.
+    """
+    if credentials is None:
+        return None
+    return get_current_principal(request, credentials)
 
 
 def require_owner(
@@ -45,6 +78,32 @@ def require_owner(
             detail="A profile can only be changed by its owner.",
         )
     return principal
+
+
+@router.get("/{did}", response_model=PublicProfileOut)
+def get_profile(
+    did: str,
+    response: Response,
+    _caller: Optional[Principal] = Depends(optional_principal),
+) -> PublicProfileOut:
+    """Return the public view of ``did``'s profile.
+
+    ``200`` for any DID -- one with no profile at all answers with the
+    pseudonymous DID, null personal fields, tier 0 and no reviews, which is
+    exactly what an erased profile answers too.  A stored blob that will not
+    decrypt although its key exists is corruption, not erasure, and answers
+    ``500`` problem details instead of quietly impersonating one.
+    """
+    try:
+        view = public_profile(did)
+    except ProfileDecryptionError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="The stored profile could not be decrypted.",
+        ) from exc
+    # Personal data: keep it out of shared caches and the browser's history cache.
+    response.headers["Cache-Control"] = "no-store"
+    return PublicProfileOut(**asdict(view))
 
 
 @router.put("/{did}", response_model=ProfileOut)

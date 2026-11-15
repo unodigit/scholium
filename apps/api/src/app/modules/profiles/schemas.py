@@ -11,12 +11,30 @@ empty (an independent researcher has none).  Leading and trailing whitespace is
 trimmed.  Unknown members are ignored, so nothing but these three fields -- in
 particular no trust tier -- can be written through this route.  The response
 echoes the saved profile with the owning ``did``.
+
+``GET /v1/profiles/{did}`` (feature 29) answers with the public view assembled
+in :mod:`app.modules.profiles.views`::
+
+    {"did": "did:key:z6Mk...",
+     "name": "Ada Lovelace",          # null once erased
+     "affiliation": "Analytical Engine Co.",
+     "email": "ada@example.org",
+     "orcid": "0000-0002-1825-0097",  # null: not linked, or erased
+     "tier": 1,
+     "erased": false,
+     "reviews": [{"review_cid": "sch:...", ...}]}
+
+Every personal member is nullable: "nothing to show" is a normal answer for a
+DID that never saved a profile, and it is the *only* answer after erasure.
+``tier`` and ``reviews`` are never personal data, so they always appear.
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import datetime
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -26,6 +44,8 @@ __all__ = [
     "NAME_MAX",
     "ProfileIn",
     "ProfileOut",
+    "PublicProfileOut",
+    "PublicReviewOut",
 ]
 
 NAME_MAX = 200
@@ -72,3 +92,38 @@ class ProfileOut(BaseModel):
     name: str
     affiliation: str
     email: str
+
+
+class PublicReviewOut(BaseModel):
+    """One revealed review the DID signed, for public credit.
+
+    The rubric scores pass through as stored.  ``review_key`` and ``nullifier``
+    have no member here on purpose: the pseudonymity material must never leave
+    the ``review`` table.
+    """
+
+    review_cid: str
+    version_cid: str
+    recommendation: Optional[str] = None
+    confidence: Optional[int] = None
+    scores: Optional[Any] = None
+    report_cid: Optional[str] = None
+    committed_at: Optional[datetime] = None
+    revealed_at: Optional[datetime] = None
+
+
+class PublicProfileOut(BaseModel):
+    """The public view of a DID: who they are, and what they signed.
+
+    A member that is ``null`` is one there is nothing to say about; ``did``,
+    ``tier``, ``erased`` and ``reviews`` are always present.
+    """
+
+    did: str
+    name: Optional[str] = None
+    affiliation: Optional[str] = None
+    email: Optional[str] = None
+    orcid: Optional[str] = None
+    tier: int = 0
+    erased: bool = False
+    reviews: list[PublicReviewOut] = Field(default_factory=list)
