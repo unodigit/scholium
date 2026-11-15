@@ -19,11 +19,9 @@
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
 import { parseShortId } from "../verify-core";
 
-/** The route prefix: `/review/{id}` (docs/design.md §4). */
-export const REVIEW_PATH = "/review";
-
-/** The reader-facing page title. */
-export const REVIEW_TITLE = "Review";
+// Re-exported so this module stays the one import for everything the page
+// needs to name a paper; the client components import `links.ts` directly.
+export { REVIEW_PATH, REVIEW_TITLE, reviewHref, reviewSignInHref } from "./links";
 
 /** One paragraph of the paper's text, in reading order. */
 export interface PaperParagraph {
@@ -36,6 +34,11 @@ export interface PaperParagraph {
 export interface ReviewPaper {
   /** Canonical paper id, `sch:xxxx-xxxx-xxxx`. */
   readonly shortId: string;
+  /**
+   * cid of the version being reviewed (the newest listed one), when the API
+   * names it. A commit targets this record; without it the form cannot commit.
+   */
+  readonly versionCid?: string;
   /** The version being reviewed: the newest listed one. */
   readonly version: number;
   readonly title: string;
@@ -66,11 +69,6 @@ export class InvalidPaperIdError extends Error {
 
 /** `GET`-only slice of the API client, so tests need no network stack. */
 export type PaperClient = Pick<ApiClient, "get">;
-
-/** The URL of the review form for a paper. */
-export function reviewHref(shortId: string): string {
-  return `${REVIEW_PATH}/${encodeURIComponent(shortId)}`;
-}
 
 /** Decode one URL segment, leaving it alone when it is not valid escaping. */
 function decodeSegment(segment: string): string {
@@ -129,6 +127,8 @@ function readVersion(...values: unknown[]): number | null {
 /** The fields of `GET /v1/papers/{id}` the page uses. */
 export interface PaperHead {
   readonly shortId: string;
+  /** cid of the version described, when the API includes it. */
+  readonly versionCid?: string;
   readonly version: number;
   readonly title: string;
   readonly abstract: string;
@@ -159,8 +159,14 @@ export function parsePaperHead(payload: unknown): PaperHead {
     ? payload.categories.flatMap((category) => readText(category) ?? [])
     : [];
 
+  // `versionCid` is the canonical field; `cid` is its alias in the catalog
+  // response. A commit needs one of them, but a body that predates it still
+  // renders the form (the commit says the version is missing).
+  const versionCid = readText(payload.versionCid) ?? readText(payload.cid);
+
   return {
     shortId,
+    ...(versionCid === null ? {} : { versionCid }),
     version,
     title,
     abstract: readText(payload.abstract) ?? "",

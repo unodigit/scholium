@@ -10,6 +10,7 @@ import {
   parsePaperHead,
   parseReviewTarget,
   reviewHref,
+  reviewSignInHref,
   type PaperClient,
 } from "./paper";
 
@@ -81,6 +82,14 @@ describe("reviewHref", () => {
   });
 });
 
+describe("reviewSignInHref", () => {
+  it("sends the reviewer back to the review after signing in, encoded once", () => {
+    expect(reviewSignInHref(ID)).toBe(
+      "/signin?next=%2Freview%2Fsch%3A6sel-2dio-orm6",
+    );
+  });
+});
+
 describe("parsePaperHead", () => {
   it("reads the fields the page shows", () => {
     expect(parsePaperHead(HEAD)).toEqual({
@@ -90,6 +99,18 @@ describe("parsePaperHead", () => {
       abstract: "We study branching under uncertainty.",
       categories: ["cs.AI", "cs.CR"],
     });
+  });
+
+  it("reads the version cid a commit must target", () => {
+    expect(parsePaperHead({ ...HEAD, versionCid: "bafyreiversion" }).versionCid).toBe(
+      "bafyreiversion",
+    );
+    // The catalog also spells it `cid`; either names the version record.
+    expect(parsePaperHead({ ...HEAD, cid: "bafyreialias" }).versionCid).toBe(
+      "bafyreialias",
+    );
+    // A body without it still renders; the commit says the version is missing.
+    expect(parsePaperHead(HEAD).versionCid).toBeUndefined();
   });
 
   it("falls back to the other spellings of the id and version", () => {

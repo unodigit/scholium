@@ -412,6 +412,221 @@
   border: 0;
 }
 
+/* ---- Conflict check ----------------------------------------------------- */
+
+/* Above the form: three checks, each an icon and a word. The row's colour is
+   on the icon only; the label, status word and detail stay in ink. */
+.rf-coi {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  padding: calc(var(--space-unit) * 4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  color: var(--ink);
+}
+
+.rf-coi-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  font-weight: 600;
+}
+
+.rf-coi-note,
+.rf-coi-summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.rf-coi-loading {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.rf-coi-spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  animation: rf-spin 1.2s linear infinite;
+}
+
+@keyframes rf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rf-coi-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.rf-coi-error-message {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.rf-coi-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rf-coi-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--space-unit) * 3);
+  row-gap: calc(var(--space-unit) * 0.5);
+}
+
+.rf-coi-status {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 1);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rf-coi-status-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.rf-coi-row[data-status="pass"] .rf-coi-status-icon {
+  color: var(--verified);
+}
+
+.rf-coi-row[data-status="fail"] .rf-coi-status-icon {
+  color: var(--critical);
+}
+
+.rf-coi-row[data-status="unknown"] .rf-coi-status-icon {
+  color: var(--pending);
+}
+
+.rf-coi-check-label {
+  font-weight: 500;
+}
+
+.rf-coi-detail {
+  grid-column: 2;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- Commit review ------------------------------------------------------ */
+
+.rf-commit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 3);
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.rf-commit-note {
+  flex: 1 1 16rem;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.rf-commit .rf-button {
+  margin-top: 0;
+}
+
+.rf-button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.rf-button--quiet {
+  margin-top: 0;
+  background: var(--surface);
+  border-color: var(--rule);
+  color: var(--accent);
+}
+
+.rf-commit-error {
+  padding-top: calc(var(--space-unit) * 2);
+  border-top: 1px solid var(--rule);
+}
+
+/* ---- Sealed review ------------------------------------------------------ */
+
+.rf-sealed {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  /* The verified colour marks the edge; the headline and words carry the
+     message, so the state is never colour alone (docs/design.md §9). */
+  border-inline-start: 4px solid var(--verified);
+  border-radius: var(--corner-card);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  color: var(--ink);
+}
+
+.rf-sealed-text {
+  margin: 0;
+}
+
+.rf-sealed-date {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rf-sealed-id {
+  margin: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* A link in prose: the accent colour and an underline, so it is not colour
+   alone; the focus ring is the shared one. */
+.rf-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.rf-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--corner-control);
+}
+
 /* ---- Small screens ------------------------------------------------------ */
 
 @media (max-width: 40rem) {

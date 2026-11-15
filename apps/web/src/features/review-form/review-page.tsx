@@ -1,32 +1,51 @@
 /**
  * `/review/[id]` — the formal review form (docs/design.md §5.5).
  *
- * A split view: the paper on the left, the rubric form on the right, with the
- * anonymity notice above the form. Under 1024 px the two stack, paper first,
- * so a phone reads the paper and then writes the review (design.md §10 asks
- * for stepped pages under 640 px; that is not built yet, see the README).
+ * A split view: the paper on the left, the conflict check and rubric form on
+ * the right, with the anonymity notice above them. Under 1024 px the two
+ * stack, paper first, so a phone reads the paper and then writes the review
+ * (design.md §10 asks for stepped pages under 640 px; that is not built yet,
+ * see the README).
  *
  * The page is given either the paper or the reason there is none, never both:
  * a review form that does not show what it reviews would invite a review of
  * the wrong paper, so a failure replaces the whole split view.
  *
- * Server-safe: the only client component below is the form.
+ * Server-safe: the conflict check and the form are the client components.
  */
 
 import { AnonymityNotice } from "./anonymity-notice";
+import type { ConflictReport } from "./conflict";
+import { ConflictCheck } from "./conflict-check";
 import type { PaperFailure, ReviewPaper } from "./paper";
 import { PaperPane } from "./paper-pane";
-import { ReviewForm } from "./review-form";
+import { ReviewForm, type CommitReview } from "./review-form";
 import "./review-form.css";
 
-export type ReviewPageProps =
-  | { paper: ReviewPaper; failure?: undefined; retryHref?: undefined }
-  | {
-      paper?: undefined;
-      failure: PaperFailure;
-      /** Where "Try again" goes; only offered for a failure worth retrying. */
-      retryHref?: string;
-    };
+/** Props both page states accept (tests and hosts may inject either half). */
+interface ReviewPageExtras {
+  /** A conflict report already fetched, so the first paint shows it. */
+  conflict?: ConflictReport;
+  /** Why a conflict fetch failed; the panel offers a retry. */
+  conflictError?: string;
+  /** Replace the commit flow, for tests. */
+  commit?: CommitReview;
+  /** Pin the sign-in state instead of reading it from the stored session. */
+  signedIn?: boolean;
+  /** Where "Sign in" goes; defaults to sign-in, then back to this review. */
+  signInHref?: string;
+}
+
+export type ReviewPageProps = ReviewPageExtras &
+  (
+    | { paper: ReviewPaper; failure?: undefined; retryHref?: undefined }
+    | {
+        paper?: undefined;
+        failure: PaperFailure;
+        /** Where "Try again" goes; only offered for a failure worth retrying. */
+        retryHref?: string;
+      }
+  );
 
 export function ReviewPage(props: ReviewPageProps) {
   if (props.paper === undefined) {
@@ -47,7 +66,23 @@ export function ReviewPage(props: ReviewPageProps) {
         <PaperPane paper={paper} />
         <div className="rf-side">
           <AnonymityNotice />
-          <ReviewForm />
+          {/* The conflict check comes before the form: a reviewer sees it
+              before deciding what to write. It is advisory, so a failure here
+              never hides the form. */}
+          <ConflictCheck
+            paperId={paper.shortId}
+            initial={props.conflict}
+            initialError={props.conflictError}
+            signedIn={props.signedIn}
+            signInHref={props.signInHref}
+          />
+          <ReviewForm
+            paperId={paper.shortId}
+            versionCid={paper.versionCid}
+            signedIn={props.signedIn}
+            signInHref={props.signInHref}
+            commit={props.commit}
+          />
         </div>
       </div>
     </div>

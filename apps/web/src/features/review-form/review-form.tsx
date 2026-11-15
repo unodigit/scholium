@@ -8,10 +8,11 @@
  * assistance was used. Nothing is chosen for the reviewer: every radio starts
  * unselected, so a score is always a decision.
  *
- * The form holds the draft and says how far along it is. It does not commit
- * anything — signing and sealing the review is a later feature of this plugin
- * (`review-form`), which reads the finished draft through
- * {@link toReviewBody}.
+ * Beneath the rubric is **Commit review**. It validates the draft, signs a
+ * `review.commit` with the reviewer's pseudonymous per-paper key (one passkey
+ * prompt), sends it to `POST /v1/reviews/commit`, and replaces itself with
+ * "Your review is sealed" and the date the review will be revealed. A failed
+ * commit says what happened and that nothing was sent; the draft is kept.
  *
  * Accessibility (design.md §9): every group is a `fieldset` with a `legend`,
  * every radio's name carries its text equivalent ("4 of 5") so it never
@@ -21,7 +22,18 @@
 
 import { useId, useState } from "react";
 
+import { useSignedIn } from "../../components/nav/session";
 import { Icon } from "../ui-kit/icons";
+import {
+  SEALED_HEADLINE,
+  commitReview,
+  describeCommitError,
+  formatRevealDate,
+  type CommitFailure,
+  type ReviewCommitInput,
+  type ReviewCommitResult,
+} from "./commit";
+import { reviewSignInHref } from "./links";
 import {
   CONFIDENCE_OPTIONS,
   RECOMMENDATION_OPTIONS,
@@ -30,6 +42,7 @@ import {
   SCORE_MAX,
   describeProgress,
   emptyDraft,
+  isComplete,
   progressOf,
   validateDraft,
   withDimension,
@@ -48,31 +61,110 @@ export const AI_ASSISTANCE_LABEL =
 /** What the declaration does, so the reviewer knows it is public. */
 export const AI_ASSISTANCE_HINT = "(declared on the report)";
 
+/** The button that seals the review (docs/design.md §5.5). */
+export const COMMIT_LABEL = "Commit review";
+
+/** Said under the button so the reviewer knows what committing does. */
+export const COMMIT_NOTE =
+  "Committing signs the review with a per-paper key and seals it until it is revealed.";
+
+/** Signs and sends the review; replaceable in tests. */
+export type CommitReview = (input: ReviewCommitInput) => Promise<ReviewCommitResult>;
+
 export interface ReviewFormProps {
   /** Start from a draft other than a blank one. */
   initialDraft?: ReviewDraft;
+  /** The paper being reviewed, for the commit's nullifier and sign-in link. */
+  paperId?: string;
+  /** The version a commit targets; without it the commit is refused. */
+  versionCid?: string;
+  /** Pin the sign-in state instead of reading it from the stored session. */
+  signedIn?: boolean;
+  /** Where "Sign in" goes; defaults to sign-in, then back to this review. */
+  signInHref?: string;
+  /** Replace the commit flow (derive key, sign and send), for tests. */
+  commit?: CommitReview;
 }
 
-/** The six-dimension rubric and the verdict beneath it. */
-export function ReviewForm({ initialDraft }: ReviewFormProps = {}) {
+type Phase = "editing" | "signing" | "sealed";
+
+/** The six-dimension rubric, the verdict beneath it, and Commit review. */
+export function ReviewForm({
+  initialDraft,
+  paperId = "",
+  versionCid,
+  signedIn: signedInOverride,
+  signInHref: signInHrefOverride,
+  commit: commitOverride,
+}: ReviewFormProps = {}) {
   const uid = useId();
+  const signedIn = useSignedIn(signedInOverride);
+  const signInHref = signInHrefOverride ?? reviewSignInHref(paperId);
+
   const [draft, setDraft] = useState<ReviewDraft>(
     () => initialDraft ?? emptyDraft(),
   );
   // A dimension's problems are shown once the reviewer has left its
-  // justification box, not while they are still typing in it.
+  // justification box, not while they are still typing in it. A commit attempt
+  // shows every problem at once.
   const [visited, setVisited] = useState<Partial<Record<DimensionId, true>>>({});
+  const [submitted, setSubmitted] = useState(false);
+  const [phase, setPhase] = useState<Phase>("editing");
+  const [sealed, setSealed] = useState<ReviewCommitResult | null>(null);
+  const [error, setError] = useState<CommitFailure | null>(null);
 
   const problems = validateDraft(draft);
   const progress = progressOf(draft);
+  const complete = isComplete(problems);
+
+  if (phase === "sealed" && sealed !== null) {
+    return <SealedNotice result={sealed} />;
+  }
+
+  const commit = async (): Promise<void> => {
+    if (phase === "signing") return;
+
+    setSubmitted(true);
+    if (!complete) {
+      // The messages beside the fields say what is missing; nothing is signed.
+      setError(null);
+      return;
+    }
+    if (!signedIn && commitOverride === undefined) {
+      setError({
+        message:
+          "Sign in to commit your review. Nothing was sent.",
+        signIn: true,
+      });
+      return;
+    }
+
+    setError(null);
+    setPhase("signing");
+    try {
+      const result = await (commitOverride ?? commitReview)({
+        paperId,
+        versionCid,
+        draft,
+      });
+      setSealed(result);
+      setPhase("sealed");
+    } catch (thrown) {
+      setError(describeCommitError(thrown));
+      setPhase("editing");
+    }
+  };
 
   return (
     <form
       className="rf-form"
       aria-labelledby={`${uid}-title`}
       noValidate
-      // Nothing is committed from here: Enter in a field must not reload.
-      onSubmit={(event) => event.preventDefault()}
+      onSubmit={(event) => {
+        // Committing is the only submit; Enter in a field must not reload.
+        event.preventDefault();
+        void commit();
+      }}
     >
       <h2 id={`${uid}-title`} className="rf-form-title">
         Your review
@@ -90,7 +182,7 @@ export function ReviewForm({ initialDraft }: ReviewFormProps = {}) {
           score={draft.scores[dimension.id].score}
           justification={draft.scores[dimension.id].justification}
           problems={
-            visited[dimension.id] === true
+            submitted || visited[dimension.id] === true
               ? (problems.scores[dimension.id] ?? {})
               : {}
           }
@@ -108,7 +200,17 @@ export function ReviewForm({ initialDraft }: ReviewFormProps = {}) {
         />
       ))}
 
-      <fieldset className="rf-group">
+      <fieldset
+        className="rf-group"
+        aria-describedby={
+          submitted && problems.confidence !== undefined
+            ? `${uid}-confidence-error`
+            : undefined
+        }
+        aria-invalid={
+          submitted && problems.confidence !== undefined ? true : undefined
+        }
+      >
         <legend className="rf-group-legend">Confidence</legend>
         <div className="rf-choices">
           {CONFIDENCE_OPTIONS.map((option) => (
@@ -130,9 +232,22 @@ export function ReviewForm({ initialDraft }: ReviewFormProps = {}) {
             </label>
           ))}
         </div>
+        {submitted && problems.confidence !== undefined ? (
+          <FieldError id={`${uid}-confidence-error`} message={problems.confidence} />
+        ) : null}
       </fieldset>
 
-      <fieldset className="rf-group">
+      <fieldset
+        className="rf-group"
+        aria-describedby={
+          submitted && problems.recommendation !== undefined
+            ? `${uid}-recommendation-error`
+            : undefined
+        }
+        aria-invalid={
+          submitted && problems.recommendation !== undefined ? true : undefined
+        }
+      >
         <legend className="rf-group-legend">Recommendation</legend>
         <div className="rf-choices rf-choices--stacked">
           {RECOMMENDATION_OPTIONS.map((option) => (
@@ -154,6 +269,12 @@ export function ReviewForm({ initialDraft }: ReviewFormProps = {}) {
             </label>
           ))}
         </div>
+        {submitted && problems.recommendation !== undefined ? (
+          <FieldError
+            id={`${uid}-recommendation-error`}
+            message={problems.recommendation}
+          />
+        ) : null}
       </fieldset>
 
       <label className="rf-ai">
@@ -175,7 +296,60 @@ export function ReviewForm({ initialDraft }: ReviewFormProps = {}) {
       <p className="rf-progress" role="status">
         {describeProgress(progress)}
       </p>
+
+      {error !== null ? (
+        <p className="rf-error rf-commit-error" role="alert">
+          <Icon name="alert" className="rf-error-icon" />
+          <span>
+            {error.message}
+            {error.signIn ? (
+              <>
+                {" "}
+                <a className="rf-link" href={signInHref}>
+                  Sign in
+                </a>
+              </>
+            ) : null}
+          </span>
+        </p>
+      ) : null}
+
+      <div className="rf-commit">
+        <p className="rf-commit-note">{COMMIT_NOTE}</p>
+        <button
+          type="submit"
+          className="rf-button"
+          disabled={phase === "signing"}
+          aria-busy={phase === "signing" ? true : undefined}
+        >
+          {phase === "signing" ? "Signing…" : COMMIT_LABEL}
+        </button>
+      </div>
     </form>
+  );
+}
+
+/** What replaces the form once the commit is accepted. */
+export function SealedNotice({ result }: { result: ReviewCommitResult }) {
+  const revealDate = formatRevealDate(result.revealAt);
+  return (
+    <section
+      className="rf-sealed"
+      role="status"
+      aria-live="polite"
+      data-state="sealed"
+    >
+      <h2 className="rf-form-title">{SEALED_HEADLINE}</h2>
+      <p className="rf-sealed-text">
+        It will be revealed with the others when a second review is committed,
+        or on{" "}
+        <time className="rf-sealed-date" dateTime={result.revealAt}>
+          {revealDate}
+        </time>
+        .
+      </p>
+      <p className="rf-sealed-id mono-id">Review {result.reviewCid}</p>
+    </section>
   );
 }
 
