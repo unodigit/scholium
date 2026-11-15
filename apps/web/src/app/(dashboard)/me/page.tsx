@@ -1,0 +1,20 @@
+import type { Metadata } from "next";
+
+import { DashboardPage } from "../../../features/dashboard/dashboard-page";
+
+export const metadata: Metadata = {
+  title: "Me · Scholium",
+  description:
+    "Your dashboard: needs your attention, your papers, your reviews, credentials and notifications.",
+};
+
+/**
+ * `/me` — the signed-in member's dashboard.
+ *
+ * The dashboard needs the signed-in account's bearer token, which only exists
+ * in the browser, so unlike `/network` there is nothing to fetch on the server:
+ * the page fetches on the client and the API decides what to show.
+ */
+export default function MeRoutePage() {
+  return <DashboardPage />;
+}

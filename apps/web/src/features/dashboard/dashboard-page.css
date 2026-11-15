@@ -1,0 +1,305 @@
+/*
+ * `/me` — the signed-in member's dashboard (docs/design.md §5.6).
+ *
+ * Every value is a design token from `src/styles/tokens.css`, so light, dark
+ * and a forced `data-theme` all re-theme the cards with no extra classes.
+ * Rules are prefixed `db-` (dashboard) so nothing leaks into other features.
+ * The route layout owns the outer width; these rules only style content.
+ */
+
+.db-page {
+  display: block;
+}
+
+.db-header {
+  margin-bottom: calc(var(--space-unit) * 8);
+  max-width: var(--measure-reading);
+}
+
+.db-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.db-title {
+  margin: 0;
+}
+
+.db-lede {
+  margin-top: calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  max-width: var(--measure-reading);
+}
+
+.db-loading {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+/* ---- The card grid -------------------------------------------------------
+   Two columns on a wide screen, one on a phone. `auto-fit` lets a lone card
+   take the full width instead of leaving a ragged half-empty column. */
+
+.db-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: calc(var(--space-unit) * 6);
+  align-items: start;
+}
+
+.db-card {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  padding: calc(var(--space-unit) * 6);
+}
+
+/* The header's bell deep-links to /me#notifications: mark the card it lands
+   on without moving it (no scroll jank, no colour-only signal). Leave room
+   for the sticky header so the heading is not hidden under it. */
+.db-card {
+  scroll-margin-block-start: calc(var(--space-unit) * 20);
+}
+
+.db-card:target {
+  border-color: var(--accent);
+}
+
+.db-card-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  font-weight: var(--weight-title);
+}
+
+.db-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  min-width: 0;
+}
+
+.db-count {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Lists --------------------------------------------------------------- */
+
+.db-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.db-item,
+.db-paper,
+.db-review {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 1.5);
+  padding-block: calc(var(--space-unit) * 3);
+  border-top: 1px solid var(--rule);
+}
+
+.db-item:first-child,
+.db-paper:first-child,
+.db-review:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.db-item:last-child,
+.db-paper:last-child,
+.db-review:last-child {
+  padding-bottom: 0;
+}
+
+.db-paper-head,
+.db-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2);
+  width: 100%;
+  min-width: 0;
+}
+
+/* A paper or review title reads as a link, not as underlined running text. */
+.db-paper-title,
+.db-review-title {
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  text-decoration-line: none;
+  text-wrap: pretty;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+a.db-paper-title:hover,
+a.db-review-title:hover {
+  color: var(--accent);
+  text-decoration-line: underline;
+}
+
+a.db-paper-title:focus-visible,
+a.db-review-title:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.db-item-summary {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.db-item-detail,
+.db-paper-meta,
+.db-review-meta,
+.db-cred-note,
+.db-cred-label {
+  margin: 0;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Chips ---------------------------------------------------------------
+   A quiet label for a kind or a state. The word is the information; the
+   colour family only reinforces it, and the text stays --ink so it reads at
+   13 px (docs/design.md §3 and §9). */
+
+.db-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding-block: calc(var(--space-unit) * 0.5);
+  padding-inline: calc(var(--space-unit) * 2);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  white-space: nowrap;
+}
+
+.db-chip[data-tone="verified"] {
+  border-color: var(--verified);
+  background: var(--verified-soft);
+}
+
+.db-chip[data-tone="pending"] {
+  border-color: var(--pending);
+  background: var(--pending-soft);
+}
+
+.db-link {
+  color: var(--accent);
+}
+
+/* ---- Credentials --------------------------------------------------------- */
+
+.db-cred-id {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Notices, buttons and loading --------------------------------------- */
+
+.db-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  max-width: var(--reading-column);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  padding: calc(var(--space-unit) * 6);
+}
+
+.db-notice-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.db-notice-text {
+  margin: 0;
+  color: var(--ink-2);
+  max-width: var(--measure-reading);
+}
+
+.db-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-unit) * 2);
+  min-block-size: calc(var(--space-unit) * 10);
+  padding-block: calc(var(--space-unit) * 2);
+  padding-inline: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  text-decoration-line: none;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.db-button:hover {
+  background: var(--accent-soft);
+}
+
+.db-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Small screens ------------------------------------------------------
+   One card per row; touch readers get a 44 px action (docs/design.md §9). */
+
+@media (max-width: 40rem) {
+  .db-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .db-card {
+    padding: calc(var(--space-unit) * 4);
+  }
+}
+
+@media (pointer: coarse) {
+  .db-button,
+  .db-link {
+    min-block-size: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-button {
+    transition: none;
+  }
+}

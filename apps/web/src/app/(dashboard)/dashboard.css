@@ -1,0 +1,21 @@
+/*
+ * `/me` — the dashboard shell.
+ *
+ * Wide enough for two cards side by side on a desktop, comfortable on a
+ * phone. The cards themselves are styled by `features/dashboard`.
+ */
+
+.db-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .db-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
