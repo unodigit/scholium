@@ -1,0 +1,22 @@
+/* ============================================================================
+   Shell for the public network transparency pages (`/network`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame lives here: the global navigation is mounted by
+   the layout, and the status styles live with the feature
+   (`features/network-page/network-page.css`). Every value is a design token.
+   ============================================================================ */
+
+.np-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--reading-column) + var(--space-unit) * 8);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .np-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
