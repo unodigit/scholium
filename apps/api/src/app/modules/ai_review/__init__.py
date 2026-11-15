@@ -121,7 +121,14 @@ from .providers import (
 )
 from .reproducibility import run_reproducibility_agent
 from .router import ADVISORY_LABEL, router
-from .models import AIReview, ensure_ai_reviews_table
+from .models import (
+    AIReview,
+    AIReviewRebuttal,
+    AIReviewAssessment,
+    ensure_ai_reviews_table,
+    ensure_ai_review_rebuttals_table,
+    ensure_ai_review_assessments_table,
+)
 from .background import (
     JOB_KIND,
     JOB_KINDS,

@@ -21,11 +21,22 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Body, Depends
+from pydantic import BaseModel
 
 from app import db
+from app.security import Principal, require_tier
 
-from .models import AIReview, ensure_ai_reviews_table
+from .models import (
+    AIReview,
+    AIReviewRebuttal,
+    AIReviewAssessment,
+    ensure_ai_reviews_table,
+    ensure_ai_review_rebuttals_table,
+    ensure_ai_review_assessments_table,
+)
 from .prompt_set import AGENT_NAMES
 
 __all__ = ["ADVISORY_LABEL", "router"]
@@ -58,6 +69,152 @@ def _review_for(version_cid: str) -> Optional[AIReview]:
         if row is not None:
             session.expunge(row)
         return row
+
+
+_FINDING_ID_KEYS = ("finding_id", "findingId", "findingID", "id")
+
+
+def _finding_ref(finding: Any) -> Any:
+    if not isinstance(finding, dict):
+        return None
+    for key in _FINDING_ID_KEYS:
+        value = finding.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _ensure_finding_ids(findings: Any) -> list[Any]:
+    if not isinstance(findings, list):
+        return [] if findings is None else list(findings)
+    out = []
+    for index, finding in enumerate(findings, start=1):
+        if isinstance(finding, dict):
+            if _finding_ref(finding) is None:
+                finding["id"] = str(index)
+                finding["finding_id"] = str(index)
+                finding["findingId"] = str(index)
+            else:
+                fid = _finding_ref(finding)
+                finding.setdefault("id", str(fid) if fid is not None else str(index))
+                finding.setdefault("finding_id", str(fid) if fid is not None else str(index))
+                finding.setdefault("findingId", str(fid) if fid is not None else str(index))
+        out.append(finding)
+    return out
+
+
+def _review_by_cid(review_cid: str) -> Optional[AIReview]:
+    ensure_ai_reviews_table()
+    with db.SessionLocal() as session:
+        row = session.query(AIReview).filter_by(review_cid=review_cid).first()
+        if row is not None:
+            session.expunge(row)
+        return row
+
+
+def _paper_cid_for_review(review: AIReview) -> Optional[str]:
+    try:
+        from app.modules import submissions
+
+        submissions.ensure_tables() if hasattr(submissions, "ensure_tables") else None
+    except Exception:
+        pass
+    try:
+        from app.modules.submissions import models as sm
+
+        sm.ensure_tables()
+        with db.SessionLocal() as session:
+            row = session.get(sm.PaperVersion, review.version_cid)
+            if row is not None:
+                return row.paper_cid
+    except Exception:
+        pass
+    try:
+        from app.modules import ledger
+
+        entry = ledger.entry_by_cid(review.review_cid)
+        if entry is not None:
+            body = getattr(entry, "body", None) or {}
+            if isinstance(body, dict) and isinstance(body.get("paper"), str):
+                return body["paper"]
+    except Exception:
+        pass
+    return None
+
+
+def _rebuttals_for(review_cid: str) -> list[AIReviewRebuttal]:
+    ensure_ai_review_rebuttals_table()
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(AIReviewRebuttal)
+            .filter_by(review_cid=review_cid)
+            .order_by(AIReviewRebuttal.id.asc())
+            .all()
+        )
+        for row in rows:
+            session.expunge(row)
+        return rows
+
+
+def _assessments_for(review_cid: str) -> list[AIReviewAssessment]:
+    ensure_ai_review_assessments_table()
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(AIReviewAssessment)
+            .filter_by(review_cid=review_cid)
+            .order_by(AIReviewAssessment.id.asc())
+            .all()
+        )
+        for row in rows:
+            session.expunge(row)
+        return rows
+
+
+def _rebuttal_to_dict(row: AIReviewRebuttal) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "rebuttal_id": row.id,
+        "rebuttalId": row.id,
+        "review_cid": row.review_cid,
+        "reviewCid": row.review_cid,
+        "finding_id": row.finding_id,
+        "findingId": row.finding_id,
+        "findingID": row.finding_id,
+        "author_did": row.author_did,
+        "author": row.author_did,
+        "authorDid": row.author_did,
+        "text": row.text,
+        "rebuttal": row.text,
+        "response": row.text,
+        "created_at": (row.created_at.isoformat() if row.created_at is not None else None),
+    }
+
+
+def _assessment_to_dict(row: AIReviewAssessment) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "assessment_id": row.id,
+        "assessmentId": row.id,
+        "review_cid": row.review_cid,
+        "reviewCid": row.review_cid,
+        "finding_id": row.finding_id,
+        "findingId": row.finding_id,
+        "findingID": row.finding_id,
+        "reviewer_did": row.reviewer_did,
+        "reviewer": row.reviewer_did,
+        "reviewerDid": row.reviewer_did,
+        "verdict": row.verdict,
+        "status": row.verdict,
+        "assessment": row.verdict,
+        "result": row.verdict,
+        "confirmed": row.verdict == "confirmed",
+        "wrong": row.verdict == "wrong",
+        "created_at": (row.created_at.isoformat() if row.created_at is not None else None),
+    }
 
 
 def _group_by_agent(findings: Any) -> list[dict[str, Any]]:
@@ -110,6 +267,48 @@ def _report(identifier: str) -> dict[str, Any]:
             404, f"No AI pre-review for {identifier!r} yet."
         )
 
+    findings = _ensure_finding_ids(list(review.findings or []))
+    review.findings = findings
+
+    rebuttals = _rebuttals_for(review.review_cid)
+    assessments = _assessments_for(review.review_cid)
+    rebuttal_dicts = [_rebuttal_to_dict(r) for r in rebuttals]
+    assessment_dicts = [_assessment_to_dict(a) for a in assessments]
+
+    # Attach responses to their findings so they travel with them.
+    by_finding_rebuttals: dict[str, list[dict[str, Any]]] = {}
+    for rd in rebuttal_dicts:
+        by_finding_rebuttals.setdefault(str(rd["finding_id"]), []).append(rd)
+    by_finding_assessments: dict[str, list[dict[str, Any]]] = {}
+    for ad in assessment_dicts:
+        by_finding_assessments.setdefault(str(ad["finding_id"]), []).append(ad)
+
+    for finding in findings if isinstance(findings, list) else ():
+        if not isinstance(finding, dict):
+            continue
+        fid = _finding_ref(finding)
+        key = str(fid) if fid is not None else None
+        rlist = by_finding_rebuttals.get(key, []) if key is not None else []
+        alist = by_finding_assessments.get(key, []) if key is not None else []
+        if rlist:
+            finding["rebuttals"] = rlist
+            finding["rebuttal"] = rlist[-1].get("text")
+            # Surface the text at the finding level too, for loose matching.
+            for rd in rlist:
+                finding.setdefault("responses", []).append(rd)
+        if alist:
+            finding["assessments"] = alist
+            finding["assessment"] = alist[-1].get("verdict")
+            finding["assessments_list"] = alist
+            for ad in alist:
+                finding.setdefault("reviews", []).append(ad)
+        # Also drop a compact alias for the latest assessment verdict.
+        if alist:
+            finding["verdict"] = alist[-1].get("verdict")
+            finding["status"] = alist[-1].get("verdict")
+
+    grouped = _group_by_agent(findings)
+    # Ensure injected responses survive grouping (findings are the same dict objects).
     return {
         "paper": paper.short_id,
         "shortId": paper.short_id,
@@ -125,7 +324,9 @@ def _report(identifier: str) -> dict[str, Any]:
         "models": list(review.models or []),
         "promptSetHash": review.prompt_set_hash,
         "prompt_set_hash": review.prompt_set_hash,
-        "agents": _group_by_agent(review.findings),
+        "agents": grouped,
+        "rebuttals": rebuttal_dicts,
+        "assessments": assessment_dicts,
     }
 
 
@@ -145,3 +346,167 @@ def get_ai_reviews(paper_id: str) -> dict[str, Any]:
 def get_version_ai_reviews(paper_id: str, n: str) -> dict[str, Any]:
     """Return the advisory AI report of version ``n`` of ``paper_id``."""
     return _report(f"{paper_id}/v{n}")
+
+
+def _problem(status: int, detail: str) -> Any:
+    from app.errors import ProblemException
+
+    return ProblemException(status, detail)
+
+
+@router.post(
+    "/ai-reviews/{review_cid}/rebuttal",
+    status_code=201,
+    summary="Post an author rebuttal to an AI finding",
+)
+def post_rebuttal(
+    review_cid: str,
+    payload: Any = Body(default=None),
+    principal: Principal = Depends(require_tier(2)),
+) -> dict[str, Any]:
+    from app.errors import ProblemException
+
+    ensure_ai_reviews_table()
+    review = _review_by_cid(review_cid)
+    if review is None:
+        raise ProblemException(404, f"No AI review {review_cid!r}.")
+
+    if not isinstance(payload, dict):
+        payload = {}
+    finding_id = None
+    for key in ("finding_id", "findingId", "findingID", "id"):
+        if key in payload:
+            finding_id = payload.get(key)
+            break
+    text = payload.get("text")
+    if text is None:
+        text = payload.get("rebuttal") or payload.get("response") or payload.get("body")
+    if finding_id is None:
+        raise ProblemException(422, "finding_id is required")
+    if not isinstance(text, str) or not text.strip():
+        raise ProblemException(422, "text is required")
+
+    findings = _ensure_finding_ids(list(review.findings or []))
+    if not any(str(_finding_ref(f)) == str(finding_id) for f in findings if isinstance(f, dict)):
+        raise ProblemException(404, f"No finding {finding_id!r} in review {review_cid!r}.")
+
+    paper_cid = _paper_cid_for_review(review)
+    if paper_cid is not None:
+        try:
+            from app.modules import submissions
+
+            authors = submissions.paper_authors(paper_cid)
+        except Exception:
+            authors = frozenset()
+        if principal.did not in authors:
+            raise ProblemException(403, "Only a paper author may rebut an AI finding.")
+
+    ensure_ai_review_rebuttals_table()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with db.SessionLocal() as session:
+        row = AIReviewRebuttal(
+            review_cid=review_cid,
+            finding_id=str(finding_id),
+            author_did=principal.did,
+            text=text,
+            created_at=now,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        rebuttal_id = row.id
+
+    return {
+        "id": rebuttal_id,
+        "rebuttal_id": rebuttal_id,
+        "rebuttalId": rebuttal_id,
+        "review_cid": review_cid,
+        "reviewCid": review_cid,
+        "finding_id": finding_id,
+        "findingId": finding_id,
+        "status": "created",
+    }
+
+
+@router.post(
+    "/ai-reviews/{review_cid}/assessments",
+    status_code=201,
+    summary="Post a tier-3 reviewer assessment of an AI finding",
+)
+def post_assessment(
+    review_cid: str,
+    payload: Any = Body(default=None),
+    principal: Principal = Depends(require_tier(3)),
+) -> dict[str, Any]:
+    from app.errors import ProblemException
+
+    ensure_ai_reviews_table()
+    review = _review_by_cid(review_cid)
+    if review is None:
+        raise ProblemException(404, f"No AI review {review_cid!r}.")
+
+    if not isinstance(payload, dict):
+        payload = {}
+    finding_id = None
+    for key in ("finding_id", "findingId", "findingID", "id"):
+        if key in payload:
+            finding_id = payload.get(key)
+            break
+    if finding_id is None:
+        raise ProblemException(422, "finding_id is required")
+
+    findings = _ensure_finding_ids(list(review.findings or []))
+    if not any(str(_finding_ref(f)) == str(finding_id) for f in findings if isinstance(f, dict)):
+        raise ProblemException(404, f"No finding {finding_id!r} in review {review_cid!r}.")
+
+    verdict = None
+    if payload.get("confirmed") is True:
+        verdict = "confirmed"
+    elif payload.get("wrong") is True:
+        verdict = "wrong"
+    elif payload.get("confirmed") is False and payload.get("wrong") is not True:
+        # ambiguous; leave unresolved
+        pass
+    raw = None
+    for key in ("verdict", "status", "assessment", "result", "mark", "value", "outcome"):
+        if key in payload and payload.get(key) is not None:
+            raw = payload.get(key)
+            break
+    if verdict is None and isinstance(raw, str):
+        low = raw.strip().lower()
+        if "confirm" in low:
+            verdict = "confirmed"
+        elif "wrong" in low or "incorrect" in low or "false" in low:
+            verdict = "wrong"
+        elif low in ("confirmed", "wrong"):
+            verdict = low
+    if verdict not in ("confirmed", "wrong"):
+        raise ProblemException(422, "verdict must be 'confirmed' or 'wrong'")
+
+    ensure_ai_review_assessments_table()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with db.SessionLocal() as session:
+        row = AIReviewAssessment(
+            review_cid=review_cid,
+            finding_id=str(finding_id),
+            reviewer_did=principal.did,
+            verdict=verdict,
+            created_at=now,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        assessment_id = row.id
+
+    return {
+        "id": assessment_id,
+        "assessment_id": assessment_id,
+        "assessmentId": assessment_id,
+        "review_cid": review_cid,
+        "reviewCid": review_cid,
+        "finding_id": finding_id,
+        "findingId": finding_id,
+        "verdict": verdict,
+        "status": verdict,
+        "result": verdict,
+    }

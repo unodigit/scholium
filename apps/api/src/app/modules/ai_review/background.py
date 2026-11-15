@@ -186,9 +186,12 @@ def _run_pipeline(
     by_name = {r.agent: r for r in reports + [repro_report]}
     ordered = [by_name[name] for name in AGENT_NAMES if name in by_name]
 
-    return ordered, _models_from_reports(ordered), set_hash, [
-        finding.to_dict() for finding in meta_review(ordered).findings
-    ]
+    final_findings = [finding.to_dict() for finding in meta_review(ordered).findings]
+    for index, finding in enumerate(final_findings, start=1):
+        finding.setdefault("id", str(index))
+        finding.setdefault("finding_id", finding["id"])
+        finding.setdefault("findingId", finding["id"])
+    return ordered, _models_from_reports(ordered), set_hash, final_findings
 
 
 def run_ai_review(
