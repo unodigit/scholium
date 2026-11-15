@@ -19,6 +19,7 @@ import { AuthorsStep } from "./authors-step";
 import type { ChecksVersionRef, FetchChecks } from "./checks";
 import { ChecksStep } from "./checks-step";
 import { DetailsStep } from "./details-step";
+import { SignStep } from "./sign-step";
 import { emptyDetails, type DetailsValues } from "./details";
 import { FilesStep, type FilesStepProps } from "./files-step";
 import type { SubmitFile } from "./upload-manager";
@@ -143,8 +144,18 @@ export function SubmitWizard({
           pollMs={checksPollMs}
           files={files}
           onBack={() => setStep("authors")}
+          onContinue={() => setStep("sign")}
           onFixFiles={() => setStep("files")}
           onFixDetails={() => setStep("details")}
+        />
+      ) : null}
+
+      {step === "sign" ? (
+        <SignStep
+          files={files}
+          details={details}
+          authors={authors}
+          onBack={() => setStep("checks")}
         />
       ) : null}
     </div>

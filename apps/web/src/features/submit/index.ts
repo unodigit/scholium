@@ -25,6 +25,8 @@
 export { SubmitWizard, type SubmitWizardProps } from "./submit-wizard";
 export { AuthorsStep, type AuthorsStepProps } from "./authors-step";
 export { ChecksStep, type ChecksStepProps } from "./checks-step";
+export { SignStep, type SignStepProps, type SignResult } from "./sign-step";
+export { StatusTracker, type StatusTrackerProps } from "./status-tracker";
 export { ConsentTracker, type ConsentTrackerProps } from "./consent-tracker";
 export { DetailsStep, type DetailsStepProps } from "./details-step";
 export { FilesStep, type FilesStepProps } from "./files-step";
