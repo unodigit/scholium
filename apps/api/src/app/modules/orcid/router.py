@@ -71,6 +71,7 @@ from app.security import Principal, get_current_principal
 from app.settings import settings
 
 from app.modules.ledger.origin import node_signing_key
+from .nullifier import OrcidAlreadyLinked
 from .state import InvalidState, sign_state, verify_state
 from .service import exchange_code, issue_orcid_credential
 from .present import router as credentials_router
@@ -247,7 +248,11 @@ def orcid_callback(
     code: str,
     state: str,
 ) -> dict:
-    """Exchange ``code`` and verify ``state``, then issue and persist the credential."""
+    """Exchange ``code`` and verify ``state``, then issue and persist the credential.
+
+    ``409`` problem details when the ORCID iD is already linked to an active
+    DID (see :mod:`app.modules.orcid.nullifier`).
+    """
     try:
         claims = verify_state(state)
     except InvalidState as exc:
@@ -275,6 +280,9 @@ def orcid_callback(
 
     try:
         credential = issue_orcid_credential(did, orcid_id)
+    except OrcidAlreadyLinked:
+        # 409 problem details: one ORCID iD maps to one active DID (feature 33).
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

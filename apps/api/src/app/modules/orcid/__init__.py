@@ -11,13 +11,27 @@ sends back and returns its claims.  The ``did`` claim is present only when
 ``/start`` was called with a valid access token, in which case it is that
 token's DID -- it is never taken from a query string.
 
+Feature 33: linking stores the nullifier ``H(issuer || orcid || domain)`` in the
+``nullifiers`` table, so one ORCID iD maps to one active DID; a second link of
+the same iD is ``409`` problem details (:class:`OrcidAlreadyLinked`).  See
+:mod:`app.modules.orcid.nullifier`.
+
 The module loader discovers packages under ``app.modules`` by scan and mounts
 the ``router`` exported here under ``/v1``; nothing else needs wiring.
 """
 
 from __future__ import annotations
 
-from .models import Credential, ensure_tables as ensure_credential_tables
+from .models import Credential, Nullifier, ensure_tables as ensure_credential_tables
+from .nullifier import (
+    NULLIFIER_DOMAIN,
+    ORCID_ALREADY_LINKED,
+    OrcidAlreadyLinked,
+    claim_nullifier,
+    compute_nullifier,
+    credential_nullifier,
+    normalise_orcid,
+)
 from .router import (
     AUTHORIZE_PATH,
     CALLBACK_PATH,
@@ -63,7 +77,11 @@ __all__ = [
     "InvalidCredentialSignature",
     "InvalidCredentialStatus",
     "InvalidState",
+    "NULLIFIER_DOMAIN",
+    "Nullifier",
+    "ORCID_ALREADY_LINKED",
     "ORCID_AUTH_SCOPE",
+    "OrcidAlreadyLinked",
     "OrcidStartResponse",
     "PRESENT_PATH",
     "PresentationVerified",
@@ -73,9 +91,13 @@ __all__ = [
     "authorize_endpoint",
     "build_authorize_url",
     "callback_url",
+    "claim_nullifier",
+    "compute_nullifier",
+    "credential_nullifier",
     "ensure_credential_tables",
     "exchange_code",
     "issue_orcid_credential",
+    "normalise_orcid",
     "orcid_base_url",
     "router",
     "sign_state",

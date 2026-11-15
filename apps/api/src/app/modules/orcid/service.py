@@ -5,6 +5,12 @@ ownership verifiable credential bound to ``did``, persists it to the
 ``credentials`` table and returns the credential document.  ``exchange_code``
 turns an authorization ``code`` (a mock code when ``ORCID_MOCK=1``) into the
 ORCID iD it carries.
+
+Issuing also claims the iD's uniqueness nullifier (feature 33,
+:mod:`app.modules.orcid.nullifier`) in the same transaction as the credential
+row, so one ORCID iD maps to one active DID: linking an iD that is already
+linked raises :class:`~app.modules.orcid.nullifier.OrcidAlreadyLinked` (``409``
+problem details) and writes nothing.
 """
 
 from __future__ import annotations
@@ -20,10 +26,17 @@ from app import db
 from app.settings import settings
 
 from .models import Credential, ensure_tables
+from .nullifier import OrcidAlreadyLinked, claim_nullifier, compute_nullifier
 from .state import InvalidState, verify_state
 
 # re-export for router convenience
-__all__ = ["InvalidState", "exchange_code", "issue_orcid_credential", "verify_state"]
+__all__ = [
+    "InvalidState",
+    "OrcidAlreadyLinked",
+    "exchange_code",
+    "issue_orcid_credential",
+    "verify_state",
+]
 
 from app.modules.ledger.origin import node_signing_key, did_key_from_public_key
 from scholium_record_core import encode_signature
@@ -75,7 +88,11 @@ def exchange_code(code: str, *, redirect_uri: Optional[str] = None) -> str:
 
 
 def issue_orcid_credential(did: str, orcid_id: str) -> dict:
-    """Build, sign with the node key and persist an ORCID ownership VC for ``did``."""
+    """Build, sign with the node key and persist an ORCID ownership VC for ``did``.
+
+    Raises :class:`OrcidAlreadyLinked` (``409``) when ``orcid_id`` is already
+    linked to an active DID -- ``did`` itself included -- and stores nothing.
+    """
     if not isinstance(did, str) or not did.strip():
         raise ValueError("a non-empty did is required")
     if not isinstance(orcid_id, str) or not orcid_id.strip():
@@ -115,7 +132,10 @@ def issue_orcid_credential(did: str, orcid_id: str) -> dict:
     credential["node_did"] = node_did
 
     cred_id = f"cred_{uuid.uuid4().hex}"
+    nullifier = compute_nullifier(node_did, orcid_id)
     with db.SessionLocal() as session:
+        # Claim first, commit together: no nullifier without its credential.
+        claim_nullifier(session, nullifier, did, orcid_id=orcid_id)
         session.add(
             Credential(
                 id=cred_id,
