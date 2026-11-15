@@ -4,23 +4,32 @@ A journey is told from the outside: people sign in, save profiles, submit signed
 records and read answers back, all through ``/v1``.  :class:`Actor` is such a
 person -- a fresh Ed25519 key, the ``did:key`` it encodes, and whatever tokens
 the API has handed them so far.  Nothing here reaches into the database or the
-plugins, except to read the one thing HTTP cannot show: the mail the node sent
-(:func:`verification_link_for`).
+plugins, except to reach the two things HTTP cannot: the mail the node sent
+(:func:`verification_link_for`) and the passage of time
+(:func:`elapse_recovery_contest_window`).
 """
 
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 from fastapi.testclient import TestClient
 from nacl.signing import SigningKey
-from scholium_record_core import did_key_from_signing_key, encode_signature, sign_record
+from scholium_record_core import (
+    compute_record_id,
+    did_key_from_signing_key,
+    encode_signature,
+    sign_envelope,
+    sign_record,
+)
 
+from app import db, jobs
 from app.modules.notifications import get_outbox
 from app.modules.profiles import EMAIL_VERIFICATION_KIND
+from app.modules.recovery import CONTEST_WINDOW, JOB_KIND as RECOVERY_FINALIZE_JOB, RecoveryRequest
 from app.security import decode_access_token
 
 PROBLEM_JSON = "application/problem+json"
@@ -54,6 +63,49 @@ def verification_link_for(did: str) -> str:
     assert match, f"no link in the verification email: {mails[-1]['body']!r}"
     link = urlparse(match.group(1))
     return f"{link.path}?{link.query}"
+
+
+def sign_text(seed: SigningKey, text: str) -> str:
+    """A detached Ed25519 signature over ``text`` by ``seed``, as the API writes signatures."""
+    return encode_signature(bytes(seed.sign(text.encode("utf-8")).signature))
+
+
+def recovery_finalize_jobs(request_id: str) -> list[jobs.Job]:
+    """The ``recovery.finalize`` jobs still queued for the recovery request ``request_id``."""
+    with db.SessionLocal() as session:
+        queued = session.query(jobs.Job).filter(
+            jobs.Job.kind == RECOVERY_FINALIZE_JOB, jobs.Job.status == jobs.STATUS_QUEUED
+        )
+        found = [job for job in queued if (job.payload or {}).get("request_id") == request_id]
+        session.expunge_all()
+    return found
+
+
+def elapse_recovery_contest_window(request_id: str) -> int:
+    """Let the 72-hour contest window of ``request_id`` run out, then run the due jobs.
+
+    Nobody can wait three days in a test and HTTP has no clock to turn, so time
+    is moved the one way the data allows: everything the node stored about this
+    window -- the request's ``contest_until`` and the ``run_after`` of the job
+    scheduled for the window's end -- is moved back by the window's length plus a
+    minute, exactly as if the third approval had come in 72 hours and a minute ago.
+    Then the job runner is run on the real clock, which is what the node's worker
+    thread does on its own in production.  Only this request's rows are touched.
+
+    Returns how many job attempts the runner made.
+    """
+    shift = CONTEST_WINDOW + timedelta(minutes=1)
+    with db.SessionLocal() as session:
+        request = session.get(RecoveryRequest, request_id)
+        assert request is not None and request.contest_until is not None, "no contest window is open"
+        request.contest_until -= shift
+        for job in session.query(jobs.Job).filter(
+            jobs.Job.kind == RECOVERY_FINALIZE_JOB, jobs.Job.status == jobs.STATUS_QUEUED
+        ):
+            if (job.payload or {}).get("request_id") == request_id and job.run_after is not None:
+                job.run_after -= shift
+        session.commit()
+    return jobs.run_pending()
 
 
 class Actor:
@@ -103,10 +155,32 @@ class Actor:
         assert self.access_token, "sign in first"
         return decode_access_token(self.access_token).tier
 
+    def link_orcid(self, orcid: str) -> dict:
+        """Link ``orcid`` through the (mock) ORCID login; return the credential the node issues."""
+        start = self.client.get("/v1/auth/orcid/start", headers=self.headers)
+        assert start.status_code == 200, start.text
+        callback = self.client.get(
+            "/v1/auth/orcid/callback",
+            params={"code": f"mock-{orcid}", "state": start.json()["state"]},
+        )
+        assert callback.status_code == 200, callback.text
+        return callback.json()
+
+    def sign(self, text: str) -> str:
+        """A detached signature over ``text`` by this actor's key (what a guardian signs to approve)."""
+        return sign_text(self.seed, text)
+
     # --- records -------------------------------------------------------------
 
-    def record(self, record_type: str, body: dict) -> dict:
-        """A ``record_type`` record with ``body``, signed by this actor's key."""
+    def record(self, record_type: str, body: dict, *, signer: Optional[SigningKey] = None) -> dict:
+        """A ``record_type`` record with ``body``, authored by this actor's DID.
+
+        It is signed by this actor's key unless ``signer`` names another: after
+        a recovery the account keeps its DID but a different key signs for it.
+        (:func:`~scholium_record_core.sign_record` refuses to sign for an author
+        whose did:key is not the signing key's, so that case completes the
+        envelope with its cid and signature by hand.)
+        """
         envelope = {
             "v": 1,
             "type": record_type,
@@ -116,7 +190,11 @@ class Actor:
             "body": body,
             "proofs": [],
         }
-        return sign_record(envelope, self.seed)
+        if signer is None:
+            return sign_record(envelope, self.seed)
+        envelope["id"] = compute_record_id(envelope)
+        envelope["sig"] = sign_envelope(envelope, signer)
+        return envelope
 
     def submit(self, record: dict) -> Any:
         """``POST /v1/records`` the record with this actor's access token."""

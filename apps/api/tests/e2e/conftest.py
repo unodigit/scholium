@@ -8,8 +8,10 @@ node signing key and its own empty mailbox, and talks to an app assembled by
 ``create_app()`` over them.
 
 The node is configured the way a development node is: ORCID in mock mode (a
-code of ``mock-<orcid>`` stands for a completed ORCID login) and no ``SMTP_URL``
-(mail lands in the in-process outbox instead of going out).
+code of ``mock-<orcid>`` stands for a completed ORCID login), no ``SMTP_URL``
+(mail lands in the in-process outbox instead of going out) and eager jobs (jobs
+that are due run inline; ones deferred to a later time wait for the test to run
+the job runner).
 """
 
 from __future__ import annotations
@@ -57,6 +59,10 @@ def node(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "journey-secret-" + "x" * 64)
     monkeypatch.setattr(settings, "ORCID_MOCK", 1)
     monkeypatch.setattr(settings, "SMTP_URL", "")
+    # Due jobs run inline, and jobs deferred to a later time wait until a test
+    # runs the job runner itself (``jobs.run_pending``): no worker thread is
+    # left polling a database file that the next test deletes.
+    monkeypatch.setattr(settings, "JOBS_EAGER", 1)
 
     clear_outbox()
     yield node_key
