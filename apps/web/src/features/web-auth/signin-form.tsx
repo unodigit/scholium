@@ -13,6 +13,7 @@
  * this file is markup only.
  */
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { SIGNIN_UNSUPPORTED_MESSAGE } from "./signin-messages";
@@ -75,6 +76,13 @@ export function SignInForm({ next, auth }: SignInFormProps) {
       <p className="wa-meta">
         New here? Your first sign-in on this device creates a passkey and your
         account.
+      </p>
+
+      <p className="wa-meta">
+        Lost your device?{" "}
+        <Link className="wa-link" href="/recover">
+          Recover your account
+        </Link>
       </p>
     </section>
   );

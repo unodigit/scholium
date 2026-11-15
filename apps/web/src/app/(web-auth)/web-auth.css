@@ -355,9 +355,169 @@
   margin-top: 24px;
 }
 
+/* --- /recover ------------------------------------------------------------- */
+
+/*
+ * The progress card grows with the approval panel and the safety-window panel,
+ * so it opts out of the shell's cross-axis centring the same way the
+ * onboarding checklist does: it centres when it fits and scrolls from the top
+ * when it does not.
+ */
+
+.wa-recover {
+  max-width: 480px;
+  align-self: flex-start;
+  margin-block: auto;
+}
+
+.wa-recover-start {
+  margin-top: 20px;
+}
+
+.wa-recover-how {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--wa-rule);
+}
+
+.wa-recover-how-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--wa-ink-2);
+}
+
+.wa-recover-facts {
+  margin: 0 0 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.wa-recover-fact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.wa-recover-fact dt {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--wa-ink-2);
+}
+
+.wa-recover-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wa-mono {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.wa-recover-panel {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid var(--wa-rule);
+  border-radius: 8px;
+}
+
+.wa-recover-panel > * + * {
+  margin-top: 10px;
+}
+
+.wa-recover-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wa-status-chip {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid var(--wa-rule);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--wa-ink-2);
+  white-space: nowrap;
+}
+
+.wa-status-chip--contest,
+.wa-status-chip--finalized {
+  border-color: var(--wa-accent);
+  color: var(--wa-accent);
+}
+
+.wa-status-chip--finalized {
+  background: var(--wa-accent);
+  color: var(--wa-on-accent);
+}
+
+.wa-status-chip--cancelled {
+  border-color: var(--wa-critical);
+  color: var(--wa-critical);
+}
+
+.wa-progressbar {
+  box-sizing: border-box;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--wa-rule);
+}
+
+.wa-progressbar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wa-accent);
+  transition: width 200ms ease-out;
+}
+
+.wa-recover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.wa-recover-cancel {
+  margin: 0;
+}
+
+.wa-link-button {
+  box-sizing: border-box;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.wa-link-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.wa-notice {
+  margin: 12px 0 0;
+  color: var(--wa-ink-2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .wa-button,
-  .wa-chip {
+  .wa-chip,
+  .wa-progressbar-fill {
     transition: none;
   }
 }

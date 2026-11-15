@@ -46,6 +46,15 @@ describe("web-auth public surface", () => {
       "describeOnboardingError",
       "useOnboarding",
       "defaultOnboardingServices",
+      "normalizeOrcid",
+      "openRecoveryRequest",
+      "fetchRecoveryStatus",
+      "cancelRecoveryRequest",
+      "approvalProgressText",
+      "RECOVERY_STORAGE_KEY",
+      "describeRecoveryError",
+      "useRecover",
+      "defaultRecoveryServices",
     ]) {
       expect(webAuth).toHaveProperty(name);
     }

@@ -84,6 +84,47 @@ reload — or the round-trip to ORCID — keeps the checklist. Behaviour lives
 in `useOnboarding` (unit-tested via `renderHook`); `onboarding-form.tsx` is
 markup only.
 
+## Recovery page (`/recover`)
+
+`apps/web/src/app/(web-auth)/recover/page.tsx` renders `RecoverForm`, the
+lost-device flow from `docs/design.md` §6:
+
+```text
+"Lost your device?" → identify by ORCID iD
+  → guardians approve → progress "2 of 3 approvals"
+  → 72-hour safety window with a cancel link → new passkey
+```
+
+- **Identify.** The ORCID iD is normalised exactly as the API does (bare
+  `0000-0002-1825-0097`, a pasted `https://orcid.org/…` URL, lowercase check
+  digit), so a valid iD never fails in the browser and then succeeds on the
+  server. `POST /v1/recovery/requests` is unauthenticated — the account holder
+  has no token any more — and carries the `did:key` the account should move
+  to. A browser with no device key creates one here (the "new passkey" at the
+  end of the flow); an existing key is reused.
+- **Progress.** The page shows `n of 3 approvals` (the API's
+  `APPROVAL_THRESHOLD`) with a text-labelled meter, the number of notified
+  guardians and the request id. It reads
+  `GET /v1/recovery/requests/{id}` for the live count. That read route does not
+  exist yet: a 404 that is not the request-not-found problem type, 405 or 501
+  is treated as "no news", not an error, and the last known progress stays on
+  screen behind "Check for approvals".
+- **72-hour safety window.** The third approval opens the window
+  (`CONTEST_WINDOW`). The page shows its UTC deadline and the time left, and
+  explains what opens it while approvals are pending.
+- **Cancel.** While the request is pending or contesting, "Cancel this
+  recovery" signs the request id with the device key behind a passkey prompt
+  and posts the detached signature. Cancelling therefore needs the old key;
+  `/recover?request=rec_…` is the link sent to known contacts, and a 401 is
+  explained as "open the cancel link on a device that still has your old
+  passkey".
+- **Remembering.** The request is kept under
+  `scholium.web-auth.recovery`, so a reload — or opening the cancel link —
+  lands on the progress card instead of the form.
+
+`/signin` offers the way in ("Lost your device?"). Behaviour lives in
+`useRecover` (unit-tested via `renderHook`); `recover-form.tsx` is markup only.
+
 ## Quick start
 
 ```ts
@@ -183,6 +224,9 @@ key").
 | `followCategories` | Save category picks (`PUT /v1/me/follows/{category}`), keeping them on-device when the endpoint is absent. |
 | `validateGuardians`, `saveGuardians` | Check (and then save, `PUT /v1/me/guardians`) a five-guardian list; API 422s map onto inputs. |
 | `useOnboarding` | React hook driving the page: step states, actions, the guardians gate on finishing. |
+| `openRecoveryRequest`, `fetchRecoveryStatus`, `cancelRecoveryRequest` | Open a recovery by ORCID iD, read its approval progress, and cancel it with a passkey-signed request id. |
+| `approvalProgressText`, `safetyWindowNote` | The `"2 of 3 approvals"` line and the 72-hour safety-window copy. |
+| `useRecover` | React hook behind `/recover`: identify, progress, refresh, cancel, reset. |
 
 All failures are `DeviceKeyError` with a stable `code`
 (`unsupported`, `storage-unavailable`, `not-found`, `already-exists`,
@@ -207,6 +251,10 @@ All failures are `DeviceKeyError` with a stable `code`
 | `onboarding-messages.ts` | Copy for the `/onboarding` page, including the guardians nag and `describeOnboardingError`. |
 | `use-onboarding.ts` | React hook behind the checklist (step states, actions, finish gate). |
 | `onboarding-form.tsx` | The `/onboarding` checklist (markup only; client component). |
+| `recover.ts` | ORCID validation, opening a recovery, reading progress, cancelling, the 72-hour window and per-browser memory. |
+| `recover-messages.ts` | Copy for the `/recover` page, including `describeRecoveryError`. |
+| `use-recover.ts` | React hook behind `/recover` (identify, progress, refresh, cancel). |
+| `recover-form.tsx` | The `/recover` card (markup only; client component). |
 | `did-key.ts` | Base58btc / `did:key` encoding. |
 | `encoding.ts` | base64url, hex and byte helpers. |
 | `errors.ts` | Typed errors and cancellation detection. |
