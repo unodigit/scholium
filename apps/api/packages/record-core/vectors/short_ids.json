@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "description": "Cross-language test vectors for Scholium sch: short ids. A paper short id is derived from the genesis record CID: the first 50 bits of its sha2-256 digest as 10 lowercase RFC 4648 base32 characters, followed by a 2-character CRC-10/ATM checksum of those 50 bits, grouped xxxx-xxxx-xxxx behind the sch: prefix. A version id appends /vN. Every implementation must derive short_id and version_ids from genesis_cid alone, parse every entry of parse to the stated result and reject every entry of invalid: format means the string is not shaped like a sch: id, checksum means it is shaped correctly but the checksum does not match.",
+  "short_id": {
+    "prefix": "sch:",
+    "alphabet": "abcdefghijklmnopqrstuvwxyz234567",
+    "payload_length": 10,
+    "checksum_length": 2,
+    "group_size": 4,
+    "payload": "base32 (RFC 4648, lowercase, unpadded) of the sha2-256 digest of the genesis CID, first 10 characters (the first 50 bits); never the leading characters of the CID string",
+    "checksum": "CRC-10/ATM (width 10, poly 0x233, init 0, no reflection, xorout 0) over the 50 payload bits, most significant bit first; written as two base32 characters, high 5 bits first",
+    "version": "/v followed by a decimal integer from 1 to 999999999 without leading zeros",
+    "case": "parsing is case-insensitive; the canonical form is lowercase"
+  },
+  "vectors": [
+    {
+      "name": "paper-genesis-minimal",
+      "description": "genesis CID of the paper.genesis vector in records.json",
+      "genesis_cid": "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4",
+      "version_ids": {
+        "1": "sch:5jmi-pmva-4lmr/v1",
+        "2": "sch:5jmi-pmva-4lmr/v2",
+        "10": "sch:5jmi-pmva-4lmr/v10",
+        "999999999": "sch:5jmi-pmva-4lmr/v999999999"
+      },
+      "digest_hex": "ea5887b2a0e2e4f34babab4d2eef39d1a73d32c9ff34bcfeb1308a2dae8a93cf",
+      "short_id": "sch:5jmi-pmva-4lmr"
+    },
+    {
+      "name": "paper-version-record",
+      "description": "any record CID derives a short id; this is the paper.version vector id",
+      "genesis_cid": "bafyreicincmn5eotnt4a7ik3wq7dohecjikpgxvbikftwgyyrdml6rszey",
+      "version_ids": {
+        "1": "sch:jbuj-rxur-2nan/v1",
+        "2": "sch:jbuj-rxur-2nan/v2",
+        "10": "sch:jbuj-rxur-2nan/v10",
+        "999999999": "sch:jbuj-rxur-2nan/v999999999"
+      },
+      "digest_hex": "486898de91d36cf80fa15bb43e371c824a14f35ea1428b3b1b1888d8bf465926",
+      "short_id": "sch:jbuj-rxur-2nan"
+    },
+    {
+      "name": "manifest-record",
+      "description": "the manifest vector id",
+      "genesis_cid": "bafyreie6ulqlp3667jrwf33u3trxessrmjq6hu3ziflot7vvrblv6mt7am",
+      "version_ids": {
+        "1": "sch:t2ro-bn7p-33uf/v1",
+        "2": "sch:t2ro-bn7p-33uf/v2",
+        "10": "sch:t2ro-bn7p-33uf/v10",
+        "999999999": "sch:t2ro-bn7p-33uf/v999999999"
+      },
+      "digest_hex": "9ea2e0b7efdefa6362ef74dce3724a516261e3d3794156e9feb588575f327f03",
+      "short_id": "sch:t2ro-bn7p-33uf"
+    },
+    {
+      "name": "discussion-record",
+      "description": "the discussion.post vector id",
+      "genesis_cid": "bafyreic2douy2f6mqt27ff6h24ag2acjdm5igadpkebkc3v32f4nxnekwy",
+      "version_ids": {
+        "1": "sch:lin2-tdix-zsaw/v1",
+        "2": "sch:lin2-tdix-zsaw/v2",
+        "10": "sch:lin2-tdix-zsaw/v10",
+        "999999999": "sch:lin2-tdix-zsaw/v999999999"
+      },
+      "digest_hex": "5a1ba98d17cc84f5f297c7d7006d00491b3a83006f5102a16ebbd178dbb48ab6",
+      "short_id": "sch:lin2-tdix-zsaw"
+    },
+    {
+      "name": "digest-all-zero",
+      "description": "all-zero digest: payload aaaaaaaaaa and checksum aa",
+      "genesis_cid": "bafyreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "version_ids": {
+        "1": "sch:aaaa-aaaa-aaaa/v1",
+        "2": "sch:aaaa-aaaa-aaaa/v2",
+        "10": "sch:aaaa-aaaa-aaaa/v10",
+        "999999999": "sch:aaaa-aaaa-aaaa/v999999999"
+      },
+      "digest_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "short_id": "sch:aaaa-aaaa-aaaa"
+    },
+    {
+      "name": "digest-all-ones",
+      "description": "all-ones digest: payload 7777777777",
+      "genesis_cid": "bafyreih777777777777777777777777777777777777777777777777774",
+      "version_ids": {
+        "1": "sch:7777-7777-77rs/v1",
+        "2": "sch:7777-7777-77rs/v2",
+        "10": "sch:7777-7777-77rs/v10",
+        "999999999": "sch:7777-7777-77rs/v999999999"
+      },
+      "digest_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "short_id": "sch:7777-7777-77rs"
+    },
+    {
+      "name": "digest-bits-50-to-55-ignored",
+      "description": "only the first 50 digest bits count: bits 50-55 and everything after are ignored, so this equals digest-all-zero",
+      "genesis_cid": "bafyreiaaaaaaaaaah77777777777777777777777777777777777777774",
+      "version_ids": {
+        "1": "sch:aaaa-aaaa-aaaa/v1",
+        "2": "sch:aaaa-aaaa-aaaa/v2",
+        "10": "sch:aaaa-aaaa-aaaa/v10",
+        "999999999": "sch:aaaa-aaaa-aaaa/v999999999"
+      },
+      "digest_hex": "0000000000003fffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "short_id": "sch:aaaa-aaaa-aaaa"
+    },
+    {
+      "name": "digest-bit-49-counts",
+      "description": "bit 49 (the last payload bit) is set, turning the tenth payload character into b",
+      "genesis_cid": "bafyreiaaaaaaaaaaiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "version_ids": {
+        "1": "sch:aaaa-aaaa-abrt/v1",
+        "2": "sch:aaaa-aaaa-abrt/v2",
+        "10": "sch:aaaa-aaaa-abrt/v10",
+        "999999999": "sch:aaaa-aaaa-abrt/v999999999"
+      },
+      "digest_hex": "0000000000004000000000000000000000000000000000000000000000000000",
+      "short_id": "sch:aaaa-aaaa-abrt"
+    }
+  ],
+  "parse": [
+    {
+      "name": "paper-id",
+      "input": "sch:5jmi-pmva-4lmr",
+      "short_id": "sch:5jmi-pmva-4lmr",
+      "version": null
+    },
+    {
+      "name": "version-id",
+      "input": "sch:5jmi-pmva-4lmr/v3",
+      "short_id": "sch:5jmi-pmva-4lmr",
+      "version": 3
+    },
+    {
+      "name": "uppercase-is-canonicalised",
+      "input": "SCH:5JMI-PMVA-4LMR/V3",
+      "short_id": "sch:5jmi-pmva-4lmr",
+      "version": 3
+    },
+    {
+      "name": "max-version",
+      "input": "sch:5jmi-pmva-4lmr/v999999999",
+      "short_id": "sch:5jmi-pmva-4lmr",
+      "version": 999999999
+    }
+  ],
+  "invalid": [
+    {
+      "name": "empty",
+      "input": "",
+      "error": "format"
+    },
+    {
+      "name": "missing-prefix",
+      "input": "5jmi-pmva-4lmr",
+      "error": "format"
+    },
+    {
+      "name": "wrong-prefix",
+      "input": "doi:5jmi-pmva-4lmr",
+      "error": "format"
+    },
+    {
+      "name": "no-hyphens",
+      "input": "sch:5jmipmva4lmr",
+      "error": "format"
+    },
+    {
+      "name": "wrong-grouping",
+      "input": "sch:5jmip-mva4-lmr",
+      "error": "format"
+    },
+    {
+      "name": "too-long",
+      "input": "sch:5jmi-pmva-4lmr2",
+      "error": "format"
+    },
+    {
+      "name": "too-short",
+      "input": "sch:5jmi-pmva-4lm",
+      "error": "format"
+    },
+    {
+      "name": "character-outside-alphabet",
+      "input": "sch:5jmi-pmva-4lm1",
+      "error": "format"
+    },
+    {
+      "name": "docs-example-is-not-base32",
+      "input": "sch:k3f9-q2xz-7mwd",
+      "error": "format"
+    },
+    {
+      "name": "non-ascii-lookalike",
+      "input": "sch:Kaaa-aaaa-aaaa",
+      "error": "format"
+    },
+    {
+      "name": "trailing-newline",
+      "input": "sch:5jmi-pmva-4lmr\n",
+      "error": "format"
+    },
+    {
+      "name": "leading-space",
+      "input": " sch:5jmi-pmva-4lmr",
+      "error": "format"
+    },
+    {
+      "name": "version-zero",
+      "input": "sch:5jmi-pmva-4lmr/v0",
+      "error": "format"
+    },
+    {
+      "name": "version-leading-zero",
+      "input": "sch:5jmi-pmva-4lmr/v01",
+      "error": "format"
+    },
+    {
+      "name": "version-missing-number",
+      "input": "sch:5jmi-pmva-4lmr/v",
+      "error": "format"
+    },
+    {
+      "name": "version-negative",
+      "input": "sch:5jmi-pmva-4lmr/v-1",
+      "error": "format"
+    },
+    {
+      "name": "version-not-numeric",
+      "input": "sch:5jmi-pmva-4lmr/v1a",
+      "error": "format"
+    },
+    {
+      "name": "version-too-large",
+      "input": "sch:5jmi-pmva-4lmr/v1000000000",
+      "error": "format"
+    },
+    {
+      "name": "version-without-v",
+      "input": "sch:5jmi-pmva-4lmr/1",
+      "error": "format"
+    },
+    {
+      "name": "trailing-slash",
+      "input": "sch:5jmi-pmva-4lmr/v1/",
+      "error": "format"
+    },
+    {
+      "name": "checksum-last-character-changed",
+      "input": "sch:5jmi-pmva-4lma",
+      "error": "checksum"
+    },
+    {
+      "name": "checksum-payload-character-changed",
+      "input": "sch:6jmi-pmva-4lmr",
+      "error": "checksum"
+    },
+    {
+      "name": "checksum-adjacent-characters-swapped",
+      "input": "sch:j5mi-pmva-4lmr",
+      "error": "checksum"
+    },
+    {
+      "name": "checksum-version-id",
+      "input": "sch:5jmi-pmva-4lma/v1",
+      "error": "checksum"
+    }
+  ]
+}
