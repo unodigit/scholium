@@ -2,6 +2,7 @@
 
 The module loader mounts ``router`` under ``/v1``, so this package serves::
 
+    GET /v1/papers
     GET /v1/papers/{id}
     GET /v1/papers/{id}/v/{n}/manifest
 
@@ -83,15 +84,52 @@ The same visibility rule as feature 79 applies: a malformed id or version
 number, an id this node does not hold, a version that does not exist and a
 version that is not listed all answer ``404`` with the same message.  So does
 a listed version whose ``manifest`` record this node does not hold.
+
+Feature 82 -- the catalog listing
+---------------------------------
+
+``GET /v1/papers`` lists the papers that have a listed version::
+
+    GET /v1/papers[?tab=latest|reviewed][&category=cs.AI]
+                  [&sort=newest|recently_reviewed|recently_updated]
+                  [&limit=1-100][&cursor=<nextCursor>]
+
+    {
+      "items": [
+        {"paper": "sch:xxxx-xxxx-xxxx", "shortId": "sch:xxxx-xxxx-xxxx",
+         "paperCid": "bafyrei...", "versionCid": "bafyrei...", "cid": "bafyrei...",
+         "n": 2, "version": 2, "title": "...", "abstract": "...",
+         "authors": [{"did": "did:key:z6Mk...", "author": "did:key:z6Mk...",
+                      "position": 1, "creditRoles": ["Conceptualization"]}],
+         "categories": ["cs.AI"], "licence": "CC-BY-4.0", "status": "reviewed",
+         "listedAt": "2026-01-01T00:00:00", "updatedAt": "2026-02-01T00:00:00"}
+      ],
+      "nextCursor": "eyJ2IjoxLC4uLn0"
+    }
+
+Each item describes the version ``GET /v1/papers/{id}`` would answer with for
+that paper; ``listedAt`` is when the paper first appeared in the catalog and
+``updatedAt`` when a version of it was last listed (UTC).  ``tab`` defaults to
+``latest`` (every listed paper; ``reviewed`` keeps those whose status is
+``reviewed``), ``sort`` to ``newest`` and ``limit`` to 20.  ``category`` keeps
+the papers filed under exactly that category.  ``nextCursor`` is ``null`` on the
+last page; pass it back unchanged as ``cursor`` (with the same ``sort``) to
+read the next one.  The list carries no vote or like counts of any kind: papers
+are ordered by when they were listed or reviewed, never by popularity.
+
+An unknown ``tab`` or ``sort``, an out-of-range ``limit`` and a ``cursor`` that
+this listing did not issue for the ``sort`` are ``422`` problem details.
+Like reading one paper, listing is public.  See :mod:`app.modules.catalog.listing`
+for the tabs, the sorts and the cursor.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict
 
 from app.modules import content
@@ -102,13 +140,15 @@ from app.modules.submissions import (
     notices_for_paper,
 )
 
-from . import service
+from . import listing, service
 
 __all__ = [
     "AuthorOut",
     "ManifestFileOut",
     "ManifestOut",
     "NoticeOut",
+    "PaperListItemOut",
+    "PaperListOut",
     "PaperOut",
     "SCAN_MISSING",
     "router",
@@ -367,3 +407,122 @@ def get_version_manifest(paper_id: str, n: str) -> ManifestOut:
     if view is None or files is None:
         raise _not_found(f"{paper_id}/v/{n}")
     return _manifest_out(view, files)
+
+
+class PaperListItemOut(BaseModel):
+    """One paper of ``GET /v1/papers``: the list-row view of its listed version.
+
+    There is deliberately no vote, like or popularity field: the list is
+    ordered by time alone.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Canonical paper short id (``sch:xxxx-xxxx-xxxx``).
+    paper: str
+    #: Alias of ``paper``.
+    shortId: str
+    #: cid of the paper's ``paper.genesis`` record.
+    paperCid: str
+    #: cid of the listed ``paper.version`` record shown.
+    versionCid: str
+    #: Alias of ``versionCid``.
+    cid: str
+    #: Version number shown (1-based).
+    n: int
+    #: Alias of ``n``.
+    version: int
+    #: The shown version's title.
+    title: str
+    #: The shown version's abstract.
+    abstract: str
+    #: The shown version's authors, in byline order.
+    authors: list[AuthorOut]
+    #: The paper's categories.
+    categories: list[str]
+    #: The licence the shown version names.
+    licence: str
+    #: The paper's stored status.
+    status: str
+    #: When the paper first appeared in the catalog (UTC).
+    listedAt: Optional[datetime] = None
+    #: When a version of the paper was most recently listed (UTC).
+    updatedAt: Optional[datetime] = None
+
+
+class PaperListOut(BaseModel):
+    """The response body of ``GET /v1/papers``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The page's papers, in the order ``sort`` names.
+    items: list[PaperListItemOut]
+    #: Pass as ``cursor`` for the next page; ``null`` on the last page.
+    nextCursor: Optional[str] = None
+
+
+def _list_item_out(entry: listing.CatalogEntry) -> PaperListItemOut:
+    """Render one catalog entry as the wire row."""
+    paper = entry.paper
+    version = entry.version
+    return PaperListItemOut(
+        paper=paper.short_id,
+        shortId=paper.short_id,
+        paperCid=paper.paper_cid,
+        versionCid=version.version_cid,
+        cid=version.version_cid,
+        n=int(version.n),
+        version=int(version.n),
+        title=version.title,
+        abstract=version.abstract,
+        authors=[_author_out(row) for row in authorship_for(version.version_cid)],
+        categories=list(paper.categories or []),
+        licence=version.licence,
+        status=paper.status or "preprint",
+        listedAt=entry.listed_at,
+        updatedAt=entry.updated_at,
+    )
+
+
+@router.get(
+    "/papers",
+    response_model=PaperListOut,
+    summary="List the papers in the catalog",
+)
+def list_papers(
+    tab: Literal["latest", "reviewed"] = Query(
+        default="latest",
+        description="latest: every listed paper; reviewed: status reviewed",
+    ),
+    category: Optional[str] = Query(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description="keep papers in this category",
+    ),
+    sort: Literal["newest", "recently_reviewed", "recently_updated"] = Query(
+        default="newest", description="the order of the list, newest first"
+    ),
+    cursor: Optional[str] = Query(
+        default=None, max_length=512, description="the nextCursor of the previous page"
+    ),
+    limit: int = Query(
+        default=listing.DEFAULT_LIMIT,
+        ge=1,
+        le=listing.MAX_LIMIT,
+        description="the most papers on one page",
+    ),
+) -> PaperListOut:
+    """Return one page of the listed papers."""
+    try:
+        page = listing.list_papers(
+            tab=tab, category=category, sort=sort, cursor=cursor, limit=limit
+        )
+    except listing.InvalidCursor as exc:
+        from app.errors import ProblemException
+
+        raise ProblemException(422, str(exc)) from None
+    return PaperListOut(
+        items=[_list_item_out(entry) for entry in page.entries],
+        nextCursor=page.next_cursor,
+    )

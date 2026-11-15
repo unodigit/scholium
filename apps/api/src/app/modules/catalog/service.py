@@ -31,7 +31,7 @@ their query logic.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -53,6 +53,7 @@ __all__ = [
     "latest_listed_version",
     "listed_version_n",
     "manifest_entries",
+    "pick_listed_version",
     "resolve",
     "resolve_version",
 ]
@@ -76,13 +77,33 @@ def listed_version_n(paper_cid: object, n: int) -> Optional[PaperVersion]:
     return None
 
 
+def pick_listed_version(
+    latest_version_cid: Optional[str], listed: Sequence[PaperVersion]
+) -> Optional[PaperVersion]:
+    """Pick the version a paper is shown as from its *listed* versions.
+
+    Prefers ``latest_version_cid`` (``papers.latest_version_cid``, the
+    bookkeeping listing maintains) when that version is among ``listed``, then
+    falls back to the highest-numbered one -- so a paper whose newest version
+    was held still shows its most recent published one.  ``None`` when
+    ``listed`` is empty.
+
+    Both ``GET /v1/papers/{id}`` and the ``GET /v1/papers`` listing choose
+    through this one rule, so a paper is the same version in both.
+    """
+    if not listed:
+        return None
+    if latest_version_cid:
+        for version in listed:
+            if version.version_cid == latest_version_cid:
+                return version
+    return max(listed, key=lambda version: int(version.n))
+
+
 def latest_listed_version(paper: Paper) -> Optional[PaperVersion]:
     """Return the version a paper id should answer with, or ``None``.
 
-    Prefers ``papers.latest_version_cid`` when that version is still listed
-    (the bookkeeping listing maintains), then falls back to the
-    highest-numbered listed version -- so a paper whose newest version was
-    held still serves its most recent published one.
+    See :func:`pick_listed_version` for the rule.
     """
     if paper is None:
         return None
@@ -91,14 +112,7 @@ def latest_listed_version(paper: Paper) -> Optional[PaperVersion]:
         for version in versions_for_paper(paper.paper_cid)
         if version.state == LISTED
     ]
-    if not listed:
-        return None
-    current = paper.latest_version_cid
-    if current:
-        for version in listed:
-            if version.version_cid == current:
-                return version
-    return max(listed, key=lambda version: int(version.n))
+    return pick_listed_version(paper.latest_version_cid, listed)
 
 
 def _resolve_version_id(identifier: str) -> Optional[PaperView]:
