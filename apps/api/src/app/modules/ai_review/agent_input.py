@@ -41,10 +41,13 @@ from .providers.base import DataBlock, LLMRequest
 __all__ = [
     "DEFAULT_INSTRUCTIONS",
     "HIDDEN_TEXT_BLOCK_PREFIX",
+    "REFERENCE_BLOCK_PREFIX",
+    "RUN_LOG_BLOCK_ID",
     "build_agent_input",
     "build_data_blocks",
     "hidden_text_blocks",
     "paragraph_blocks",
+    "reference_blocks",
 ]
 
 #: Instructions for a generic pre-review request.  Agent-specific prompts
@@ -62,6 +65,17 @@ DEFAULT_INSTRUCTIONS = (
 #: Prefix of the block id carrying a file's hidden-text finding, followed by
 #: the file id the sanitizer recorded it for.
 HIDDEN_TEXT_BLOCK_PREFIX = "hidden_text:"
+
+#: Prefix of the block id carrying one entry of the paper's reference list,
+#: followed by the entry's 0-based position
+#: (:attr:`app.modules.checks.Reference.index`).  This id is what a finding's
+#: ``reference_id`` evidence names.
+REFERENCE_BLOCK_PREFIX = "ref:"
+
+#: Id of the block carrying the sandbox run log of the code bundle (feature
+#: 119), given only to the reproducibility agent.  Each line of its content is
+#: one candidate ``log_line`` evidence.
+RUN_LOG_BLOCK_ID = "run_log"
 
 
 def paragraph_blocks(version_cid: str) -> tuple[DataBlock, ...]:
@@ -104,6 +118,25 @@ def hidden_text_blocks(pdf_cid: Optional[str] = None) -> tuple[DataBlock, ...]:
         for report in sanitizer.reports_for(pdf_cid)
         if report.check_name == sanitizer.CHECK_HIDDEN_TEXT
         and report.result == sanitizer.RESULT_FAILED
+    )
+
+
+def reference_blocks(version_cid: str) -> tuple[DataBlock, ...]:
+    """The entries of the version's reference list, one quoted block each.
+
+    The entries come from :func:`app.modules.checks.extract_references` over
+    the saved text.  A block's ``id`` is :data:`REFERENCE_BLOCK_PREFIX` plus
+    the entry's 0-based position and its ``content`` is the entry's text.
+    These ids are the only valid ``reference_id`` values for the version.
+
+    A version with no saved text, no reference list (or an invalid
+    ``version_cid``) gives ``()``.
+    """
+    from app.modules import checks
+
+    return tuple(
+        DataBlock(id=f"{REFERENCE_BLOCK_PREFIX}{reference.index}", content=reference.text)
+        for reference in checks.extract_references(checks.get_version_text(version_cid))
     )
 
 

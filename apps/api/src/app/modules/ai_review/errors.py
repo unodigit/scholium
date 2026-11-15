@@ -9,3 +9,24 @@ class PrivateDraftError(Exception):
     leaves the node.  The message always begins with ``PrivateDraftError``
     so callers can surface it verbatim.
     """
+
+
+class UnknownAgentError(ValueError):
+    """An agent name other than methodology, literature, reproducibility or integrity."""
+
+
+class PromptSetError(Exception):
+    """The ``prompts/*.md`` files are missing, empty or unreadable.
+
+    Raised instead of hashing or running with a partial prompt set: a
+    ``prompt_set_hash`` that silently covers fewer prompts than the agents
+    use would let a signed report claim a configuration nobody can re-run.
+    """
+
+
+class AgentOutputError(ValueError):
+    """An agent's reply holds no JSON object with a ``findings`` list.
+
+    Individual malformed findings do not raise this; they are dropped and
+    reported in :attr:`~app.modules.ai_review.agents.AgentReport.dropped`.
+    """
