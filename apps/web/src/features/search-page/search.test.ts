@@ -12,6 +12,9 @@ import {
   keywordQuery,
   loadKeywordSearch,
   loadSemanticSearch,
+  paperHref,
+  paperHrefForQuery,
+  parseSchId,
   parseSearchParams,
   parseSearchResult,
   parseSemanticResult,
@@ -157,6 +160,42 @@ describe("searchHref", () => {
       (input[key] ??= []).push(value);
     });
     expect(parseSearchParams(input)).toEqual(original);
+  });
+});
+
+describe("sch: ids in the search field", () => {
+  it("recognises a paper id and a version id", () => {
+    expect(parseSchId("sch:k3f9-q2xz-7mwd")).toEqual({
+      shortId: "sch:k3f9-q2xz-7mwd",
+      version: null,
+    });
+    expect(parseSchId("  SCH:K3F9-Q2XZ-7MWD/v3  ")).toEqual({
+      shortId: "sch:k3f9-q2xz-7mwd",
+      version: 3,
+    });
+  });
+
+  it("does not mistake ordinary search terms for an id", () => {
+    expect(parseSchId("pulsar timing")).toBeNull();
+    expect(parseSchId("sch:nope")).toBeNull();
+    expect(parseSchId("sch:k3f9-q2xz-7mwd/v0")).toBeNull();
+    expect(parseSchId("title sch:k3f9-q2xz-7mwd")).toBeNull();
+  });
+
+  it("builds the paper page URL, percent-encoding the colon", () => {
+    expect(paperHref({ shortId: "sch:k3f9-q2xz-7mwd", version: null })).toBe(
+      "/p/sch%3Ak3f9-q2xz-7mwd",
+    );
+    expect(paperHref({ shortId: "sch:k3f9-q2xz-7mwd", version: 2 })).toBe(
+      "/p/sch%3Ak3f9-q2xz-7mwd/v2",
+    );
+  });
+
+  it("maps a query to the paper page only when it is an id", () => {
+    expect(paperHrefForQuery("sch:abcd-efgh-jklm/v4")).toBe(
+      "/p/sch%3Aabcd-efgh-jklm/v4",
+    );
+    expect(paperHrefForQuery("reward models")).toBeNull();
   });
 });
 

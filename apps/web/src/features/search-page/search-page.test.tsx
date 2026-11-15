@@ -373,4 +373,71 @@ describe("SearchPage submit and failures", () => {
   });
 });
 
+describe("SearchPage with a sch: id", () => {
+  it("goes to the paper page instead of searching when an id is submitted", () => {
+    const updateUrl = vi.fn();
+    const loadKeyword = vi.fn(async (_next: SearchState) => RESULT);
+
+    render(
+      <SearchPage
+        initialState={EMPTY_SEARCH_STATE}
+        updateUrl={updateUrl}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Search papers"), {
+      target: { value: "  sch:k3f9-q2xz-7mwd/v2 " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(updateUrl).toHaveBeenCalledWith(
+      "/p/sch%3Ak3f9-q2xz-7mwd/v2",
+      "push",
+    );
+    expect(loadKeyword).not.toHaveBeenCalled();
+  });
+
+  it("follows a sch: id that arrived in the URL", () => {
+    const updateUrl = vi.fn();
+
+    render(
+      <SearchPage
+        initialState={state({ q: "sch:abcd-efgh-jklm" })}
+        updateUrl={updateUrl}
+      />,
+    );
+
+    expect(updateUrl).toHaveBeenCalledWith(
+      "/p/sch%3Aabcd-efgh-jklm",
+      "replace",
+    );
+    const link = screen.getByRole("link", { name: "the paper" });
+    expect(link.getAttribute("href")).toBe("/p/sch%3Aabcd-efgh-jklm");
+  });
+
+  it("still searches for a term that merely mentions sch:", () => {
+    const updateUrl = vi.fn();
+    const loadKeyword = vi.fn(async (_next: SearchState) => RESULT);
+
+    render(
+      <SearchPage
+        initialState={EMPTY_SEARCH_STATE}
+        updateUrl={updateUrl}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Search papers"), {
+      target: { value: "sch: ids in papers" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(updateUrl).toHaveBeenCalledWith(
+      "/search?q=sch%3A+ids+in+papers",
+      "push",
+    );
+  });
+});
+
 type SearchPageLoader = (state: SearchState) => Promise<SearchResult>;

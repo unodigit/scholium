@@ -327,9 +327,17 @@
 }
 
 .sp-loading,
-.sp-prompt {
+.sp-prompt,
+.sp-redirect {
   margin: 0;
   color: var(--ink-2);
+}
+
+/* A `sch:` id is on its way to the paper page (feature 184). The link is the
+   no-JavaScript, keyboard-followable form of the redirect. */
+.sp-redirect a {
+  color: var(--accent);
+  text-underline-offset: 0.18em;
 }
 
 .sp-error {

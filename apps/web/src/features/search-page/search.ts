@@ -293,6 +293,70 @@ export function searchHref(state: SearchState, path: string = SEARCH_PATH): stri
   return suffix === "" ? path : `${path}?${suffix}`;
 }
 
+/* -------------------------------------------------------------------------- */
+/* `sch:` ids: the search field is also how a reader jumps to a paper          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The shape of a `sch:` paper id, with an optional `/vN` version suffix.
+ *
+ * Deliberately *shape only*: the UI redirects what looks like an id and lets
+ * the API decide whether a paper with that id exists (and whether its checksum
+ * is right). That keeps a mistyped id on the paper page's honest "not listed
+ * here" answer instead of turning it into a keyword search for `sch:…`, and it
+ * accepts the ids the design and the fixtures write, e.g.
+ * `sch:k3f9-q2xz-7mwd/v3`.
+ */
+const SCH_ID_PATTERN =
+  /^sch:([a-z0-9]{4})-([a-z0-9]{4})-([a-z0-9]{4})(?:\/v([1-9][0-9]{0,8}))?$/i;
+
+/** A `sch:` id split into the paper's short id and an optional version. */
+export interface SchIdRef {
+  /** Canonical lowercase `sch:xxxx-xxxx-xxxx`. */
+  readonly shortId: string;
+  /** Version number, or `null` for the paper (its latest listed version). */
+  readonly version: number | null;
+}
+
+/**
+ * Read a `sch:` id, or `null` when the text is not one.
+ *
+ * Surrounding whitespace is ignored and the result is canonical lowercase.
+ * Only the shape is checked — existence and checksum are the API's job.
+ */
+export function parseSchId(value: string): SchIdRef | null {
+  const match = SCH_ID_PATTERN.exec(value.trim());
+  if (match === null) {
+    return null;
+  }
+  return {
+    shortId: `sch:${match[1]}-${match[2]}-${match[3]}`.toLowerCase(),
+    version: match[4] === undefined ? null : Number.parseInt(match[4], 10),
+  };
+}
+
+/**
+ * The paper page URL for an id: `/p/sch:xxxx-xxxx-xxxx` or, for a version,
+ * `/p/sch:xxxx-xxxx-xxxx/vN`.
+ *
+ * The `sch:` colon is percent-encoded, so the URL survives copy, paste and a
+ * server round-trip; Next.js decodes the route parameter again.
+ */
+export function paperHref(ref: SchIdRef): string {
+  const base = `/p/${encodeURIComponent(ref.shortId)}`;
+  return ref.version === null ? base : `${base}/v${ref.version}`;
+}
+
+/**
+ * The paper page a search term addresses, or `null` when the term is an
+ * ordinary query. Submitting one of these ids goes to the paper page instead
+ * of running a keyword search (feature 184).
+ */
+export function paperHrefForQuery(query: string): string | null {
+  const ref = parseSchId(query);
+  return ref === null ? null : paperHref(ref);
+}
+
 /**
  * A stable identity for a search, used to decide whether a new request is
  * needed. Filter order does not matter; the query is trimmed.

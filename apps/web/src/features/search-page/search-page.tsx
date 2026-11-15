@@ -22,6 +22,11 @@
  *
  * The semantic endpoint takes only `q`, so the facet filters are disabled in
  * semantic mode and the page says so rather than pretending to apply them.
+ *
+ * A `sch:xxxx-xxxx-xxxx` (or `/vN`) term is not a search at all: it addresses
+ * one paper, so submitting it navigates to that paper's page instead of
+ * rewriting `?q=`. `paperHrefForQuery` owns that decision, and the server
+ * route performs the same redirect for a shared link or the nav's GET form.
  */
 
 import {
@@ -36,6 +41,7 @@ import {
 import { StatusChip, isPaperStatus } from "../ui-kit";
 import {
   EMPTY_SEARCH_STATE,
+  SEARCH_PATH,
   clearFilters,
   describeSearchError,
   facetOptions,
@@ -43,6 +49,7 @@ import {
   hasActiveFilters,
   loadKeywordSearch,
   loadSemanticSearch,
+  paperHrefForQuery,
   parseSearchParams,
   resultHref,
   resultSummary,
@@ -97,7 +104,19 @@ type SearchView =
     }
   | { readonly status: "error"; readonly key: string; readonly message: string };
 
-/** A shallow URL update Next.js understands; no full navigation. */
+/** Whether `href` is the search page itself (with or without a query string). */
+function isSearchHref(href: string): boolean {
+  return href === SEARCH_PATH || href.startsWith(`${SEARCH_PATH}?`);
+}
+
+/**
+ * Rewrite the address bar.
+ *
+ * A change *within* `/search` is a shallow update Next.js understands, so the
+ * results client keeps its state and the back button works. A hop to another
+ * route — the paper page a `sch:` id names — is a real navigation: only the
+ * browser (or the router injected in tests) can render that page.
+ */
 function defaultUpdateUrl(href: string, mode: UrlUpdateMode): void {
   if (typeof window === "undefined") {
     return;
@@ -107,6 +126,17 @@ function defaultUpdateUrl(href: string, mode: UrlUpdateMode): void {
     return;
   }
   try {
+    if (!isSearchHref(href)) {
+      // `replace` for an id that arrived in the URL (Back leaves the search
+      // rather than bouncing off the same redirect); `assign` for a fresh
+      // submission (Back returns to the search the reader was on).
+      if (mode === "replace") {
+        window.location.replace(href);
+      } else {
+        window.location.assign(href);
+      }
+      return;
+    }
     if (mode === "push") {
       window.history.pushState(null, "", href);
     } else {
@@ -227,7 +257,20 @@ export function SearchPage({
   }, []);
 
   const key = searchStateKey(state);
+  // A `sch:` id in the field addresses a paper, not a keyword search. The
+  // paper page owns what happens next; the search page's job is to take the
+  // reader there, including when the id arrived in a shared `?q=` link.
+  const paperTarget = paperHrefForQuery(state.q);
+
   useEffect(() => {
+    const target = paperHrefForQuery(state.q);
+    if (target !== null) {
+      // Nothing to search for: stop here and hand the id to the paper page.
+      requestedRef.current = "";
+      setView({ status: "idle" });
+      navigate(target, "replace");
+      return;
+    }
     if (state.q.trim() === "") {
       requestedRef.current = "";
       setView({ status: "idle" });
@@ -276,7 +319,16 @@ export function SearchPage({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    apply({ ...state, q: draft.trim() }, "push");
+    const query = draft.trim();
+    // Pasting a `sch:` id is a jump to that paper (feature 184). The default
+    // URL update turns this into a real navigation; a test or host router
+    // receives the same href through `updateUrl`.
+    const target = paperHrefForQuery(query);
+    if (target !== null) {
+      navigate(target, "push");
+      return;
+    }
+    apply({ ...state, q: query }, "push");
   };
 
   const chooseMode = (mode: SearchState["mode"]): void => {
@@ -498,7 +550,13 @@ export function SearchPage({
         </aside>
 
         <section className="sp-results" aria-label="Search results">
-          {view.status === "idle" ? (
+          {paperTarget !== null ? (
+            <p className="sp-redirect" role="status">
+              Opening <a href={paperTarget}>the paper</a>…
+            </p>
+          ) : null}
+
+          {view.status === "idle" && paperTarget === null ? (
             <p className="sp-prompt" role="status">
               Enter a term above to search the listed papers.
             </p>

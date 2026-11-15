@@ -149,6 +149,21 @@ describe("search route (server render)", () => {
     expect(html).toContain("Try again");
   });
 
+  it("sends a sch: id to the paper page instead of searching", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const thrown = await SearchRoutePage({
+      searchParams: params("sch:k3f9-q2xz-7mwd/v2"),
+    }).catch((error: unknown) => error);
+
+    // Next's `redirect()` throws a control-flow error carrying the target.
+    const digest = String((thrown as { digest?: string }).digest ?? "");
+    expect(digest).toContain("NEXT_REDIRECT");
+    expect(digest).toContain("/p/sch%3Ak3f9-q2xz-7mwd/v2");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("asks for a term instead of calling the API when q is absent", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

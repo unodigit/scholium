@@ -1,0 +1,188 @@
+/*
+ * `/p/{id}` — the paper page a `sch:` id opens (feature 184).
+ *
+ * Prefix `sp-paper-`/`sp-author` so the rules sit beside the search page's
+ * `sp-` styles without leaking into another feature. Every colour, space and
+ * type value is a token from `src/styles/tokens.css`, so light, dark and a
+ * forced `data-theme` all re-theme the page.
+ */
+
+.sp-paper {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 8);
+  max-width: var(--reading-column);
+}
+
+/* ---- Header -------------------------------------------------------------- */
+
+.sp-paper-header {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.sp-paper-id {
+  align-self: flex-start;
+}
+
+.sp-paper-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  font-weight: var(--weight-title);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-title);
+  text-wrap: balance;
+}
+
+.sp-paper-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.sp-paper-version {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sp-paper-facts {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- Authors ------------------------------------------------------------- */
+
+.sp-authors {
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.sp-authors-heading,
+.sp-abstract-heading,
+.sp-notices-heading {
+  margin: 0 0 calc(var(--space-unit) * 3);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.sp-author-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sp-author {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.sp-author-name {
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  font-weight: 600;
+  line-height: var(--leading-reading);
+  overflow-wrap: anywhere;
+}
+
+.sp-author-affiliation,
+.sp-author-roles,
+.sp-authors-empty {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sp-author-roles {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
+/* ---- Abstract and notices ------------------------------------------------ */
+
+.sp-abstract,
+.sp-notices {
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.sp-abstract-body {
+  margin: 0;
+  max-width: var(--measure-reading);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.sp-notice-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sp-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border: 1px solid var(--critical);
+  border-radius: var(--corner-card);
+  background: var(--critical-soft);
+}
+
+.sp-notice-kind {
+  color: var(--ink);
+  text-transform: capitalize;
+}
+
+.sp-notice-reason {
+  color: var(--ink);
+}
+
+/* ---- Unavailable --------------------------------------------------------- */
+
+.sp-paper-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  max-width: var(--reading-column);
+  padding: calc(var(--space-unit) * 5);
+  border: 1px solid var(--critical);
+  border-radius: var(--corner-card);
+  background: var(--critical-soft);
+}
+
+.sp-paper-error-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  line-height: var(--leading-title);
+}
+
+.sp-paper-error-message {
+  margin: 0;
+  color: var(--ink);
+}
+
+.sp-paper-back {
+  color: var(--accent);
+}

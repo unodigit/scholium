@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
 import {
   SearchPage,
   describeSearchError,
   loadKeywordSearch,
   loadSemanticSearch,
+  paperHrefForQuery,
   parseSearchParams,
   type SearchParamsInput,
   type SearchResult,
@@ -43,6 +45,15 @@ interface SearchRouteProps {
 export default async function SearchRoutePage({ searchParams }: SearchRouteProps) {
   const params: SearchParamsInput = (await searchParams) ?? {};
   const state: SearchState = parseSearchParams(params);
+
+  // A `sch:` id is a paper address, not a search term: send the reader to the
+  // paper page before any search runs. Doing it on the server means a shared
+  // or reloaded `/search?q=sch:…` link, and the global nav's plain GET form,
+  // land on the paper page even before JavaScript loads (feature 184).
+  const paperTarget = paperHrefForQuery(state.q);
+  if (paperTarget !== null) {
+    redirect(paperTarget);
+  }
 
   let initialResult: SearchResult | SemanticResult | undefined;
   let initialError: string | undefined;
