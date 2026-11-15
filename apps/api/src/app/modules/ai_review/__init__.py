@@ -45,10 +45,24 @@ run log.  Anything else is rejected with a reason::
     )
     result.findings, result.rejected
 
+Feature 120 is the meta-reviewer: it builds the final findings list from the
+specialists' reports, merging findings that make the same point on the same
+evidence, flagging findings the agents rated differently, and guaranteeing
+the report's wording.  An integrity finding always ends with "Needs a human
+check.", and no final claim states fraud, plagiarism, fabrication,
+falsification, misconduct or cheating; such a claim becomes a neutral
+sentence pointing at the evidence::
+
+    final = ai_review.meta_review(reports)
+    final.findings        # most severe first, duplicates merged
+    final.merged          # notes on merged duplicates
+    final.disagreements   # notes on flagged disagreement
+
 See :mod:`app.modules.ai_review.prompt_set` for how the hash is defined,
 :mod:`app.modules.ai_review.findings` for the finding shape,
 :mod:`app.modules.ai_review.agents` for running an agent,
 :mod:`app.modules.ai_review.verification` for the evidence verifier,
+:mod:`app.modules.ai_review.meta_review` for the final findings list,
 and :mod:`app.modules.ai_review.sandbox` for the sandbox.
 """
 
@@ -78,6 +92,14 @@ from .findings import (
     Evidence,
     Finding,
     parse_findings,
+)
+from .meta_review import (
+    DUPLICATE_SIMILARITY,
+    HUMAN_CHECK,
+    NEUTRAL_CLAIM,
+    MetaReviewResult,
+    finalize_findings,
+    meta_review,
 )
 from .prompt_set import (
     AGENT_NAMES,
@@ -118,6 +140,7 @@ __all__ = [
     "BundleError",
     "CONFIDENCES",
     "DEFAULT_INSTRUCTIONS",
+    "DUPLICATE_SIMILARITY",
     "DataBlock",
     "EVIDENCE_KINDS",
     "Evidence",
@@ -125,9 +148,12 @@ __all__ = [
     "FakeProvider",
     "Finding",
     "HIDDEN_TEXT_BLOCK_PREFIX",
+    "HUMAN_CHECK",
     "LLMProvider",
     "LLMRequest",
     "LLMResponse",
+    "MetaReviewResult",
+    "NEUTRAL_CLAIM",
     "NOT_RUN_REASONS",
     "OllamaProvider",
     "PROMPTS_DIR",
@@ -142,10 +168,12 @@ __all__ = [
     "VerificationResult",
     "build_agent_input",
     "build_data_blocks",
+    "finalize_findings",
     "get_provider",
     "hidden_text_blocks",
     "load_prompt",
     "load_prompts",
+    "meta_review",
     "paragraph_blocks",
     "parse_findings",
     "prompt_files",

@@ -40,6 +40,14 @@ A finding in that list that lacks a field, has an unknown severity or
 confidence, or carries no evidence (or more than one kind) is dropped, and
 the reason is returned beside the findings so a drop is never silent.  The
 ``agent`` of a finding is set by the caller, never read from the reply.
+
+A specialist's finding carries only these five fields.  The meta-reviewer
+(feature 120) adds the optional metadata a *final* finding also has:
+``also_reported_by`` names the other agents that reported the same point,
+``agents_disagree`` says the agents rated it differently, and
+``needs_human_check`` marks an integrity observation.  Those fields default
+to empty or ``False`` and :meth:`Finding.to_dict` omits them then, so a
+specialist's finding keeps the shape the agents return.
 """
 
 from __future__ import annotations
@@ -123,6 +131,12 @@ class Finding:
     severity: str
     confidence: str
     evidence: Evidence
+    #: Other agents that reported the same finding (set by the meta-reviewer).
+    also_reported_by: tuple[str, ...] = ()
+    #: Whether the reporting agents rated this finding differently.
+    agents_disagree: bool = False
+    #: Whether this is an integrity observation phrased for a human to check.
+    needs_human_check: bool = False
 
     def __post_init__(self) -> None:
         if not self.claim or not self.claim.strip():
@@ -131,16 +145,41 @@ class Finding:
             raise ValueError(f"severity must be one of {', '.join(SEVERITIES)}")
         if self.confidence not in CONFIDENCES:
             raise ValueError(f"confidence must be one of {', '.join(CONFIDENCES)}")
+        others = tuple(self.also_reported_by)
+        if any(not isinstance(agent, str) or not agent.strip() for agent in others):
+            raise ValueError("also_reported_by must contain agent names")
+        if len(set(others)) != len(others):
+            raise ValueError("also_reported_by must not repeat an agent")
+        if self.agent in others:
+            raise ValueError("also_reported_by must not repeat the finding's agent")
+        if self.also_reported_by is not others:
+            object.__setattr__(self, "also_reported_by", others)
+
+    @property
+    def agents(self) -> tuple[str, ...]:
+        """Every agent that reported this finding, ``agent`` first."""
+        return (self.agent, *self.also_reported_by)
 
     def to_dict(self) -> dict[str, Any]:
-        """The finding as a JSON-ready dict, with an ``evidence`` object."""
-        return {
+        """The finding as a JSON-ready dict, with an ``evidence`` object.
+
+        The meta-reviewer's optional metadata appears only when it was set,
+        so a specialist's finding has exactly the five fields agents return.
+        """
+        data: dict[str, Any] = {
             "agent": self.agent,
             "claim": self.claim,
             "severity": self.severity,
             "confidence": self.confidence,
             "evidence": self.evidence.to_dict(),
         }
+        if self.also_reported_by:
+            data["also_reported_by"] = list(self.also_reported_by)
+        if self.agents_disagree:
+            data["agents_disagree"] = True
+        if self.needs_human_check:
+            data["needs_human_check"] = True
+        return data
 
 
 def _load_json(text: str) -> Any:
