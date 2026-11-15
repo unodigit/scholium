@@ -346,6 +346,150 @@ def test_helpful_on_unknown_post_is_404(client):
     assert response.status_code == 404, response.text
 
 
+def test_the_first_helpful_mark_reports_the_new_count(client):
+    author = Member(tier=1)
+    voter = Member(tier=1)
+    paper = publish(author)
+    record = post(client, author, paper, f"count me {uuid.uuid4().hex}")
+
+    response = client.post(f"/v1/posts/{record['id']}/helpful", headers=voter.headers)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["post_cid"] == record["id"]
+    assert response.json()["helpful"] == 1
+    assert int(stored(record["id"]).helpful) == 1
+
+
+def test_each_member_counts_once_and_a_repeat_changes_nothing(client):
+    author = Member(tier=1)
+    first_voter = Member(tier=1)
+    second_voter = Member(tier=1)
+    paper = publish(author)
+    record = post(client, author, paper, f"two voters {uuid.uuid4().hex}")
+    url = f"/v1/posts/{record['id']}/helpful"
+
+    assert client.post(url, headers=first_voter.headers).status_code == 201
+    assert client.post(url, headers=second_voter.headers).status_code == 201
+    assert int(stored(record["id"]).helpful) == 2
+
+    # A repeat by either voter is refused and leaves the count where it was.
+    assert client.post(url, headers=first_voter.headers).status_code == 409
+    assert client.post(url, headers=second_voter.headers).status_code == 409
+    assert int(stored(record["id"]).helpful) == 2
+
+
+def test_the_409_names_the_already_helpful_problem(client):
+    author = Member(tier=1)
+    voter = Member(tier=1)
+    paper = publish(author)
+    record = post(client, author, paper, f"problem type {uuid.uuid4().hex}")
+    url = f"/v1/posts/{record['id']}/helpful"
+
+    client.post(url, headers=voter.headers)
+    repeat = client.post(url, headers=voter.headers)
+
+    assert repeat.status_code == 409, repeat.text
+    assert repeat.json()["status"] == 409
+    assert repeat.json()["type"] == "urn:scholium:problem:already-helpful"
+
+
+def test_a_helpful_mark_by_the_author_is_one_vote_like_any_other(client):
+    author = Member(tier=1)
+    paper = publish(author)
+    record = post(client, author, paper, f"my own post {uuid.uuid4().hex}")
+    url = f"/v1/posts/{record['id']}/helpful"
+
+    assert client.post(url, headers=author.headers).status_code == 201
+    assert client.post(url, headers=author.headers).status_code == 409
+    assert int(stored(record["id"]).helpful) == 1
+
+
+def test_helpful_without_a_token_is_401(client):
+    author = Member(tier=1)
+    paper = publish(author)
+    record = post(client, author, paper, f"no token {uuid.uuid4().hex}")
+
+    response = client.post(f"/v1/posts/{record['id']}/helpful")
+
+    assert response.status_code == 401, response.text
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
+    assert int(stored(record["id"]).helpful) == 0
+
+
+def test_tier_0_helpful_is_403_and_counts_nothing(client):
+    author = Member(tier=1)
+    reader = Member(tier=0)
+    paper = publish(author)
+    record = post(client, author, paper, f"reader vote {uuid.uuid4().hex}")
+
+    response = client.post(f"/v1/posts/{record['id']}/helpful", headers=reader.headers)
+
+    assert response.status_code == 403, response.text
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
+    assert response.json()["required_tier"] == 1
+    assert int(stored(record["id"]).helpful) == 0
+
+
+def paper_row(published: Published):
+    """The ``papers`` row for ``published``, as the submissions plugin stores it."""
+    from app.modules.submissions import Paper, ensure_tables as ensure_paper_tables
+
+    ensure_paper_tables()
+    with db.SessionLocal() as session:
+        row = session.get(Paper, published.genesis_id)
+        if row is not None:
+            session.expunge(row)
+        return row
+
+
+@pytest.mark.parametrize("seeded", ["preprint", "under_review", "reviewed"])
+def test_helpful_marks_never_change_papers_status(client, seeded):
+    from app.modules.submissions import save_paper
+
+    author = Member(tier=1)
+    voter = Member(tier=1)
+    paper = publish(author)
+    save_paper(paper_cid=paper.genesis_id, categories=("cs.CR",), status=seeded)
+    record = post(client, author, paper, f"status stays {uuid.uuid4().hex}")
+    assert paper_row(paper).status == seeded
+
+    url = f"/v1/posts/{record['id']}/helpful"
+    assert client.post(url, headers=voter.headers).status_code == 201
+    assert paper_row(paper).status == seeded
+
+    # The refused repeat and a vote on a reply do not move it either.
+    assert client.post(url, headers=voter.headers).status_code == 409
+    reply = post(client, author, paper, f"a reply {uuid.uuid4().hex}", parent=record["id"])
+    assert client.post(
+        f"/v1/posts/{reply['id']}/helpful", headers=voter.headers
+    ).status_code == 201
+    assert paper_row(paper).status == seeded
+
+
+def test_a_helpful_mark_only_reorders_the_thread(client):
+    author = Member(tier=1)
+    voter = Member(tier=1)
+    paper = publish(author)
+    first = post(client, author, paper, f"alpha {uuid.uuid4().hex}")
+    second = post(client, author, paper, f"beta {uuid.uuid4().hex}")
+    before = threads(client, paper)
+
+    assert client.post(
+        f"/v1/posts/{second['id']}/helpful", headers=voter.headers
+    ).status_code == 201
+    after = threads(client, paper)
+
+    # The same posts with the same content, in a new order: only ``helpful``
+    # and the position differ.
+    assert cids(before) == [first["id"], second["id"]]
+    assert cids(after) == [second["id"], first["id"]]
+    assert after["count"] == before["count"] == 2
+    assert {n["post_cid"]: n["text"] for n in after["threads"]} == {
+        n["post_cid"]: n["text"] for n in before["threads"]
+    }
+    assert [n["helpful"] for n in after["threads"]] == [1, 0]
+
+
 # --------------------------------------------------------------------------- #
 # Feature 102: mutes
 # --------------------------------------------------------------------------- #
