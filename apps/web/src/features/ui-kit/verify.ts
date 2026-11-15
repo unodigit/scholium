@@ -1,0 +1,131 @@
+/**
+ * The five states a VerifyBadge can show, and everything that decides how each
+ * one looks: its words, its icon and its colour family.
+ *
+ * The states, words, icons and colours are the header-indicator table of
+ * docs/design.md §5.3, verbatim:
+ *
+ * | State          | Icon + label                       |
+ * | -------------- | ---------------------------------- |
+ * | Verified       | ✓ green "Verified"                 |
+ * | Anchor pending | ◔ amber "Signed · anchor pending"  |
+ * | Checking       | spinner "Checking…"                |
+ * | Cannot verify  | ? grey "Could not check"           |
+ * | Failed         | ✕ red "Verification failed"        |
+ *
+ * Pure data and functions, no React: the markup lives in `verify-badge.ts`.
+ * Deciding *which* state a paper is in (from verify-core's report and the
+ * anchor proof) belongs to the Proof tab; the badge only shows the answer.
+ */
+
+import type { IconName } from "./icons";
+
+/**
+ * Every state, in the order of docs/design.md §5.3: the best outcome first,
+ * then "working", then the two ways a check can fail to finish.
+ */
+export const VERIFY_STATES = [
+  "verified",
+  "anchor_pending",
+  "checking",
+  "cannot_verify",
+  "failed",
+] as const;
+
+export type VerifyState = (typeof VERIFY_STATES)[number];
+
+/**
+ * Colour family of a badge (docs/design.md §3), the same families a StatusChip
+ * uses. It maps onto token pairs in `verify-badge.css`: `verified` →
+ * `--verified`, `pending` → `--pending`, `critical` → `--critical`; `neutral`
+ * (grey: `--ink-2` and `--rule`) is shared by "Checking…" and "Could not
+ * check" on purpose. Neither is a verdict, and an inability to check is never
+ * dressed as a failure (§5.3).
+ */
+export type VerifyTone = "neutral" | "verified" | "pending" | "critical";
+
+export interface VerifyBadgeSpec {
+  readonly state: VerifyState;
+  /** The words beside the icon (docs/design.md §5.3, verbatim). */
+  readonly label: string;
+  readonly tone: VerifyTone;
+  /** A different silhouette per state: a badge must survive without colour. */
+  readonly icon: IconName;
+  /** One plain-language line, for galleries and the badge's tooltip. */
+  readonly meaning: string;
+}
+
+export const VERIFY_BADGE_SPECS: Readonly<Record<VerifyState, VerifyBadgeSpec>> = {
+  verified: {
+    state: "verified",
+    label: "Verified",
+    tone: "verified",
+    icon: "check",
+    meaning: "Every check passed and the public timestamp is in place.",
+  },
+  anchor_pending: {
+    state: "anchor_pending",
+    label: "Signed · anchor pending",
+    tone: "pending",
+    icon: "pending",
+    meaning: "Signed. The public timestamp will be added within the hour.",
+  },
+  checking: {
+    state: "checking",
+    label: "Checking…",
+    tone: "neutral",
+    icon: "spinner",
+    meaning: "The check is running in your browser.",
+  },
+  cannot_verify: {
+    state: "cannot_verify",
+    label: "Could not check",
+    tone: "neutral",
+    icon: "question",
+    meaning:
+      "You may be offline, or the proof is not available. This is not a failure.",
+  },
+  failed: {
+    state: "failed",
+    label: "Verification failed",
+    tone: "critical",
+    icon: "cross",
+    meaning:
+      "This file does not match what the authors signed. Do not rely on it.",
+  },
+};
+
+/** Narrow an unknown value (an API field, a query parameter) to a state. */
+export function isVerifyState(value: unknown): value is VerifyState {
+  return (
+    typeof value === "string" &&
+    (VERIFY_STATES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Where every badge goes when it is activated: the paper page's Proof tab
+ * answers to the `#proof` fragment (docs/design.md §7: "always opens the Proof
+ * tab"). A badge on the paper page itself can leave `href` out; one in a feed
+ * passes the paper's own path, e.g. `proofTabHref("/p/k3f9-q2xz-7mwd/v2")`.
+ */
+export const PROOF_TAB_HREF = "#proof";
+
+/**
+ * The link target of a badge: `base` with the Proof tab's fragment on it, or
+ * the bare fragment when there is no base.
+ *
+ * A blank or non-string base is treated as none, so a badge never renders a
+ * dead link. A base that already has a fragment loses it: the badge always
+ * opens *the Proof tab*, never wherever the page happened to point.
+ */
+export function proofTabHref(base?: string): string {
+  if (typeof base !== "string") return PROOF_TAB_HREF;
+  const path = base.trim().split("#")[0];
+  return path.length === 0 ? PROOF_TAB_HREF : `${path}${PROOF_TAB_HREF}`;
+}
+
+/** The tooltip (and accessible description) of a badge: what it means, then what a click does. */
+export function verifyBadgeTitle(state: VerifyState): string {
+  return `${VERIFY_BADGE_SPECS[state].meaning} Opens the Proof tab.`;
+}

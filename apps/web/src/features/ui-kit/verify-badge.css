@@ -1,0 +1,155 @@
+/* ============================================================================
+   VerifyBadge — docs/design.md §5.3 (states), §7 (Components), §9
+   (Accessibility), §10 (Responsive behaviour).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work.
+
+   Colour rules (src/styles/README.md):
+   - The label is --ink on a soft tint. --pending on --pending-soft is 4.13:1
+     at 13 px, below the 4.5:1 text rule, so the status colour is carried by
+     the icon and the border, never the word.
+   - Colour is reinforcement. Every state has an icon of its own shape and its
+     own words, so nothing depends on telling amber from green.
+   - "Checking…" and "Could not check" are both grey: neither is a verdict, and
+     an inability to check must never look like a failure (§5.3).
+   - --ai is never used here: AI output must not look like a human verdict.
+
+   The pill is a link (it always opens the Proof tab), so the rules below also
+   undo the global link styling: ink label, no underline until hover. Focus
+   uses the global 2 px `--focus-ring` (base.css); nothing here resets
+   `outline`.
+
+   Unlayered on purpose: a stylesheet imported from a component must not
+   re-declare Tailwind's cascade layers, and unlayered rules outrank them, so
+   the base layer's link styles cannot restyle a badge. No margin is set, so a
+   consumer's spacing utilities (ml-2, gap-2 on a parent) still apply.
+   ============================================================================ */
+
+.sch-verify {
+  /* Neutral (grey) by default; the tone rules below override these three. */
+  --verify-icon: var(--ink-2);
+  --verify-fill: var(--surface);
+  --verify-edge: var(--rule);
+
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.sch-verify[data-tone="verified"] {
+  --verify-icon: var(--verified);
+  --verify-fill: var(--verified-soft);
+  --verify-edge: var(--verified);
+}
+
+.sch-verify[data-tone="pending"] {
+  --verify-icon: var(--pending);
+  --verify-fill: var(--pending-soft);
+  --verify-edge: var(--pending);
+}
+
+.sch-verify[data-tone="critical"] {
+  --verify-icon: var(--critical);
+  --verify-fill: var(--critical-soft);
+  --verify-edge: var(--critical);
+}
+
+.sch-verify__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-unit);
+  box-sizing: border-box;
+  min-block-size: calc(var(--space-unit) * 6);
+  padding-inline: calc(var(--space-unit) * 2);
+
+  border: 1px solid var(--verify-edge);
+  border-radius: var(--corner-pill);
+  background-color: var(--verify-fill);
+
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration-line: none;
+  /* The browser's default tap flash is a square that ignores the pill's
+     radius; :active below is the feedback. */
+  -webkit-tap-highlight-color: transparent;
+
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+/* Hover only where there is a hover: on touch it would stay lit after a tap.
+   The underline is the "this is a link" cue; the tint alone would be colour. */
+@media (hover: hover) {
+  .sch-verify__link:hover {
+    background-color: color-mix(in srgb, var(--ink) 6%, var(--verify-fill));
+  }
+
+  .sch-verify__link:hover .sch-verify__label {
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
+}
+
+.sch-verify__link:active {
+  background-color: color-mix(in srgb, var(--ink) 10%, var(--verify-fill));
+}
+
+.sch-verify__icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 4);
+  block-size: calc(var(--space-unit) * 4);
+  color: var(--verify-icon);
+}
+
+.sch-verify__label {
+  color: var(--ink);
+}
+
+/* "Checking…": the open ring turns. Transform only, and constant speed: a
+   spinner is a loop, not a UI transition, so --duration-* does not apply. */
+.sch-verify[data-state="checking"] .sch-verify__icon {
+  animation: sch-verify-spin 900ms linear infinite;
+}
+
+@keyframes sch-verify-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Touch targets are at least 44 px (design.md §9). */
+@media (pointer: coarse) {
+  .sch-verify__link {
+    min-block-size: calc(var(--space-unit) * 11);
+    padding-inline: calc(var(--space-unit) * 3);
+  }
+}
+
+/* Reduced motion: the ring stands still. "Checking…" is still in words. */
+@media (prefers-reduced-motion: reduce) {
+  .sch-verify__link {
+    transition: none;
+  }
+
+  .sch-verify[data-state="checking"] .sch-verify__icon {
+    animation: none;
+  }
+}
+
+/* Forced colours (Windows High Contrast): the browser drops the tints and
+   recolours border, text and icon to system colours. This is a link, so it
+   takes the link colour throughout; the border keeps the pill's shape, the
+   icon strokes follow the text, and the words are still there. */
+@media (forced-colors: active) {
+  .sch-verify__link {
+    border-color: LinkText;
+  }
+
+  .sch-verify__icon {
+    color: LinkText;
+  }
+}

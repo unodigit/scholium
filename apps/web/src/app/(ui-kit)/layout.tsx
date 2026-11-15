@@ -16,6 +16,7 @@ export default function UiKitLayout({
     <main className="uk-shell">
       <nav className="uk-nav" aria-label="UI kit components">
         <a href="/ui-kit/status-chip">Status chip</a>
+        <a href="/ui-kit/verify-badge">Verify badge</a>
         <a href="/ui-kit/record-link">Record link</a>
         <a href="/ui-kit/empty-state">Empty state</a>
         <a href="/ui-kit/decision-banner">Decision banner</a>

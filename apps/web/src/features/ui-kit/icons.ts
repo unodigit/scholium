@@ -31,6 +31,14 @@ export interface IconShape {
  * - `ban` ⊘ ring with a bar: withdrawn
  * - `update` ⤒ arrow up to a bar: something newer sits above this one
  * - `tombstone` ⌢ arch slab: the content is gone, the marker stays
+ *
+ * Verification icons (docs/design.md §5.3), one per VerifyBadge state. `check`
+ * above is the fifth; these four are as distinct from it and from each other:
+ *
+ * - `pending` ◔ ring with one quarter filled: signed, the timestamp is coming
+ * - `spinner` ◜ ring open at one corner: working. VerifyBadge turns it
+ * - `question` ? bare question mark: could not find out (not a failure)
+ * - `cross` ✕ two crossing strokes: the check failed
  */
 export const ICON_SHAPES = {
   circle: [{ tag: "circle", attrs: { cx: 8, cy: 8, r: 5.25 } }],
@@ -66,6 +74,29 @@ export const ICON_SHAPES = {
   tombstone: [
     { tag: "path", attrs: { d: "M4.5 13.25v-5a3.5 3.5 0 0 1 7 0v5z" } },
     { tag: "path", attrs: { d: "M6.5 9.75h3" } },
+  ],
+  pending: [
+    { tag: "circle", attrs: { cx: 8, cy: 8, r: 5.25 } },
+    // The one filled shape in the set: a quarter wedge, upper right, as in ◔.
+    // Its own `fill` wins over the `none` the Icon sets on the <svg>.
+    {
+      tag: "path",
+      attrs: { d: "M8 8V2.75A5.25 5.25 0 0 1 13.25 8Z", fill: "currentColor" },
+    },
+  ],
+  // Three quarters of a ring, open at the upper left.
+  spinner: [{ tag: "path", attrs: { d: "M8 2.75A5.25 5.25 0 1 1 2.75 8" } }],
+  question: [
+    {
+      tag: "path",
+      attrs: { d: "M5.25 5.5a2.75 2.75 0 1 1 5 1.58c-.75 1.06-2.25 1.1-2.25 2.9" },
+    },
+    // A zero-length stroke with a round cap draws the dot of the "?".
+    { tag: "path", attrs: { d: "M8 12.75h.01" } },
+  ],
+  cross: [
+    { tag: "path", attrs: { d: "M4.25 4.25l7.5 7.5" } },
+    { tag: "path", attrs: { d: "M11.75 4.25l-7.5 7.5" } },
   ],
   // An action icon rather than a status one: two sheets, the front one whole.
   copy: [

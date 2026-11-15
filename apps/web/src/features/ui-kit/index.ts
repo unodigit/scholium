@@ -7,10 +7,11 @@
  * `apps/web/src/app/(ui-kit)/`.
  *
  * ```tsx
- * import { DecisionBanner, EmptyState, IdPill, RecordLink, StatusChip, UnderReviewChip } from "@/features/ui-kit";
+ * import { DecisionBanner, EmptyState, IdPill, RecordLink, StatusChip, UnderReviewChip, VerifyBadge } from "@/features/ui-kit";
  *
  * <StatusChip status={paper.status} count={paper.reviewers} />
  * <UnderReviewChip count={3} />
+ * <VerifyBadge state="anchor_pending" />   // "Signed · anchor pending"; opens the Proof tab
  * <RecordLink cid={paper.recordCid} />
  * <IdPill schId="sch:k3f9-q2xz-7mwd/v3" />   // click copies; toast says "Copied"
  * <DecisionBanner kind="retracted" recordCid={notice.id} clause="MOD-03" reason={notice.body.reason} />
@@ -40,6 +41,20 @@ export {
   type StatusChipSpec,
   type StatusTone,
 } from "./status";
+
+export { VerifyBadge, type VerifyBadgeProps } from "./verify-badge";
+
+export {
+  PROOF_TAB_HREF,
+  VERIFY_BADGE_SPECS,
+  VERIFY_STATES,
+  isVerifyState,
+  proofTabHref,
+  verifyBadgeTitle,
+  type VerifyBadgeSpec,
+  type VerifyState,
+  type VerifyTone,
+} from "./verify";
 
 export {
   ICON_GRID,
