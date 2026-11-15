@@ -10,6 +10,7 @@ The module loader mounts ``router`` under ``/v1``, so this package serves:
         "version": 2,
         "versionCid": "bafyrei...",
         "state": "awaiting_consent",
+        "declinedBy": null,
         "count": 3,
         "waiting": 1,
         "signed": 2,
@@ -27,8 +28,12 @@ The module loader mounts ``router`` under ``/v1``, so this package serves:
 
   ``status`` is ``waiting`` before the author signs, ``signed`` when their
   ``coauthor.consent`` accepted authorship and ``declined`` when it refused
-  it.  ``{id}`` is the paper's ``sch:`` short id (a full genesis cid is
-  accepted too) and ``{n}`` its version number.
+  it.  ``state`` is the version's lifecycle state: it stays
+  ``awaiting_consent`` until every listed author has accepted, moves to
+  ``scanning`` then, and drops back to ``draft`` when one author declines --
+  ``declinedBy`` names that author (feature 55).  ``{id}`` is the paper's
+  ``sch:`` short id (a full genesis cid is accepted too) and ``{n}`` its
+  version number.
 
   An unknown short id, a paper with no such version, or a malformed id
   answers ``404`` problem details -- a malformed id is simply not a paper this
@@ -86,6 +91,9 @@ class PaperConsents(BaseModel):
     versionCid: str
     #: The version's lifecycle state (``awaiting_consent``, ``scanning``, ...).
     state: str
+    #: The DID of the author who declined and sent the version back to
+    #: ``draft`` (feature 55), or ``null`` when nobody has declined.
+    declinedBy: Optional[str] = None
     #: Number of listed authors.
     count: int
     #: How many authors have not signed yet.
@@ -144,6 +152,7 @@ def get_paper_consents(paper_id: str, n: int) -> PaperConsents:
         version=n,
         versionCid=version.version_cid,
         state=version.state,
+        declinedBy=service.first_decliner(entries),
         count=len(authors),
         waiting=sum(1 for entry in entries if entry.status == service.STATUS_WAITING),
         signed=sum(1 for entry in entries if entry.status == service.STATUS_SIGNED),

@@ -15,12 +15,27 @@ The handler adds the one rule the generic pipeline cannot know:
 
 Accepting the record writes the record's cid (and decision) onto the
 matching ``authorship`` row for ``(version, author)``.
+
+Feature 55 then tallies the version's consents and advances its state:
+
+* while any listed author is still waiting, the version stays in
+  ``awaiting_consent``;
+* once every listed author has accepted, the version moves to ``scanning``
+  (:func:`evaluate_consents`);
+* one decline returns the version to ``draft`` with the decliner named --
+  their DID is the event's ``actor`` and its ``reason`` reads
+  ``declined by <did>``.
+
+The advance goes through the submissions plugin's
+``transition_version``, so it is written to ``paper_versions.state`` and
+announced as a ``version.state_changed`` event like every other change.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from scholium_record_core import derive_short_id, parse_short_id
@@ -31,12 +46,15 @@ from app.errors import ProblemException
 from app.modules.ingest.errors import InvalidRecord
 
 __all__ = [
+    "AWAITING_CONSENT_STATE",
     "COAUTHOR_CONSENT",
     "COAUTHOR_CONSENT_MIN_TIER",
     "COAUTHOR_CONSENT_TYPE",
     "CONSENT_MIN_TIER",
     "CONSENT_STATUSES",
     "CONSENT_TYPE",
+    "DRAFT_STATE",
+    "SCANNING_STATE",
     "STATUS_DECLINED",
     "STATUS_SIGNED",
     "STATUS_WAITING",
@@ -51,6 +69,8 @@ __all__ = [
     "VersionRef",
     "consents_for_version",
     "ensure_tables",
+    "evaluate_consents",
+    "first_decliner",
     "handle_coauthor_consent",
     "handle_consent",
     "is_listed_author",
@@ -59,6 +79,8 @@ __all__ = [
     "save_coauthor_consent",
     "save_consent",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: The record type this plugin owns.
 CONSENT_TYPE = "coauthor.consent"
@@ -84,6 +106,14 @@ CONSENT_STATUSES = (STATUS_WAITING, STATUS_SIGNED, STATUS_DECLINED)
 #: (a log built by replaying records without the submissions handler).  A
 #: version that lists authors is waiting for their consent until they decide.
 _UNSTORED_VERSION_STATE = "awaiting_consent"
+
+#: The version states this plugin drives a version between (feature 55).
+#: ``awaiting_consent`` is where a saved version starts, ``scanning`` is where
+#: it goes once every listed author has accepted, and ``draft`` is where one
+#: decline sends it back.
+AWAITING_CONSENT_STATE = "awaiting_consent"
+SCANNING_STATE = "scanning"
+DRAFT_STATE = "draft"
 
 #: Record types the paper/version lookup understands.
 _PAPER_GENESIS_TYPE = "paper.genesis"
@@ -377,6 +407,17 @@ def handle_consent(record: Mapping[str, Any]) -> str:
         consent_cid=record_cid,
         decision=decision,
         role=role,
+    )
+    # Feature 55: the decision just saved may be the one that completes or
+    # stops the round of consent.  The record itself is appended to the log by
+    # the pipeline after this handler returns, so the decision is passed in
+    # explicitly rather than re-read: a re-signed consent must count as the
+    # decision it is, not as the earlier record the log still holds.
+    evaluate_consents(
+        version_cid,
+        actor=author,
+        author=author,
+        decision=decision,
     )
     return "accepted"
 
@@ -744,3 +785,121 @@ def consents_for_version(version_cid: str) -> list[ConsentEntry]:
             )
         )
     return entries
+
+
+# --------------------------------------------------------------------------- #
+# Advancing the version once its authors have decided (feature 55)
+# --------------------------------------------------------------------------- #
+
+
+def first_decliner(entries: Sequence[ConsentEntry]) -> Optional[str]:
+    """The DID of the first listed author (in byline order) who declined.
+
+    ``None`` when nobody has declined.  When more than one author refuses, the
+    version is already back in ``draft``; naming the first one keeps the
+    answer stable rather than depending on the order records arrived in.
+    """
+    for entry in entries:
+        if entry.status == STATUS_DECLINED:
+            return entry.did
+    return None
+
+
+def _with_decision(entries: Sequence[ConsentEntry], author: str, decision: str) -> list[ConsentEntry]:
+    """``entries`` with ``author``'s entry reflecting ``decision``.
+
+    The consent record being handled is appended to the log only after the
+    handler returns, so :func:`consents_for_version` can still be showing this
+    author's previous decision.  Overriding their entry with the decision in
+    hand makes the tally reflect the record the caller is storing.
+    """
+    status = STATUS_DECLINED if decision == "decline" else STATUS_SIGNED
+    updated: list[ConsentEntry] = []
+    for entry in entries:
+        if entry.did == author:
+            updated.append(replace(entry, status=status, decision=decision))
+        else:
+            updated.append(entry)
+    return updated
+
+
+def _version_state(version_cid: str) -> Optional[str]:
+    """The stored state of ``version_cid``, or ``None`` when it is not stored."""
+    try:
+        row = _submissions().get_version(version_cid)
+    except Exception:  # pragma: no cover - a damaged table is not a normal path
+        return None
+    state = getattr(row, "state", None)
+    return state if isinstance(state, str) and state else None
+
+
+def evaluate_consents(
+    version_cid: Any,
+    *,
+    actor: Optional[str] = None,
+    author: Optional[str] = None,
+    decision: Optional[str] = None,
+) -> Optional[str]:
+    """Advance ``version_cid`` out of ``awaiting_consent`` once its authors decide.
+
+    The rule (feature 55):
+
+    * one decline -- the version returns to ``draft``, with the decliner named:
+      their DID is the ``version.state_changed`` event's ``actor`` and its
+      ``reason`` reads ``declined by <did>``;
+    * every listed author has accepted -- the version moves to ``scanning``;
+    * otherwise -- it stays in ``awaiting_consent``.
+
+    ``author``/``decision`` describe the consent record being stored right now
+    (the ingest handler has not appended it to the log yet); passing them lets
+    the tally count that decision instead of the author's previous one.
+
+    Returns the state the version is in after the call, or ``None`` when this
+    node holds no such version (nothing to advance).  A version already past
+    consent keeps its state: a later change of mind is still recorded on the
+    author's ``authorship`` row and reported by the consents endpoint, but it
+    does not pull a scanning or moderated version back on its own.
+
+    Never raises: a failure to advance is logged and the version keeps the
+    state it had, so the consent record itself is still stored and accepted.
+    """
+    if not isinstance(version_cid, str) or not version_cid:
+        return None
+
+    current = _version_state(version_cid)
+    if current is None:
+        return None
+    if current != AWAITING_CONSENT_STATE:
+        return current
+
+    entries = consents_for_version(version_cid)
+    if not entries:
+        # No byline to wait for: there is nothing that can complete the round.
+        return current
+    if isinstance(author, str) and author and decision in ("accept", "decline"):
+        entries = _with_decision(entries, author, decision)
+
+    decliner = first_decliner(entries)
+    if decliner is not None:
+        target = DRAFT_STATE
+        event_actor: Optional[str] = decliner
+        reason = f"declined by {decliner}"
+    elif all(entry.status == STATUS_SIGNED for entry in entries):
+        target = SCANNING_STATE
+        event_actor = actor
+        reason = "all listed authors consented"
+    else:
+        return current
+
+    try:
+        _submissions().transition_version(
+            version_cid, target, actor=event_actor, reason=reason
+        )
+    except Exception:
+        logger.exception(
+            "could not move version %s to %s after a consent decision",
+            version_cid,
+            target,
+        )
+        return current
+    return target
