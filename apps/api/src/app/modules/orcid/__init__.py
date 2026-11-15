@@ -31,6 +31,17 @@ from .router import (
     router,
 )
 from .service import exchange_code, issue_orcid_credential
+from .present import (
+    CREDENTIAL_PRESENTATION_INVALID,
+    CREDENTIAL_SIGNATURE_INVALID,
+    CREDENTIAL_STATUS_INVALID,
+    PRESENT_PATH,
+    InvalidCredentialPresentation,
+    InvalidCredentialSignature,
+    InvalidCredentialStatus,
+    PresentationVerified,
+    verify_presentation,
+)
 from .state import (
     STATE_ALGORITHM,
     STATE_PURPOSE,
@@ -43,11 +54,19 @@ from .state import (
 __all__ = [
     "AUTHORIZE_PATH",
     "CALLBACK_PATH",
+    "CREDENTIAL_PRESENTATION_INVALID",
+    "CREDENTIAL_SIGNATURE_INVALID",
+    "CREDENTIAL_STATUS_INVALID",
     "Credential",
     "DEFAULT_ORCID_BASE_URL",
+    "InvalidCredentialPresentation",
+    "InvalidCredentialSignature",
+    "InvalidCredentialStatus",
     "InvalidState",
     "ORCID_AUTH_SCOPE",
     "OrcidStartResponse",
+    "PRESENT_PATH",
+    "PresentationVerified",
     "STATE_ALGORITHM",
     "STATE_PURPOSE",
     "STATE_TTL",
@@ -60,5 +79,6 @@ __all__ = [
     "orcid_base_url",
     "router",
     "sign_state",
+    "verify_presentation",
     "verify_state",
 ]

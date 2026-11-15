@@ -73,6 +73,7 @@ from app.settings import settings
 from app.modules.ledger.origin import node_signing_key
 from .state import InvalidState, sign_state, verify_state
 from .service import exchange_code, issue_orcid_credential
+from .present import router as credentials_router
 
 __all__ = [
     "AUTHORIZE_PATH",
@@ -87,8 +88,15 @@ __all__ = [
     "router",
 ]
 
-#: Router the module loader mounts under ``/v1`` (serves ``/v1/auth/orcid/start``).
-router = APIRouter(prefix="/auth/orcid", tags=["orcid"])
+#: The ORCID OAuth routes, served below ``/v1/auth/orcid``.
+auth_router = APIRouter(prefix="/auth/orcid", tags=["orcid"])
+
+#: Router the module loader mounts under ``/v1``.  It carries the ORCID OAuth
+#: routes and feature 35's credential presentation route (``/v1/credentials``),
+#: which ships in this plugin but not below the ``/auth/orcid`` prefix.
+router = APIRouter()
+router.include_router(auth_router)
+router.include_router(credentials_router)
 
 #: ORCID's sandbox host, used unless ``ORCID_BASE_URL`` is configured.
 DEFAULT_ORCID_BASE_URL = "https://sandbox.orcid.org"
@@ -201,7 +209,7 @@ def optional_principal(
     return get_current_principal(request, credentials)
 
 
-@router.get(
+@auth_router.get(
     "/start",
     response_model=OrcidStartResponse,
     summary="Return the ORCID authorize URL with a signed state",
@@ -230,7 +238,7 @@ def start_orcid_link(
     )
 
 
-@router.get(
+@auth_router.get(
     "/callback",
     summary="Exchange an ORCID authorization code for a node-signed ORCID ownership credential",
 )
