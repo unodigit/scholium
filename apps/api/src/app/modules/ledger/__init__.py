@@ -14,8 +14,10 @@ importing this package is enough to register the ``EventLog`` model on the
 shared declarative base before ``create_app`` creates tables.
 
 See :mod:`app.modules.ledger.service` for append and subscription semantics,
-:mod:`app.modules.ledger.hashing` for the hash-chain rule and
-:mod:`app.modules.ledger.origin` for how ``origin_node`` is resolved.
+:mod:`app.modules.ledger.hashing` for the hash-chain rule,
+:mod:`app.modules.ledger.origin` for how ``origin_node`` is resolved and
+:mod:`app.modules.ledger.sync_range` for the replay endpoint
+``GET /v1/sync/range?from=&to=`` this package serves.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from .service import (
     subscriber_count,
     unsubscribe,
 )
+from .sync_range import MAX_PAGE, REVERSED_RANGE_TYPE, SyncEntry, router
 
 __all__ = [
     "DEFAULT_ORIGIN_NODE",
@@ -56,7 +59,10 @@ __all__ = [
     "GENESIS_PREV_HASH",
     "HASH_SIZE",
     "LedgerEntry",
+    "MAX_PAGE",
+    "REVERSED_RANGE_TYPE",
     "RecordSubscriber",
+    "SyncEntry",
     "WILDCARD",
     "append",
     "append_entry",
@@ -69,6 +75,7 @@ __all__ = [
     "entry_by_cid",
     "latest",
     "node_did",
+    "router",
     "subscribe",
     "subscribed_types",
     "subscriber_count",
