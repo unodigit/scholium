@@ -27,15 +27,33 @@ downstream model (``"ignore previous instructions"``)::
     sanitizer.hidden_text_detail(hits)                # the report's detail
     result = sanitizer.scan_pdf_bytes(pdf_bytes)      # saves the finding
 
+Feature 63 scans every file of a version that is in ``scanning`` state and
+moves the version on (see :mod:`.scan_job`)::
+
+    result = sanitizer.scan_version(version_cid)   # every manifest file
+    result.state                                   # "moderation" or "held"
+    result.failing_check                           # e.g. "javascript"
+
+The work runs as the background job ``sanitizer.scan_version``; a
+``version.state_changed`` event for a version entering ``scanning`` enqueues
+it automatically.  Each scanned blob's ``scan_status`` is saved to the
+``blobs`` table, a clean version moves to ``moderation`` and a version with a
+failing file is held with the exact failing check in the event's ``reason``.
+
 The module exposes no ``router``.  Importing this package registers the
 ``ScanReport`` model on the shared declarative base before ``create_app``
 creates tables, and the module loader discovers it automatically.
 
 See :mod:`app.modules.sanitizer.models` for the table, :mod:`.reports` for the
-read/write helpers and :mod:`.pdf` for the structural checks.
+read/write helpers, :mod:`.pdf` for the structural checks, :mod:`.bundle` for
+archive checks and :mod:`.scan_job` for the per-version background scan.
 """
 
 from __future__ import annotations
+
+from typing import Optional
+
+from fastapi import FastAPI
 
 from .errors import InvalidScanReport, SanitizerError
 from .models import (
@@ -132,6 +150,20 @@ from .reports import (
     record_report,
     reports_for,
 )
+from .scan_job import (
+    CHECK_FILE_MISSING,
+    CHECK_FILE_UNREADABLE,
+    CHECK_MANIFEST_UNREADABLE,
+    JOB_KIND,
+    FileScanResult,
+    VersionScanResult,
+    enqueue_scan,
+    ensure_subscribed,
+    scan_pending_versions,
+    scan_version,
+    scan_version_job,
+    versions_in_scanning_state,
+)
 
 __all__ = [
     "CHECK_EMBEDDED_FILES",
@@ -218,4 +250,26 @@ __all__ = [
     "scan_zip_bytes",
     "scan_zip_path",
     "scan_zip_stream",
+    "CHECK_FILE_MISSING",
+    "CHECK_FILE_UNREADABLE",
+    "CHECK_MANIFEST_UNREADABLE",
+    "JOB_KIND",
+    "FileScanResult",
+    "VersionScanResult",
+    "enqueue_scan",
+    "ensure_subscribed",
+    "scan_pending_versions",
+    "scan_version",
+    "scan_version_job",
+    "versions_in_scanning_state",
 ]
+
+
+def on_startup(app: Optional[FastAPI] = None) -> None:
+    """Re-attach the version-state subscription when the app starts.
+
+    The subscription is also made at import time; doing it again here is
+    harmless (registration is idempotent) and restores it after anything
+    that clears the process-wide subscriber list, such as a test fixture.
+    """
+    ensure_subscribed()

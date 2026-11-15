@@ -59,6 +59,7 @@ __all__ = [
     "analyze_bundle",
     "analyze_tar",
     "analyze_zip",
+    "detect_bundle_kind",
     "check_archive",
     "check_bundle",
     "check_tar",
@@ -388,6 +389,17 @@ def _detect_kind(raw: bytes) -> str:
         return "tar"
     except Exception:
         return "unknown"
+
+
+def detect_bundle_kind(data: Buffer) -> str:
+    """Return ``"zip"``, ``"tar"`` or ``"unknown"`` for ``data``.
+
+    The background version scan uses this to decide whether a file is a
+    bundle before handing it to :func:`scan_bundle_bytes`.  Detection looks
+    only at the archive structure: nothing is extracted or executed.
+    """
+    return _detect_kind(_as_bytes(data))
+
 
 
 def _analyze_archive_raw(raw: bytes) -> tuple[Finding, ...]:
