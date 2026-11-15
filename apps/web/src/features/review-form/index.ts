@@ -13,9 +13,18 @@
  * <ReviewForm paperId="sch:k3f9-q2xz-7mwd" versionCid="bafyrei…" />
  * ```
  *
+ * The review card's actions live here too: {@link ReviewCardActions} puts a
+ * point-by-point reply form in front of a paper's authors and a quality rating
+ * in front of tier-3 members, on a revealed review.
+ *
+ * ```tsx
+ * import { ReviewCardActions } from "@/features/review-form";
+ *
+ * <ReviewCardActions review={review} paperId="sch:k3f9-q2xz-7mwd" />
+ * ```
+ *
  * Later features of this plugin (the "sign with my name" option and "Cite in
- * review", author replies and review ratings) add files here and extend
- * {@link ReviewPage}.
+ * review") add files here and extend {@link ReviewPage}.
  */
 
 export {
@@ -157,3 +166,85 @@ export {
   ReviewPage,
   type ReviewPageProps,
 } from "./review-page";
+
+export {
+  ReviewCardActions,
+  type ReviewCardActionsProps,
+  type ReviewCardTarget,
+} from "./review-actions";
+
+export {
+  EmptyReplyError,
+  GENERAL_REPLY_ID,
+  REPLY_LABEL,
+  REPLY_POINTS,
+  REPLY_SIGNING_NOTE,
+  REPLY_SUBMIT_LABEL,
+  REVIEW_RESPONSE_TYPE,
+  ReplyInputError,
+  WrongReplyRecordError,
+  answeredPoints,
+  buildReplyBody,
+  describeReplyError,
+  describeReplyProgress,
+  emptyReplyDraft,
+  isReplyComplete,
+  respondToReview,
+  responsePath,
+  withReply,
+  type ReplyAccepted,
+  type ReplyDraft,
+  type ReplyInput,
+  type ReplyItem,
+  type ReplyPoint,
+  type ReplyPointId,
+  type ReplyResult,
+  type ReplySeams,
+  type RespondToReview,
+  type ReviewResponseBody,
+  type SignReplyRecord,
+  type SubmitReplyRecord,
+} from "./reply";
+
+export {
+  InvalidRatingError,
+  RATING_HINT,
+  RATING_LABEL,
+  RATING_SUBMIT_LABEL,
+  RATING_VALUES,
+  RatingInputError,
+  describeRatingError,
+  isRating,
+  rateReview,
+  ratingPath,
+  ratingText,
+  type RateReview,
+  type RatingAccepted,
+  type RatingInput,
+  type RatingResult,
+  type RatingSeams,
+  type SubmitRating,
+} from "./rating";
+
+export {
+  NOT_SENT,
+  describeActionError,
+  type ActionFailure,
+  type ActionWords,
+} from "./action-errors";
+
+export {
+  NO_OFFER,
+  RATING_MIN_TIER,
+  SIGNED_OUT,
+  loadPaperAuthors,
+  offerFor,
+  parseAuthorDids,
+  viewerFromToken,
+  type AuthorsClient,
+  type LoadPaperAuthors,
+  type Offer,
+  type Viewer,
+} from "./viewer";
+
+export { useViewer, usePaperAuthors, type AuthorsState } from "./use-viewer";

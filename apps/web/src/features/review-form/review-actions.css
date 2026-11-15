@@ -1,0 +1,315 @@
+/* ============================================================================
+   Review card actions — the author's point-by-point reply and the tier-3
+   quality rating (docs/design.md §5.2, §3 tokens, §7 review card, §9
+   accessibility, §10 responsive behaviour).
+   ----------------------------------------------------------------------------
+   These sit at the foot of a review card in the 360 px margin panel, so
+   everything stacks and wraps rather than scrolls. Every value is a design
+   token from src/styles/tokens.css: no hex lives here, so light, dark and a
+   forced `data-theme` all re-theme it. Rules are prefixed `ra-` (review
+   actions) so nothing leaks into the card they sit in or into other features.
+
+   Colour rules (src/styles/README.md):
+   - Text is --ink or --ink-2. An outcome is an icon plus words; its colour is
+     on the icon only (--critical for a failure, --verified for success).
+   - --ai is never used: these are people's replies and ratings, not AI output.
+   - No shadow: only the annotation popover floats (§3).
+
+   Unlayered on purpose, like the other component stylesheets: it must not
+   re-declare Tailwind's cascade layers.
+   ============================================================================ */
+
+.ra-actions {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  min-inline-size: 0;
+  margin-block-start: calc(var(--space-unit) * 3);
+  padding-block-start: calc(var(--space-unit) * 3);
+  border-block-start: 1px solid var(--rule);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- The reply expander -------------------------------------------------- */
+
+.ra-reply {
+  min-inline-size: 0;
+}
+
+.ra-summary {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-block-size: 44px;
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ra-summary:hover {
+  border-color: var(--accent);
+}
+
+.ra-summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ra-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  padding-block-start: calc(var(--space-unit) * 3);
+}
+
+.ra-lede,
+.ra-note,
+.ra-progress,
+.ra-point__context {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- One point ----------------------------------------------------------- */
+
+.ra-point {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  min-inline-size: 0;
+}
+
+.ra-point__label {
+  font-weight: 600;
+}
+
+.ra-textarea {
+  box-sizing: border-box;
+  display: block;
+  inline-size: 100%;
+  min-block-size: calc(var(--space-unit) * 20);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.ra-textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ra-textarea:disabled {
+  opacity: 0.7;
+}
+
+/* ---- Sending ------------------------------------------------------------- */
+
+.ra-submit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.ra-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 44px;
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-control);
+  background-color: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-decel);
+}
+
+.ra-button:hover {
+  opacity: 0.9;
+}
+
+.ra-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ra-button:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.ra-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ra-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Failures ------------------------------------------------------------ */
+
+/* An icon and words, never colour alone (§9): the colour is on the icon, the
+   words stay in --ink. */
+.ra-error {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.ra-error__icon {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+  color: var(--critical);
+}
+
+/* ---- After a reply or a rating is accepted ------------------------------- */
+
+.ra-sent,
+.ra-rating--done {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  padding-block-start: calc(var(--space-unit) * 3);
+}
+
+.ra-rating--done {
+  padding-block-start: 0;
+}
+
+.ra-sent__headline {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ra-sent__icon {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+  margin-block-start: calc(var(--space-unit) * 1);
+  color: var(--verified);
+}
+
+.ra-sent__items {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.ra-sent__label {
+  font-weight: 600;
+}
+
+.ra-sent__answer {
+  margin: 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- The rating ---------------------------------------------------------- */
+
+.ra-rating {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  min-inline-size: 0;
+}
+
+.ra-group {
+  inline-size: 100%;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* A legend is drawn on its fieldset's top border by default; floating it makes
+   it an ordinary line, and what follows clears it. */
+.ra-legend {
+  float: left;
+  inline-size: 100%;
+  padding: 0;
+  margin-block-end: calc(var(--space-unit) * 1);
+  font-weight: 600;
+}
+
+.ra-legend + * {
+  clear: both;
+}
+
+.ra-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 calc(var(--space-unit) * 2);
+}
+
+/* The whole label is the target: at least 44 px square (§9), so a thumb can
+   hit a "3" without hitting a "2". */
+.ra-choice {
+  /* Anchors the visually hidden "4 of 5" text so it cannot land elsewhere. */
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding-inline: calc(var(--space-unit) * 2);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.ra-choice input {
+  flex: none;
+  inline-size: 18px;
+  block-size: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Visually hidden, still read by assistive technology. */
+.ra-sr-only {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

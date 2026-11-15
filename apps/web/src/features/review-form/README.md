@@ -4,10 +4,13 @@ The formal review form from `docs/design.md` §5.5: the paper on the left; on
 the right the anonymity notice, the conflict check and the rubric form, which
 seals the review as a signed `review.commit`.
 
-This feature covers displaying the form (spec feature 165) and committing it
-(166). "Sign with my name instead", the stylometry tip and "Cite in review"
-(167), and author replies and review ratings (168) are later features of this
-same plugin; they add files here and extend `ReviewPage`.
+This feature covers displaying the form (spec feature 165), committing it
+(166), and the two actions on a revealed review card — an author's
+point-by-point reply and a tier-3 member's quality rating (168; see
+[Replying and rating on the review card](#replying-and-rating-on-the-review-card)).
+"Sign with my name instead", the stylometry tip and "Cite in review" (167) are
+a later feature of this same plugin; it adds files here and extends
+`ReviewPage`.
 
 ## What the page shows
 
@@ -107,6 +110,81 @@ body (`scores.<dimension>.{score, justification}`, `confidence`,
 `aiAssisted` is not named by the schema (it allows extra properties); it is how
 the AI declaration travels on the report and is part of the sealed commitment.
 
+## Replying and rating on the review card
+
+`ReviewCardActions` sits at the foot of a **revealed** review card (the
+Reviews tab, docs/design.md §5.2) and offers whoever may act one control:
+
+```tsx
+import { ReviewCardActions } from "@/features/review-form";
+
+<ReviewCardActions review={review} paperId="sch:k3f9-q2xz-7mwd" />
+```
+
+`review` is the Reviews tab's own `Review` (it only needs `reviewCid`, `label`,
+`report` and `scores`, so this feature does not import that one).
+
+| Who | Sees | Sent as |
+| --- | --- | --- |
+| A paper author | **Reply point by point**: an expander with a labelled box for each rubric dimension and a *General reply*. Beside each point, what the reviewer scored it (`Reviewer scored 4 of 5`). | A signed `review.response` to `POST /v1/reviews/{cid}/response` |
+| A tier-3 member who is not an author | **Rate this review’s quality**: five radios, each named `N of 5`, and **Send rating** | `{"rating": N}` to `POST /v1/reviews/{cid}/rating` |
+| Anyone else, a signed-out reader, or a still-sealed review | Nothing — the card is as it was | — |
+
+**The reply** needs at least one answered point and does not require every
+dimension (the API accepts one reply or six); blank points are not sent. It is
+signed with the author's **own** device key — not the reviewer's pseudonymous
+key — behind one passkey prompt, with `prev: null`, using `signRecord`. The
+form says what signing does in the design's words ("You’re signing with your
+passkey. Scholium never sees your key.") and, once sent, shows back what was
+sent. A reply is sent once, not edited in place.
+
+**The rating** is about the review’s quality, not its verdict, and affects the
+reviewer’s reputation only (PRD REV-6). It needs no passkey prompt: the API
+takes the plain `{"rating": N}` with the member's access token. The API keeps
+**one rating per member per review** (its primary key), so the control offers no
+"change rating", and a repeat is explained ("your first rating stands") instead
+of being retried.
+
+### Who is offered what — and who decides
+
+The control shown is only a convenience; **the API is the gate**. It answers
+`403` to a non-author's reply and to a rating from a lower tier, from the
+review's own reviewer, or from an author. So `viewer.ts` reads the signed-in
+account's access-token claims (`sub` = their `did:key`, `tier`) **without
+verifying them** and uses them only to pick a control:
+
+- **Reply** is offered when the viewer's DID is on the paper's byline
+  (`GET /v1/papers/{id}`, public, one shared request however many cards ask).
+- **Rating** is offered to a signed-in viewer whose tier is not known to be
+  below 3 and who is not an author. An unknown or stale tier is let through,
+  because the API reads the *current* tier, not the one in a 15-minute token.
+- Whether the viewer *wrote* the review cannot be known — a reviewer's identity
+  is escrowed by design — so the API says so ("The reviewer of a review may not
+  rate it.") and the card shows that sentence, with **Nothing was sent.**
+- While the byline is loading nothing is shown, so a control never appears and
+  then vanishes. If the byline cannot be read, the reply form stays out of the
+  way and a tier-3 member still sees the rating.
+
+A refusal is shown in the API's own words when it gave any; otherwise in a
+plain sentence. Every failure ends with whether anything was sent, and a
+session that has ended offers **Sign in**. A failure keeps the draft or the
+chosen rating where it was.
+
+### Mounting it on the card
+
+The review card itself belongs to `paper-reviews` (`reviews-tab.tsx`), another
+plugin, so this feature ships the component and does not edit that file. The
+card mounts it with one line after its replies:
+
+```tsx
+import { ReviewCardActions } from "../review-form";
+
+<ReviewCardActions review={review} paperId={paperId} />
+```
+
+`ReviewCard` needs `paperId`, which `ReviewsView` already holds. Until that
+line is added the Reviews tab shows no reply form or rating.
+
 ## Layout
 
 - **≥ 1024 px:** two columns. The paper scrolls with the page; the form column
@@ -155,6 +233,13 @@ reviews would invite a review of the wrong paper. The page sends
 | `anonymity-notice.tsx` | The notice. Server-safe. |
 | `review-page.tsx` | Header, split view, conflict check, form, and the failure notice. |
 | `review-form.css` | All content styles; every value is a design token; prefix `rf-`. |
+| `reply.ts` | The author's reply: points, draft, the `review.response` body, signing and sending, failure wording. Pure, no React. |
+| `rating.ts` | The quality rating: values, sending, failure wording. Pure, no React. |
+| `action-errors.ts` | The failure sentences the reply and the rating share (cancelled passkey, ended session, refusal, offline). |
+| `viewer.ts` | Access-token claims as a viewer, what to offer them, and the paper's byline. Pure, no React. |
+| `use-viewer.ts` | `useViewer` (live from the token store) and `usePaperAuthors` (one shared read). |
+| `review-actions.tsx` | `ReviewCardActions`, the reply form and the rating control (client components). |
+| `review-actions.css` | Their styles; every value is a design token; prefix `ra-`. |
 | `index.ts` | Public surface for later features of this plugin. |
 | `*.test.ts(x)` | Rubric, paper loading, conflict check, key derivation, commitment vectors, commit flow, form behaviour, page composition, server render of the route, stylesheet contract. |
 | `app/(review-form)/layout.tsx` | Global nav + page shell (`rfs-shell`). |
