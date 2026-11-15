@@ -5,6 +5,10 @@ A ``review.commit`` that is not a well-formed record (no ``target``, no
 ``InvalidRecord`` before any handler here runs.  These are the refusals only
 the reviews plugin can make: the target must be a version this node holds, the
 caller may not be an author of the paper, and one person reviews a paper once.
+
+Revealing a review adds three more: there must be a sealed review to reveal
+(``422``), the revealed content must be what was sealed (``422``), and a
+review is revealed once (``409``).
 """
 
 from __future__ import annotations
@@ -15,16 +19,25 @@ from app.errors import ProblemException
 
 __all__ = [
     "REVIEW_ALREADY_COMMITTED",
+    "REVIEW_ALREADY_REVEALED",
+    "REVIEW_COMMITMENT_MISMATCH",
     "REVIEW_NOT_AUTHORIZED",
+    "REVIEW_NOT_COMMITTED",
     "UNKNOWN_REVIEW_TARGET",
     "ReviewAlreadyCommitted",
+    "ReviewAlreadyRevealed",
+    "ReviewCommitmentMismatch",
     "ReviewNotAuthorized",
+    "ReviewNotCommitted",
     "UnknownReviewTarget",
 ]
 
 UNKNOWN_REVIEW_TARGET = "urn:scholium:problem:unknown-review-target"
 REVIEW_NOT_AUTHORIZED = "urn:scholium:problem:review-not-authorized"
 REVIEW_ALREADY_COMMITTED = "urn:scholium:problem:review-already-committed"
+REVIEW_NOT_COMMITTED = "urn:scholium:problem:review-not-committed"
+REVIEW_COMMITMENT_MISMATCH = "urn:scholium:problem:review-commitment-mismatch"
+REVIEW_ALREADY_REVEALED = "urn:scholium:problem:review-already-revealed"
 
 _MAX_ECHO = 64
 
@@ -113,5 +126,87 @@ class ReviewAlreadyCommitted(ProblemException, ValueError):
             message,
             type=REVIEW_ALREADY_COMMITTED,
             paper_cid=paper_cid,
+            review=review_cid,
+        )
+
+
+class ReviewNotCommitted(ProblemException, LookupError):
+    """There is no sealed review for this review key on this version: ``422``.
+
+    A review is revealed against the commitment it was sealed with, so a
+    ``review.formal`` signed by a key that never committed to this version has
+    nothing to match.
+    """
+
+    def __init__(self, review_key: object, target: object) -> None:
+        self.review_key = review_key
+        self.target = target
+        shown = _clip(target if isinstance(target, str) else repr(target))
+        message = (
+            "There is no sealed review by this review key on "
+            f"{shown!r}; commit the review with POST /v1/reviews/commit before "
+            "revealing it."
+        )
+        super().__init__(
+            422,
+            message,
+            type=REVIEW_NOT_COMMITTED,
+            errors=[
+                {
+                    "loc": ["body", "target"],
+                    "msg": message,
+                    "type": "review_not_committed",
+                    "input": shown,
+                }
+            ],
+        )
+
+
+class ReviewCommitmentMismatch(ProblemException, ValueError):
+    """The revealed review is not the one that was sealed: ``422``.
+
+    ``kind`` says which half of the match failed: ``commitment_mismatch`` when
+    the record's ``commitment`` is not the commit's, ``content_mismatch`` when
+    the commitment is the commit's but the revealed content does not hash to
+    it (the sealed review was altered after the fact).  Neither digest is
+    echoed: the commit's is public, but the one computed from the revealed
+    content would let a client probe the scheme for nothing.
+    """
+
+    def __init__(self, kind: str, message: str) -> None:
+        self.kind = kind
+        super().__init__(
+            422,
+            message,
+            type=REVIEW_COMMITMENT_MISMATCH,
+            errors=[
+                {
+                    "loc": ["body", "commitment"],
+                    "msg": message,
+                    "type": kind,
+                    "input": None,
+                }
+            ],
+        )
+
+
+class ReviewAlreadyRevealed(ProblemException, ValueError):
+    """The sealed review has been revealed already: ``409``.
+
+    A commitment opens once.  The cid of the sealed review is carried as the
+    ``review`` extension member; it is a public record, so naming it
+    discloses nothing.
+    """
+
+    def __init__(self, review_cid: object) -> None:
+        self.review_cid = review_cid
+        message = (
+            "This sealed review has already been revealed; a commitment can "
+            "be opened once."
+        )
+        super().__init__(
+            409,
+            message,
+            type=REVIEW_ALREADY_REVEALED,
             review=review_cid,
         )

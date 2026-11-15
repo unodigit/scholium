@@ -633,19 +633,26 @@ def nullifier_bytes(value: Any) -> bytes:
         return text.encode("utf-8")
 
 
-def _invalid(loc: list[Any], message: str, error_type: str, value: Any = None) -> InvalidRecord:
-    """A ``422`` for one bad field of a ``review.commit``, located at ``loc``."""
+def _invalid(
+    loc: list[Any],
+    message: str,
+    error_type: str,
+    value: Any = None,
+    *,
+    subject: str = "review commit",
+) -> InvalidRecord:
+    """A ``422`` for one bad field of a ``review.commit`` (or ``subject``), located at ``loc``."""
     shown = value if isinstance(value, (str, int, float, bool, type(None))) else None
     if isinstance(shown, str) and len(shown) > 64:
         shown = shown[:61] + "..."
-    full = f"The review commit {message}."
+    full = f"The {subject} {message}."
     return InvalidRecord(
         [{"loc": loc, "msg": full, "type": error_type, "input": shown}],
         detail=full,
     )
 
 
-def _created_at(record: Mapping[str, Any]) -> datetime:
+def _created_at(record: Mapping[str, Any], *, subject: str = "review commit") -> datetime:
     """The record's ``created`` as naive UTC (a bare timestamp is read as UTC), or ``422``."""
     value = record.get("created")
     try:
@@ -658,6 +665,7 @@ def _created_at(record: Mapping[str, Any]) -> datetime:
             "field 'created' must be an ISO 8601 instant",
             "invalid_created",
             value,
+            subject=subject,
         )
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)

@@ -11,6 +11,9 @@ The module loader mounts this router under ``/v1``, so this package serves:
   tier-3 member, once per person and paper, and escrow the caller's identity
   as a sealed box for the committee; see :mod:`app.modules.reviews.service`
   and :mod:`app.modules.reviews.escrow`.
+* ``POST /v1/reviews/reveal`` -- accept a signed ``review.formal`` that opens
+  a sealed review: a complete rubric, and content that matches the commitment;
+  see :mod:`app.modules.reviews.reveal`.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from app.errors import ProblemException
 from app.modules.ingest.service import ingest
 from app.security import Principal, get_current_principal, require_tier, Tier
 
-from . import coi, service
+from . import coi, reveal, service
 from .models import ensure_table, ensure_tables
 
 __all__ = ["router"]
@@ -191,6 +194,75 @@ def commit_review(
     return {
         "id": result.record_id,
         "target": fields.version_cid,
+        "state": result.state,
+        "anchor": result.anchor,
+    }
+
+
+@router.post("/reviews/reveal", status_code=201)
+def reveal_review(
+    record: dict[str, Any] = Body(..., description="The signed review.formal envelope."),
+    principal: Principal = Depends(require_tier(Tier.REVIEWER)),
+) -> dict[str, Any]:
+    """Accept a signed ``review.formal`` that opens a sealed review.
+
+    Like the commit it opens, the record is signed by the reviewer's
+    pseudonymous per-paper review key; the access token says only that a tier-3
+    member is asking.  What makes the reveal acceptable is the record itself:
+
+    * a complete rubric -- a ``{score, justification}`` for each of soundness,
+      evidence, reproducibility, novelty, clarity and limitations, each score
+      1-5, plus a confidence and a recommendation.  Free text alone, with no
+      scores, is not a formal review;
+    * a commitment that matches -- the review key must have sealed a review on
+      this version, the record must carry that commit's ``commitment``, and the
+      revealed content must hash to it (see
+      :func:`app.modules.reviews.reveal.commitment_digest`).
+
+    An accepted reveal goes through the standard ingest pipeline (envelope,
+    body schema, cid, signature, ledger) and fills in the ``review`` row the
+    commit created: scores, recommendation, confidence and ``revealed_at``.
+
+    Failures are RFC 9457 problem details: ``401`` for a missing token or a bad
+    signature, ``403`` for a caller below tier 3, ``409`` for a review that was
+    revealed already, and ``422`` for an incomplete rubric, a review that was
+    never sealed, content that does not match its commitment, or a target this
+    node does not hold.
+    """
+    if record.get("type") != reveal.REVIEW_FORMAL_TYPE:
+        raise ProblemException(
+            422,
+            f"This endpoint accepts {reveal.REVIEW_FORMAL_TYPE!r} records, "
+            f"got {record.get('type')!r}.",
+            errors=[
+                {
+                    "loc": ["body", "type"],
+                    "msg": f"The record must be a {reveal.REVIEW_FORMAL_TYPE}.",
+                    "type": "wrong_record_type",
+                    "input": record.get("type"),
+                }
+            ],
+        )
+
+    ensure_tables()
+    # Shape-check first: an incomplete rubric is refused here with every
+    # problem located at its field, before the signature is even looked at.
+    # Whether a sealed review exists, and whether this is it, is decided by the
+    # handler once the pipeline has verified who signed the record.
+    fields = reveal.review_reveal_fields(record)
+
+    # The pipeline validates the envelope and body, verifies the signature,
+    # runs the handler (which matches the commitment) and appends the record.
+    result = ingest(record)
+    # The ledger subscriber normally filled in the review as the record was
+    # appended; this is a no-op then, and the one that reports a failure when
+    # it did not.
+    review = reveal.apply_review_reveal(record)
+
+    return {
+        "id": result.record_id,
+        "target": fields.version_cid,
+        "review": review.review_cid,
         "state": result.state,
         "anchor": result.anchor,
     }
