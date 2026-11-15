@@ -11,17 +11,31 @@
 
 One row per accepted ``moderation.decision`` record.  ``decision_cid`` is the
 record's content id, so replaying the same record can never add a second row.
-``target_cid`` is the version the decision is about, ``action`` one of
-``list``/``hold``/``reclassify``/``reject``/``delist``, ``clause`` the id of the
-policy clause it cites and ``moderator_did`` the DID that signed it.
+``target_cid`` is what the decision is about (a version; for a ``tombstone`` also
+a paper or a file), ``action`` one of
+``list``/``hold``/``reclassify``/``reject``/``delist``/``tombstone``, ``clause``
+the id of the policy clause it cites and ``moderator_did`` the DID that signed it.
 ``decided_at`` is the instant the *record* is dated (``created``, in UTC), not
 the instant this node received it, so the table is a pure projection of the
 signed records and rebuilding it from the ledger yields the same rows.  The
 reason stays in the record, which the ledger serves by ``decision_cid``.
 
-The model is declared on the application's shared declarative base so
+``denylist`` (``app_spec.xml``, ``database_schema/denylist``)::
+
+    denylist(cid TEXT PRIMARY KEY,
+             decision_cid TEXT NOT NULL)
+
+One row per tombstoned cid: ``cid`` is the content id whose bytes moderation
+removed and ``decision_cid`` the ``moderation.decision`` (``action:
+tombstone``) that removed it.  The content plugin reads this table *by name*
+(``content.is_tombstoned``) to answer ``451`` and to refuse to serve, run or
+export the bytes, so the column names here are a contract with it.  A row is
+never updated or deleted by this plugin: the first decision to tombstone a cid
+stays the one on record.
+
+The models are declared on the application's shared declarative base so
 ``main.create_app`` -- which creates tables after the module loader has
-imported every module package -- registers it in one pass.
+imported every module package -- registers them in one pass.
 :func:`ensure_tables` covers callers that never build the app.
 """
 
@@ -37,6 +51,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from app import db
 
 __all__ = [
+    "Denylist",
     "ModerationDecision",
     "ensure_table",
     "ensure_tables",
@@ -63,6 +78,18 @@ class ModerationDecision(db.Base):
         )
 
 
+class Denylist(db.Base):
+    """A cid moderation tombstoned, and the decision that did it."""
+
+    __tablename__ = "denylist"
+
+    cid = Column(Text, primary_key=True)
+    decision_cid = Column(Text, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<Denylist cid={self.cid!r} decision_cid={self.decision_cid!r}>"
+
+
 # Self-healing table creation, mirroring the other modules: callers that never
 # build the app (scripts, tests) still get their table on first use.
 _table_lock = threading.Lock()
@@ -77,7 +104,7 @@ def ensure_tables() -> None:
     with _table_lock:
         if _table_engine is db.engine:
             return
-        for table in (ModerationDecision.__table__,):
+        for table in (ModerationDecision.__table__, Denylist.__table__):
             try:
                 table.create(bind=db.engine, checkfirst=True)
             except (OperationalError, ProgrammingError):

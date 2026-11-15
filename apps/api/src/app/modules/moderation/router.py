@@ -223,7 +223,12 @@ def post_decision(
     * ``hold`` -- ``held``;
     * ``reject`` and ``delist`` -- ``rejected``;
     * ``reclassify`` -- the state is unchanged and the paper's categories
-      become ``body.category`` / ``body.categories``.
+      become ``body.category`` / ``body.categories``;
+    * ``tombstone`` -- the target's cid(s) are saved to ``denylist`` and their
+      bytes deleted (``GET /v1/content/{cid}`` then answers ``451``); a version
+      target also becomes ``rejected``.  The record and its log entry stay, and
+      the paper still verifies.  ``target`` may be a version, a paper or a file
+      id, and ``state`` is ``tombstoned`` unless the target is a version.
 
     Failures are RFC 9457 problem details: ``401``/``403`` for a caller or a
     signer below tier 4 or a bad signature, ``409`` for a repeated decision or

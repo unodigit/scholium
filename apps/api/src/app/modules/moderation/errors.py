@@ -68,13 +68,15 @@ class UnknownDecisionTarget(ProblemException, LookupError):
     """A decision targets something that is not a paper version here: ``422``.
 
     ``body.target`` must be the cid of a version this node holds: a decision
-    sets a version's state, and it cannot create the version it is about.
+    sets a version's state, and it cannot create the version it is about.  A
+    ``tombstone`` may also name a paper or a file, so it passes ``expected`` to
+    say what it takes instead.
     """
 
-    def __init__(self, target: object) -> None:
+    def __init__(self, target: object, expected: str = "a paper version this node holds") -> None:
         self.target = target
         shown = _clip(target if isinstance(target, str) else repr(target))
-        message = f"The decision targets {shown!r}, which is not a paper version this node holds."
+        message = f"The decision targets {shown!r}, which is not {expected}."
         super().__init__(
             422,
             message,

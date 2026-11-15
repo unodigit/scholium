@@ -74,6 +74,8 @@ class Submission:
         self.did = did_key_from_signing_key(self.seed)
         self.title = f"Decision test paper {self.tag}"
         manuscript = f"%PDF-1.7 decision test {self.tag}".encode()
+        #: The bytes the manifest's one file names (not stored unless a test stores them).
+        self.manuscript = manuscript
 
         genesis = self._sign(
             "paper.genesis",
@@ -116,6 +118,8 @@ class Submission:
         )
         for record in (genesis, manifest, version):
             ledger.append(record)
+        #: The signed genesis, manifest and version records, as appended to the log.
+        self.records: tuple[dict, ...] = (genesis, manifest, version)
 
         save_paper(paper_cid=genesis["id"], categories=(category,))
         save_version(
@@ -441,7 +445,7 @@ def test_a_reason_cid_stands_in_for_the_reason(client, moderator):
 
 def test_unknown_action_is_422(client, moderator):
     submission = Submission()
-    decision = moderator.decide(submission, "tombstone")
+    decision = moderator.decide(submission, "expunge")
 
     response = client.post(DECISIONS_URL, json=decision, headers=moderator.headers)
 

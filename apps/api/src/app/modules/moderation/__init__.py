@@ -9,12 +9,16 @@ the source file.
 with the signals a moderator decides with.
 
 ``POST /v1/moderation/decisions`` accepts a signed ``moderation.decision``
-(list, hold, reclassify, reject, delist) that cites a known policy clause
-and a reason, saves it to the ``moderation_decisions`` table and sets the
-version state (feature 71).  Importing this package registers the record
+(list, hold, reclassify, reject, delist, tombstone) that cites a known policy
+clause and a reason, saves it to the ``moderation_decisions`` table and sets
+the version state (feature 71).  Importing this package registers the record
 type with the ingest pipeline at tier 4 and subscribes to the ledger, so a
 decision takes effect whether it arrives here or through ``POST
 /v1/records``.  See :mod:`app.modules.moderation.decisions`.
+
+A ``tombstone`` saves the cid to the ``denylist`` table and deletes the blob
+bytes, while the envelope and log entry remain and verification still passes
+(feature 73).  See :mod:`app.modules.moderation.tombstones`.
 """
 
 from app.security import Tier
@@ -40,7 +44,7 @@ from .errors import (
     UnknownDecisionTarget,
     UnknownPolicyClause,
 )
-from .models import ModerationDecision, ensure_table, ensure_tables
+from .models import Denylist, ModerationDecision, ensure_table, ensure_tables
 from .policies import (
     DEFAULT_POLICIES_FILE,
     POLICIES_YAML_ENV,
@@ -55,6 +59,16 @@ from .policies import (
     policies_path,
 )
 from .router import router
+from .tombstones import (
+    TOMBSTONE,
+    TOMBSTONED,
+    Tombstone,
+    TombstoneScope,
+    get_denylist_entry,
+    resolve_scope,
+    tombstone_cid,
+    tombstone_target,
+)
 
 __all__ = [
     "ACTIONS",
@@ -65,10 +79,15 @@ __all__ = [
     "DEFAULT_POLICIES_FILE",
     "DecisionFields",
     "DecisionNotAllowed",
+    "Denylist",
     "ModerationDecision",
     "POLICIES_YAML_ENV",
     "PolicyClause",
     "PolicyClauseError",
+    "TOMBSTONE",
+    "TOMBSTONED",
+    "Tombstone",
+    "TombstoneScope",
     "UNKNOWN_DECISION_TARGET",
     "UNKNOWN_POLICY_CLAUSE",
     "UnknownDecisionTarget",
@@ -82,13 +101,17 @@ __all__ = [
     "get_clause",
     "get_clauses",
     "get_decision",
+    "get_denylist_entry",
     "handle_moderation_decision",
     "load_clauses",
     "parse_yaml_subset",
     "persist_entry",
     "policies_path",
     "require_known_clause",
+    "resolve_scope",
     "router",
+    "tombstone_cid",
+    "tombstone_target",
 ]
 
 

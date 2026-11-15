@@ -3,7 +3,7 @@
 A moderator's public, signed decision on a version::
 
     {"target": "bafyrei...",      # cid of the version being decided on
-     "action": "list",            # list | hold | reclassify | reject | delist
+     "action": "list",            # list | hold | reclassify | reject | delist | tombstone
      "clause": "MOD-01",          # a clause served by GET /v1/moderation/policies
      "reason": "...",             # shown to the author; or ``reasonCid`` instead
      "category": "cs.CR"}         # reclassify only (or ``categories``)
@@ -19,10 +19,12 @@ generic pipeline cannot make, *before* anything is stored:
   neither ``reason`` nor ``reasonCid``, is already a ``422`` from the body
   schema; a blank ``reason`` with no ``reasonCid`` is refused here;
 * **a version.**  ``body.target`` must be a version this node holds (``422``,
-  :class:`~.errors.UnknownDecisionTarget`);
+  :class:`~.errors.UnknownDecisionTarget`); a ``tombstone`` may instead name a
+  paper or a file id;
 * **a reachable state.**  The state the action asks for must follow from the
   version's present one (``409``, :class:`~.errors.DecisionNotAllowed`), so a
   moderator cannot list a version that is still scanning or awaiting consent.
+  A ``tombstone`` is exempt: a takedown must work whatever state the version is in.
 
 What an action does
 -------------------
@@ -36,11 +38,15 @@ What an action does
                 version state has no separate "delisted" word
 ``reclassify``  the version's state is left alone; the paper's categories become
                 ``body.category`` / ``body.categories`` (required)
+``tombstone``   the target's cid(s) go to the ``denylist`` table and their bytes
+                are deleted; a version (or every version of a paper) also becomes
+                ``rejected``.  The envelopes and log entries stay, so history
+                still verifies.  See :mod:`app.modules.moderation.tombstones`
 ==============  ================================================================
 
 This is the split :func:`app.modules.status.compute_status` assumes: ``list``,
-``hold``, ``reject`` and ``delist`` set a version's state, ``reclassify`` does
-not.  The state change goes through
+``hold``, ``reject``, ``delist`` and ``tombstone`` set a version's state,
+``reclassify`` does not.  The state change goes through
 :func:`app.modules.submissions.transition_version`, so ``version.state_changed``
 is published like for any other move (the author notification, the advisory AI
 pre-review of a newly listed version).
@@ -76,6 +82,7 @@ from app.security import Tier
 from .errors import DecisionNotAllowed, UnknownDecisionTarget, UnknownPolicyClause
 from .models import ModerationDecision, ensure_tables
 from .policies import get_clause
+from .tombstones import TOMBSTONE, TOMBSTONED, resolve_scope, tombstone_target
 
 __all__ = [
     "ACTIONS",
@@ -97,11 +104,15 @@ DECISION_TYPE = "moderation.decision"
 #: Lowest trust tier whose signature the registry lets through (Moderator).
 DECISION_MIN_TIER = int(Tier.MODERATOR)
 
-#: The five actions of the record core's ``moderation.decision`` schema.
-ACTIONS = ("list", "hold", "reclassify", "reject", "delist")
+#: The actions a ``moderation.decision`` may carry.  The record core's schema
+#: must list every one of them, or ingest refuses the record before this plugin
+#: sees it.
+ACTIONS = ("list", "hold", "reclassify", "reject", "delist", TOMBSTONE)
 
-#: The version state each state-setting action asks for.  ``reclassify`` is not
-#: here: it leaves a version's state alone.
+#: The version state each plain state-setting action asks for.  ``reclassify``
+#: is not here: it leaves a version's state alone.  ``tombstone`` is not either:
+#: it moves versions to ``rejected`` only where it can, and also acts on files
+#: (see :mod:`app.modules.moderation.tombstones`).
 ACTION_STATES: Mapping[str, str] = {
     "list": submissions.LISTED,
     "hold": submissions.HELD,
@@ -320,6 +331,9 @@ def _requested_state(fields: DecisionFields, current: str) -> str:
 def handle_moderation_decision(record: Mapping[str, Any]) -> str:
     """Validate a ``moderation.decision``; return the state its version will be in.
 
+    A ``tombstone`` reports ``"tombstoned"``: its target may be a file, which
+    has no version state.
+
     Runs before the record is appended to the ledger, so a refusal stores
     nothing and leaves the version alone.  Nothing is changed here either: the
     state change and the ``moderation_decisions`` row are made by
@@ -327,6 +341,10 @@ def handle_moderation_decision(record: Mapping[str, Any]) -> str:
     """
     fields = decision_fields(record)
     require_known_clause(fields.clause)
+
+    if fields.action == TOMBSTONE:
+        resolve_scope(fields.target)  # refuses (422) a target it cannot take down
+        return TOMBSTONED
 
     version = submissions.get_version(fields.target)
     if version is None:
@@ -387,7 +405,10 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
     Raises:
         InvalidRecord: the record is not a well-formed decision.
         UnknownDecisionTarget: the target is not a version (or, for a
-            ``reclassify``, its paper is not indexed) on this node.
+            ``reclassify``, its paper is not indexed) on this node; for a
+            ``tombstone``, not a paper, a version or a file id either.
+        OSError: a ``tombstone`` could not delete a file's bytes.  Its cids are
+            denylisted by then, and nothing is saved, so a retry finishes.
     """
     fields = decision_fields(record)
 
@@ -396,7 +417,16 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
         return existing
 
     state = ACTION_STATES.get(fields.action)
-    if state is not None:
+    if fields.action == TOMBSTONE:
+        # Denylist the cid(s), delete the bytes, take the version(s) out of the
+        # catalog.  The envelopes and log entries are not touched.
+        tombstone_target(
+            fields.target,
+            fields.decision_cid,
+            actor=fields.moderator_did,
+            reason=fields.reason,
+        )
+    elif state is not None:
         try:
             submissions.transition_version(
                 fields.target,
