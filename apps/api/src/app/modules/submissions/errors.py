@@ -31,11 +31,13 @@ __all__ = [
     "VERSION_OUT_OF_SEQUENCE",
     "CategoryNotEndorsed",
     "GenesisRateLimited",
+    "InvalidVersionState",
     "ManifestFileError",
     "ManifestFileNotStored",
     "ManifestFileSizeMismatch",
     "ShortIdCollision",
     "UnknownPaper",
+    "UnknownVersion",
     "VersionOutOfSequence",
 ]
 
@@ -385,4 +387,43 @@ class GenesisRateLimited(ProblemException):
             retry_after=self.retry_after,
             limit=self.limit,
             window_seconds=self.window_seconds,
+        )
+
+
+# --------------------------------------------------------------------------- #
+# State transitions (feature 52)
+# --------------------------------------------------------------------------- #
+#
+# These two are not HTTP problems: a state change is made by the node's own
+# jobs and by other plugins (consents, moderation, sanitizer), never by a
+# client request this plugin serves, so letting one escape a request is a bug.
+# They are still ordinary Python exceptions -- ``LookupError`` and
+# ``ValueError`` -- so a caller can catch them without FastAPI in the picture.
+
+
+class UnknownVersion(LookupError):
+    """No stored version has this cid, so its state cannot be advanced."""
+
+    def __init__(self, version_cid: object) -> None:
+        self.version_cid = version_cid
+        shown = _clip(version_cid if isinstance(version_cid, str) else repr(version_cid))
+        super().__init__(f"No stored paper version has cid {shown!r}.")
+
+
+class InvalidVersionState(ValueError):
+    """A version cannot be put in the requested state.
+
+    The vocabulary is fixed: the spec's ``awaiting_consent``, ``scanning``,
+    ``moderation``, ``listed``, ``held`` and ``rejected``, plus the consent
+    plugin's ``draft``.  Anything else would make
+    ``paper_versions.state`` unreadable to every feature that switches on it.
+    """
+
+    def __init__(self, state: object) -> None:
+        self.state = state
+        shown = _clip(state if isinstance(state, str) else repr(state))
+        super().__init__(
+            f"{shown!r} is not a version state: a version may be "
+            "awaiting_consent, scanning, moderation, listed, held, rejected "
+            "or draft."
         )

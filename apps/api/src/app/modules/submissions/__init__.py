@@ -26,6 +26,16 @@ its listed authors to ``authorship`` with their byline positions and CRediT
 roles.  A stale ``prev`` or a skipped/duplicated number is refused with
 ``409`` problem details (:class:`VersionOutOfSequence`).
 
+Feature 52: every advance of ``paper_versions.state`` -- through
+``awaiting_consent``, ``scanning``, ``moderation``, ``listed``, ``held`` and
+``rejected`` -- is recorded with one ``version.state_changed`` event.
+:func:`transition_version` writes the new state and publishes the event;
+:func:`subscribe_version_state_changed` listens for it;
+:func:`advance_version` walks the happy path.  A newly accepted version emits
+its first event when it enters ``awaiting_consent``.  See
+:mod:`app.modules.submissions.state` and
+:mod:`app.modules.submissions.events`.
+
 Each check runs as the record type's ingest handler, so it happens inside
 ``POST /v1/records`` before the record reaches the ledger.  Registering the
 handlers is the only wiring needed: the module loader imports every package
@@ -37,7 +47,9 @@ See :mod:`app.modules.submissions.manifest`,
 :mod:`app.modules.submissions.versions` for the handlers,
 :mod:`app.modules.submissions.limits` for the weekly genesis limit,
 :mod:`app.modules.submissions.models` for the ``papers``,
-``paper_versions`` and ``authorship`` tables and
+``paper_versions`` and ``authorship`` tables,
+:mod:`app.modules.submissions.state` and
+:mod:`app.modules.submissions.events` for version state transitions and
 :mod:`app.modules.submissions.errors` for their refusals.
 """
 
@@ -55,12 +67,26 @@ from .errors import (
     VERSION_OUT_OF_SEQUENCE,
     CategoryNotEndorsed,
     GenesisRateLimited,
+    InvalidVersionState,
     ManifestFileError,
     ManifestFileNotStored,
     ManifestFileSizeMismatch,
     ShortIdCollision,
     UnknownPaper,
+    UnknownVersion,
     VersionOutOfSequence,
+)
+from .events import (
+    VERSION_STATE_CHANGED,
+    VersionStateChanged,
+    clear_state_changed_subscribers,
+    emit_state_changed,
+    emit_version_state_changed,
+    state_changed_subscriber_count,
+    subscribe_state_changed,
+    subscribe_version_state_changed,
+    unsubscribe_state_changed,
+    unsubscribe_version_state_changed,
 )
 from .genesis import (
     GENESIS_MIN_TIER,
@@ -116,6 +142,22 @@ from .versions import (
     version_fields,
     versions_for_paper,
 )
+from .state import (
+    ALLOWED_TRANSITIONS,
+    DRAFT,
+    HELD,
+    KNOWN_STATES,
+    LISTED,
+    MODERATION,
+    REJECTED,
+    SCANNING,
+    advance_version,
+    can_transition,
+    is_known_state,
+    next_state,
+    set_version_state,
+    transition_version,
+)
 
 #: Register the handlers once, at import time.  ``register`` is a no-op when the
 #: same handler and tier are already registered, so a module loader that
@@ -125,30 +167,40 @@ register(PAPER_GENESIS_TYPE, handle_paper_genesis, min_tier=GENESIS_MIN_TIER)
 register(PAPER_VERSION_TYPE, handle_paper_version, min_tier=VERSION_MIN_TIER)
 
 __all__ = [
+    "ALLOWED_TRANSITIONS",
     "AWAITING_CONSENT",
     "CATEGORY_NOT_ENDORSED",
     "DEFAULT_LICENCE",
+    "DRAFT",
     "GENESIS_MIN_TIER",
     "GENESIS_RATE_LIMITED",
     "GENESIS_WEEKLY_LIMIT",
     "GENESIS_WINDOW",
+    "HELD",
     "INITIAL_STATUS",
+    "KNOWN_STATES",
+    "LISTED",
     "MANIFEST_FILE_NOT_STORED",
     "MANIFEST_FILE_SIZE_MISMATCH",
     "MANIFEST_MIN_TIER",
     "MANIFEST_TYPE",
+    "MODERATION",
     "PAPER_GENESIS_TYPE",
     "PAPER_VERSION_TYPE",
+    "REJECTED",
+    "SCANNING",
     "SHORT_ID_COLLISION",
     "UNKNOWN_PAPER",
     "VERSION_MIN_TIER",
     "VERSION_OUT_OF_SEQUENCE",
+    "VERSION_STATE_CHANGED",
     "VERSION_STATES",
     "YOUNG_ACCOUNT_MAX_AGE",
     "YOUNG_AUTHOR_TIER",
     "Authorship",
     "CategoryNotEndorsed",
     "GenesisRateLimited",
+    "InvalidVersionState",
     "ManifestFileError",
     "ManifestFileNotStored",
     "ManifestFileSizeMismatch",
@@ -156,11 +208,18 @@ __all__ = [
     "PaperVersion",
     "ShortIdCollision",
     "UnknownPaper",
+    "UnknownVersion",
     "VersionAuthor",
     "VersionFields",
     "VersionOutOfSequence",
+    "VersionStateChanged",
     "account_created_at",
+    "advance_version",
     "authorship_for",
+    "can_transition",
+    "clear_state_changed_subscribers",
+    "emit_state_changed",
+    "emit_version_state_changed",
     "enforce_genesis_quota",
     "ensure_tables",
     "expected_chain",
@@ -172,15 +231,24 @@ __all__ = [
     "handle_manifest",
     "handle_paper_genesis",
     "handle_paper_version",
+    "is_known_state",
     "is_young_author",
     "latest_version",
     "manifest_files",
     "newest_recent_genesis",
+    "next_state",
     "require_endorsed",
     "require_known_paper",
     "save_paper",
     "save_version",
+    "set_version_state",
+    "state_changed_subscriber_count",
+    "subscribe_state_changed",
+    "subscribe_version_state_changed",
+    "transition_version",
     "unendorsed_categories",
+    "unsubscribe_state_changed",
+    "unsubscribe_version_state_changed",
     "validate_manifest_files",
     "version_authors",
     "version_fields",

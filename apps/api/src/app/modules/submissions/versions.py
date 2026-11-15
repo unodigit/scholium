@@ -50,11 +50,16 @@ What this module deliberately leaves alone
 
 ``papers.latest_version_cid`` and ``paper_versions.listed_at`` stay NULL here:
 they describe the paper's *listed* state, which a version reaches through
-scanning and moderation (features 52 and 79), not on acceptance.  Likewise no
-notification is sent and no ``version.state_changed`` event is emitted from
-this handler; those are the notifications and state-transition plugins' work.
-The returned state is ``awaiting_consent``, which is also what
+scanning and moderation (features 52 and 79), not on acceptance.  No
+notification is sent either; that is the notifications plugin's work
+(feature 59).  The returned state is ``awaiting_consent``, which is also what
 ``POST /v1/records`` reports back to the client.
+
+Saving a *new* version does emit its first ``version.state_changed`` event
+(feature 52), from :data:`AWAITING_CONSENT` with no previous state, so a
+subscriber that cares about a version entering consent (feature 59) sees it
+exactly once.  A repeat of a version already stored emits nothing -- see
+:mod:`app.modules.submissions.events`.
 
 Refusals and side effects
 -------------------------
@@ -90,6 +95,7 @@ from app.modules.ingest import (
 from app.security import Tier
 
 from .errors import UnknownPaper, VersionOutOfSequence
+from .events import VersionStateChanged, emit_state_changed
 from .genesis import get_paper
 from .models import Authorship, PaperVersion, ensure_tables
 
@@ -507,6 +513,10 @@ def save_version(
     the same version).  The authors are only written with a new row for the
     same reason.
 
+    A newly written row emits one ``version.state_changed`` event with
+    ``previous_state=None`` (feature 52); a repeat does not, so the event says
+    "this version exists in this state" exactly once.
+
     Raises:
         IntegrityError: when another version already holds ``(paper_cid, n)``.
             The handler turns that race into ``409`` problem details; a direct
@@ -516,9 +526,11 @@ def save_version(
         raise ValueError("a non-empty version_cid is required")
 
     ensure_tables()
+    created = False
     with db.SessionLocal() as session:
         existing = session.get(PaperVersion, version_cid)
         if existing is not None:
+            session.expunge(existing)
             return existing
 
         row = PaperVersion(
@@ -551,10 +563,30 @@ def save_version(
             session.rollback()
             existing = session.get(PaperVersion, version_cid)
             if existing is not None:
+                session.expunge(existing)
                 return existing
             raise
+        created = True
         session.refresh(row)
-        return row
+        saved_paper_cid = row.paper_cid
+        saved_n = int(row.n)
+        saved_state = row.state
+        session.expunge(row)
+
+    if created:
+        # Published only after the commit: a subscriber never sees a state the
+        # database does not have, and a race that stored the row first still
+        # emits exactly once (the loser returned above without reaching here).
+        emit_state_changed(
+            VersionStateChanged(
+                version_cid=version_cid,
+                paper_cid=saved_paper_cid,
+                n=saved_n,
+                state=saved_state,
+                previous_state=None,
+            )
+        )
+    return row
 
 
 # --------------------------------------------------------------------------- #
