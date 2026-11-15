@@ -11,7 +11,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 
 import { useSignedIn } from "../../components/nav/session";
 import { initialAuthors, withSubmitterDid, type DraftAuthor, type ResolveAuthor } from "./authors";
@@ -21,6 +21,11 @@ import { ChecksStep } from "./checks-step";
 import { DetailsStep } from "./details-step";
 import { SignStep } from "./sign-step";
 import { emptyDetails, type DetailsValues } from "./details";
+import {
+  createSubmitDraftStorage,
+  type SubmitDraft,
+  type SubmitDraftStorage,
+} from "./submit-draft-storage";
 import { FilesStep, type FilesStepProps } from "./files-step";
 import type { SubmitFile } from "./upload-manager";
 import { useSubmitterDid } from "./use-submitter-did";
@@ -50,6 +55,14 @@ export interface SubmitWizardProps {
   fetchChecks?: FetchChecks;
   /** How often step 4 asks the node again while it is scanning. */
   checksPollMs?: number;
+  /** Persistence for the wizard draft. Tests may inject a store or an IndexedDB factory. */
+  draftStorage?: SubmitDraftStorage;
+  storage?: SubmitDraftStorage;
+  draftStorageFactory?: (options?: { factory?: IDBFactory }) => SubmitDraftStorage;
+  indexedDbFactory?: IDBFactory;
+  idbFactory?: IDBFactory;
+  factory?: IDBFactory;
+  draftDbFactory?: IDBFactory;
 }
 
 export function SubmitWizard({
@@ -60,6 +73,13 @@ export function SubmitWizard({
   checksFor,
   fetchChecks,
   checksPollMs,
+  draftStorage,
+  storage,
+  draftStorageFactory,
+  indexedDbFactory,
+  idbFactory,
+  factory,
+  draftDbFactory,
 }: SubmitWizardProps): ReactElement {
   const isSignedIn = useSignedIn(signedIn);
   // The stored session is only readable after mount. Wait for it before saying
@@ -84,6 +104,91 @@ export function SubmitWizard({
     }
   }, [ownDid]);
 
+  // Pick the persistence backend. Props win; otherwise IndexedDB when the
+  // browser has it, with an in-memory fallback for tests and SSR.
+  const resolvedFactory = draftDbFactory ?? indexedDbFactory ?? idbFactory ?? factory ?? undefined;
+  const draftStore = useMemo<SubmitDraftStorage>(() => {
+    if (draftStorage) {
+      return draftStorage;
+    }
+    if (storage) {
+      return storage;
+    }
+    if (draftStorageFactory) {
+      return draftStorageFactory({ factory: resolvedFactory });
+    }
+    return createSubmitDraftStorage(resolvedFactory ? { factory: resolvedFactory } : {});
+  }, [draftStorage, storage, draftStorageFactory, resolvedFactory]);
+
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const draftLoadedRef = useRef(false);
+  const skipDraftSaveRef = useRef(true);
+  const firstDraftSaveRef = useRef(true);
+
+  // Restore a saved draft when the author returns to /submit.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const saved = await draftStore.get();
+        if (!active || !saved) {
+          // nothing to restore
+        } else {
+          if (saved.step) {
+            setStep(saved.step);
+          }
+          if (saved.details) {
+            setDetails(saved.details);
+          }
+          if (Array.isArray(saved.authors) && saved.authors.length > 0) {
+            setAuthors(saved.authors);
+          }
+          if (Array.isArray(saved.files)) {
+            setFiles(saved.files);
+          }
+        }
+      } catch {
+        // Storage may be blocked; behave as if there were no draft.
+      }
+      if (active) {
+        draftLoadedRef.current = true;
+        skipDraftSaveRef.current = false;
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [draftStore]);
+
+  // Save the draft on every change.
+  useEffect(() => {
+    if (!draftLoadedRef.current || skipDraftSaveRef.current) {
+      return;
+    }
+    if (firstDraftSaveRef.current) {
+      firstDraftSaveRef.current = false;
+      return;
+    }
+    setDraftStatus("saving");
+    const draft: SubmitDraft = { step, details, authors, files };
+    let active = true;
+    void draftStore
+      .put(draft)
+      .then(() => {
+        if (active) {
+          setDraftStatus("saved");
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setDraftStatus("idle");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [step, details, authors, files, draftStore]);
+
   // Coming back to Files leaves focus on a button that no longer exists; move
   // it to the Files heading instead of dropping it on the document.
   const previousStep = useRef<WizardStepId>("files");
@@ -99,6 +204,11 @@ export function SubmitWizard({
       <header className="sw-header">
         <p className="sw-crumb">Submit</p>
         <h1 className="sw-title">Submit a paper</h1>
+        {draftStatus === "saved" ? (
+          <p className="sw-draft-saved" role="status">
+            Draft saved
+          </p>
+        ) : null}
       </header>
 
       <WizardRail current={step} />
