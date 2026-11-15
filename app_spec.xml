@@ -1,0 +1,1427 @@
+<project_specification mode="greenfield">
+  <project_name>Scholium</project_name>
+  <overview>
+    Scholium is a decentralized preprint and peer-review network: the arXiv you can verify, review in the open, and never lose.
+    Every paper, version, review and decision is a signed, content-addressed record appended to a hash-chained event log that any
+    reader can verify offline. This spec builds the Phase 1 Community MVP from docs/PRD.md section 5 (signed records and export,
+    identity with tiers 0-4, upload/sanitize/moderate/list, viewer, annotations and search, discussion and escrowed formal review,
+    advisory AI pre-review). Phase 2-4 capabilities (IPFS/cold storage, on-chain anchoring, ZK review, DOIs, governance,
+    reputation, federation) are out of scope; anchor status is always reported as pending.
+    Source documents: docs/PRD.md (requirements), docs/tech_architect.md (architecture), docs/design.md (UX/UI, the authority for
+    every screen). docs/scholium-poc.html is a journey prototype for reference only; never copy its layout over design.md.
+  </overview>
+  <target_audience>
+    Authors (PhD students publishing 2-4 papers a year), reviewers (senior researchers who want verifiable credit while staying
+    anonymous), readers (ML engineers who need to know whether a paper was checked), volunteer moderators (category editors), and
+    library node operators. Pilot community: AI/ML researchers.
+  </target_audience>
+  <layout>
+    <zone root="apps/api" profile="uv-workspace"/>
+    <zone root="apps/web" profile="pnpm-single-app">
+      <root template="apps/web/src/app/({plugin})/**" optional="true"/>
+    </zone>
+    <seam tier="discovery">apps/api/src/app/module_loader.py</seam>
+  </layout>
+  <technology_stack>
+    <frontend>
+      <framework>Next.js 15 App Router (each feature owns a route group apps/web/src/app/(feature)/ plus apps/web/src/features/feature/)</framework>
+      <language>TypeScript</language>
+      <styling>Tailwind CSS with design.md tokens as CSS variables</styling>
+      <crypto>WebCrypto Ed25519 + WebAuthn passkeys, @noble/ed25519, @ipld/dag-cbor, multiformats</crypto>
+      <testing>vitest (maxWorkers 2) + @testing-library/react; Playwright for browser journeys</testing>
+    </frontend>
+    <backend>
+      <framework>Python 3.12 FastAPI, one app with modules under apps/api/src/app/modules/* discovered by module_loader.py</framework>
+      <orm>SQLAlchemy 2.0 (sync); each module declares its own models in its own package</orm>
+      <record_core>apps/api/packages/record-core (python package scholium_record_core): DAG-CBOR, CIDv1, Ed25519, did:key, sch: ids, JSON Schemas, verifier. Replaces the Rust record-core of tech_architect.md for the MVP; the TypeScript port lives in apps/web/src/features/verify-core and both are pinned by shared test vectors</record_core>
+      <cli>apps/api/packages/cli (console script scholium)</cli>
+      <testing>pytest with pytest-xdist -n 2, FastAPI TestClient, JOBS_EAGER=1</testing>
+    </backend>
+    <database>
+      <primary>SQLite (DATABASE_URL) with FTS5 for full-text search; tables created from module models at startup</primary>
+    </database>
+    <communication>
+      <api_style>REST under /v1; every write is a client-signed record envelope; errors are RFC 9457 problem details</api_style>
+      <auth>did:key challenge-response sign-in, 15-minute access tokens, rotating refresh tokens</auth>
+    </communication>
+    <infrastructure>
+      <ai>Pluggable LLM providers: fake (tests), Anthropic (hosted, public papers only), Ollama (self-hosted)</ai>
+      <sandbox>docker run --network none for reproduction runs when docker is available</sandbox>
+    </infrastructure>
+  </technology_stack>
+  <prerequisites>
+    - Python 3.12 with uv; Node.js 22+ with pnpm
+    - Optional: docker for reproduction runs, clamd for antivirus, ANTHROPIC_API_KEY for hosted AI review, OLLAMA_URL for self-hosted models
+    - Environment variables documented in .env.example: DATABASE_URL, CONTENT_DIR, NODE_KEY_PATH, JWT_SECRET, COMMITTEE_PUBLIC_KEY, ORCID_BASE_URL, ORCID_CLIENT_ID, ORCID_CLIENT_SECRET, ORCID_MOCK, ARXIV_MOCK, AI_PROVIDER, AI_HOSTED_MODEL, OLLAMA_URL, SMTP_URL, JOBS_EAGER, NEXT_PUBLIC_API_URL
+    - Root `npm test` runs the api pytest suite and the web vitest suite; `npm run test:e2e` runs Playwright
+  </prerequisites>
+  <constraints>
+    - Never store personal data or paper content on a blockchain.
+    - Do not add a tradable token or token-weighted votes.
+    - Never let AI review output change paper status, listing or reputation; no code path from ai_review to papers.status.
+    - Never hold a user's private signing key on the server; the server only ever sees public keys and signatures.
+    - Process unlisted drafts only with self-hosted or fake AI providers.
+    - Run paper reproduction only in an isolated sandbox with no network.
+    - Pass paper text to AI agents as quoted data in a separate block, never concatenated into instructions.
+    - Never update or delete rows in the event_log table.
+    - Never render AI output in the colours of human review status; --ai is reserved for AI pre-review.
+    - Never convey status by colour alone; always icon plus word.
+    - Return API errors as RFC 9457 problem details.
+    - Keep personal data only in the encrypted, erasable profile table.
+    - Do not show like or vote counts on papers.
+    - Meet WCAG 2.2 AA accessibility, keyboard access to everything, focus rings 2px accent.
+    - Follow docs/design.md for every screen, token, component and microcopy; docs/scholium-poc.html is reference only.
+    - Modules register routers and record handlers from their own package; never edit main.py or module_loader.py after the foundation.
+  </constraints>
+  <core_features>
+    <category name="Workspace Foundation">
+      <feature index="1" depends_on="" shape="core" touches_files="package.json,.env.example,apps/api/pyproject.toml,apps/api/src/app/main.py,apps/api/src/app/module_loader.py,apps/api/src/app/settings.py,apps/api/src/app/db.py,apps/api/src/app/__init__.py,apps/api/tests/conftest.py,apps/web/package.json,apps/web/next.config.js,apps/web/vitest.config.ts,apps/web/postcss.config.mjs,apps/web/tsconfig.json,apps/web/src/app/layout.tsx">
+        <description>System foundation: Scaffold the workspace skeleton (creates root package.json whose test script runs the api pytest suite then the web vitest suite, .env.example, apps/api uv project with [tool.uv.workspace] members packages/* (record-core and cli package skeletons), FastAPI app factory in apps/api/src/app/main.py with module_loader.py importing every apps/api/src/app/modules/* package and mounting its optional router under /v1 and calling its optional on_startup hook, settings.py, db.py (SQLAlchemy 2.0 sync engine, SQLite via DATABASE_URL, a declarative Base whose metadata create_all runs after modules load), GET /healthz that returns 200, pytest config with -n 2 and testpaths covering src and packages, and apps/web Next.js 15 App Router TypeScript Tailwind shell with root layout.tsx and vitest.config.ts using maxWorkers 2; it pins every dependency the spec names (fastapi, sqlalchemy, pydantic, pyjwt, cryptography, pynacl, dag-cbor, multiformats, pypdf, httpx, anthropic, pytest, pytest-xdist; next, react, tailwindcss, @ipld/dag-cbor, multiformats, @noble/ed25519, @noble/hashes, tus-js-client, vitest, @testing-library/react, @playwright/test); every python command runs as uv run --all-packages so workspace packages are importable)</description>
+      </feature>
+    </category>
+    <category name="API Kernel">
+      <feature index="2" depends_on="1" shape="core" touches_files="apps/api/src/app/errors.py,apps/api/tests/test_errors.py">
+        <description>API returns every error as an RFC 9457 problem details JSON body (type, title, status, detail, instance) with content type application/problem+json, including 422 with a field-level errors array on validation failure</description>
+      </feature>
+      <feature index="3" depends_on="1" shape="core" touches_files="apps/api/src/app/security.py,apps/api/tests/test_security.py" covers="cq-3">
+        <description>System issues 15-minute access tokens and exposes a require_tier(n) FastAPI dependency that returns 403 problem details naming the required tier and the caller tier when a principal's trust tier (0 Reader, 1 Member, 2 Author, 3 Reviewer, 4 Moderator) is too low</description>
+      </feature>
+      <feature index="4" depends_on="1" shape="core" touches_files="apps/api/src/app/jobs.py,apps/api/tests/test_jobs.py">
+        <description>Background job runner persists queued jobs to the jobs table and runs registered job handlers on a worker thread, running them inline when JOBS_EAGER=1 so tests are synchronous</description>
+      </feature>
+      <feature index="5" depends_on="1,3" shape="core" touches_files="apps/api/src/app/middleware.py,apps/api/tests/test_middleware.py" covers="cq-42">
+        <description>API middleware throttles writes per trust tier and per account age (new accounts get 20 posts per day) and returns 429 problem details with Retry-After plus an X-RateLimit-Remaining header on every write</description>
+      </feature>
+    </category>
+    <category name="Signed Record Core">
+      <feature index="6" depends_on="1" shape="plugin" plugin="record-core" touches_files="apps/api/packages/record-core/**">
+        <description>System computes a record id as a CIDv1 (dag-cbor codec, sha2-256) over the DAG-CBOR encoding of the envelope fields v, type, author, created, prev, body, proofs (excluding id and sig) and writes cross-language test vectors to vectors/records.json</description>
+      </feature>
+      <feature index="7" depends_on="1,6" shape="plugin" plugin="record-core" touches_files="apps/api/packages/record-core/**">
+        <description>System signs and verifies Ed25519 signatures over the canonical envelope bytes and converts Ed25519 public keys to and from did:key identifiers, that returns False for a tampered body</description>
+      </feature>
+      <feature index="8" depends_on="1,6" shape="plugin" plugin="record-core" touches_files="apps/api/packages/record-core/**">
+        <description>System computes raw-codec CIDv1 sha2-256 file ids for file bytes and validates a manifest body of files with path, cid, size, mediaType and role fields</description>
+      </feature>
+      <feature index="9" depends_on="1,6" shape="plugin" plugin="record-core" touches_files="apps/api/packages/record-core/**" covers="cq-14">
+        <description>System derives the stable sch: short id (12 base32 characters of the genesis CID plus a checksum grouped xxxx-xxxx-xxxx) and parses sch:xxxx-xxxx-xxxx/vN version ids, and returns a ValueError error message on a bad checksum</description>
+      </feature>
+      <feature index="10" depends_on="1,6" shape="plugin" plugin="record-core" touches_files="apps/api/packages/record-core/**">
+        <description>System validates record bodies against JSON Schemas shipped in schemas/ for every Phase 1 record type (paper.genesis, paper.version, manifest, coauthor.consent, review.commit, review.formal, review.response, review.rating, discussion.post, ai.review, rendition, endorsement, moderation.decision, appeal, appeal.decision, retraction, correction, withdrawal, key.rotation, erasure.request, external.mirror, flag) and returns a list of error messages</description>
+      </feature>
+      <feature index="11" depends_on="1,7,8,9" shape="plugin" plugin="record-core" touches_files="apps/api/packages/record-core/**" covers="cq-44">
+        <description>System verifies a paper from a set of records by following prev links from newest version to genesis, checking each signature, each prev hash, a consent from every listed author and applying retraction, correction and tombstone supersession, that returns a report with status, signers, version_count and per-check results</description>
+      </feature>
+    </category>
+    <category name="Event Log Ledger">
+      <feature index="12" depends_on="1,6" shape="plugin" plugin="ledger" touches_files="apps/api/src/app/modules/ledger/**">
+        <description>System persists each accepted record to the event_log table with seq, record_cid, record_type, author_did, body, raw canonical bytes, prev_hash, entry_hash = sha256(prev_hash || record_cid || raw) and origin_node, and notifies in-process subscribers registered with ledger.subscribe(record_type, fn)</description>
+      </feature>
+      <feature index="13" depends_on="1,12" shape="plugin" plugin="ledger" touches_files="apps/api/src/app/modules/ledger/**">
+        <description>Database triggers on the event_log table reject UPDATE and DELETE statements so the log is append-only, raising an integrity error message</description>
+      </feature>
+      <feature index="14" depends_on="1,12,7" shape="plugin" plugin="ledger" touches_files="apps/api/src/app/modules/ledger/**">
+        <description>API exposes GET /v1/sync/head that returns the node-signed log head (node_did, seq, entry_hash, signature) using the node Ed25519 key loaded from NODE_KEY_PATH</description>
+        <acceptance>
+          - GET /v1/sync/head returns 200 with seq, entry_hash, node_did and signature fields
+          - The signature in the GET /v1/sync/head response verifies against the node_did public key
+        </acceptance>
+      </feature>
+      <feature index="15" depends_on="1,12" shape="plugin" plugin="ledger" touches_files="apps/api/src/app/modules/ledger/**">
+        <description>API exposes GET /v1/records/{cid} that returns the stored signed envelope as JSON, and 404 problem details for an unknown cid</description>
+      </feature>
+      <feature index="16" depends_on="1,14" shape="plugin" plugin="ledger" touches_files="apps/api/src/app/modules/ledger/**">
+        <description>API exposes GET /v1/records/{cid}/proof that returns the record's log seq, entry_hash, prev_hash, the signed log head and anchor status pending</description>
+      </feature>
+      <feature index="17" depends_on="1,12" shape="plugin" plugin="ledger" touches_files="apps/api/src/app/modules/ledger/**">
+        <description>API exposes GET /v1/sync/range?from=&amp;to= that returns log entries in seq order with their hashes so a third party can replay the log</description>
+      </feature>
+      <feature index="18" depends_on="1,12" shape="plugin" plugin="ledger" touches_files="apps/api/src/app/modules/ledger/**" covers="cq-37">
+        <description>System verify_log function recomputes the hash chain over a sequence of log entries and returns the first broken seq when any entry was rewritten, reordered or removed</description>
+      </feature>
+    </category>
+    <category name="Record Ingest">
+      <feature index="19" depends_on="1,2" shape="plugin" plugin="ingest" touches_files="apps/api/src/app/modules/ingest/**">
+        <description>System provides a record-type handler registry where modules call register(record_type, handler, min_tier) at import time, and lookup of an unregistered type returns 422 problem details</description>
+      </feature>
+      <feature index="20" depends_on="1,19,10,7,12,3" shape="plugin" plugin="ingest" touches_files="apps/api/src/app/modules/ingest/**" covers="cq-8">
+        <description>API exposes POST /v1/records that validates the envelope schema, recomputes the CID, verifies the signature against the author's active key, runs the type handler, appends to the ledger and returns 201 with id, shortId, state and anchor pending</description>
+        <acceptance>
+          - POST /v1/records with an id that does not match the recomputed CID returns 422 problem details
+          - POST /v1/records with a signature made by a different key returns 401 problem details
+          - POST /v1/records with an unknown record type returns 422 problem details
+        </acceptance>
+      </feature>
+      <feature index="21" depends_on="1,20" shape="plugin" plugin="ingest" touches_files="apps/api/src/app/modules/ingest/**" covers="cq-3">
+        <description>API rejects a POST /v1/records submission whose author tier is below the handler's min_tier with 403 problem details stating the required tier</description>
+      </feature>
+      <feature index="22" depends_on="1,20" shape="plugin" plugin="ingest" touches_files="apps/api/src/app/modules/ingest/**">
+        <description>API replays the stored 201 response when POST /v1/records repeats an Idempotency-Key, persisting keys to the idempotency_keys table</description>
+      </feature>
+    </category>
+    <category name="Identity &amp; Access">
+      <feature index="23" depends_on="1,7,3" shape="plugin" plugin="identity" touches_files="apps/api/src/app/modules/identity/**">
+        <description>API exposes POST /v1/auth/challenge that returns a single-use nonce (expires in 5 minutes) for a did:key, saved to the auth_challenges table</description>
+      </feature>
+      <feature index="24" depends_on="1,23" shape="plugin" plugin="identity" touches_files="apps/api/src/app/modules/identity/**" covers="cq-1">
+        <description>API exposes POST /v1/auth/verify that checks the Ed25519 signature over the nonce, creates the account in the accounts table on first sign-in at tier 0 and returns 200 with access_token and refresh_token</description>
+        <acceptance>
+          - POST /v1/auth/verify with a correctly signed nonce returns 200 with access_token and refresh_token
+          - POST /v1/auth/verify with a reused nonce returns 401 problem details
+          - POST /v1/auth/verify with a signature from another key returns 401 problem details
+        </acceptance>
+      </feature>
+      <feature index="25" depends_on="1,24" shape="plugin" plugin="identity" touches_files="apps/api/src/app/modules/identity/**">
+        <description>API exposes POST /v1/auth/refresh that rotates the refresh token, storing hashes in the refresh_tokens table, and returns 401 when a rotated-out token is reused</description>
+        <acceptance>
+          - POST /v1/auth/refresh with a valid refresh_token returns 200 with a new refresh_token
+          - POST /v1/auth/refresh with an already-used refresh_token returns 401
+        </acceptance>
+      </feature>
+      <feature index="26" depends_on="1,24" shape="plugin" plugin="identity" touches_files="apps/api/src/app/modules/identity/**">
+        <description>API exposes GET /v1/did/{did} that returns the DID document with the active key, the key history from key.rotation records and the account tier</description>
+      </feature>
+      <feature index="27" depends_on="1,26" shape="plugin" plugin="identity" touches_files="apps/api/src/app/modules/identity/**" covers="cq-4">
+        <description>System resolves the active signing key for a DID from the account_keys table so ingest rejects records signed by a key rotated out before the record arrived</description>
+      </feature>
+      <feature index="177" depends_on="1,25" shape="plugin" plugin="identity" touches_files="apps/api/src/app/modules/identity/**">
+        <description>API exposes POST /v1/auth/logout that revokes the caller refresh token in the refresh_tokens table and returns 204</description>
+      </feature>
+    </category>
+    <category name="Profiles &amp; Erasure">
+      <feature index="28" depends_on="1,24" shape="plugin" plugin="profiles" touches_files="apps/api/src/app/modules/profiles/**">
+        <description>User can save name, affiliation and email via PUT /v1/profiles/{did} (returns 200), which the system encrypts with a per-object key into profile.enc_blob with the key held in the profile_keys table</description>
+      </feature>
+      <feature index="29" depends_on="1,28" shape="plugin" plugin="profiles" touches_files="apps/api/src/app/modules/profiles/**">
+        <description>API exposes GET /v1/profiles/{did} that returns decrypted name, affiliation, ORCID iD, tier and public signed reviews, showing only the pseudonymous DID after erasure</description>
+      </feature>
+      <feature index="30" depends_on="1,29,20,15" shape="plugin" plugin="profiles" touches_files="apps/api/src/app/modules/profiles/**" covers="cq-6">
+        <description>User can erase their profile via DELETE /v1/profiles/{did}, which deletes the per-object key (crypto-shredding), appends an erasure.request record and returns 202 while their records still verify</description>
+        <acceptance>
+          - DELETE /v1/profiles/{did} by the owner returns 202
+          - After erasure GET /v1/profiles/{did} returns the DID with null name, affiliation and email
+          - After erasure GET /v1/records/{cid} for a record the user signed still returns the signed envelope
+        </acceptance>
+      </feature>
+      <feature index="178" depends_on="1,30,57" shape="plugin" plugin="profiles" touches_files="apps/api/src/app/modules/profiles/**" covers="cq-1">
+        <description>System sends an email verification link on PUT /v1/profiles/{did} and POST /v1/profiles/{did}/verify-email returns 200 setting email_verified, which tier 1 requires</description>
+      </feature>
+    </category>
+    <category name="ORCID &amp; Credentials">
+      <feature index="31" depends_on="1,24" shape="plugin" plugin="orcid" touches_files="apps/api/src/app/modules/orcid/**">
+        <description>API exposes GET /v1/auth/orcid/start that returns the ORCID authorize URL with a signed state parameter, using ORCID_BASE_URL (sandbox by default)</description>
+      </feature>
+      <feature index="32" depends_on="1,31,29" shape="plugin" plugin="orcid" touches_files="apps/api/src/app/modules/orcid/**" covers="cq-2">
+        <description>API exposes GET /v1/auth/orcid/callback that exchanges the code (ORCID_MOCK=1 accepts mock-&lt;orcid&gt; codes for tests), issues a node-signed ORCID ownership verifiable credential bound to the DID and saves it to the credentials table</description>
+        <acceptance>
+          - With ORCID_MOCK=1, GET /v1/auth/orcid/callback?code=mock-0000-0002-1825-0097 with a valid state returns 200 with the credential
+          - GET /v1/profiles/{did} after linking shows the linked ORCID iD
+        </acceptance>
+      </feature>
+      <feature index="33" depends_on="1,32" shape="plugin" plugin="orcid" touches_files="apps/api/src/app/modules/orcid/**" covers="cq-2">
+        <description>System stores a nullifier H(issuer || orcid || domain) in the nullifiers table so one ORCID maps to one active DID, that returns 409 problem details on a second link</description>
+      </feature>
+      <feature index="34" depends_on="1,33,28" shape="plugin" plugin="orcid" touches_files="apps/api/src/app/modules/orcid/**">
+        <description>System saves tier 1 Member to the accounts table once an email and an ORCID credential exist for an account at tier 0</description>
+      </feature>
+      <feature index="35" depends_on="1,32" shape="plugin" plugin="orcid" touches_files="apps/api/src/app/modules/orcid/**">
+        <description>API exposes POST /v1/credentials/present that verifies a credential presentation signature and status, that returns 200 with verified true or 422 with the failing check</description>
+      </feature>
+    </category>
+    <category name="Key Recovery">
+      <feature index="36" depends_on="1,24" shape="plugin" plugin="recovery" touches_files="apps/api/src/app/modules/recovery/**">
+        <description>User can set 5 recovery guardian DIDs via PUT /v1/me/guardians, saved to the guardians table, and submissions return 403 problem details until guardians are set</description>
+      </feature>
+      <feature index="37" depends_on="1,36,27,20" shape="plugin" plugin="recovery" touches_files="apps/api/src/app/modules/recovery/**" covers="cq-4">
+        <description>System accepts a key.rotation record signed by the old key, records the new key as active in account_keys and rejects later records signed by the old key with 401</description>
+      </feature>
+      <feature index="38" depends_on="1,37,32" shape="plugin" plugin="recovery" touches_files="apps/api/src/app/modules/recovery/**" covers="cq-4">
+        <description>User can open a recovery request via POST /v1/recovery/requests identified by ORCID with a new public key, which notifies each guardian and returns 201 with request_id (persisted to the recovery_requests table)</description>
+      </feature>
+      <feature index="39" depends_on="1,38" shape="plugin" plugin="recovery" touches_files="apps/api/src/app/modules/recovery/**" covers="cq-4">
+        <description>API exposes POST /v1/recovery/requests/{id}/approvals for guardian signatures and returns the approval count, opening a 72-hour contest window at 3 of 5 approvals</description>
+      </feature>
+      <feature index="40" depends_on="1,39,4" shape="plugin" plugin="recovery" touches_files="apps/api/src/app/modules/recovery/**" covers="cq-4">
+        <description>Background job finalizes a recovery after the 72-hour contest window by appending a key.rotation record with the guardian proofs, while POST /v1/recovery/requests/{id}/cancel signed by the old key returns 200 and cancels it</description>
+        <acceptance>
+          - After 3 approvals and the contest window elapsing, records signed by the old key return 401 from POST /v1/records
+          - POST /v1/recovery/requests/{id}/cancel signed by the old key returns 200 and the old key stays active
+        </acceptance>
+      </feature>
+    </category>
+    <category name="Endorsements">
+      <feature index="41" depends_on="1,20" shape="plugin" plugin="endorsements" touches_files="apps/api/src/app/modules/endorsements/**" covers="cq-5">
+        <description>System accepts an endorsement record (endorsee, category, expiry) only from a tier-3 endorser, saves it to the endorsements table and grants the endorsee tier 2 Author</description>
+      </feature>
+      <feature index="42" depends_on="1,41" shape="plugin" plugin="endorsements" touches_files="apps/api/src/app/modules/endorsements/**" covers="cq-5">
+        <description>System exposes can_submit(did, category) that returns False for a category the author is not endorsed in, and GET /v1/me/endorsements lists active endorsements with expiry</description>
+      </feature>
+    </category>
+    <category name="Content &amp; Uploads">
+      <feature index="43" depends_on="1,8" shape="plugin" plugin="content" touches_files="apps/api/src/app/modules/content/**">
+        <description>System stores file bytes in a CID-addressed blob directory (CONTENT_DIR) and records cid, size, media_type and scan_status in the blobs table</description>
+      </feature>
+      <feature index="44" depends_on="1,43" shape="plugin" plugin="content" touches_files="apps/api/src/app/modules/content/**" covers="cq-10">
+        <description>API exposes GET /v1/content/{cid} that serves bytes only when scan_status is passed, with Content-Security-Policy sandbox, X-Content-Type-Options nosniff and no cookies, that returns 423 while scanning and 451 for a tombstoned cid</description>
+        <acceptance>
+          - GET /v1/content/{cid} for a blob still scanning returns 423
+          - GET /v1/content/{cid} for a passed blob returns 200 with a Content-Security-Policy header containing sandbox
+        </acceptance>
+      </feature>
+      <feature index="45" depends_on="1,3" shape="plugin" plugin="uploads" touches_files="apps/api/src/app/modules/uploads/**" covers="cq-7">
+        <description>API exposes POST /v1/uploads (tus 1.0 creation) that returns 201 with a Location header, rejecting a PDF over 50 MB or a bundle over 5 GB with 413 problem details</description>
+      </feature>
+      <feature index="46" depends_on="1,45" shape="plugin" plugin="uploads" touches_files="apps/api/src/app/modules/uploads/**" covers="cq-7">
+        <description>API exposes PATCH /v1/uploads/{id} appending bytes at Upload-Offset and HEAD /v1/uploads/{id} returning the current Upload-Offset, with 409 on an offset mismatch so interrupted uploads resume</description>
+        <acceptance>
+          - HEAD /v1/uploads/{id} after a partial PATCH returns the received Upload-Offset
+          - PATCH /v1/uploads/{id} with a wrong Upload-Offset returns 409
+        </acceptance>
+      </feature>
+      <feature index="47" depends_on="1,46,43" shape="plugin" plugin="uploads" touches_files="apps/api/src/app/modules/uploads/**" covers="cq-8">
+        <description>System moves a completed upload into the content store and returns its raw CID in the final PATCH response Upload-Cid header</description>
+      </feature>
+    </category>
+    <category name="Publishing &amp; Versions">
+      <feature index="48" depends_on="1,20,47" shape="plugin" plugin="submissions" touches_files="apps/api/src/app/modules/submissions/**" covers="cq-8">
+        <description>System accepts a manifest record only when every listed file cid exists in the blobs table with a matching size, otherwise 422 problem details naming the file path</description>
+      </feature>
+      <feature index="49" depends_on="1,48,42,9" shape="plugin" plugin="submissions" touches_files="apps/api/src/app/modules/submissions/**" covers="cq-15,cq-14,cq-5">
+        <description>System accepts a paper.genesis record from a tier-2 author endorsed in every category, which saves to the papers table its categories, licence (default CC BY 4.0) and assigned sch: short_id</description>
+      </feature>
+      <feature index="50" depends_on="1,49" shape="plugin" plugin="submissions" touches_files="apps/api/src/app/modules/submissions/**" covers="cq-7,cq-12">
+        <description>System saves to paper_versions each accepted paper.version record whose prev equals the current latest version and n is prev n + 1, keeping title, abstract, manifest, licence and change_note, plus authors with credit roles in the authorship table, in state awaiting_consent</description>
+      </feature>
+      <feature index="51" depends_on="1,49" shape="plugin" plugin="submissions" touches_files="apps/api/src/app/modules/submissions/**" covers="cq-42">
+        <description>System limits tier-2 accounts younger than 90 days to one paper.genesis per week, that returns 429 problem details with the next allowed date</description>
+      </feature>
+      <feature index="52" depends_on="1,50" shape="plugin" plugin="submissions" touches_files="apps/api/src/app/modules/submissions/**">
+        <description>System emits a version.state_changed event as paper_versions.state advances through awaiting_consent, scanning, moderation, listed, held and rejected</description>
+      </feature>
+      <feature index="53" depends_on="1,52" shape="plugin" plugin="submissions" touches_files="apps/api/src/app/modules/submissions/**" covers="cq-13">
+        <description>System accepts withdrawal, correction and retraction records from a paper author or a tier-4 member, saving them to the notices table so every version shows the notice</description>
+      </feature>
+    </category>
+    <category name="Co-author Consent">
+      <feature index="54" depends_on="1,50" shape="plugin" plugin="consents" touches_files="apps/api/src/app/modules/consents/**" covers="cq-9">
+        <description>System accepts a coauthor.consent record (version, role, decision accept or decline) only from a DID listed on that version, saving consent_cid to the authorship table and rejecting others with 403</description>
+      </feature>
+      <feature index="55" depends_on="1,56,52" shape="plugin" plugin="consents" touches_files="apps/api/src/app/modules/consents/**" covers="cq-9">
+        <description>System keeps a version in awaiting_consent until every listed author has accepted, then moves it to scanning, while one decline returns the version to draft with the decliner named</description>
+        <acceptance>
+          - A version with 3 authors and 2 consents has state awaiting_consent in GET /v1/papers/{id}/v/{n}/consents
+          - After the third consent the version state becomes scanning
+        </acceptance>
+      </feature>
+      <feature index="56" depends_on="1,54" shape="plugin" plugin="consents" touches_files="apps/api/src/app/modules/consents/**" covers="cq-9">
+        <description>API exposes GET /v1/papers/{id}/v/{n}/consents that returns each author with status waiting, signed or declined</description>
+      </feature>
+    </category>
+    <category name="Notifications">
+      <feature index="57" depends_on="1,4" shape="plugin" plugin="notifications" touches_files="apps/api/src/app/modules/notifications/**">
+        <description>System notify(did, kind, payload) persists a row to the notifications table, emailing through SMTP when SMTP_URL is set and logging the email to the outbox otherwise</description>
+      </feature>
+      <feature index="58" depends_on="1,57,3" shape="plugin" plugin="notifications" touches_files="apps/api/src/app/modules/notifications/**">
+        <description>API exposes GET /v1/me/notifications that returns unread and read notifications, and POST /v1/me/notifications/{id}/read marks one read</description>
+      </feature>
+      <feature index="59" depends_on="1,57,52" shape="plugin" plugin="notifications" touches_files="apps/api/src/app/modules/notifications/**" covers="cq-9">
+        <description>System sends each listed co-author a consent link notification when a version enters awaiting_consent</description>
+      </feature>
+    </category>
+    <category name="File Sanitizing">
+      <feature index="60" depends_on="1,43" shape="plugin" plugin="sanitizer" touches_files="apps/api/src/app/modules/sanitizer/**" covers="cq-10">
+        <description>System saves a failed result to the scan_reports table for each PDF (checked with pypdf) when it contains JavaScript, embedded files, Launch or OpenAction actions</description>
+      </feature>
+      <feature index="61" depends_on="1,60" shape="plugin" plugin="sanitizer" touches_files="apps/api/src/app/modules/sanitizer/**" covers="cq-10">
+        <description>System saves a hidden_text finding to scan_reports for hidden text in a PDF (white or near-invisible text, text under 2pt, instruction-like strings such as ignore previous instructions)</description>
+      </feature>
+      <feature index="62" depends_on="1,60" shape="plugin" plugin="sanitizer" touches_files="apps/api/src/app/modules/sanitizer/**" covers="cq-10">
+        <description>System saves bundle findings to scan_reports for path traversal, symlinks and absolute paths in zip and tar bundles, using ClamAV through clamd when CLAMD_SOCKET is set and recording av unavailable otherwise</description>
+      </feature>
+      <feature index="63" depends_on="1,61,62,4,52" shape="plugin" plugin="sanitizer" touches_files="apps/api/src/app/modules/sanitizer/**" covers="cq-10">
+        <description>Background job scans every file of a version in scanning state, saves scan_status to the blobs table, moves a clean version to moderation and holds a failed one with the exact failing check</description>
+      </feature>
+      <feature index="64" depends_on="1,63,12" shape="plugin" plugin="sanitizer" touches_files="apps/api/src/app/modules/sanitizer/**">
+        <description>System creates a node-signed rendition record listing sanitized files and tool versions after a version passes scanning</description>
+      </feature>
+    </category>
+    <category name="Automated Checks">
+      <feature index="65" depends_on="1,43" shape="plugin" plugin="checks" touches_files="apps/api/src/app/modules/checks/**">
+        <description>System saves extracted PDF text to the version_texts table split into paragraphs with stable paragraph ids (sha256 of normalized paragraph text)</description>
+      </feature>
+      <feature index="66" depends_on="1,65" shape="plugin" plugin="checks" touches_files="apps/api/src/app/modules/checks/**" covers="cq-40">
+        <description>System saves similarity_pct to the check_results table, computed against every listed paper using word 5-gram shingle Jaccard</description>
+      </feature>
+      <feature index="67" depends_on="1,65" shape="plugin" plugin="checks" touches_files="apps/api/src/app/modules/checks/**" covers="cq-40">
+        <description>System extracts references from version text and saves references_total and references_unresolved to check_results, resolving DOIs through Crossref only when CROSSREF_ENABLED=1</description>
+      </feature>
+      <feature index="68" depends_on="1,65" shape="plugin" plugin="checks" touches_files="apps/api/src/app/modules/checks/**">
+        <description>System saves metadata_match to check_results, true when the signed title appears in the first page text</description>
+      </feature>
+    </category>
+    <category name="Moderation">
+      <feature index="69" depends_on="1,3" shape="plugin" plugin="moderation" touches_files="apps/api/src/app/modules/moderation/**">
+        <description>API exposes GET /v1/moderation/policies that returns the policy clause list (id, title, text) loaded from policies.yaml</description>
+      </feature>
+      <feature index="70" depends_on="1,69,66,67,63" shape="plugin" plugin="moderation" touches_files="apps/api/src/app/modules/moderation/**" covers="cq-40">
+        <description>API exposes GET /v1/moderation/queue for tier 4 that returns versions in moderation with category, age_hours, similarity_pct, references_unresolved, scan result and new_account flag</description>
+        <acceptance>
+          - GET /v1/moderation/queue as a tier-1 user returns 403 problem details
+          - GET /v1/moderation/queue as a tier-4 user returns 200 with similarity_pct and scan fields per entry
+        </acceptance>
+      </feature>
+      <feature index="71" depends_on="1,70,20,52,15,79" shape="plugin" plugin="moderation" touches_files="apps/api/src/app/modules/moderation/**" covers="cq-11">
+        <description>API exposes POST /v1/moderation/decisions accepting a signed moderation.decision (list, hold, reclassify, reject, delist) that requires a known policy clause and a reason, saves it to the moderation_decisions table and sets the version state</description>
+        <acceptance>
+          - POST /v1/moderation/decisions without a clause returns 422 problem details
+          - POST /v1/moderation/decisions with action list returns 201 and the paper becomes resolvable by its sch: id
+          - GET /v1/records/{cid} returns the decision record publicly
+        </acceptance>
+      </feature>
+      <feature index="72" depends_on="1,71,57" shape="plugin" plugin="moderation" touches_files="apps/api/src/app/modules/moderation/**" covers="cq-11">
+        <description>System sends the submitting author a notification for each moderation decision with the action, clause and reason text</description>
+      </feature>
+      <feature index="73" depends_on="1,71,44" shape="plugin" plugin="moderation" touches_files="apps/api/src/app/modules/moderation/**" covers="cq-39">
+        <description>System saves a tombstoned cid to the denylist table and deletes the blob bytes, while the envelope and log entry remain and verification still passes</description>
+      </feature>
+    </category>
+    <category name="Appeals &amp; Flags">
+      <feature index="74" depends_on="1,71" shape="plugin" plugin="appeals" touches_files="apps/api/src/app/modules/appeals/**" covers="cq-32">
+        <description>User can appeal a moderation decision once via POST /v1/appeals with grounds, which saves an appeal record and returns 409 on a second appeal</description>
+      </feature>
+      <feature index="75" depends_on="1,74" shape="plugin" plugin="appeals" touches_files="apps/api/src/app/modules/appeals/**" covers="cq-32">
+        <description>System saves to appeal_panels a 3-member panel of tier-3 or tier-4 members excluding the deciding moderator and the authors, seeded deterministically from the appeal cid</description>
+      </feature>
+      <feature index="76" depends_on="1,75,15" shape="plugin" plugin="appeals" touches_files="apps/api/src/app/modules/appeals/**" covers="cq-32">
+        <description>API exposes POST /v1/appeals/{cid}/votes for panel members; once 2 of 3 agree the system creates a node-signed appeal.decision with outcome and reasons</description>
+        <acceptance>
+          - Two matching panel votes on POST /v1/appeals/{cid}/votes produce an appeal.decision record retrievable from GET /v1/records/{cid}
+          - A vote from a non-panel member returns 403
+        </acceptance>
+      </feature>
+      <feature index="77" depends_on="1,70" shape="plugin" plugin="flags" touches_files="apps/api/src/app/modules/flags/**" covers="cq-41">
+        <description>User can flag a paper, post or review via POST /v1/flags with a reason category, which saves to the flags table and adds the flag to the moderation queue</description>
+      </feature>
+      <feature index="78" depends_on="1,77,57" shape="plugin" plugin="flags" touches_files="apps/api/src/app/modules/flags/**" covers="cq-41">
+        <description>API exposes GET /v1/flags/{id} that returns the flag status and linked decision cid, and notifies the reporter when decided</description>
+      </feature>
+    </category>
+    <category name="Paper Catalog">
+      <feature index="79" depends_on="1,50,53" shape="plugin" plugin="catalog" touches_files="apps/api/src/app/modules/catalog/**" covers="cq-14,cq-18,cq-13">
+        <description>API exposes GET /v1/papers/{id} accepting a sch: id, a sch: version id or a version cid and that returns title, abstract, authors, categories, licence, status, notices and version n</description>
+        <acceptance>
+          - GET /v1/papers/sch:xxxx-xxxx-xxxx for a listed paper returns 200 with the latest version
+          - GET /v1/papers/sch:xxxx-xxxx-xxxx/v1 returns version 1 after version 2 is listed
+          - GET /v1/papers/{id} for an unlisted draft returns 404 to anonymous readers
+        </acceptance>
+      </feature>
+      <feature index="80" depends_on="1,79" shape="plugin" plugin="catalog" touches_files="apps/api/src/app/modules/catalog/**" covers="cq-12">
+        <description>API exposes GET /v1/papers/{id}/versions that returns the version timeline with n, cid, change_note, listed_at and anchor status</description>
+      </feature>
+      <feature index="81" depends_on="1,79" shape="plugin" plugin="catalog" touches_files="apps/api/src/app/modules/catalog/**" covers="cq-18">
+        <description>API exposes GET /v1/papers/{id}/v/{n}/manifest that returns files with path, cid, size, role, licence and scan status</description>
+      </feature>
+      <feature index="82" depends_on="1,79" shape="plugin" plugin="catalog" touches_files="apps/api/src/app/modules/catalog/**" covers="cq-17">
+        <description>API exposes GET /v1/papers that returns listed papers with tab latest or reviewed, category filter, sort newest, recently_reviewed or recently_updated and cursor pagination, without any vote counts</description>
+        <acceptance>
+          - GET /v1/papers?tab=reviewed returns only papers with status reviewed
+          - GET /v1/papers?category=cs.AI returns only cs.AI papers
+        </acceptance>
+      </feature>
+    </category>
+    <category name="Paper Status">
+      <feature index="83" depends_on="1,11" shape="plugin" plugin="status" touches_files="apps/api/src/app/modules/status/**" covers="cq-31">
+        <description>System compute_status(records) deterministically returns preprint, under_review, reviewed, contested, corrected or retracted from moderation, review and notice records only (never ai.review), with documented precedence</description>
+      </feature>
+      <feature index="84" depends_on="1,83,12,53,79" shape="plugin" plugin="status" touches_files="apps/api/src/app/modules/status/**" covers="cq-31">
+        <description>System saves a recomputed status to papers.status through a ledger subscription whenever a review, notice or moderation record for that paper is appended</description>
+        <acceptance>
+          - A listed paper with two revealed formal reviews recommending minor revisions shows status reviewed in GET /v1/papers/{id}
+          - A paper with a retraction record shows status retracted in GET /v1/papers/{id}
+        </acceptance>
+      </feature>
+    </category>
+    <category name="Search &amp; Feeds">
+      <feature index="85" depends_on="1,65,52" shape="plugin" plugin="search" touches_files="apps/api/src/app/modules/search/**" covers="cq-20">
+        <description>System saves into the SQLite FTS5 table search_fts each listed version's title, abstract and text through a ledger subscription</description>
+      </feature>
+      <feature index="86" depends_on="1,85" shape="plugin" plugin="search" touches_files="apps/api/src/app/modules/search/**" covers="cq-20">
+        <description>API exposes GET /v1/search?q= that returns ranked results with facet counts and filters for category, date range, status and has_code</description>
+        <acceptance>
+          - GET /v1/search?q=&lt;word from a listed title&gt; returns that paper in the first 5 results
+          - GET /v1/search?q=x&amp;status=reviewed returns only reviewed papers with facets in the body
+        </acceptance>
+      </feature>
+      <feature index="87" depends_on="1,85" shape="plugin" plugin="search" touches_files="apps/api/src/app/modules/search/**" covers="cq-20">
+        <description>API exposes GET /v1/search/semantic?q= that returns listed versions ranked by cosine similarity of embeddings stored in the embeddings table from a pluggable embedder (deterministic hashing embedder by default, Ollama when OLLAMA_URL is set)</description>
+      </feature>
+      <feature index="88" depends_on="1,82" shape="plugin" plugin="feeds" touches_files="apps/api/src/app/modules/feeds/**" covers="cq-22">
+        <description>API exposes GET /v1/feeds/{category} that returns an Atom feed of newly listed papers with the sch: id and status per entry</description>
+      </feature>
+      <feature index="89" depends_on="1,88" shape="plugin" plugin="feeds" touches_files="apps/api/src/app/modules/feeds/**" covers="cq-22">
+        <description>API returns a JSON Feed 1.1 document from GET /v1/feeds/{category}?format=json</description>
+      </feature>
+    </category>
+    <category name="Export &amp; Rebuild">
+      <feature index="90" depends_on="1,79" shape="plugin" plugin="export" touches_files="apps/api/src/app/modules/export/**" covers="cq-23">
+        <description>API exposes GET /v1/papers/{id}/cite?format=bibtex|ris that returns a citation with the sch: version id and a retraction note when retracted</description>
+      </feature>
+      <feature index="91" depends_on="1,79,17" shape="plugin" plugin="export" touches_files="apps/api/src/app/modules/export/**" covers="cq-23">
+        <description>API exposes GET /v1/export/paper/{id}.car that returns a CARv1 archive of every record, file and log entry for the paper</description>
+      </feature>
+      <feature index="92" depends_on="1,91" shape="plugin" plugin="export" touches_files="apps/api/src/app/modules/export/**">
+        <description>API exposes GET /v1/export/user/{did}.car that returns a CARv1 archive of every record authored by the DID</description>
+      </feature>
+      <feature index="93" depends_on="1,91,73" shape="plugin" plugin="export" touches_files="apps/api/src/app/modules/export/**" covers="cq-38">
+        <description>API exposes GET /v1/export/archive.car that returns the complete public archive with the signed log head and excluding tombstoned bytes</description>
+      </feature>
+      <feature index="94" depends_on="1,79" shape="plugin" plugin="export" touches_files="apps/api/src/app/modules/export/**">
+        <description>API exposes GET /v1/oai?verb=ListRecords that returns OAI-PMH Dublin Core XML for listed papers</description>
+      </feature>
+    </category>
+    <category name="Command-line Verifier">
+      <feature index="95" depends_on="1,11" shape="plugin" plugin="cli" touches_files="apps/api/packages/cli/**" covers="cq-44,cq-23">
+        <description>System provides `scholium verify &lt;file.car&gt;` that verifies the paper offline and prints the plain-language checklist, exiting 0 when verified and 1 on any signature or hash mismatch</description>
+      </feature>
+      <feature index="96" depends_on="1,95" shape="plugin" plugin="cli" touches_files="apps/api/packages/cli/**" covers="cq-44,cq-19">
+        <description>System provides `scholium verify sch:xxxx-xxxx-xxxx/vN --node URL` that fetches records and proofs from a node and prints the same checklist and exit code</description>
+      </feature>
+      <feature index="97" depends_on="1,95" shape="plugin" plugin="cli" touches_files="apps/api/packages/cli/**">
+        <description>System provides `scholium verify-file &lt;path&gt; &lt;sch-id&gt;` that prints whether the file's CID matches the signed manifest, exiting 1 on mismatch</description>
+      </feature>
+      <feature index="98" depends_on="1,95" shape="plugin" plugin="cli" touches_files="apps/api/packages/cli/**" covers="cq-38,cq-37">
+        <description>System provides `scholium rebuild &lt;archive.car&gt; --db &lt;path&gt;` that verifies the log chain and every record, rebuilds paper, version and status views into a fresh database and prints the paper count</description>
+      </feature>
+    </category>
+    <category name="Discussion &amp; Annotations">
+      <feature index="99" depends_on="1,20,79" shape="plugin" plugin="discussion" touches_files="apps/api/src/app/modules/discussion/**" covers="cq-24">
+        <description>System accepts discussion.post records from tier-1 members, and GET /v1/papers/{id}/threads returns threads with replies ordered by helpful votes then time (persisted to the discussion_posts table)</description>
+      </feature>
+      <feature index="100" depends_on="1,99" shape="plugin" plugin="discussion" touches_files="apps/api/src/app/modules/discussion/**" covers="cq-24">
+        <description>API exposes POST /v1/papers/{id}/threads accepting a signed discussion.post and that returns 201 with the post cid</description>
+        <acceptance>
+          - POST /v1/papers/{id}/threads by a tier-0 account returns 403
+          - POST /v1/papers/{id}/threads by a tier-1 member returns 201 and the post appears in GET /v1/papers/{id}/threads
+        </acceptance>
+      </feature>
+      <feature index="101" depends_on="1,99" shape="plugin" plugin="discussion" touches_files="apps/api/src/app/modules/discussion/**" covers="cq-24">
+        <description>User can mark a post helpful once via POST /v1/posts/{cid}/helpful (returns 201, a repeat returns 409), which only reorders the thread and never changes papers.status</description>
+      </feature>
+      <feature index="102" depends_on="1,99" shape="plugin" plugin="discussion" touches_files="apps/api/src/app/modules/discussion/**">
+        <description>User can mute another DID via POST /v1/me/mutes (returns 201) so GET /v1/papers/{id}/threads omits their posts for that user</description>
+      </feature>
+      <feature index="103" depends_on="1,20,65" shape="plugin" plugin="annotations" touches_files="apps/api/src/app/modules/annotations/**" covers="cq-21">
+        <description>API exposes POST /v1/annotations accepting a signed discussion.post whose anchor names a version cid, paragraph_id, quote and offset, that returns 201</description>
+      </feature>
+      <feature index="104" depends_on="1,103" shape="plugin" plugin="annotations" touches_files="apps/api/src/app/modules/annotations/**" covers="cq-21">
+        <description>API exposes GET /v1/papers/{id}/v/{n}/annotations that returns annotations grouped by paragraph_id so they re-attach to the same paragraph on reload</description>
+        <acceptance>
+          - An annotation created with paragraph_id P is returned under P by GET /v1/papers/{id}/v/{n}/annotations
+        </acceptance>
+      </feature>
+    </category>
+    <category name="Formal Review">
+      <feature index="105" depends_on="1,79,57" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**">
+        <description>API exposes POST /v1/papers/{id}/review-invitations that saves to review_invitations an invitation from an author or tier-4 member to a tier-3 reviewer in the paper category</description>
+      </feature>
+      <feature index="106" depends_on="1,105,29" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-26">
+        <description>API exposes GET /v1/papers/{id}/coi-check that returns checks for not an author, no co-authorship in 3 years and different institution for the calling reviewer</description>
+      </feature>
+      <feature index="107" depends_on="1,106,20" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-26">
+        <description>API exposes POST /v1/reviews/commit accepting a review.commit (target version, commitment hash, per-paper review key, nullifier) from a tier-3 member, that returns 409 for a second review by the same person and 403 for a co-author</description>
+        <acceptance>
+          - A second POST /v1/reviews/commit by the same reviewer on the same paper returns 409
+          - POST /v1/reviews/commit by a listed co-author returns 403
+          - POST /v1/reviews/commit by a tier-3 non-author returns 201
+        </acceptance>
+      </feature>
+      <feature index="108" depends_on="1,107" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-26">
+        <description>System saves each review's reviewer identity to the review_escrows table only as a sealed box Enc(committee_public_key, reviewer_did), with uniqueness tracked by an HMAC token, never the plaintext mapping</description>
+      </feature>
+      <feature index="109" depends_on="1,108" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-25">
+        <description>API exposes POST /v1/reviews/reveal accepting a review.formal whose commitment matches, requiring scores 1-5 with justification for soundness, evidence, reproducibility, novelty, clarity and limitations plus confidence and recommendation, and returns 422 for free-text-only</description>
+        <acceptance>
+          - POST /v1/reviews/reveal with a report but no rubric scores returns 422
+          - POST /v1/reviews/reveal whose content does not match the commitment returns 422
+          - POST /v1/reviews/reveal with all six scores returns 201
+        </acceptance>
+      </feature>
+      <feature index="110" depends_on="1,109" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-27">
+        <description>API exposes GET /v1/papers/{id}/reviews that returns 200 with report bodies hidden until two reviews are committed on the version or 21 days pass since the first commit, labelling anonymous reviewers Reviewer A, Reviewer B per paper</description>
+        <acceptance>
+          - With one committed review, GET /v1/papers/{id}/reviews as the second reviewer returns the review without its report
+          - After a second commit, GET /v1/papers/{id}/reviews returns both reports
+        </acceptance>
+      </feature>
+      <feature index="111" depends_on="1,110" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-30">
+        <description>User can sign a formal review with their name (signed true) so GET /v1/profiles/{did}/reviews returns it for public credit</description>
+      </feature>
+      <feature index="112" depends_on="1,110" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-28">
+        <description>System accepts an updated review.formal with prev pointing at the reviewer's earlier review against a newer version, so GET /v1/papers/{id}/reviews returns both in its history</description>
+      </feature>
+      <feature index="113" depends_on="1,110" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-29">
+        <description>API exposes POST /v1/reviews/{cid}/rating for tier-3 members who are neither the reviewer nor an author that saves a review.rating 1-5 to review_ratings</description>
+      </feature>
+      <feature index="114" depends_on="1,110" shape="plugin" plugin="reviews" touches_files="apps/api/src/app/modules/reviews/**" covers="cq-28">
+        <description>API exposes POST /v1/reviews/{cid}/response accepting a review.response from a paper author with point-by-point replies keyed by rubric dimension and saves it to review_responses</description>
+        <acceptance>
+          - POST /v1/reviews/{cid}/response by a non-author returns 403
+          - POST /v1/reviews/{cid}/response by an author returns 201 and the reply appears with the review in GET /v1/papers/{id}/reviews
+        </acceptance>
+      </feature>
+    </category>
+    <category name="AI Pre-review">
+      <feature index="115" depends_on="1" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-33">
+        <description>System defines an LLM provider interface with a deterministic fake provider, an Anthropic provider (AI_HOSTED_MODEL default claude-sonnet-5-5) and an Ollama provider, that returns a PrivateDraftError error message when a hosted provider is asked to process an unlisted draft</description>
+      </feature>
+      <feature index="116" depends_on="1,115,65,61" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-33">
+        <description>System creates agent input from the sanitized version text as quoted paragraphs with ids passed in a separate data block, never concatenated into instructions, plus the hidden_text findings</description>
+      </feature>
+      <feature index="117" depends_on="1,116" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-33,cq-35">
+        <description>Agent prompts for methodology, literature, reproducibility and integrity live in prompts/*.md and each agent returns findings with claim, severity, confidence and evidence (span, reference_id or log_line), with the prompt-set sha256 exposed as prompt_set_hash</description>
+      </feature>
+      <feature index="118" depends_on="1,117" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-34">
+        <description>System rejects every finding whose evidence span is not found verbatim in the paper text, whose reference_id is unknown or whose log_line is absent from the run log</description>
+      </feature>
+      <feature index="119" depends_on="1,117" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-33">
+        <description>Agent for reproducibility runs the code bundle with docker --network none, read-only root, CPU, memory and 10-minute time limits, that returns log lines as evidence or a not_run finding when docker is unavailable</description>
+      </feature>
+      <feature index="120" depends_on="1,118,119" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-33">
+        <description>Agent meta-reviewer creates the final findings list by merging duplicates, flagging agent disagreements and phrasing integrity findings as needs a human check, never fraud or plagiarism detected</description>
+      </feature>
+      <feature index="121" depends_on="1,120,4,12,52" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-33,cq-35">
+        <description>Background job runs the agent pipeline after a version is listed and appends a node-signed ai.review record with agents, models with versions, prompt_set_hash and findings, with no code path writing papers.status (persisted to the ai_reviews table)</description>
+      </feature>
+      <feature index="122" depends_on="1,121,79" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-33">
+        <description>API exposes GET /v1/papers/{id}/ai-reviews that returns reports labelled advisory with findings grouped by agent</description>
+        <acceptance>
+          - With the fake provider, GET /v1/papers/{id}/ai-reviews for a listed paper returns 200 with advisory true and four agents
+          - Every finding in GET /v1/papers/{id}/ai-reviews has an evidence object
+          - The paper status in GET /v1/papers/{id} is unchanged after the AI review is appended
+        </acceptance>
+      </feature>
+      <feature index="123" depends_on="1,122" shape="plugin" plugin="ai_review" touches_files="apps/api/src/app/modules/ai_review/**" covers="cq-36">
+        <description>API exposes POST /v1/ai-reviews/{cid}/rebuttal for paper authors per finding_id and POST /v1/ai-reviews/{cid}/assessments for tier-3 reviewers marking a finding confirmed or wrong (both return 201), both shown in GET /v1/papers/{id}/ai-reviews</description>
+        <acceptance>
+          - POST /v1/ai-reviews/{cid}/rebuttal by a non-author returns 403
+          - A rebuttal posted by an author appears beside its finding in GET /v1/papers/{id}/ai-reviews
+        </acceptance>
+      </feature>
+    </category>
+    <category name="arXiv Import">
+      <feature index="124" depends_on="1,20,47" shape="plugin" plugin="imports" touches_files="apps/api/src/app/modules/imports/**" covers="cq-16">
+        <description>API exposes POST /v1/imports/arxiv for tier 4 that creates a node-signed external.mirror record from arXiv metadata (ARXIV_MOCK=1 for tests) marked unclaimed</description>
+      </feature>
+      <feature index="125" depends_on="1,124,50,32" shape="plugin" plugin="imports" touches_files="apps/api/src/app/modules/imports/**" covers="cq-16">
+        <description>User can claim an imported paper by signing a paper.version that references the external.mirror cid, which saves claimed true to the papers table when the signer's ORCID matches</description>
+      </feature>
+    </category>
+    <category name="Dashboard API">
+      <feature index="126" depends_on="1,56,110,58" shape="plugin" plugin="me" touches_files="apps/api/src/app/modules/me/**" covers="cq-43">
+        <description>API exposes GET /v1/me/dashboard that returns needs_attention (consents to sign, review invitations, author replies, moderation outcomes), my_papers with status and review counts and my_reviews with sealed or revealed state</description>
+        <acceptance>
+          - GET /v1/me/dashboard for a co-author with a pending consent lists it in needs_attention
+        </acceptance>
+      </feature>
+    </category>
+    <category name="Network Transparency">
+      <feature index="127" depends_on="1,14,71" shape="plugin" plugin="network" touches_files="apps/api/src/app/modules/network/**">
+        <description>API exposes GET /v1/network that returns node did, log head seq, last anchor status pending, replica summary 1 of 1 local and moderation decision counts by clause</description>
+      </feature>
+    </category>
+    <category name="Admin Tools">
+      <feature index="128" depends_on="1,24" shape="plugin" plugin="admin" touches_files="apps/api/src/app/modules/admin/**">
+        <description>Admin can set an account trust tier with `uv run python -m app.modules.admin set-tier &lt;did&gt; &lt;tier&gt;`, which updates the accounts table and prints the new tier</description>
+      </feature>
+      <feature index="129" depends_on="1,128,71,109,121,41" shape="plugin" plugin="admin" touches_files="apps/api/src/app/modules/admin/**">
+        <description>Admin can load demo data with `uv run python -m app.modules.admin seed-demo`, which creates demo authors, reviewers and a moderator, signs records client-side with keys written to .demo-keys.json and prints the created sch: ids</description>
+      </feature>
+    </category>
+    <category name="Web Foundation">
+      <feature index="130" depends_on="1" shape="core" touches_files="apps/web/src/styles/**,apps/web/tailwind.config.ts">
+        <description>UI displays every screen with the design.md tokens as CSS variables for light and dark themes (bg, surface, ink, ink-2, rule, accent, verified, pending, critical, ai, margin-note) in a Tailwind theme with Source Serif 4, Inter and JetBrains Mono, 4px spacing scale and reduced-motion support</description>
+      </feature>
+      <feature index="131" depends_on="1" shape="core" touches_files="apps/web/src/lib/api/**">
+        <description>Frontend api client in src/lib/api wraps fetch to NEXT_PUBLIC_API_URL, attaches the access token, refreshes on 401 and surfaces RFC 9457 problem details as typed errors</description>
+      </feature>
+      <feature index="132" depends_on="1,130" shape="core" touches_files="apps/web/src/components/nav/**">
+        <description>UI displays the global navigation (lowercase scholium wordmark, search field, categories, Submit, notifications, avatar) on desktop and a bottom bar (Home, Search, Submit, Inbox, Me) under 640px</description>
+      </feature>
+    </category>
+    <category name="Web Components">
+      <feature index="133" depends_on="1,130" shape="plugin" plugin="ui-kit" touches_files="apps/web/src/features/ui-kit/**,apps/web/src/app/(ui-kit)/**">
+        <description>UI provides StatusChip components that display an icon plus word for Preprint, Under review (n), Reviewed, Contested, Corrected and Retracted, never colour alone</description>
+      </feature>
+      <feature index="134" depends_on="1,133" shape="plugin" plugin="ui-kit" touches_files="apps/web/src/features/ui-kit/**,apps/web/src/app/(ui-kit)/**">
+        <description>UI provides a VerifyBadge that displays five states (Verified, Signed · anchor pending, Checking…, Could not check, Verification failed) using the design.md icons and labels</description>
+      </feature>
+      <feature index="135" depends_on="1,133" shape="plugin" plugin="ui-kit" touches_files="apps/web/src/features/ui-kit/**,apps/web/src/app/(ui-kit)/**">
+        <description>UI provides an IdPill rendering sch: ids in monospace that copies on click and shows a Copied toast notification</description>
+      </feature>
+      <feature index="136" depends_on="1,133" shape="plugin" plugin="ui-kit" touches_files="apps/web/src/features/ui-kit/**,apps/web/src/app/(ui-kit)/**" covers="cq-13">
+        <description>UI provides a DecisionBanner that displays Retracted, Corrected, A newer version exists and Content removed for legal reasons that links to the record and policy clause</description>
+      </feature>
+      <feature index="137" depends_on="1,133,131" shape="plugin" plugin="ui-kit" touches_files="apps/web/src/features/ui-kit/**,apps/web/src/app/(ui-kit)/**">
+        <description>UI provides a RecordLink that displays the raw signed JSON from GET /v1/records/{cid} in a side sheet, plus an EmptyState with one sentence and one action</description>
+      </feature>
+    </category>
+    <category name="Browser Verifier">
+      <feature index="138" depends_on="1,6" shape="plugin" plugin="verify-core" touches_files="apps/web/src/features/verify-core/**,apps/web/src/app/(verify-core)/**" covers="cq-19">
+        <description>Frontend verify-core computes record CIDs with @ipld/dag-cbor and multiformats and returns identical ids for every entry in apps/api/packages/record-core/vectors/records.json</description>
+      </feature>
+      <feature index="139" depends_on="1,138,11" shape="plugin" plugin="verify-core" touches_files="apps/web/src/features/verify-core/**,apps/web/src/app/(verify-core)/**" covers="cq-19">
+        <description>Frontend verify-core verifyPaper(records, proofs) checks Ed25519 signatures with @noble/ed25519, prev links, consents and supersession and returns the same report shape as the Python rc-verify for the shared vectors</description>
+      </feature>
+    </category>
+    <category name="Web Sign-in &amp; Onboarding">
+      <feature index="140" depends_on="1,131" shape="plugin" plugin="web-auth" touches_files="apps/web/src/features/web-auth/**,apps/web/src/app/(web-auth)/**" covers="cq-1">
+        <description>Frontend creates a non-extractable Ed25519 WebCrypto signing key saved to IndexedDB, unlocked by a WebAuthn passkey prompt, so the private key never leaves the device</description>
+      </feature>
+      <feature index="141" depends_on="1,140,24" shape="plugin" plugin="web-auth" touches_files="apps/web/src/features/web-auth/**,apps/web/src/app/(web-auth)/**" covers="cq-1">
+        <description>UI displays a /signin page whose button signs the POST /v1/auth/challenge nonce with the device key, which redirects to /onboarding for a new account</description>
+      </feature>
+      <feature index="142" depends_on="1,141,31,36" shape="plugin" plugin="web-auth" touches_files="apps/web/src/features/web-auth/**,apps/web/src/app/(web-auth)/**" covers="cq-2,cq-4">
+        <description>UI displays the /onboarding steps (passkey created, link ORCID, pick categories to follow, set recovery guardians) with guardians required before first submission</description>
+      </feature>
+      <feature index="143" depends_on="1,140,138" shape="plugin" plugin="web-auth" touches_files="apps/web/src/features/web-auth/**,apps/web/src/app/(web-auth)/**">
+        <description>Frontend signRecord(type, body, prev) returns a signed envelope it builds, computes its CID with verify-core and signs it with the device key behind a Sign and submit passkey prompt</description>
+      </feature>
+      <feature index="144" depends_on="1,143,40" shape="plugin" plugin="web-auth" touches_files="apps/web/src/features/web-auth/**,apps/web/src/app/(web-auth)/**" covers="cq-4">
+        <description>UI displays a /recover page where a user identifies by ORCID, sees guardian approval progress (2 of 3 approvals) and the 72-hour safety window with a cancel link</description>
+      </feature>
+    </category>
+    <category name="Web Home Feed">
+      <feature index="145" depends_on="1,82,133,131,132" shape="plugin" plugin="feed" touches_files="apps/web/src/features/feed/**,apps/web/src/app/(feed)/**" covers="cq-17">
+        <description>UI displays the home feed at / with Latest, Reviewed and Following tabs, category and sort selectors and rows showing serif title, authors, categories, version, age, two-line abstract and status chips, with no vote counts</description>
+      </feature>
+      <feature index="146" depends_on="1,145,88" shape="plugin" plugin="feed" touches_files="apps/web/src/features/feed/**,apps/web/src/app/(feed)/**" covers="cq-17,cq-22">
+        <description>UI displays category pages at /c/[category] listing that category's papers with the same row layout and an Atom feed link</description>
+      </feature>
+    </category>
+    <category name="Web Paper Page Tabs">
+      <feature index="147" depends_on="1,110,133,131" shape="plugin" plugin="paper-reviews" touches_files="apps/web/src/features/paper-reviews/**,apps/web/src/app/(paper-reviews)/**" covers="cq-18,cq-27">
+        <description>UI provides a ReviewsTab that displays review cards (reviewer label, recommendation, rubric dots with text equivalents like 4 of 5, expandable report, author replies) and a median-per-dimension summary bar</description>
+      </feature>
+      <feature index="148" depends_on="1,123,133,131" shape="plugin" plugin="paper-ai" touches_files="apps/web/src/features/paper-ai/**,apps/web/src/app/(paper-ai)/**" covers="cq-33,cq-36">
+        <description>UI provides an AiTab that displays the purple --ai panel, the fixed banner Advisory. Generated by AI agents. Not a peer review., findings grouped by agent with evidence links and Rebut, Confirm and Wrong buttons</description>
+      </feature>
+      <feature index="149" depends_on="1,100,77,143" shape="plugin" plugin="paper-discussion" touches_files="apps/web/src/features/paper-discussion/**,apps/web/src/app/(paper-discussion)/**" covers="cq-24,cq-41">
+        <description>UI provides a DiscussionTab that displays threads ordered by helpful votes with a reply form and a Report flag action on every post</description>
+      </feature>
+      <feature index="150" depends_on="1,149,104" shape="plugin" plugin="paper-discussion" touches_files="apps/web/src/features/paper-discussion/**,apps/web/src/app/(paper-discussion)/**" covers="cq-21">
+        <description>UI displays margin markers beside annotated paragraphs and lets a user select a paragraph and press A to create an annotation that persists after reload</description>
+      </feature>
+      <feature index="151" depends_on="1,80,81,131" shape="plugin" plugin="paper-meta" touches_files="apps/web/src/features/paper-meta/**,apps/web/src/app/(paper-meta)/**" covers="cq-12,cq-18">
+        <description>UI provides components that display a VersionsTab (timeline with change notes and anchor status) and FilesTab (files with size, licence, scan status and download links) components</description>
+      </feature>
+      <feature index="152" depends_on="1,139,16,134,135" shape="plugin" plugin="paper-proof" touches_files="apps/web/src/features/paper-proof/**,apps/web/src/app/(paper-proof)/**" covers="cq-19">
+        <description>UI provides a ProofTab that runs verify-core in the browser and shows the plain-language checklist (signed by all authors, history intact, files match, timestamp or anchor pending, no retraction) with technical details and the offline CLI command</description>
+      </feature>
+    </category>
+    <category name="Web Paper Page">
+      <feature index="153" depends_on="1,79,147,148,150,151,152,136" shape="plugin" plugin="paper-page" touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**" covers="cq-18,cq-14">
+        <description>UI displays /p/[id] and /p/[id]/v[n] with title, authors, status chip, version of total, licence, PDF, HTML, Cite and Download actions, a 720px reading column and a 360px margin panel of tabs Reviews, AI, Discussion, Versions, Files and Proof</description>
+      </feature>
+      <feature index="154" depends_on="1,153" shape="plugin" plugin="paper-page" touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**" covers="cq-13">
+        <description>UI shows the full-width status banner (Retracted, Corrected, A newer version exists, Content removed) above the title on every version of the paper</description>
+      </feature>
+      <feature index="155" depends_on="1,153,90,91" shape="plugin" plugin="paper-page" touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**" covers="cq-23">
+        <description>UI shows a Cite dialog with BibTeX and RIS copied from GET /v1/papers/{id}/cite and a Download menu with the paper archive</description>
+      </feature>
+      <feature index="156" depends_on="1,153" shape="plugin" plugin="paper-page" touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**">
+        <description>UI shows the margin panel as a collapsible drawer between 1024 and 1279px and as a bottom sheet with the same tabs under 1024px</description>
+      </feature>
+      <feature index="185" depends_on="1,153,182" shape="plugin" plugin="paper-page" touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**" covers="cq-18">
+        <description>UI displays the reading column as HTML paragraphs from GET /v1/papers/{id}/v/{n}/text with KaTeX math, and a PDF view toggle using PDF.js</description>
+      </feature>
+      <feature index="186" depends_on="1,185,183" shape="plugin" plugin="paper-page" touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**" covers="cq-12">
+        <description>UI displays a compare view from the Versions tab showing the paragraph diff between two versions</description>
+      </feature>
+      <feature index="187" depends_on="1,186,105" shape="plugin" plugin="paper-page" touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**">
+        <description>UI displays an Invite reviewer action for authors that sends POST /v1/papers/{id}/review-invitations</description>
+      </feature>
+    </category>
+    <category name="Web Search">
+      <feature index="157" depends_on="1,86,87,133,132" shape="plugin" plugin="search-page" touches_files="apps/web/src/features/search-page/**,apps/web/src/app/(search-page)/**" covers="cq-20">
+        <description>UI displays /search?q= with results, facet filters for category, date, status and code available, and a semantic toggle calling GET /v1/search/semantic</description>
+      </feature>
+      <feature index="184" depends_on="1,157,29" shape="plugin" plugin="search-page" touches_files="apps/web/src/features/search-page/**,apps/web/src/app/(search-page)/**" covers="cq-14,cq-20">
+        <description>UI redirects to the paper page when the search field receives a sch: id and displays an Authors section matching profile names</description>
+      </feature>
+    </category>
+    <category name="Web Submit Wizard">
+      <feature index="158" depends_on="1,47,143" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**" covers="cq-7">
+        <description>UI displays /submit step 1 Files with drag-and-drop PDF, LaTeX, code and data, resumable tus-js-client uploads, per-file fingerprint progress and stated size limits</description>
+      </feature>
+      <feature index="159" depends_on="1,158" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**" covers="cq-15">
+        <description>UI displays step 2 Details with title, abstract, categories and a licence picker defaulting to CC BY 4.0 with a one-line explanation per option</description>
+      </feature>
+      <feature index="160" depends_on="1,159,56" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**" covers="cq-9">
+        <description>UI displays step 3 Authors to add co-authors by DID, ORCID or email with CRediT roles and order, plus a consent tracker showing Waiting, Signed or Declined</description>
+      </feature>
+      <feature index="161" depends_on="1,160,68,63" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**" covers="cq-10">
+        <description>UI displays step 4 Checks with live file safety, references resolved, similarity and metadata match results from the version's check results</description>
+      </feature>
+      <feature index="162" depends_on="1,161,50" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**" covers="cq-7">
+        <description>UI displays step 5 Sign with a summary card and a Sign and submit button that signs paper.genesis, manifest and paper.version and shows a status tracker through consents, moderation, listed and AI pre-review</description>
+      </feature>
+      <feature index="163" depends_on="1,162" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**" covers="cq-12">
+        <description>UI displays a New version form from the paper page that pre-fills details, requires a change note and signs a paper.version with prev set to the latest version</description>
+      </feature>
+      <feature index="164" depends_on="1,162,54" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**" covers="cq-9">
+        <description>UI displays a /consent/[version] page where a co-author reviews the version and signs a coauthor.consent accept or decline</description>
+      </feature>
+      <feature index="188" depends_on="1,163" shape="plugin" plugin="submit" touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**">
+        <description>UI saves the submit wizard draft to IndexedDB on every change and displays Draft saved, restoring it on return to /submit</description>
+      </feature>
+    </category>
+    <category name="Web Review Form">
+      <feature index="165" depends_on="1,106,143" shape="plugin" plugin="review-form" touches_files="apps/web/src/features/review-form/**,apps/web/src/app/(review-form)/**" covers="cq-25">
+        <description>UI displays /review/[id] with the paper on the left and a rubric form on the right (six 1-5 radios each with required justification, confidence, recommendation, AI assistance checkbox) and the anonymity notice</description>
+      </feature>
+      <feature index="166" depends_on="1,165,109" shape="plugin" plugin="review-form" touches_files="apps/web/src/features/review-form/**,apps/web/src/app/(review-form)/**" covers="cq-26,cq-27">
+        <description>UI shows the conflict check results before the form and a Commit review button that signs review.commit then shows Your review is sealed with the reveal date</description>
+      </feature>
+      <feature index="167" depends_on="1,166,111" shape="plugin" plugin="review-form" touches_files="apps/web/src/features/review-form/**,apps/web/src/app/(review-form)/**" covers="cq-30">
+        <description>UI displays a Sign with my name instead option, a stylometry tip for anonymous reviewers and Cite in review for selected paper text</description>
+      </feature>
+      <feature index="168" depends_on="1,166,114,113" shape="plugin" plugin="review-form" touches_files="apps/web/src/features/review-form/**,apps/web/src/app/(review-form)/**" covers="cq-28,cq-29">
+        <description>UI displays a point-by-point reply form for authors on a revealed review plus a quality rating control for tier-3 reviewers on the review card</description>
+      </feature>
+    </category>
+    <category name="Web Dashboard">
+      <feature index="169" depends_on="1,126,133,132" shape="plugin" plugin="dashboard" touches_files="apps/web/src/features/dashboard/**,apps/web/src/app/(dashboard)/**" covers="cq-43">
+        <description>UI displays /me with cards Needs your attention, My papers (status, review count), My reviews (sealed, revealed, awaiting author), Credentials and Notifications</description>
+      </feature>
+      <feature index="170" depends_on="1,169,37,143" shape="plugin" plugin="dashboard" touches_files="apps/web/src/features/dashboard/**,apps/web/src/app/(dashboard)/**" covers="cq-4">
+        <description>UI displays /me/security with devices, recovery guardians 3 of 5, last key rotation and a Rotate key action</description>
+      </feature>
+      <feature index="171" depends_on="1,169,30,111" shape="plugin" plugin="dashboard" touches_files="apps/web/src/features/dashboard/**,apps/web/src/app/(dashboard)/**" covers="cq-6,cq-30">
+        <description>UI displays /u/[did] profile with name, affiliation, ORCID, tier and signed reviews, plus an Erase my profile action on the owner's settings</description>
+      </feature>
+      <feature index="190" depends_on="1,171,180" shape="plugin" plugin="dashboard" touches_files="apps/web/src/features/dashboard/**,apps/web/src/app/(dashboard)/**" covers="cq-17">
+        <description>UI displays follow toggles on category pages and a saved searches list on /me with delete actions</description>
+      </feature>
+    </category>
+    <category name="Web Moderation Console">
+      <feature index="172" depends_on="1,70,133,132" shape="plugin" plugin="mod-console" touches_files="apps/web/src/features/mod-console/**,apps/web/src/app/(mod-console)/**" covers="cq-40">
+        <description>UI displays /mod for tier 4 with a queue table of paper, category, age and signals (similarity %, unresolved references, scan result, new-account flag)</description>
+      </feature>
+      <feature index="173" depends_on="1,172,71,143" shape="plugin" plugin="mod-console" touches_files="apps/web/src/features/mod-console/**,apps/web/src/app/(mod-console)/**" covers="cq-11">
+        <description>UI displays a moderation detail view with the paper beside a decision form (action, required policy clause, required reason, author preview) stating This decision is a public signed record</description>
+      </feature>
+      <feature index="174" depends_on="1,173,76,78" shape="plugin" plugin="mod-console" touches_files="apps/web/src/features/mod-console/**,apps/web/src/app/(mod-console)/**" covers="cq-32,cq-41">
+        <description>UI displays flags and appeals in /mod with the panel vote form for drawn panel members</description>
+      </feature>
+    </category>
+    <category name="Web Verify &amp; Network">
+      <feature index="175" depends_on="1,139,81,134" shape="plugin" plugin="verify-page" touches_files="apps/web/src/features/verify-page/**,apps/web/src/app/(verify-page)/**" covers="cq-19">
+        <description>UI displays /verify where a dropped file's CID is computed in the browser and compared with a sch: version manifest, showing This file does not match what the authors signed on mismatch</description>
+      </feature>
+      <feature index="176" depends_on="1,127,132" shape="plugin" plugin="network-page" touches_files="apps/web/src/features/network-page/**,apps/web/src/app/(network-page)/**">
+        <description>UI displays /network with node standing, log head, anchor pending state, replica summary and moderation statistics by clause</description>
+      </feature>
+      <feature index="189" depends_on="1,69,132" shape="plugin" plugin="policies-page" touches_files="apps/web/src/features/policies-page/**,apps/web/src/app/(policies-page)/**" covers="cq-11">
+        <description>UI displays /policies listing moderation policy clauses from GET /v1/moderation/policies with anchors linked from decision banners</description>
+      </feature>
+    </category>
+    <category name="Follows &amp; Saved Searches">
+      <feature index="179" depends_on="1,82" shape="plugin" plugin="follows" touches_files="apps/api/src/app/modules/follows/**" covers="cq-17">
+        <description>User can follow a category via PUT /v1/me/follows/{category} (returns 204), saved to the follows table, and GET /v1/papers?tab=following returns papers from followed categories</description>
+      </feature>
+      <feature index="180" depends_on="1,179,86" shape="plugin" plugin="follows" touches_files="apps/api/src/app/modules/follows/**" covers="cq-22">
+        <description>User can save a search via POST /v1/me/saved-searches (returns 201), saved to the saved_searches table</description>
+      </feature>
+      <feature index="181" depends_on="1,180,57,4" shape="plugin" plugin="follows" touches_files="apps/api/src/app/modules/follows/**" covers="cq-22">
+        <description>Background job sends a daily email digest listing new papers matching each user's follows and saved searches</description>
+      </feature>
+    </category>
+    <category name="Reading &amp; Compare">
+      <feature index="182" depends_on="1,65,79" shape="plugin" plugin="reading" touches_files="apps/api/src/app/modules/reading/**" covers="cq-18,cq-21">
+        <description>API exposes GET /v1/papers/{id}/v/{n}/text that returns the version paragraphs with paragraph_id, position and text for the HTML reading view</description>
+        <acceptance>
+          - GET /v1/papers/{id}/v/{n}/text for a listed version returns 200 with paragraphs carrying paragraph_id
+        </acceptance>
+      </feature>
+      <feature index="183" depends_on="1,182" shape="plugin" plugin="reading" touches_files="apps/api/src/app/modules/reading/**" covers="cq-12">
+        <description>API exposes GET /v1/papers/{id}/compare?from=1&amp;to=2 that returns a paragraph-level diff with added, removed and changed paragraphs plus both change notes</description>
+      </feature>
+    </category>
+    <category name="End-to-End Verification">
+      <feature index="191" depends_on="1,34,42,21" shape="core" touches_files="apps/api/tests/e2e/**" covers="cq-1,cq-2,cq-3,cq-5">
+        <description>System passes an API journey test in apps/api/tests/e2e where a new DID signs in, links a mock ORCID, reaches tier 1, is endorsed in cs.AI and gets 403 submitting in cs.CL</description>
+      </feature>
+      <feature index="192" depends_on="1,55,71,122,79,64" shape="core" touches_files="apps/api/tests/e2e/**" covers="cq-7,cq-9,cq-10,cq-11,cq-14,cq-33">
+        <description>System passes an API journey test (exits 0) where an author uploads a PDF, signs genesis, manifest and version, two co-authors consent, scanning passes, a moderator lists it, the sch: id resolves and a fake-provider AI pre-review appears</description>
+      </feature>
+      <feature index="193" depends_on="1,114,112,84,192" shape="core" touches_files="apps/api/tests/e2e/**" covers="cq-25,cq-26,cq-27,cq-28,cq-31">
+        <description>System passes an API journey test (exits 0) where two reviewers commit, reports reveal after the second commit, the author responds, posts v2, a reviewer updates and the paper status becomes reviewed</description>
+      </feature>
+      <feature index="194" depends_on="1,93,95,98,18,192" shape="core" touches_files="apps/api/tests/e2e/**" covers="cq-37,cq-38,cq-44,cq-23">
+        <description>System passes an API journey test that exports archive.car, runs scholium verify and scholium rebuild against it with exit 0, and gets exit 1 after one byte of a record is altered</description>
+      </feature>
+      <feature index="195" depends_on="1,78,76,84,73,192" shape="core" touches_files="apps/api/tests/e2e/**" covers="cq-41,cq-32,cq-13,cq-39">
+        <description>System passes an API journey test where a reader flags a paper, a moderator holds it, the author appeals, the panel decides, a correction is published and the Corrected notice shows on every version</description>
+      </feature>
+      <feature index="196" depends_on="1,40,191" shape="core" touches_files="apps/api/tests/e2e/**" covers="cq-4">
+        <description>System passes an API journey test where 3 of 5 guardians approve recovery, the contest window elapses, the new key signs a record with 201 and the old key gets 401</description>
+      </feature>
+      <feature index="197" depends_on="1,145,154,155,156,129,157,163,164,167,168,170,171,174,175,176,142,144,146,184,187,188,189,190" shape="core" touches_files="apps/web/tests/e2e/**" covers="cq-17,cq-18,cq-19">
+        <description>System passes Playwright browser journeys in apps/web/tests/e2e (run by npm run test:e2e) where the seeded home feed displays papers, a paper page shows Verified in the Proof tab and the AI tab shows the advisory banner</description>
+      </feature>
+    </category>
+  </core_features>
+  <database_schema>
+    <tables>
+      <table name="event_log">
+        <column>seq INTEGER PRIMARY KEY AUTOINCREMENT</column>
+        <column>record_cid TEXT NOT NULL UNIQUE</column>
+        <column>record_type TEXT NOT NULL</column>
+        <column>author_did TEXT NOT NULL</column>
+        <column>body JSON NOT NULL</column>
+        <column>raw BLOB NOT NULL</column>
+        <column>prev_hash BLOB NOT NULL</column>
+        <column>entry_hash BLOB NOT NULL</column>
+        <column>received_at TIMESTAMP NOT NULL</column>
+        <column>origin_node TEXT NOT NULL</column>
+      </table>
+      <table name="idempotency_keys">
+        <column>key TEXT PRIMARY KEY</column>
+        <column>response JSON NOT NULL</column>
+        <column>created_at TIMESTAMP NOT NULL</column>
+      </table>
+      <table name="jobs">
+        <column>id INTEGER PRIMARY KEY</column>
+        <column>kind TEXT NOT NULL</column>
+        <column>payload JSON NOT NULL</column>
+        <column>status TEXT NOT NULL</column>
+        <column>run_after TIMESTAMP</column>
+        <column>attempts INTEGER DEFAULT 0</column>
+      </table>
+      <table name="accounts">
+        <column>did TEXT PRIMARY KEY</column>
+        <column>tier INTEGER NOT NULL DEFAULT 0</column>
+        <column>created_at TIMESTAMP NOT NULL</column>
+      </table>
+      <table name="account_keys">
+        <column>did TEXT NOT NULL</column>
+        <column>public_key TEXT NOT NULL</column>
+        <column>active_from TIMESTAMP NOT NULL</column>
+        <column>active_until TIMESTAMP</column>
+      </table>
+      <table name="auth_challenges">
+        <column>nonce TEXT PRIMARY KEY</column>
+        <column>did TEXT NOT NULL</column>
+        <column>expires_at TIMESTAMP NOT NULL</column>
+        <column>used BOOLEAN DEFAULT FALSE</column>
+      </table>
+      <table name="refresh_tokens">
+        <column>token_hash TEXT PRIMARY KEY</column>
+        <column>did TEXT NOT NULL</column>
+        <column>expires_at TIMESTAMP NOT NULL</column>
+        <column>rotated BOOLEAN DEFAULT FALSE</column>
+      </table>
+      <table name="profile">
+        <column>did TEXT PRIMARY KEY</column>
+        <column>enc_blob BLOB NOT NULL</column>
+        <column>key_ref TEXT NOT NULL</column>
+      </table>
+      <table name="profile_keys">
+        <column>key_ref TEXT PRIMARY KEY</column>
+        <column>key BLOB NOT NULL</column>
+      </table>
+      <table name="credentials">
+        <column>id TEXT PRIMARY KEY</column>
+        <column>did TEXT NOT NULL</column>
+        <column>kind TEXT NOT NULL</column>
+        <column>vc JSON NOT NULL</column>
+        <column>status TEXT NOT NULL</column>
+      </table>
+      <table name="nullifiers">
+        <column>nullifier TEXT PRIMARY KEY</column>
+        <column>did TEXT NOT NULL</column>
+      </table>
+      <table name="guardians">
+        <column>did TEXT NOT NULL</column>
+        <column>guardian_did TEXT NOT NULL</column>
+        <column>position INTEGER NOT NULL</column>
+      </table>
+      <table name="recovery_requests">
+        <column>id TEXT PRIMARY KEY</column>
+        <column>did TEXT NOT NULL</column>
+        <column>new_public_key TEXT NOT NULL</column>
+        <column>approvals JSON NOT NULL</column>
+        <column>contest_until TIMESTAMP</column>
+        <column>status TEXT NOT NULL</column>
+      </table>
+      <table name="endorsements">
+        <column>record_cid TEXT PRIMARY KEY</column>
+        <column>endorser_did TEXT NOT NULL</column>
+        <column>endorsee_did TEXT NOT NULL</column>
+        <column>category TEXT NOT NULL</column>
+        <column>expires_at TIMESTAMP</column>
+      </table>
+      <table name="blobs">
+        <column>cid TEXT PRIMARY KEY</column>
+        <column>size INTEGER NOT NULL</column>
+        <column>media_type TEXT</column>
+        <column>scan_status TEXT NOT NULL</column>
+      </table>
+      <table name="uploads">
+        <column>id TEXT PRIMARY KEY</column>
+        <column>owner_did TEXT NOT NULL</column>
+        <column>length INTEGER NOT NULL</column>
+        <column>offset INTEGER NOT NULL</column>
+        <column>kind TEXT NOT NULL</column>
+      </table>
+      <table name="papers">
+        <column>paper_cid TEXT PRIMARY KEY</column>
+        <column>short_id TEXT NOT NULL UNIQUE</column>
+        <column>categories JSON NOT NULL</column>
+        <column>licence TEXT NOT NULL</column>
+        <column>status TEXT NOT NULL</column>
+        <column>latest_version_cid TEXT</column>
+        <column>listed_at TIMESTAMP</column>
+        <column>claimed BOOLEAN DEFAULT TRUE</column>
+      </table>
+      <table name="paper_versions">
+        <column>version_cid TEXT PRIMARY KEY</column>
+        <column>paper_cid TEXT NOT NULL</column>
+        <column>n INTEGER NOT NULL</column>
+        <column>title TEXT NOT NULL</column>
+        <column>abstract TEXT NOT NULL</column>
+        <column>manifest_cid TEXT NOT NULL</column>
+        <column>prev_cid TEXT</column>
+        <column>state TEXT NOT NULL</column>
+        <column>change_note TEXT</column>
+        <column>listed_at TIMESTAMP</column>
+      </table>
+      <table name="authorship">
+        <column>version_cid TEXT NOT NULL</column>
+        <column>author_did TEXT NOT NULL</column>
+        <column>position INTEGER NOT NULL</column>
+        <column>credit_roles JSON</column>
+        <column>consent_cid TEXT</column>
+        <column>consent_decision TEXT</column>
+      </table>
+      <table name="notices">
+        <column>record_cid TEXT PRIMARY KEY</column>
+        <column>paper_cid TEXT NOT NULL</column>
+        <column>kind TEXT NOT NULL</column>
+        <column>reason TEXT NOT NULL</column>
+        <column>created_at TIMESTAMP NOT NULL</column>
+      </table>
+      <table name="notifications">
+        <column>id INTEGER PRIMARY KEY</column>
+        <column>did TEXT NOT NULL</column>
+        <column>kind TEXT NOT NULL</column>
+        <column>payload JSON NOT NULL</column>
+        <column>read BOOLEAN DEFAULT FALSE</column>
+      </table>
+      <table name="scan_reports">
+        <column>cid TEXT NOT NULL</column>
+        <column>check_name TEXT NOT NULL</column>
+        <column>result TEXT NOT NULL</column>
+        <column>detail TEXT</column>
+      </table>
+      <table name="version_texts">
+        <column>version_cid TEXT NOT NULL</column>
+        <column>paragraph_id TEXT NOT NULL</column>
+        <column>position INTEGER NOT NULL</column>
+        <column>text TEXT NOT NULL</column>
+      </table>
+      <table name="check_results">
+        <column>version_cid TEXT PRIMARY KEY</column>
+        <column>similarity_pct REAL</column>
+        <column>references_total INTEGER</column>
+        <column>references_unresolved INTEGER</column>
+        <column>metadata_match BOOLEAN</column>
+      </table>
+      <table name="moderation_decisions">
+        <column>decision_cid TEXT PRIMARY KEY</column>
+        <column>target_cid TEXT NOT NULL</column>
+        <column>action TEXT NOT NULL</column>
+        <column>clause TEXT NOT NULL</column>
+        <column>moderator_did TEXT NOT NULL</column>
+        <column>decided_at TIMESTAMP NOT NULL</column>
+      </table>
+      <table name="denylist">
+        <column>cid TEXT PRIMARY KEY</column>
+        <column>decision_cid TEXT NOT NULL</column>
+      </table>
+      <table name="appeal_panels">
+        <column>appeal_cid TEXT NOT NULL</column>
+        <column>member_did TEXT NOT NULL</column>
+        <column>vote TEXT</column>
+      </table>
+      <table name="flags">
+        <column>id TEXT PRIMARY KEY</column>
+        <column>target_cid TEXT NOT NULL</column>
+        <column>reporter_did TEXT NOT NULL</column>
+        <column>reason TEXT NOT NULL</column>
+        <column>status TEXT NOT NULL</column>
+        <column>decision_cid TEXT</column>
+      </table>
+      <table name="search_fts">
+        <column>version_cid UNINDEXED</column>
+        <column>title</column>
+        <column>abstract</column>
+        <column>body (FTS5 virtual table)</column>
+      </table>
+      <table name="follows">
+        <column>did TEXT NOT NULL</column>
+        <column>category TEXT NOT NULL</column>
+      </table>
+      <table name="saved_searches">
+        <column>id TEXT PRIMARY KEY</column>
+        <column>did TEXT NOT NULL</column>
+        <column>query JSON NOT NULL</column>
+      </table>
+      <table name="embeddings">
+        <column>version_cid TEXT PRIMARY KEY</column>
+        <column>vector BLOB NOT NULL</column>
+      </table>
+      <table name="review_invitations">
+        <column>id TEXT PRIMARY KEY</column>
+        <column>version_cid TEXT NOT NULL</column>
+        <column>reviewer_did TEXT NOT NULL</column>
+        <column>status TEXT NOT NULL</column>
+      </table>
+      <table name="review">
+        <column>review_cid TEXT PRIMARY KEY</column>
+        <column>version_cid TEXT NOT NULL</column>
+        <column>review_key TEXT NOT NULL</column>
+        <column>nullifier BLOB NOT NULL</column>
+        <column>scores JSON</column>
+        <column>recommendation TEXT</column>
+        <column>confidence INTEGER</column>
+        <column>report_cid TEXT</column>
+        <column>signed_by TEXT</column>
+        <column>committed_at TIMESTAMP</column>
+        <column>revealed_at TIMESTAMP</column>
+      </table>
+      <table name="review_escrows">
+        <column>review_cid TEXT PRIMARY KEY</column>
+        <column>sealed_identity BLOB NOT NULL</column>
+        <column>uniqueness_token TEXT NOT NULL UNIQUE</column>
+      </table>
+      <table name="review_ratings">
+        <column>review_cid TEXT NOT NULL</column>
+        <column>rater_did TEXT NOT NULL</column>
+        <column>rating INTEGER NOT NULL</column>
+      </table>
+      <table name="review_responses">
+        <column>response_cid TEXT PRIMARY KEY</column>
+        <column>review_cid TEXT NOT NULL</column>
+        <column>replies JSON NOT NULL</column>
+      </table>
+      <table name="discussion_posts">
+        <column>post_cid TEXT PRIMARY KEY</column>
+        <column>paper_cid TEXT NOT NULL</column>
+        <column>parent_cid TEXT</column>
+        <column>anchor JSON</column>
+        <column>author_did TEXT NOT NULL</column>
+        <column>helpful INTEGER DEFAULT 0</column>
+      </table>
+      <table name="ai_reviews">
+        <column>review_cid TEXT PRIMARY KEY</column>
+        <column>version_cid TEXT NOT NULL</column>
+        <column>models JSON NOT NULL</column>
+        <column>prompt_set_hash TEXT NOT NULL</column>
+        <column>findings JSON NOT NULL</column>
+      </table>
+    </tables>
+  </database_schema>
+  <api_endpoints_summary>
+    <domain name="Workspace Foundation">
+      GET    /healthz
+    </domain>
+    <domain name="Event Log Ledger">
+      GET    /v1/sync/head
+      GET    /v1/records/{cid}
+      GET    /v1/records/{cid}/proof
+      GET    /v1/sync/range?from=&amp;to=
+    </domain>
+    <domain name="Record Ingest">
+      POST   /v1/records
+    </domain>
+    <domain name="Identity &amp; Access">
+      POST   /v1/auth/challenge
+      POST   /v1/auth/verify
+      POST   /v1/auth/refresh
+      GET    /v1/did/{did}
+      POST   /v1/auth/logout
+    </domain>
+    <domain name="Profiles &amp; Erasure">
+      PUT    /v1/profiles/{did}
+      GET    /v1/profiles/{did}
+      DELETE /v1/profiles/{did}
+      POST   /v1/profiles/{did}/verify-email
+    </domain>
+    <domain name="ORCID &amp; Credentials">
+      GET    /v1/auth/orcid/start
+      GET    /v1/auth/orcid/callback
+      POST   /v1/credentials/present
+    </domain>
+    <domain name="Key Recovery">
+      PUT    /v1/me/guardians
+      POST   /v1/recovery/requests
+      POST   /v1/recovery/requests/{id}/approvals
+      POST   /v1/recovery/requests/{id}/cancel
+    </domain>
+    <domain name="Endorsements">
+      GET    /v1/me/endorsements
+    </domain>
+    <domain name="Content &amp; Uploads">
+      GET    /v1/content/{cid}
+      POST   /v1/uploads
+      PATCH  /v1/uploads/{id}
+      HEAD   /v1/uploads/{id}
+    </domain>
+    <domain name="Co-author Consent">
+      GET    /v1/papers/{id}/v/{n}/consents
+    </domain>
+    <domain name="Notifications">
+      GET    /v1/me/notifications
+      POST   /v1/me/notifications/{id}/read
+    </domain>
+    <domain name="Moderation">
+      GET    /v1/moderation/policies
+      GET    /v1/moderation/queue
+      POST   /v1/moderation/decisions
+    </domain>
+    <domain name="Appeals &amp; Flags">
+      POST   /v1/appeals
+      POST   /v1/appeals/{cid}/votes
+      POST   /v1/flags
+      GET    /v1/flags/{id}
+    </domain>
+    <domain name="Paper Catalog">
+      GET    /v1/papers/{id}
+      GET    /v1/papers/{id}/versions
+      GET    /v1/papers/{id}/v/{n}/manifest
+      GET    /v1/papers
+    </domain>
+    <domain name="Search &amp; Feeds">
+      GET    /v1/search?q=
+      GET    /v1/search/semantic?q=
+      GET    /v1/feeds/{category}
+      GET    /v1/feeds/{category}?format=json
+    </domain>
+    <domain name="Export &amp; Rebuild">
+      GET    /v1/papers/{id}/cite?format=bibtex|ris
+      GET    /v1/export/paper/{id}.car
+      GET    /v1/export/user/{did}.car
+      GET    /v1/export/archive.car
+      GET    /v1/oai?verb=ListRecords
+    </domain>
+    <domain name="Discussion &amp; Annotations">
+      GET    /v1/papers/{id}/threads
+      POST   /v1/papers/{id}/threads
+      POST   /v1/posts/{cid}/helpful
+      POST   /v1/me/mutes
+      POST   /v1/annotations
+      GET    /v1/papers/{id}/v/{n}/annotations
+    </domain>
+    <domain name="Formal Review">
+      POST   /v1/papers/{id}/review-invitations
+      GET    /v1/papers/{id}/coi-check
+      POST   /v1/reviews/commit
+      POST   /v1/reviews/reveal
+      GET    /v1/papers/{id}/reviews
+      GET    /v1/profiles/{did}/reviews
+      POST   /v1/reviews/{cid}/rating
+      POST   /v1/reviews/{cid}/response
+    </domain>
+    <domain name="AI Pre-review">
+      GET    /v1/papers/{id}/ai-reviews
+      POST   /v1/ai-reviews/{cid}/rebuttal
+      POST   /v1/ai-reviews/{cid}/assessments
+    </domain>
+    <domain name="arXiv Import">
+      POST   /v1/imports/arxiv
+    </domain>
+    <domain name="Dashboard API">
+      GET    /v1/me/dashboard
+    </domain>
+    <domain name="Network Transparency">
+      GET    /v1/network
+    </domain>
+    <domain name="Web Paper Page">
+      GET    /v1/papers/{id}/cite
+    </domain>
+    <domain name="Web Search">
+      GET    /v1/search/semantic
+    </domain>
+    <domain name="Follows &amp; Saved Searches">
+      PUT    /v1/me/follows/{category}
+      GET    /v1/papers?tab=following
+      POST   /v1/me/saved-searches
+    </domain>
+    <domain name="Reading &amp; Compare">
+      GET    /v1/papers/{id}/v/{n}/text
+      GET    /v1/papers/{id}/compare?from=1&amp;to=2
+    </domain>
+  </api_endpoints_summary>
+  <ui_layout>
+    - Information architecture from design.md section 4: / (feed), /c/[category], /search, /p/[id][/v[n]], /submit, /review/[id], /me, /me/security, /u/[did], /mod, /network, /verify, /signin, /onboarding, /recover, /consent/[version]
+    - Paper page: reading column max 720px plus 360px margin panel (Reviews, AI, Discussion, Versions, Files, Proof); drawer at 1024-1279px; bottom sheet under 1024px
+    - Global nav on desktop; bottom bar (Home, Search, Submit, Inbox, Me) under 640px
+  </ui_layout>
+  <design_system>
+    - Colour tokens, typography (Source Serif 4 reading text 18/30, Inter UI 15/22, JetBrains Mono IDs 13/18), 4px grid, radius 6/10, motion 150-200ms ease-out: exactly as docs/design.md section 3
+    - Components per design.md section 7; microcopy per section 8; vocabulary avoids blockchain, token, hash, CID, node in primary UI
+  </design_system>
+  <key_interactions>
+    <interaction number="1" name="Publish">Sign in with passkey, upload files, details and licence, invite co-authors, automated checks, Sign and submit, co-authors consent, moderator lists, sch: id shared, AI pre-review arrives</interaction>
+    <interaction number="2" name="Review">Reviewer invited, conflict check, rubric form, commit sealed review, reveal after second commit, author responds, v2, reviewer updates, paper becomes Reviewed</interaction>
+    <interaction number="3" name="Verify">Reader opens paper, Proof tab verifies in browser, result equals scholium verify CLI, downloads code bundle</interaction>
+    <interaction number="4" name="Dispute">Reader flags, moderator decides with clause, author appeals, panel of 3 decides, correction notice on every version</interaction>
+    <interaction number="5" name="Recover">Lost device, identify by ORCID, 3 of 5 guardians approve, 72-hour window, new key active, old key rejected</interaction>
+  </key_interactions>
+  <implementation_steps>
+    <phase name="Phase 1: Workspace Foundation">
+      Build the Workspace Foundation features listed in that category
+    </phase>
+    <phase name="Phase 2: API Kernel">
+      Build the API Kernel features listed in that category
+    </phase>
+    <phase name="Phase 3: Signed Record Core">
+      Build the Signed Record Core features listed in that category
+    </phase>
+    <phase name="Phase 4: Event Log Ledger">
+      Build the Event Log Ledger features listed in that category
+    </phase>
+    <phase name="Phase 5: Record Ingest">
+      Build the Record Ingest features listed in that category
+    </phase>
+    <phase name="Phase 6: Identity &amp; Access">
+      Build the Identity &amp; Access features listed in that category
+    </phase>
+    <phase name="Phase 7: Profiles &amp; Erasure">
+      Build the Profiles &amp; Erasure features listed in that category
+    </phase>
+    <phase name="Phase 8: ORCID &amp; Credentials">
+      Build the ORCID &amp; Credentials features listed in that category
+    </phase>
+    <phase name="Phase 9: Key Recovery">
+      Build the Key Recovery features listed in that category
+    </phase>
+    <phase name="Phase 10: Endorsements">
+      Build the Endorsements features listed in that category
+    </phase>
+    <phase name="Phase 11: Content &amp; Uploads">
+      Build the Content &amp; Uploads features listed in that category
+    </phase>
+    <phase name="Phase 12: Publishing &amp; Versions">
+      Build the Publishing &amp; Versions features listed in that category
+    </phase>
+    <phase name="Phase 13: Co-author Consent">
+      Build the Co-author Consent features listed in that category
+    </phase>
+    <phase name="Phase 14: Notifications">
+      Build the Notifications features listed in that category
+    </phase>
+    <phase name="Phase 15: File Sanitizing">
+      Build the File Sanitizing features listed in that category
+    </phase>
+    <phase name="Phase 16: Automated Checks">
+      Build the Automated Checks features listed in that category
+    </phase>
+    <phase name="Phase 17: Moderation">
+      Build the Moderation features listed in that category
+    </phase>
+    <phase name="Phase 18: Appeals &amp; Flags">
+      Build the Appeals &amp; Flags features listed in that category
+    </phase>
+    <phase name="Phase 19: Paper Catalog">
+      Build the Paper Catalog features listed in that category
+    </phase>
+    <phase name="Phase 20: Paper Status">
+      Build the Paper Status features listed in that category
+    </phase>
+    <phase name="Phase 21: Search &amp; Feeds">
+      Build the Search &amp; Feeds features listed in that category
+    </phase>
+    <phase name="Phase 22: Export &amp; Rebuild">
+      Build the Export &amp; Rebuild features listed in that category
+    </phase>
+    <phase name="Phase 23: Command-line Verifier">
+      Build the Command-line Verifier features listed in that category
+    </phase>
+    <phase name="Phase 24: Discussion &amp; Annotations">
+      Build the Discussion &amp; Annotations features listed in that category
+    </phase>
+    <phase name="Phase 25: Formal Review">
+      Build the Formal Review features listed in that category
+    </phase>
+    <phase name="Phase 26: AI Pre-review">
+      Build the AI Pre-review features listed in that category
+    </phase>
+    <phase name="Phase 27: arXiv Import">
+      Build the arXiv Import features listed in that category
+    </phase>
+    <phase name="Phase 28: Dashboard API">
+      Build the Dashboard API features listed in that category
+    </phase>
+    <phase name="Phase 29: Network Transparency">
+      Build the Network Transparency features listed in that category
+    </phase>
+    <phase name="Phase 30: Admin Tools">
+      Build the Admin Tools features listed in that category
+    </phase>
+    <phase name="Phase 31: Web Foundation">
+      Build the Web Foundation features listed in that category
+    </phase>
+    <phase name="Phase 32: Web Components">
+      Build the Web Components features listed in that category
+    </phase>
+    <phase name="Phase 33: Browser Verifier">
+      Build the Browser Verifier features listed in that category
+    </phase>
+    <phase name="Phase 34: Web Sign-in &amp; Onboarding">
+      Build the Web Sign-in &amp; Onboarding features listed in that category
+    </phase>
+    <phase name="Phase 35: Web Home Feed">
+      Build the Web Home Feed features listed in that category
+    </phase>
+    <phase name="Phase 36: Web Paper Page Tabs">
+      Build the Web Paper Page Tabs features listed in that category
+    </phase>
+    <phase name="Phase 37: Web Paper Page">
+      Build the Web Paper Page features listed in that category
+    </phase>
+    <phase name="Phase 38: Web Search">
+      Build the Web Search features listed in that category
+    </phase>
+    <phase name="Phase 39: Web Submit Wizard">
+      Build the Web Submit Wizard features listed in that category
+    </phase>
+    <phase name="Phase 40: Web Review Form">
+      Build the Web Review Form features listed in that category
+    </phase>
+    <phase name="Phase 41: Web Dashboard">
+      Build the Web Dashboard features listed in that category
+    </phase>
+    <phase name="Phase 42: Web Moderation Console">
+      Build the Web Moderation Console features listed in that category
+    </phase>
+    <phase name="Phase 43: Web Verify &amp; Network">
+      Build the Web Verify &amp; Network features listed in that category
+    </phase>
+    <phase name="Phase 44: Follows &amp; Saved Searches">
+      Build the Follows &amp; Saved Searches features listed in that category
+    </phase>
+    <phase name="Phase 45: Reading &amp; Compare">
+      Build the Reading &amp; Compare features listed in that category
+    </phase>
+    <phase name="Phase 46: End-to-End Verification">
+      Build the End-to-End Verification features listed in that category
+    </phase>
+  </implementation_steps>
+  <success_criteria>
+    <functionality>The five key interactions pass as API journey tests and Playwright journeys; the browser verifier and CLI verifier agree on every shared vector; a third party rebuilds the archive from archive.car</functionality>
+    <ux>Every screen matches docs/design.md tokens, components and microcopy; WCAG 2.2 AA; status never by colour alone</ux>
+    <technical_quality>npm test green; no private key ever reaches the server; event_log is append-only; AI output has no path to status</technical_quality>
+  </success_criteria>
+</project_specification>

@@ -1,0 +1,552 @@
+identity:
+  name: Scholium
+  domain: decentralized preprint and peer-review network
+  _provenance:
+    by: extracted
+    source: docs/PRD.md §0
+    confidence: 0.9
+    span: '**Scholium** replaces the working title "OpenResearch".'
+    needs_review: false
+stack:
+  layout_profile: ''
+  existing_context:
+    brownfield: true
+  _provenance:
+    by: defaulted
+    source: no layout marker matched
+    confidence: 0.0
+    needs_review: true
+competency_questions:
+- id: cq-1
+  question: Can a user create an account with a passkey and sign in without the server holding
+    a private key?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: A user can create an account with a passkey; a signing key is generated on the device
+      and never leaves it
+    needs_review: false
+- id: cq-2
+  question: Can a user link their ORCID iD to their account and see it on their profile?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: A user can link ORCID via OAuth and receive a credential bound to their DID
+    needs_review: false
+- id: cq-3
+  question: Does the API refuse an action above the user's trust tier with a 403 and a reason?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Tier-1 user cannot submit; API returns 403 with reason
+    needs_review: false
+- id: cq-4
+  question: Can a user rotate their signing key and recover a lost account through 3-of-5
+    guardians?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Key rotation and 3-of-5 social recovery
+    needs_review: false
+- id: cq-5
+  question: Can a tier-3 user endorse a new author so that the author can submit in that category
+    only?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Endorsed user can submit in that category only
+    needs_review: false
+- id: cq-6
+  question: Can a user erase their profile while their records still verify under a pseudonymous
+    DID?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: After erasure, records verify and show a pseudonymous DID
+    needs_review: false
+- id: cq-7
+  question: Can an author upload a PDF with optional LaTeX source, code and data bundles and
+    submit a signed version?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Upload PDF and/or LaTeX source, optional code and data bundles (resumable)
+    needs_review: false
+- id: cq-8
+  question: Does the server reject an upload whose recomputed content IDs do not match the
+    signed record?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Server-recomputed IDs match; tampered upload rejected
+    needs_review: false
+- id: cq-9
+  question: Does a version stay draft until every listed co-author has signed consent?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Version stays draft until all consents exist
+    needs_review: false
+- id: cq-10
+  question: Are uploaded files sanitized and scanned before anyone can view them?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Files are sanitized and scanned in a sandbox before anyone can view them
+    needs_review: false
+- id: cq-11
+  question: Can a moderator list, hold, reclassify or reject a submission with a policy clause
+    and reason as a public signed record?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Decision is a public signed record; author is notified
+    needs_review: false
+- id: cq-12
+  question: Can an author publish a new version while every earlier version stays resolvable?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: v1 URL still resolves after v3; diff/change note visible
+    needs_review: false
+- id: cq-13
+  question: Does a retracted paper show a retraction banner on every version?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Retracted paper shows banner on every version
+    needs_review: false
+- id: cq-14
+  question: 'Does a sch: paper ID and per-version ID resolve to the right paper version?'
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Stable short paper ID and per-version ID
+    needs_review: false
+- id: cq-15
+  question: Is the licence chosen at submission stored inside the signed version record?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Licence stored inside the signed record
+    needs_review: false
+- id: cq-16
+  question: Can an arXiv paper be imported as unclaimed and later claimed by a signing author?
+  priority: 3
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Imported paper marked "unclaimed" until an author signs
+    needs_review: false
+- id: cq-17
+  question: Can a reader browse the home feed of latest and reviewed papers with status chips?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/design.md
+    confidence: 0.9
+    span: 'Each row: title (serif), authors, categories, version, age, two-line abstract,
+      status chips.'
+    needs_review: false
+- id: cq-18
+  question: Can a reader open a paper page showing abstract, authors, versions, status, files,
+    reviews and discussion?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: 'Paper page: abstract, authors, versions, status, files, reviews, discussion'
+    needs_review: false
+- id: cq-19
+  question: Does the in-browser verification indicator give the same result as the CLI verifier?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Indicator result equals CLI verifier result
+    needs_review: false
+- id: cq-20
+  question: Can a reader search papers by full text and filter by category, date, status and
+    code availability?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Full-text and semantic search with facets (category, date, status, code available)
+    needs_review: false
+- id: cq-21
+  question: Can a member annotate a paragraph of a version and find the annotation on the
+    same paragraph after reload?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Annotation stays attached to the same paragraph on reload
+    needs_review: false
+- id: cq-22
+  question: Can a reader follow a category feed in Atom or JSON?
+  priority: 3
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Category feeds, saved searches, email digest, Atom/JSON
+    needs_review: false
+- id: cq-23
+  question: Can a reader export a citation as BibTeX or RIS and download a paper archive that
+    verifies offline?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: 'Export: BibTeX, RIS, full paper archive'
+    needs_review: false
+- id: cq-24
+  question: Can a member post in an open discussion thread where helpful votes only order
+    the thread?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Open discussion threads (tier 1+) with helpful votes that only order the thread
+    needs_review: false
+- id: cq-25
+  question: Does the system reject a formal review that has no rubric scores?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Free-text-only formal review is rejected
+    needs_review: false
+- id: cq-26
+  question: Does the system refuse a second review from the same person and a review from
+    a co-author?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Second review from same person is refused; co-author is refused
+    needs_review: false
+- id: cq-27
+  question: Are formal review reports hidden until two are committed or 21 days pass?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: 'Commit–reveal: reports are hidden until 2 are committed or 21 days pass'
+    needs_review: false
+- id: cq-28
+  question: Can an author respond point by point to a review and a reviewer update their recommendation
+    against a new version?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Author point-by-point responses; reviewers can update against a new version
+    needs_review: false
+- id: cq-29
+  question: Can a tier-3 member rate the quality of a revealed review?
+  priority: 3
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Review quality rating by other tier-3 members
+    needs_review: false
+- id: cq-30
+  question: Can a reviewer choose to sign a review with their name and have it shown on their
+    profile?
+  priority: 3
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Signed review shown on reviewer profile
+    needs_review: false
+- id: cq-31
+  question: Is paper status computed deterministically from the records as Preprint, Under
+    review, Reviewed, Contested, Corrected or Retracted?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: 'Computed status: Preprint, Under review, Reviewed, Contested, Corrected, Retracted'
+    needs_review: false
+- id: cq-32
+  question: Can an author appeal a moderation decision to a randomly drawn 3-member panel
+    that publishes a signed decision?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Appeal produces a signed, reasoned decision
+    needs_review: false
+- id: cq-33
+  question: Does every listed paper get an advisory AI pre-review from four specialist agents
+    and a meta-reviewer?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Four specialist agents (methodology, literature, reproducibility, integrity) plus
+      a meta-reviewer
+    needs_review: false
+- id: cq-34
+  question: Are AI findings without a quoted span, resolved reference or log line dropped?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: 100% of findings have evidence; others are dropped
+    needs_review: false
+- id: cq-35
+  question: Does the signed AI report record the model versions and the prompt-set hash?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Signed report records model versions and prompt-set hash
+    needs_review: false
+- id: cq-36
+  question: Can an author rebut an AI finding and a reviewer mark it confirmed or wrong?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Authors can rebut each finding; reviewers can mark findings confirmed/wrong
+    needs_review: false
+- id: cq-37
+  question: Does the verifier detect a rewritten history in the hash-chained event log?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Rewriting history is detected by the verifier
+    needs_review: false
+- id: cq-38
+  question: Can a third party rebuild the archive from the public export?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Complete public export and independent rebuild
+    needs_review: false
+- id: cq-39
+  question: Can content be tombstoned so it is unavailable while history still verifies?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Tombstoned content unavailable; history still verifies
+    needs_review: false
+- id: cq-40
+  question: Can a moderator work a queue that shows similarity, reference resolution and scan
+    results?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Moderator queue with automated check results (similarity, reference resolution,
+      scan results)
+    needs_review: false
+- id: cq-41
+  question: Can any member flag a paper or post and see a public decision they can appeal?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Flag → decision → appeal path works end to end
+    needs_review: false
+- id: cq-42
+  question: Are bursts of actions from new accounts throttled by per-tier rate limits?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Burst from new accounts is throttled
+    needs_review: false
+- id: cq-43
+  question: Can a user see consents waiting, review invitations and their papers on a dashboard?
+  priority: 2
+  _provenance:
+    by: extracted
+    source: docs/design.md
+    confidence: 0.9
+    span: My papers · Drafts · Consents waiting
+    needs_review: false
+- id: cq-44
+  question: Can a reader verify a paper offline with a command-line verifier?
+  priority: 1
+  _provenance:
+    by: extracted
+    source: docs/tech_architect.md
+    confidence: 0.9
+    span: Record core, schemas, CLI verifier
+    needs_review: false
+constraints:
+- text: Never store personal data or paper content on a blockchain.
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: No storage of personal data or paper content on a blockchain.
+    needs_review: false
+- text: Do not add a tradable token or token-weighted votes.
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: No tradable token in scope. No token-weighted votes on scientific questions, ever.
+    needs_review: false
+- text: Never let AI review output change paper status, listing or reputation.
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Report is labelled advisory and cannot change status, listing or reputation
+    needs_review: false
+- text: Never hold a user's private signing key on the server.
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Account created in < 60 s; server holds no private key
+    needs_review: false
+- text: Process private drafts only with self-hosted models.
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Private drafts are processed only by self-hosted models
+    needs_review: false
+- text: Run paper reproduction only in an isolated sandbox with no network.
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: Reproduction runs in an isolated sandbox with no network
+    needs_review: false
+- text: Pass paper text to AI agents as quoted data, never concatenated into instructions.
+  _provenance:
+    by: extracted
+    source: docs/tech_architect.md
+    confidence: 0.9
+    span: Paper text is passed as quoted data in a separate channel, never concatenated into
+      instructions.
+    needs_review: false
+- text: Never update or delete rows in the event log.
+  _provenance:
+    by: extracted
+    source: docs/tech_architect.md
+    confidence: 0.9
+    span: REVOKE UPDATE, DELETE ON event_log FROM PUBLIC;
+    needs_review: false
+- text: Never render AI output in the colours of human review status.
+  _provenance:
+    by: extracted
+    source: docs/design.md
+    confidence: 0.9
+    span: AI output always carries its label and never uses the colours of human review status.
+    needs_review: false
+- text: Never convey status by colour alone.
+  _provenance:
+    by: extracted
+    source: docs/design.md
+    confidence: 0.9
+    span: status is never colour alone (icon + word always)
+    needs_review: false
+- text: Return API errors as RFC 9457 problem details.
+  _provenance:
+    by: extracted
+    source: docs/tech_architect.md
+    confidence: 0.9
+    span: Errors use RFC 9457 problem details.
+    needs_review: false
+- text: Keep personal data only in the encrypted, erasable profile.
+  _provenance:
+    by: extracted
+    source: docs/tech_architect.md
+    confidence: 0.9
+    span: Personal data only in `profile` (encrypted, erasable) and in consented credential
+      presentations.
+    needs_review: false
+- text: Do not show like or vote counts on papers.
+  _provenance:
+    by: extracted
+    source: docs/design.md
+    confidence: 0.9
+    span: No like counts on papers. No leaderboard.
+    needs_review: false
+- text: Meet WCAG 2.2 AA accessibility.
+  _provenance:
+    by: extracted
+    source: docs/PRD.md
+    confidence: 0.9
+    span: WCAG 2.2 AA; HTML renditions of papers where LaTeX source exists.
+    needs_review: false
+policies:
+  overlap_resolution: serialize
+  plugin_partitioning: keep-serialized
+  unclassifiable_shape: core
+  gap13_repair: widen
+  manual_review: default-and-record
+  quality_tier: standard
+  confidence_floor: 0.75
+  _provenance:
+    by: defaulted
+    source: tier:standard
+    confidence: 0.0
+    needs_review: false
