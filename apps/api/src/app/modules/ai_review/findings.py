@@ -30,7 +30,8 @@ Every finding has
 
 This module checks only the *shape*.  Whether a span really occurs in the
 paper, a reference id exists or a log line is in the run log is checked
-against the paper itself by the evidence verifier (feature 118); a parsed
+against the paper itself by the evidence verifier
+(:mod:`app.modules.ai_review.verification`, feature 118); a parsed
 :class:`Finding` is a well-formed claim, not a verified one.
 
 The model's reply is untrusted text.  A reply that is not a JSON object with a

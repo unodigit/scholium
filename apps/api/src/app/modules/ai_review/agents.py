@@ -25,7 +25,8 @@ What each agent is given besides the paragraphs and the sanitizer's
     get that log is :func:`~app.modules.ai_review.run_reproducibility_agent`.
 
 The findings are well-formed, not verified: a span may still be invented and a
-reference id unknown.  The evidence verifier (feature 118) checks them against
+reference id unknown.  The evidence verifier
+(:mod:`app.modules.ai_review.verification`, feature 118) checks them against
 the paper.  Nothing here writes a record or a paper status; an agent returns
 findings and that is all.
 """

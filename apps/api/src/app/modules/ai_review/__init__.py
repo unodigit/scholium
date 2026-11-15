@@ -35,10 +35,21 @@ finding instead, never an error::
     report.run.status      # "completed" | "failed" | "timeout" | "not_run"
     report.run_log         # the log every log_line finding is checked against
 
+Feature 118 verifies that evidence before a finding is shown: a span must be
+a verbatim substring of the paper, a ``reference_id`` must name a reference
+block the agent was given, and a ``log_line`` must be exactly one line of the
+run log.  Anything else is rejected with a reason::
+
+    result = ai_review.verify_findings(
+        report.findings, version_cid, run_log=report.run_log
+    )
+    result.findings, result.rejected
+
 See :mod:`app.modules.ai_review.prompt_set` for how the hash is defined,
 :mod:`app.modules.ai_review.findings` for the finding shape,
-:mod:`app.modules.ai_review.agents` for running an agent and
-:mod:`app.modules.ai_review.sandbox` for the sandbox.
+:mod:`app.modules.ai_review.agents` for running an agent,
+:mod:`app.modules.ai_review.verification` for the evidence verifier,
+and :mod:`app.modules.ai_review.sandbox` for the sandbox.
 """
 
 from .agent_input import (
@@ -93,6 +104,11 @@ from .sandbox import (
     SandboxRun,
     run_bundle,
 )
+from .verification import (
+    EvidenceVerifier,
+    VerificationResult,
+    verify_findings,
+)
 
 __all__ = [
     "AGENT_NAMES",
@@ -105,6 +121,7 @@ __all__ = [
     "DataBlock",
     "EVIDENCE_KINDS",
     "Evidence",
+    "EvidenceVerifier",
     "FakeProvider",
     "Finding",
     "HIDDEN_TEXT_BLOCK_PREFIX",
@@ -122,6 +139,7 @@ __all__ = [
     "SandboxLimits",
     "SandboxRun",
     "UnknownAgentError",
+    "VerificationResult",
     "build_agent_input",
     "build_data_blocks",
     "get_provider",
@@ -136,4 +154,5 @@ __all__ = [
     "run_agent",
     "run_bundle",
     "run_reproducibility_agent",
+    "verify_findings",
 ]
