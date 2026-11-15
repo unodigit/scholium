@@ -20,6 +20,7 @@ import { ConflictCheck } from "./conflict-check";
 import type { PaperFailure, ReviewPaper } from "./paper";
 import { PaperPane } from "./paper-pane";
 import { ReviewForm, type CommitReview } from "./review-form";
+import { ReviewSessionProvider } from "./review-session";
 import "./review-form.css";
 
 /** Props both page states accept (tests and hosts may inject either half). */
@@ -62,29 +63,34 @@ export function ReviewPage(props: ReviewPageProps) {
         </h1>
       </header>
 
-      <div className="rf-split">
-        <PaperPane paper={paper} />
-        <div className="rf-side">
-          <AnonymityNotice />
-          {/* The conflict check comes before the form: a reviewer sees it
-              before deciding what to write. It is advisory, so a failure here
-              never hides the form. */}
-          <ConflictCheck
-            paperId={paper.shortId}
-            initial={props.conflict}
-            initialError={props.conflictError}
-            signedIn={props.signedIn}
-            signInHref={props.signInHref}
-          />
-          <ReviewForm
-            paperId={paper.shortId}
-            versionCid={paper.versionCid}
-            signedIn={props.signedIn}
-            signInHref={props.signInHref}
-            commit={props.commit}
-          />
+      {/* The notice (Sign with my name instead), the form (its stylometry tip
+          and the commit) and the paper (Cite in review) have to agree with one
+          another, so they share a session. It renders no element. */}
+      <ReviewSessionProvider>
+        <div className="rf-split">
+          <PaperPane paper={paper} />
+          <div className="rf-side">
+            <AnonymityNotice />
+            {/* The conflict check comes before the form: a reviewer sees it
+                before deciding what to write. It is advisory, so a failure here
+                never hides the form. */}
+            <ConflictCheck
+              paperId={paper.shortId}
+              initial={props.conflict}
+              initialError={props.conflictError}
+              signedIn={props.signedIn}
+              signInHref={props.signInHref}
+            />
+            <ReviewForm
+              paperId={paper.shortId}
+              versionCid={paper.versionCid}
+              signedIn={props.signedIn}
+              signInHref={props.signInHref}
+              commit={props.commit}
+            />
+          </div>
         </div>
-      </div>
+      </ReviewSessionProvider>
     </div>
   );
 }

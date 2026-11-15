@@ -1,0 +1,72 @@
+/*
+ * "Cite in review" — the button beside selected paper text.
+ *
+ * Every value is a design token from `src/styles/tokens.css`. The floating
+ * button is the one elevated surface the design allows besides the annotation
+ * popover (docs/design.md §3, `--popover-shadow`): it is the same gesture, a
+ * small control that appears at a selection. Rules are prefixed `rc-` so
+ * nothing leaks into other features.
+ */
+
+/* The wrapper around the paper's text: the button is positioned inside it, so
+   it scrolls with the words it quotes. */
+.rc-root {
+  position: relative;
+  min-width: 0;
+  /* Room for the button to be at least this wide, which the clamp below keeps
+     inside the wrapper. */
+  --rc-width: 10rem;
+}
+
+.rc-offer {
+  position: absolute;
+  z-index: 1;
+  /* Right edge at the end of the selection, kept inside the wrapper: never
+     further left than the button is wide, never past the right edge. */
+  left: min(max(var(--rc-x, 0px), var(--rc-width)), 100%);
+  top: calc(var(--rc-y, 0px) + var(--space-unit) * 2);
+  transform: translateX(-100%);
+}
+
+.rc-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-unit) * 2);
+  min-width: var(--rc-width);
+  /* A comfortable target, as every control on this page (docs/design.md §9). */
+  min-height: 44px;
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-control);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: var(--popover-shadow);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-decel);
+}
+
+.rc-button:hover {
+  opacity: 0.9;
+}
+
+.rc-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.rc-button-icon {
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rc-button {
+    transition: none;
+  }
+}

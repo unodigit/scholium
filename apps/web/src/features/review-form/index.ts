@@ -23,8 +23,9 @@
  * <ReviewCardActions review={review} paperId="sch:k3f9-q2xz-7mwd" />
  * ```
  *
- * Later features of this plugin (the "sign with my name" option and "Cite in
- * review") add files here and extend {@link ReviewPage}.
+ * The anonymity notice offers "Sign with my name instead", the form shows the
+ * stylometry tip to a reviewer who stays anonymous, and selecting text in the
+ * paper offers "Cite in review". The three share a {@link ReviewSession}.
  */
 
 export {
@@ -85,6 +86,48 @@ export {
 } from "./anonymity-notice";
 
 export { PaperPane } from "./paper-pane";
+
+export {
+  COMMIT_NOTE_ANONYMOUS,
+  COMMIT_NOTE_SIGNED,
+  SEALED_SIGNED_NOTE,
+  SIGNED_DETAIL,
+  SIGNED_HEADLINE,
+  SIGNED_SEALED_DETAIL,
+  SIGN_WITH_NAME_LABEL,
+  STAY_ANONYMOUS_LABEL,
+  STYLOMETRY_TIP,
+} from "./identity";
+
+export {
+  ABSTRACT_SOURCE,
+  CITE_ATTRIBUTE,
+  CITE_LABEL,
+  MAX_QUOTE_CHARS,
+  PARAGRAPH_ID_CHARS,
+  appendCitation,
+  citationFromSelection,
+  collapseWhitespace,
+  describeCitation,
+  formatCitation,
+  paragraphSource,
+  shortenQuote,
+  sourceRange,
+  type Citation,
+  type SelectedCitation,
+  type SelectionPoint,
+} from "./citation";
+
+export { CiteInReview, SELECTION_SETTLE_MS } from "./cite-in-review";
+
+export {
+  ReviewSessionProvider,
+  useReviewSession,
+  type CiteHandler,
+  type FormPhase,
+  type ReviewSession,
+  type ReviewSessionProviderProps,
+} from "./review-session";
 
 export {
   AI_ASSISTANCE_HINT,

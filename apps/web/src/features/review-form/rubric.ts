@@ -103,9 +103,18 @@ export interface ReviewDraft {
   readonly recommendation: Recommendation | null;
   /** The reviewer used AI assistance; declared on the report. */
   readonly aiAssisted: boolean;
+  /**
+   * The reviewer chose "Sign with my name instead": the review will carry
+   * their name for public credit when it is revealed. Anonymous by default.
+   * The choice is part of what a commit seals, so it is made before committing.
+   */
+  readonly signed: boolean;
 }
 
-/** A blank review: no score, no confidence, no recommendation, no AI. */
+/**
+ * A blank review: no score, no confidence, no recommendation, no AI, and
+ * anonymous.
+ */
 export function emptyDraft(): ReviewDraft {
   const scores = {} as Record<DimensionId, DimensionDraft>;
   for (const { id } of RUBRIC_DIMENSIONS) {
@@ -116,6 +125,7 @@ export function emptyDraft(): ReviewDraft {
     confidence: null,
     recommendation: null,
     aiAssisted: false,
+    signed: false,
   };
 }
 
@@ -246,12 +256,16 @@ export interface ReviewScoreBody {
  * `aiAssisted` is not named by the schema (it allows extra properties); it is
  * how the declaration "I used AI assistance in writing this review" travels on
  * the report.
+ *
+ * `signed` is named by the schema: `true` asks for public credit, which
+ * `POST /v1/reviews/reveal` grants only to the reviewer who sealed the review.
  */
 export interface ReviewBody {
   readonly scores: Readonly<Record<DimensionId, ReviewScoreBody>>;
   readonly confidence: Confidence;
   readonly recommendation: Recommendation;
   readonly aiAssisted: boolean;
+  readonly signed: boolean;
 }
 
 /** Thrown by {@link toReviewBody} when the draft is not a complete review. */
@@ -293,5 +307,8 @@ export function toReviewBody(draft: ReviewDraft): ReviewBody {
     confidence: draft.confidence,
     recommendation: draft.recommendation,
     aiAssisted: draft.aiAssisted,
+    // Anything but an explicit `true` stays anonymous, so a draft that never
+    // heard of the option cannot put a name on a review.
+    signed: draft.signed === true,
   };
 }

@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * The anonymity notice at the top of the review form (docs/design.md §5.5).
  *
@@ -7,8 +9,25 @@
  * a promise the escrow does not keep — the committee threshold and the
  * misconduct case are the real conditions (`reviews` escrow, feature 108).
  *
- * Server-safe: no state, no hooks.
+ * Beside it is **Sign with my name instead** (feature 167). Choosing it swaps
+ * the notice for what signing means — the review will be credited to the
+ * reviewer by name — and offers **Stay anonymous instead** to go back. It is
+ * one button whose words change, so keyboard focus stays on it. The notice is
+ * a polite live region, so the change is read out. Once the form is signing or
+ * sealed the choice is fixed and the button goes.
+ *
+ * Without a {@link ReviewSessionProvider} the notice is the plain anonymous
+ * one, with no button: there is nothing for the choice to reach.
  */
+
+import {
+  SIGNED_DETAIL,
+  SIGNED_HEADLINE,
+  SIGNED_SEALED_DETAIL,
+  SIGN_WITH_NAME_LABEL,
+  STAY_ANONYMOUS_LABEL,
+} from "./identity";
+import { useReviewSession } from "./review-session";
 
 /** The sentence that says the reviewer is anonymous. */
 export const ANONYMITY_HEADLINE = "You are reviewing anonymously.";
@@ -19,12 +38,39 @@ export const ANONYMITY_DETAIL =
   "It can be opened only by 3 of 5 integrity committee members in a misconduct case.";
 
 export function AnonymityNotice() {
+  const session = useReviewSession();
+  const signed = session?.signed === true;
+  const locked = session?.locked === true;
+
+  const headline = signed ? SIGNED_HEADLINE : ANONYMITY_HEADLINE;
+  const detail = !signed
+    ? ANONYMITY_DETAIL
+    : locked
+      ? SIGNED_SEALED_DETAIL
+      : SIGNED_DETAIL;
+
   return (
-    <div className="rf-anonymity" role="note" aria-label="Anonymity">
-      <p className="rf-anonymity-text">
-        <strong className="rf-anonymity-headline">{ANONYMITY_HEADLINE}</strong>{" "}
-        {ANONYMITY_DETAIL}
+    <div
+      className="rf-anonymity"
+      data-identity={signed ? "signed" : "anonymous"}
+    >
+      <p
+        className="rf-anonymity-text"
+        role="note"
+        aria-label={signed ? "Signed review" : "Anonymity"}
+        aria-live="polite"
+      >
+        <strong className="rf-anonymity-headline">{headline}</strong> {detail}
       </p>
+      {session !== null && !locked ? (
+        <button
+          type="button"
+          className="rf-button rf-button--quiet rf-identity-toggle"
+          onClick={() => session.setSigned(!signed)}
+        >
+          {signed ? STAY_ANONYMOUS_LABEL : SIGN_WITH_NAME_LABEL}
+        </button>
+      ) : null}
     </div>
   );
 }

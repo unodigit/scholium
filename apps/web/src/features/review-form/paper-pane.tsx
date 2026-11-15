@@ -4,16 +4,22 @@
  * The reviewer reads the HTML rendition here while they fill in the rubric on
  * the right: the paper's id, version and categories, its abstract, then the
  * full text paragraph by paragraph. Each paragraph carries its stable id as
- * `data-paragraph-id`, which is what a citation in the review will name.
+ * `data-paragraph-id`, and `data-cite`, the name a citation gives it
+ * (`¶ 7 · 3fa9c1d2`; the abstract is `abstract`).
+ *
+ * Selecting words in the abstract or the text offers **Cite in review**
+ * (`cite-in-review.tsx`), which quotes them into the form.
  *
  * If the node has no text for this version the pane says so and the form still
  * works: a reviewer may be reading the PDF instead.
  *
- * Server-safe (the id pill is the only client piece, and it brings its own
- * `"use client"`).
+ * Server-safe (the id pill and the citation button are the client pieces, and
+ * bring their own `"use client"`).
  */
 
 import { IdPill } from "../ui-kit/id-pill";
+import { ABSTRACT_SOURCE, paragraphSource } from "./citation";
+import { CiteInReview } from "./cite-in-review";
 import type { ReviewPaper } from "./paper";
 
 export function PaperPane({ paper }: { paper: ReviewPaper }) {
@@ -27,21 +33,25 @@ export function PaperPane({ paper }: { paper: ReviewPaper }) {
         ) : null}
       </p>
 
-      {paper.abstract !== "" ? (
-        <section className="rf-paper-section" aria-labelledby="rf-abstract-heading">
-          <h2 id="rf-abstract-heading" className="rf-pane-heading">
-            Abstract
-          </h2>
-          <p className="reading rf-abstract">{paper.abstract}</p>
-        </section>
-      ) : null}
+      <CiteInReview>
+        {paper.abstract !== "" ? (
+          <section className="rf-paper-section" aria-labelledby="rf-abstract-heading">
+            <h2 id="rf-abstract-heading" className="rf-pane-heading">
+              Abstract
+            </h2>
+            <p className="reading rf-abstract" data-cite={ABSTRACT_SOURCE}>
+              {paper.abstract}
+            </p>
+          </section>
+        ) : null}
 
-      <section className="rf-paper-section" aria-labelledby="rf-text-heading">
-        <h2 id="rf-text-heading" className="rf-pane-heading">
-          Full text
-        </h2>
-        <PaperText paragraphs={paper.paragraphs} />
-      </section>
+        <section className="rf-paper-section" aria-labelledby="rf-text-heading">
+          <h2 id="rf-text-heading" className="rf-pane-heading">
+            Full text
+          </h2>
+          <PaperText paragraphs={paper.paragraphs} />
+        </section>
+      </CiteInReview>
     </article>
   );
 }
@@ -68,6 +78,7 @@ function PaperText({ paragraphs }: { paragraphs: ReviewPaper["paragraphs"] }) {
           key={`${index}:${paragraph.id}`}
           className="reading rf-paragraph"
           data-paragraph-id={paragraph.id}
+          data-cite={paragraphSource(index + 1, paragraph.id)}
         >
           {paragraph.text}
         </p>

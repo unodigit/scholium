@@ -261,6 +261,23 @@ describe("toReviewBody", () => {
     expect(toReviewBody(draft).scores.novelty.justification).toBe("Padded.");
   });
 
+  it("is anonymous unless the draft says it is signed", () => {
+    expect(emptyDraft().signed).toBe(false);
+    expect(toReviewBody(completeDraft()).signed).toBe(false);
+    expect(toReviewBody({ ...completeDraft(), signed: true }).signed).toBe(true);
+  });
+
+  it("never signs for a draft that does not carry the option", () => {
+    // A draft restored from before the option existed has no `signed` at all.
+    const { signed: _optionNeverHeardOf, ...old } = completeDraft();
+    expect(toReviewBody(old as ReviewDraft).signed).toBe(false);
+    // Only an explicit true counts: nothing truthy-but-not-true puts a name on a review.
+    expect(
+      toReviewBody({ ...completeDraft(), signed: "yes" } as unknown as ReviewDraft)
+        .signed,
+    ).toBe(false);
+  });
+
   it("refuses a draft that is not complete, and says what is wrong", () => {
     const draft = withDimension(completeDraft(), "limitations", {
       justification: "",

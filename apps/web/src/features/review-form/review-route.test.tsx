@@ -113,6 +113,30 @@ describe("/review route (server render)", () => {
     expect(html).toContain("3 of 5 integrity committee members");
   });
 
+  it("renders Sign with my name instead and the stylometry tip, anonymous to begin with", async () => {
+    stubApi();
+
+    const html = await render(ID);
+
+    expect(html).toContain("Sign with my name instead");
+    expect(html).toContain("Tip: avoid phrases that identify you or your lab.");
+    // Nothing is signed until the reviewer chooses: no signed notice, no way back.
+    expect(html).not.toContain("You are signing this review with your name.");
+    expect(html).not.toContain("Stay anonymous instead");
+  });
+
+  it("names every paragraph, and the abstract, as a citation will", async () => {
+    stubApi();
+
+    const html = await render(ID);
+
+    expect(html).toContain('data-cite="abstract"');
+    expect(html).toContain("data-cite=\"¶ 1 · p1\"");
+    expect(html).toContain("data-cite=\"¶ 2 · p2\"");
+    // The button itself appears only once words are selected.
+    expect(html).not.toContain("Cite in review");
+  });
+
   it("reads the public API, for the newest version's text, without the account", async () => {
     const fetchMock = stubApi();
 

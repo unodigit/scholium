@@ -121,6 +121,92 @@ describe("reviewRevealBody", () => {
   });
 });
 
+describe("signing with a name", () => {
+  const reviewOf = (signed: boolean) =>
+    toReviewBody({ ...completeDraft(), signed });
+
+  it("leaves an anonymous review's body, and so its commitment, as it was", () => {
+    const body = reviewRevealBody(reviewOf(false), VERSION);
+
+    expect("signed" in body).toBe(false);
+    expect(Object.keys(body).sort()).toEqual([
+      "aiAssisted",
+      "confidence",
+      "recommendation",
+      "scores",
+      "target",
+    ]);
+  });
+
+  it("puts signed: true in the body of a review signed with a name", () => {
+    expect(reviewRevealBody(reviewOf(true), VERSION).signed).toBe(true);
+  });
+
+  it("seals the choice: the same review commits differently signed and anonymous", () => {
+    expect(reviewCommitment(reviewOf(true), VERSION)).not.toBe(
+      reviewCommitment(reviewOf(false), VERSION),
+    );
+  });
+
+  it("matches the API's commitment for a signed body byte for byte", () => {
+    // Expected value computed by the API's own
+    // `app.modules.reviews.reveal.commitment_digest` over this body with
+    // `"signed": true` added.
+    expect(commitmentDigest({ ...PLAIN_BODY, signed: true })).toBe(
+      "79a83d146e8cf4275b967581da65bdc17323b524e39fef6ff31d25735de60cd5",
+    );
+    expect(commitmentDigest(PLAIN_BODY)).toBe(
+      "efbacbb9292162ec8c96ed55c9355afaef176a9e0d5649cb4985624ee6ae5d3b",
+    );
+  });
+
+  it("commits to the body it will later reveal, signed or not", () => {
+    for (const signed of [false, true]) {
+      const { body, revealBody } = buildReviewCommit(
+        { ...completeDraft(), signed },
+        VERSION,
+        KEY,
+        "sch:abc",
+      );
+      expect(revealBody.signed === true).toBe(signed);
+      expect(body.commitment).toBe(commitmentDigest(revealBody));
+    }
+  });
+
+  it("does not put the choice in the public commit record", async () => {
+    const submitted: unknown[] = [];
+    await commitReview(
+      {
+        paperId: "sch:abc",
+        versionCid: VERSION,
+        draft: { ...completeDraft(), signed: true },
+      },
+      {
+        deriveKey: async () => KEY,
+        sign: async (type, body, prev) => ({
+          v: 1,
+          type,
+          id: "bafycommit",
+          author: KEY.did,
+          created: "2026-11-16T00:00:00Z",
+          prev,
+          body,
+          proofs: [],
+          sig: "sig",
+        }),
+        submit: async (record) => {
+          submitted.push(record);
+          return {};
+        },
+      },
+    );
+
+    // The commit says who sealed it only as a pseudonymous key; "signed" lives
+    // inside the commitment, so a reader of the log cannot tell.
+    expect(JSON.stringify(submitted)).not.toMatch(/signed/);
+  });
+});
+
 describe("buildReviewCommit", () => {
   it("carries the target, the commitment, the nullifier and the review key", () => {
     const { body } = buildReviewCommit(completeDraft(), VERSION, KEY, "sch:abc");

@@ -190,6 +190,12 @@ export function canonicalJson(value: unknown): string {
  *
  * The reveal later adds its `commitment` to this body and signs it; this is
  * the content the commitment must cover, so both halves build it here.
+ *
+ * `signed: true` is in the body only when the reviewer chose "Sign with my
+ * name instead". The reveal API covers `signed` with the commitment of a first
+ * reveal (a review revealed with a different `signed` than it sealed is
+ * refused), and reads a missing flag as anonymous, so an anonymous review's
+ * body — and its commitment — is the same as before the option existed.
  */
 export function reviewRevealBody(
   review: ReviewBody,
@@ -201,6 +207,7 @@ export function reviewRevealBody(
     confidence: review.confidence,
     recommendation: review.recommendation,
     aiAssisted: review.aiAssisted,
+    ...(review.signed ? { signed: true } : {}),
   };
 }
 

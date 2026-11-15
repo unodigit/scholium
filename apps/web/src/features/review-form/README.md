@@ -5,20 +5,21 @@ the right the anonymity notice, the conflict check and the rubric form, which
 seals the review as a signed `review.commit`.
 
 This feature covers displaying the form (spec feature 165), committing it
-(166), and the two actions on a revealed review card — an author's
-point-by-point reply and a tier-3 member's quality rating (168; see
-[Replying and rating on the review card](#replying-and-rating-on-the-review-card)).
-"Sign with my name instead", the stylometry tip and "Cite in review" (167) are
-a later feature of this same plugin; it adds files here and extends
-`ReviewPage`.
+(166), who the review is credited to — "Sign with my name instead", the
+stylometry tip and "Cite in review" (167; see [Signing with your
+name](#signing-with-your-name), [The stylometry tip](#the-stylometry-tip) and
+[Cite in review](#cite-in-review)) — and the two actions on a revealed review
+card, an author's point-by-point reply and a tier-3 member's quality rating
+(168; see [Replying and rating on the review
+card](#replying-and-rating-on-the-review-card)).
 
 ## What the page shows
 
 | Where | What |
 | --- | --- |
 | Header | `Reviewing: {title} · v{n}` (the one `h1`), above a `scholium / review / sch:…` kicker. |
-| Left | The paper: id pill (click copies), version, categories, abstract, then the full text paragraph by paragraph. Each paragraph carries `data-paragraph-id`, which "Cite in review" will name. |
-| Right, top | The anonymity notice, in the design's words: "You are reviewing anonymously. Your identity is hidden from authors, readers and this node. It can be opened only by 3 of 5 integrity committee members in a misconduct case." |
+| Left | The paper: id pill (click copies), version, categories, abstract, then the full text paragraph by paragraph. Each carries `data-paragraph-id` and `data-cite` (the name a citation gives it). Selecting words offers **Cite in review**. |
+| Right, top | The anonymity notice, in the design's words: "You are reviewing anonymously. Your identity is hidden from authors, readers and this node. It can be opened only by 3 of 5 integrity committee members in a misconduct case." Beneath it, **Sign with my name instead**. |
 | Right, above the form | **Conflict check** — the three checks for this reviewer, each with an icon and a status word: not an author, no co-authorship in 3 years, different institution. |
 | Right | Six rubric dimensions, each five `1`–`5` radios and a **required** justification box; **Confidence** (Low / Medium / High); **Recommendation** (Sound as is / Minor revisions / Major concerns / Fundamentally flawed); the checkbox "I used AI assistance in writing this review (declared on the report)"; a progress line. |
 | Right, bottom | **Commit review**. After a successful commit the form is replaced by **Your review is sealed**, the reveal date and the review id. |
@@ -29,6 +30,100 @@ unticked, so every answer is a decision.
 The six dimensions, and the confidence and recommendation values, are the ones
 `apps/api/packages/record-core/schemas/review.formal.json` names;
 `rubric.test.ts` reads that schema, so the form cannot drift from it.
+
+## Signing with your name
+
+A reviewer is anonymous unless they choose otherwise. **Sign with my name
+instead** sits beneath the anonymity notice (`docs/design.md` §5.5). Choosing it
+replaces the notice's words with what signing means — "You are signing this
+review with your name. When the review is revealed it will be credited to you by
+name and listed on your public profile." — and the same button now reads **Stay
+anonymous instead**. It is one button whose label changes, so keyboard focus
+stays on it, and the notice is a polite live region, so the change is read out.
+
+What it does on the wire: the commit seals `"signed": true` inside the
+`review.formal` body it commits to. `POST /v1/reviews/reveal` covers `signed`
+with a first reveal's commitment, honours it only for the reviewer who sealed
+the review (their account DID is proved against the escrow's uniqueness token),
+and then lists the review on `GET /v1/profiles/{did}/reviews`. So:
+
+- **The choice is made before committing, and sealed with the review.** The
+  notice says so. A first reveal whose body differs from what was sealed —
+  `signed: true` added to an anonymous commit, say — is refused by the API
+  because the commitment no longer matches. (A later *update* of a revealed
+  review is not sealed, and the API lets such an update take a name; this page
+  does not offer that.)
+- **It stays out of the public commit record.** The `review.commit` carries
+  only the pseudonymous review key, the commitment and the nullifier; `signed`
+  lives inside the commitment, so a reader of the log cannot tell.
+- **`signed` is in the body only when `true`.** An anonymous review's body, and
+  so its commitment, is byte-for-byte what it was before the option existed
+  (`commit.test.ts` checks both digests against the API's own
+  `commitment_digest`). `ReviewDraft.signed` and `ReviewBody.signed` are
+  booleans; anything but an explicit `true` stays anonymous.
+- **It is fixed while the commit is being signed, and once sealed.** The button
+  goes, so what the page says is what the commitment covers. If the commit
+  fails the choice is given back, as chosen.
+- **The sealed card says it.** A signed review's "Your review is sealed" adds
+  "It will carry your name when it is revealed."
+
+The notice (top of the right column), the form (below it) and the paper (on the
+left) are siblings in a server-rendered page but must agree, so they share a
+small client-side session (`review-session.tsx`: the choice, the form's phase,
+and the hand-off for citations). `ReviewPage` mounts one around the split view;
+a `ReviewForm` used on its own mounts its own, and a bare `AnonymityNotice` is
+the plain anonymous notice with no button, since there would be nothing for the
+choice to reach.
+
+## The stylometry tip
+
+While the review is anonymous the form shows the design's hint above the
+rubric, with an eye icon: "Tip: avoid phrases that identify you or your lab."
+It is there from the start (anonymous is the default) and goes the moment the
+reviewer signs with their name, since writing style no longer hides anything;
+it returns if they switch back. It is a fixed sentence: the page does not try
+to detect identifying phrases, which would promise a protection it cannot give.
+
+## Cite in review
+
+Selecting words in the paper — the abstract or the full text — floats a **Cite
+in review** button just under the end of the selection. Pressing it puts the
+quote into a justification box:
+
+```text
+“We define a safety score for each branch.” [¶ 2 · 3fa9c1d2]
+```
+
+- **Where it goes.** The justification the reviewer last had open; the first
+  one (Soundness of method) before they have opened any. The quote is added
+  after what is already written, on its own paragraph, and nothing the reviewer
+  wrote is changed. The box is then focused with the caret at the end, so they
+  carry on writing, and a polite live region says where it went ("Quoted ¶ 2 ·
+  3fa9c1d2 in the justification for Soundness of method.") — the box may be out
+  of sight in the sticky column.
+- **What it says.** A quote in curly quotes, whitespace collapsed, cut at a
+  word with "…" past 300 characters; then where it is: the abstract is
+  `abstract`, a paragraph is `¶ {number} · {first 8 characters of its id}` (the
+  number for a reader counting down the paper, the id because it is the
+  stable one `data-paragraph-id` carries). A selection spanning paragraphs names
+  the first and the last (`¶ 3 · … – ¶ 5 · …`). Only text inside the paper's
+  blocks is quoted, so a heading between the abstract and the text never ends
+  up in it.
+- **It is plain text in the justification.** So it is part of the sealed
+  review and shows wherever a justification is shown, with no new field for the
+  API or the Reviews tab to learn.
+- **When it is offered.** Not while the pointer is down (a drag in progress),
+  and not for a selection that reaches outside the paper (into the form). Only
+  while the form can still change: not while the commit is being signed, nor
+  once sealed. **Escape** dismisses it. A press on the button does not take the
+  selection away from the text. The button is placed inside the paper's column,
+  so it scrolls with the words it quotes and never runs off either edge.
+- **Without a form**, a `PaperPane` on its own offers nothing: there is
+  nowhere to cite into.
+
+A citation counts as text in a justification, so a justification made only of a
+quote satisfies "required". The rule is still a format check, as it is for any
+other text; it does not judge the reasoning.
 
 ## The conflict check
 
@@ -229,8 +324,13 @@ reviews would invite a review of the wrong paper. The page sends
 | `review-key.ts` | Per-paper review key derivation and the nullifier. |
 | `commit.ts` | Canonical JSON, the commitment, the commit body, signing/submission and commit failures. |
 | `review-form.tsx` | The rubric form and Commit review (client component; holds the draft and the sealed state). |
-| `paper-pane.tsx` | The paper on the left. Server-safe. |
-| `anonymity-notice.tsx` | The notice. Server-safe. |
+| `paper-pane.tsx` | The paper on the left. Server-safe; writes each block's `data-cite`. |
+| `anonymity-notice.tsx` | The notice and **Sign with my name instead** (client component; reads the session). |
+| `identity.ts` | The words for the identity choice and the stylometry tip, so the notice, the form and the sealed card never drift. Pure. |
+| `citation.ts` | What a citation says and how it is added to a justification; `citationFromSelection` reads a browser selection. No React. |
+| `cite-in-review.tsx` | `CiteInReview`: wraps the paper's text and floats the **Cite in review** button at a selection (client component). |
+| `review-cite.css` | The button's styles; every value is a design token; prefix `rc-`. |
+| `review-session.tsx` | `ReviewSessionProvider` / `useReviewSession`: the signed choice, the form's phase and the paper-to-form hand-off, shared by the notice, the form and the paper. |
 | `review-page.tsx` | Header, split view, conflict check, form, and the failure notice. |
 | `review-form.css` | All content styles; every value is a design token; prefix `rf-`. |
 | `reply.ts` | The author's reply: points, draft, the `review.response` body, signing and sending, failure wording. Pure, no React. |
@@ -241,7 +341,7 @@ reviews would invite a review of the wrong paper. The page sends
 | `review-actions.tsx` | `ReviewCardActions`, the reply form and the rating control (client components). |
 | `review-actions.css` | Their styles; every value is a design token; prefix `ra-`. |
 | `index.ts` | Public surface for later features of this plugin. |
-| `*.test.ts(x)` | Rubric, paper loading, conflict check, key derivation, commitment vectors, commit flow, form behaviour, page composition, server render of the route, stylesheet contract. |
+| `*.test.ts(x)` | Rubric, paper loading, conflict check, key derivation, commitment vectors (signed and anonymous, against the API's own digest), commit flow, form behaviour, the identity choice, selections and citations (real DOM ranges), page composition, server render of the route, stylesheet contract. |
 | `app/(review-form)/layout.tsx` | Global nav + page shell (`rfs-shell`). |
 | `app/(review-form)/review-form-shell.css` | The shell's width (wider than the reading column). |
 | `app/(review-form)/review/[id]/page.tsx` | The `/review/[id]` route: metadata, id parsing, loading. |
@@ -255,7 +355,13 @@ reviews would invite a review of the wrong paper. The page sends
   can match it.
 - **No stepped pages under 640 px.** design.md §10 asks for the review form as
   stepped pages on phones; here it is one long column under the paper.
-- **No "Open reproduction log"** beside Reproducibility (design.md §5.5), and
-  no text-selection "Cite in review" (167).
+- **No "Open reproduction log"** beside Reproducibility (design.md §5.5).
+- **Cite in review has no target picker.** A quote goes to the justification
+  last opened; the reviewer moves it by cutting and pasting. A button at the
+  selection cannot offer six destinations without taking focus off the text.
+- **No citation chips or links.** A citation is text in the justification; it
+  does not link back to the paragraph, and the Reviews tab shows it as typed.
+- **No signing an already-revealed review.** The page signs a review as it is
+  sealed; taking a name on a later update (which the API allows) is not offered.
 - The paper is shown as plain paragraphs. Math (KaTeX) and figures are not
   rendered, as the reading text is plain text.

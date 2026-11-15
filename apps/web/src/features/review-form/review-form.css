@@ -149,6 +149,30 @@
   font-weight: 600;
 }
 
+/* "Sign with my name instead" sits under the notice's words. It is one button
+   whose label changes, so it keeps keyboard focus when it is pressed. The
+   notice's own words — never colour — say which state the review is in. */
+.rf-anonymity .rf-identity-toggle {
+  margin-top: calc(var(--space-unit) * 3);
+}
+
+/* The stylometry tip: a quiet line above the rubric, an icon and words. */
+.rf-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * -2) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.rf-tip-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--ink-2);
+}
+
 .rf-form {
   display: flex;
   flex-direction: column;
