@@ -20,8 +20,10 @@ matching ``authorship`` row for ``(version, author)``.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Optional
 
+from scholium_record_core import derive_short_id, parse_short_id
 from sqlalchemy.exc import IntegrityError
 
 from app import db
@@ -33,7 +35,12 @@ __all__ = [
     "COAUTHOR_CONSENT_MIN_TIER",
     "COAUTHOR_CONSENT_TYPE",
     "CONSENT_MIN_TIER",
+    "CONSENT_STATUSES",
     "CONSENT_TYPE",
+    "STATUS_DECLINED",
+    "STATUS_SIGNED",
+    "STATUS_WAITING",
+    "ConsentEntry",
     "ConsentForbidden",
     "ConsentNotAllowed",
     "CoauthorNotListed",
@@ -41,11 +48,14 @@ __all__ = [
     "NotListedAuthor",
     "UnlistedAuthor",
     "UnlistedCoauthor",
+    "VersionRef",
+    "consents_for_version",
     "ensure_tables",
     "handle_coauthor_consent",
     "handle_consent",
     "is_listed_author",
     "listed_authors",
+    "resolve_version",
     "save_coauthor_consent",
     "save_consent",
 ]
@@ -61,6 +71,57 @@ COAUTHOR_CONSENT_MIN_TIER = 0
 
 #: Problem type for a consent signed by someone not listed on the version.
 NOT_LISTED_TYPE = "urn:scholium:problem:consent-not-listed"
+
+#: The three states a listed author's consent can be in.  ``waiting`` means the
+#: author has not signed yet; ``signed`` means they accepted; ``declined``
+#: means they refused authorship of the version.
+STATUS_WAITING = "waiting"
+STATUS_SIGNED = "signed"
+STATUS_DECLINED = "declined"
+CONSENT_STATUSES = (STATUS_WAITING, STATUS_SIGNED, STATUS_DECLINED)
+
+#: The state a version is reported in when no ``paper_versions`` row exists
+#: (a log built by replaying records without the submissions handler).  A
+#: version that lists authors is waiting for their consent until they decide.
+_UNSTORED_VERSION_STATE = "awaiting_consent"
+
+#: Record types the paper/version lookup understands.
+_PAPER_GENESIS_TYPE = "paper.genesis"
+_PAPER_VERSION_TYPE = "paper.version"
+
+
+@dataclass(frozen=True)
+class VersionRef:
+    """A paper version addressed by the public API's ``{id}`` and ``{n}``."""
+
+    #: Canonical paper short id (``sch:xxxx-xxxx-xxxx``).
+    paper: str
+    #: cid of the paper's ``paper.genesis`` record.
+    genesis_cid: str
+    #: cid of the ``paper.version`` record for version ``n``.
+    version_cid: str
+    #: The version's stored lifecycle state (``awaiting_consent``, ...).
+    state: str
+
+
+@dataclass(frozen=True)
+class ConsentEntry:
+    """One listed author and the status of their consent to a version."""
+
+    #: The author's ``did:`` identifier.
+    did: str
+    #: 1-based byline position.
+    position: int
+    #: ``waiting``, ``signed`` or ``declined``.
+    status: str
+    #: The raw decision (``accept``/``decline``), or ``None`` while waiting.
+    decision: Optional[str]
+    #: cid of the author's ``coauthor.consent`` record, once signed.
+    consent_cid: Optional[str]
+    #: The CRediT role the consent record names, when it names one.
+    role: Optional[str]
+    #: The CRediT roles the version lists for this author, if any.
+    credit_roles: Optional[list[str]]
 
 
 class ConsentForbidden(ProblemException):
@@ -389,3 +450,297 @@ def save_consent(
 def save_coauthor_consent(*args: Any, **kwargs: Any) -> Any:
     """Alias for :func:`save_consent`."""
     return save_consent(*args, **kwargs)
+
+
+# --------------------------------------------------------------------------- #
+# Reading: GET /v1/papers/{id}/v/{n}/consents (feature 56)
+# --------------------------------------------------------------------------- #
+
+
+def _canonical_short_id(paper: Any) -> str:
+    """The canonical ``sch:`` id for ``paper``, or ``ValueError`` when it is none.
+
+    ``paper`` is normally the short id the API exposes.  A full
+    ``paper.genesis`` cid is accepted too and resolves to the same id, since a
+    client holding the genesis record may not have derived the short id yet;
+    anything else is malformed and the caller answers ``404``.
+    """
+    if not isinstance(paper, str) or not paper:
+        raise ValueError("the paper id must be a non-empty string")
+    try:
+        return parse_short_id(paper)
+    except ValueError as exc:
+        try:
+            return derive_short_id(paper)
+        except ValueError:
+            raise exc from None
+
+
+def _version_in_database(canonical: str, n: int) -> Optional[tuple[str, str, str]]:
+    """``(genesis_cid, version_cid, state)`` from the submissions tables, if stored."""
+    submissions = _submissions()
+    try:
+        paper_row = submissions.get_paper_by_short_id(canonical)
+    except Exception:  # pragma: no cover - a damaged table is not a normal path
+        paper_row = None
+    if paper_row is not None:
+        paper_cid = getattr(paper_row, "paper_cid", None)
+        if isinstance(paper_cid, str) and paper_cid:
+            try:
+                versions = submissions.versions_for_paper(paper_cid)
+            except Exception:  # pragma: no cover - see above
+                versions = ()
+            for row in versions:
+                if getattr(row, "n", None) == n:
+                    version_cid = getattr(row, "version_cid", None)
+                    if isinstance(version_cid, str) and version_cid:
+                        state = getattr(row, "state", None)
+                        return (
+                            paper_cid,
+                            version_cid,
+                            state if isinstance(state, str) else _UNSTORED_VERSION_STATE,
+                        )
+        return None
+
+    # A node can hold the version rows without the paper's row (a replay that
+    # stored versions only).  The short id is derived from ``paper_cid`` just
+    # as it is from the genesis record.
+    try:
+        PaperVersion = submissions.PaperVersion
+        with db.SessionLocal() as session:
+            rows = session.query(PaperVersion).filter(PaperVersion.n == n).all()
+    except Exception:  # pragma: no cover - a damaged table is not a normal path
+        return None
+    for row in rows:
+        paper_cid = getattr(row, "paper_cid", None)
+        version_cid = getattr(row, "version_cid", None)
+        if not isinstance(paper_cid, str) or not isinstance(version_cid, str):
+            continue
+        try:
+            if derive_short_id(paper_cid) != canonical:
+                continue
+        except ValueError:
+            continue
+        state = getattr(row, "state", None)
+        return (
+            paper_cid,
+            version_cid,
+            state if isinstance(state, str) else _UNSTORED_VERSION_STATE,
+        )
+    return None
+
+
+def _version_in_ledger(canonical: str, n: int) -> Optional[tuple[str, str]]:
+    """``(genesis_cid, version_cid)`` found in the event log, if a replay stored them.
+
+    Papers and versions are normally indexed in ``papers``/``paper_versions``
+    by the submissions handlers, but records can reach the log without them
+    (a sync replay, a fixture that appends signed records directly).  Reading
+    falls back to the log so the endpoint works on such a node too.
+    """
+    from sqlalchemy import select
+
+    from app.modules.ledger.models import EventLog, ensure_table
+
+    ensure_table()
+    with db.SessionLocal() as session:
+        rows = list(
+            session.execute(
+                select(EventLog)
+                .where(
+                    EventLog.record_type.in_(
+                        (_PAPER_GENESIS_TYPE, _PAPER_VERSION_TYPE)
+                    )
+                )
+                .order_by(EventLog.seq)
+            ).scalars()
+        )
+
+    genesis_cid: Optional[str] = None
+    for row in rows:
+        if row.record_type != _PAPER_GENESIS_TYPE:
+            continue
+        try:
+            if derive_short_id(row.record_cid) == canonical:
+                genesis_cid = row.record_cid
+                break
+        except ValueError:
+            # A stored cid that is not a record id cannot be a paper genesis.
+            continue
+    if genesis_cid is None:
+        return None
+
+    for row in rows:
+        if row.record_type != _PAPER_VERSION_TYPE:
+            continue
+        body = row.body if isinstance(row.body, Mapping) else {}
+        if body.get("paper") != genesis_cid:
+            continue
+        value = body.get("n")
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        if value == n:
+            return genesis_cid, row.record_cid
+    return None
+
+
+def resolve_version(paper: Any, n: Any) -> Optional[VersionRef]:
+    """Resolve ``(paper short id, version number)`` to the records that name it.
+
+    Returns ``None`` when the node holds no such version.  ``ValueError`` is
+    raised only for a malformed paper id or version number; the route treats
+    both malformed input and an unknown version as ``404``.
+    """
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        raise ValueError("the version number must be a positive integer")
+    canonical = _canonical_short_id(paper)
+
+    found = _version_in_database(canonical, n)
+    if found is not None:
+        genesis_cid, version_cid, state = found
+        return VersionRef(
+            paper=canonical,
+            genesis_cid=genesis_cid,
+            version_cid=version_cid,
+            state=state,
+        )
+
+    logged = _version_in_ledger(canonical, n)
+    if logged is None:
+        return None
+    genesis_cid, version_cid = logged
+
+    # The log names the version; a stored ``paper_versions`` row (which the
+    # submissions handler writes even when the paper row was not found) still
+    # carries the lifecycle state.
+    submissions = _submissions()
+    try:
+        version_row = submissions.get_version(version_cid)
+    except Exception:  # pragma: no cover - a damaged table is not a normal path
+        version_row = None
+    state = getattr(version_row, "state", None)
+    return VersionRef(
+        paper=canonical,
+        genesis_cid=genesis_cid,
+        version_cid=version_cid,
+        state=state if isinstance(state, str) and state else _UNSTORED_VERSION_STATE,
+    )
+
+
+def _version_from_body(body: Mapping[str, Any]) -> Optional[str]:
+    """The version cid a consent body names, under either schema spelling."""
+    for key in ("version", "versionCid", "version_cid"):
+        value = body.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _logged_consents(version_cid: str) -> dict[str, tuple[Optional[str], Optional[str], Optional[str]]]:
+    """The latest consent record per author for ``version_cid``, from the log.
+
+    Returns ``did -> (consent_cid, decision, role)``.  Later records replace
+    earlier ones, so a re-signed consent is the one reported.  The authorship
+    table already records the decision for records that went through ingest;
+    reading the log as well means a record appended by a replay or a fixture
+    is reported too, and the signed ``coauthor.consent`` stays the source of
+    truth for what an author decided.
+    """
+    from sqlalchemy import select
+
+    from app.modules.ledger.models import EventLog, ensure_table
+
+    ensure_table()
+    with db.SessionLocal() as session:
+        rows = list(
+            session.execute(
+                select(EventLog)
+                .where(EventLog.record_type == CONSENT_TYPE)
+                .order_by(EventLog.seq)
+            ).scalars()
+        )
+
+    found: dict[str, tuple[Optional[str], Optional[str], Optional[str]]] = {}
+    for entry in rows:
+        body = entry.body if isinstance(entry.body, Mapping) else {}
+        if _version_from_body(body) != version_cid:
+            continue
+        author = getattr(entry, "author_did", None)
+        if not isinstance(author, str) or not author:
+            continue
+        decision = body.get("decision")
+        role = body.get("role")
+        found[author] = (
+            getattr(entry, "record_cid", None),
+            decision if isinstance(decision, str) else None,
+            role if isinstance(role, str) else None,
+        )
+    return found
+
+
+def consents_for_version(version_cid: str) -> list[ConsentEntry]:
+    """Return each author listed on ``version_cid`` with their consent status.
+
+    Authors come from the ``authorship`` table, seeded from the version record
+    in the log when no rows exist yet (a replayed or fixture-built log).  A
+    decision recorded by a ``coauthor.consent`` record in the log takes
+    precedence over the derived row, so the answer reflects the signed record
+    even if the derived table is stale.
+    """
+    if not isinstance(version_cid, str) or not version_cid:
+        return []
+
+    ensure_tables()
+    submissions = _submissions()
+    rows = submissions.authorship_for(version_cid)
+    if not rows:
+        _ensure_authorship_from_ledger(version_cid)
+        rows = submissions.authorship_for(version_cid)
+
+    logged = _logged_consents(version_cid)
+    entries: list[ConsentEntry] = []
+    for row in rows:
+        did = getattr(row, "author_did", None)
+        if not isinstance(did, str) or not did:
+            continue
+
+        decision = getattr(row, "consent_decision", None)
+        consent_cid = getattr(row, "consent_cid", None)
+        role: Optional[str] = None
+        logged_consent = logged.get(did)
+        if logged_consent is not None:
+            logged_cid, logged_decision, logged_role = logged_consent
+            if logged_decision in ("accept", "decline"):
+                decision = logged_decision
+                consent_cid = logged_cid
+                role = logged_role
+
+        if decision == "accept":
+            status = STATUS_SIGNED
+        elif decision == "decline":
+            status = STATUS_DECLINED
+        else:
+            status = STATUS_WAITING
+            decision = None if not isinstance(decision, str) else decision
+            consent_cid = consent_cid if isinstance(consent_cid, str) else None
+            role = None
+
+        raw_roles = getattr(row, "credit_roles", None)
+        credit_roles = (
+            [str(item) for item in raw_roles]
+            if isinstance(raw_roles, (list, tuple))
+            else None
+        )
+        position = getattr(row, "position", None)
+        entries.append(
+            ConsentEntry(
+                did=did,
+                position=position if isinstance(position, int) and not isinstance(position, bool) else len(entries) + 1,
+                status=status,
+                decision=decision,
+                consent_cid=consent_cid if isinstance(consent_cid, str) else None,
+                role=role,
+                credit_roles=credit_roles,
+            )
+        )
+    return entries
