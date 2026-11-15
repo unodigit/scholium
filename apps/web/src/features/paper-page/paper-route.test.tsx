@@ -150,6 +150,14 @@ describe("/p/{id}: the four actions", () => {
     expect(names).toEqual(["PDF", "HTML", "Cite", "Download"]);
   });
 
+  it("leaves Invite reviewer out of the first HTML: it is for authors, and the server cannot know who is reading", async () => {
+    stubApi();
+    mount(await page(BARE_ID));
+
+    expect(screen.queryByRole("button", { name: "Invite reviewer" })).toBeNull();
+    expect(document.body.textContent).not.toContain("Invite reviewer");
+  });
+
   it("opens the PDF from the node's content endpoint, in a new tab", async () => {
     stubApi();
     mount(await page(BARE_ID));

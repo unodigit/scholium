@@ -38,6 +38,7 @@ error.
 | --- | --- | --- |
 | Header: title, authors, status chip, `v2 of 2`, licence | `paper-header.tsx` | server |
 | Actions: PDF, HTML, Cite, Download | `paper-actions.tsx` | server |
+| Invite reviewer (authors only) | `invite-reviewer.tsx`, `invitation.ts` | client island |
 | Reading column (≤ 720 px): abstract, then the text | `reading-column.tsx` | server |
 | Paragraphs with margin markers, the `A` shortcut and typeset math | `reading-text.tsx` | client island |
 | Which rendition shows (HTML or PDF); the PDF and HTML actions' state | `reading-view.tsx` | client islands |
@@ -202,6 +203,52 @@ Each is a real link, so the row works before any JavaScript runs.
 Cite and Download are plain links for now. The Cite dialog (BibTeX and RIS, copy)
 and the Download menu replace those two elements and keep the endpoints.
 
+## Invite reviewer
+
+An author sees a fifth action beneath the four: **Invite reviewer**. It opens a
+one-field form for a reviewer's DID and sends
+
+```text
+POST /v1/papers/{id}/review-invitations
+{"reviewer": "did:key:z6Mk…", "version": "2"}
+```
+
+for the version on screen, with the author's access token. The node saves the
+invitation as `pending` and it appears on the reviewer's dashboard under *Needs
+your attention*. An invitation is an ordinary authenticated request, **not a
+signed record**, so there is no passkey prompt.
+
+- **Authors only, once the page runs.** The control renders nothing in the first
+  HTML (the server cannot know who is reading, so a shared link and a crawler see
+  the header as it always was). After mount the signed-in viewer is read from the
+  token store (`review-form`'s `useViewer`) and the button appears only if the
+  viewer's DID is on the byline, which the page already holds
+  (`paper.authors`). Signing in or out while the page is open updates it.
+- **The API is the gate.** It answers `403` to anyone not on the byline (a tier-4
+  member may also invite; that belongs to the moderation console, not this page)
+  and `403` to an invitee who is not a tier-3 reviewer in the paper's category.
+  The page shows that sentence in the node's own words and ends it with "No
+  invitation was sent."; it never guesses at the reason.
+- **Two mistakes are caught before sending**: text that is not a DID (only the
+  shape is checked, `did:<method>:<id>`), and a DID that is on the byline: the node
+  would accept the latter, and an author reviewing their own paper is never what
+  was meant.
+- **The version is sent as text.** The node reads a version hint only when it is a
+  string and otherwise falls back to the newest version, which would invite the
+  reviewer to a version the author is not looking at. The form's heading says
+  which version ("Invite a reviewer to v2").
+- **Sending is safe to press twice.** While a request is in flight the button says
+  "Sending…" and further presses do nothing. A `5xx` says the invitation is "not
+  confirmed as sent" rather than claiming either way, since the node may have saved
+  the row.
+- **Several invitations in a row.** After a success the field is cleared and the
+  panel stays open; the people invited from this page are listed beneath it, since
+  the node has no read for an author to see their invitations.
+- **Accessible.** The button is a disclosure (`aria-expanded`, `aria-controls`);
+  the form stays mounted while closed so a half-typed DID survives; focus moves to
+  the field on opening and back to it on a mistake; outcomes are an icon plus words
+  in a live region (never colour alone); the field and buttons are at least 44 px.
+
 ## The compare view
 
 The Versions tab offers **Compare v1 with v2** for each adjacent pair
@@ -246,9 +293,8 @@ Added in v2 (1)      Removed from v1 (1)
 ## Not here (other features)
 
 Status banners above the title (Retracted, Corrected, newer version, content
-removed); the Cite dialog and Download menu; the drawer and bottom sheet; Invite
-reviewer. Until the banners land, a retraction or correction is shown by the
-status chip only.
+removed); the Cite dialog and Download menu; the drawer and bottom sheet. Until
+the banners land, a retraction or correction is shown by the status chip only.
 
 The PDF view has no text layer (no selecting or searching inside the canvas) and no
 zoom of its own; the HTML has the text, and "Open in a new tab" has the browser's
@@ -279,6 +325,9 @@ tokens, the 720/360 widths, focus rings and touch targets.
 | `reading-view.test.tsx` | the view switch: plain vs modified click, phones, the address, the HTML staying mounted |
 | `compare.test.ts` | the compare body's camelCase/snake_case shapes, dropped rows, the error for "not a diff", the summary's words |
 | `compare-route.test.tsx` | the real compare route: both notes, changed/added/removed paragraphs, the empty comparison, bad addresses and node failures |
+| `invitation.test.ts` | who is offered the action, what counts as a DID, the exact request (path, body, bearer token) through the real API client, the `201` body, every failure's sentence |
+| `invite-reviewer.test.tsx` | the disclosure, focus, sending once, the mistakes caught before sending, a refusal shown in the node's words, Sign in when a session has ended |
+| `invite-header.test.tsx` | the header with the real byline, token store and API client: shown to each author, not to a stranger or a signed-out reader, and the POST it makes |
 
 jsdom has no canvas and the real PDF.js needs a browser, so the viewer's tests use
 a fake document, and what only a browser can show (the worker loading, pages

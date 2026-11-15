@@ -22,13 +22,17 @@
  * - **Version** reads `v2 of 2`, from the version timeline; if the timeline
  *   could not be read it is just `v2`.
  * - **Licence** is the signed version's, in words (`CC BY 4.0`).
+ * - **Invite reviewer** is offered to the paper's authors only, beneath the
+ *   four actions (`invite-reviewer.tsx`).
  *
  * Server-safe: no hooks, no state, so the first HTML already has the title and
- * the byline.
+ * the byline. The one client island, Invite reviewer, renders nothing in that
+ * first HTML.
  */
 
 import { StatusChip, isPaperStatus } from "../ui-kit";
 import { licenceLabel } from "../paper-meta/meta";
+import { InviteReviewer } from "./invite-reviewer";
 import { PaperActions } from "./paper-actions";
 import {
   authorDetail,
@@ -100,6 +104,15 @@ export function PaperHeader({ data }: PaperHeaderProps) {
         pdf={pdf}
         citeUrl={citeHref(shortId, version)}
         archiveUrl={archiveHref(shortId)}
+      />
+
+      {/* A client island that renders nothing unless the reader is on the
+          byline, so the first HTML is the same for everyone. */}
+      <InviteReviewer
+        paperId={shortId}
+        version={version}
+        categories={paper.categories}
+        authorDids={paper.authors.map((author) => author.did)}
       />
     </header>
   );

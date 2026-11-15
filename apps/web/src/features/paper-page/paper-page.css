@@ -216,6 +216,226 @@
   }
 }
 
+/* ---- Invite reviewer (authors only) ----------------------------------------- */
+
+.ppg-invite {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+  justify-items: start;
+  margin-block-start: calc(var(--space-unit) * 2);
+}
+
+/* The button is a `.ppg-action`, so it looks like its neighbours in the row
+   above. Open, it is marked by fill and border (as the current view is), and
+   by aria-expanded. */
+.ppg-invite-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+/* `display` below would otherwise win over the `hidden` attribute. */
+.ppg-invite-panel[hidden] {
+  display: none;
+}
+
+.ppg-invite-panel {
+  box-sizing: border-box;
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+  inline-size: 100%;
+  max-inline-size: calc(var(--space-unit) * 120);
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.ppg-invite-title {
+  margin: 0;
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.ppg-invite-lede,
+.ppg-invite-hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.ppg-invite-form {
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.ppg-invite-label {
+  font-weight: 600;
+}
+
+.ppg-invite-input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--bg);
+  color: var(--ink);
+  /* An identifier, so the code face: a DID is read character by character. */
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
+.ppg-invite-input[aria-invalid="true"] {
+  border-color: var(--critical);
+}
+
+.ppg-invite-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ppg-invite-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.ppg-invite-send,
+.ppg-invite-close {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 4);
+  border-radius: var(--corner-control);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+  cursor: pointer;
+}
+
+.ppg-invite-send {
+  border: 1px solid var(--accent);
+  background-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.ppg-invite-send[aria-disabled="true"] {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.ppg-invite-close {
+  border: 1px solid var(--rule);
+  background-color: var(--surface);
+  color: var(--ink);
+}
+
+.ppg-invite-close:hover {
+  border-color: var(--accent);
+}
+
+.ppg-invite-send:focus-visible,
+.ppg-invite-close:focus-visible,
+.ppg-invite-toggle:focus-visible,
+.ppg-invite-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* An icon and words, never colour alone (§9): the colour is on the icon, the
+   words stay in --ink. */
+.ppg-invite-error,
+.ppg-invite-done {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+/* The live region is always mounted; empty, it takes no room. */
+.ppg-invite-done:empty {
+  display: none;
+}
+
+.ppg-invite-icon {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.ppg-invite-icon--critical {
+  color: var(--critical);
+}
+
+.ppg-invite-icon--verified {
+  color: var(--verified);
+}
+
+.ppg-invite-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ppg-invite-sent {
+  display: grid;
+  gap: calc(var(--space-unit) * 1);
+  padding-block-start: calc(var(--space-unit) * 3);
+  border-block-start: 1px solid var(--rule);
+}
+
+.ppg-invite-sent-title {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  font-weight: 600;
+  line-height: var(--leading-meta);
+}
+
+.ppg-invite-list {
+  display: grid;
+  gap: calc(var(--space-unit) * 1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ppg-invite-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.ppg-invite-did {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  overflow-wrap: anywhere;
+}
+
+.ppg-invite-status {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
 /* ---- Reading column -------------------------------------------------------- */
 
 .ppg-reading {

@@ -249,6 +249,65 @@ describe("the compare view (feature 186)", () => {
   });
 });
 
+describe("the Invite reviewer form (feature 187)", () => {
+  it("gives every control a visible 2 px focus ring in the focus colour", () => {
+    for (const selector of [
+      ".ppg-invite-input:focus-visible",
+      ".ppg-invite-send:focus-visible",
+      ".ppg-invite-close:focus-visible",
+      ".ppg-invite-toggle:focus-visible",
+      ".ppg-invite-link:focus-visible",
+    ]) {
+      expect(declarations(page, selector)).toMatch(
+        /outline:\s*2px solid var\(--focus-ring\)/,
+      );
+    }
+  });
+
+  it("makes the field and both buttons at least 44 px tall", () => {
+    for (const selector of [".ppg-invite-input", ".ppg-invite-send", ".ppg-invite-close"]) {
+      expect(declarations(page, selector)).toMatch(
+        /min-block-size:\s*calc\(var\(--space-unit\)\s*\*\s*11\)/,
+      );
+    }
+  });
+
+  it("keeps a closed panel hidden whatever else sets its display", () => {
+    // The form stays mounted while closed so a half-typed DID survives, so the
+    // `hidden` attribute is what takes it out of the page.
+    expect(declarations(page, ".ppg-invite-panel[hidden]")).toMatch(/display:\s*none/);
+  });
+
+  it("sets a DID in the code face, because it is read character by character", () => {
+    for (const selector of [".ppg-invite-input", ".ppg-invite-did"]) {
+      expect(declarations(page, selector)).toMatch(/font-family:\s*var\(--family-mono\)/);
+    }
+  });
+
+  it("does not rely on colour alone for a mistake or for an open form", () => {
+    // The words stay in --ink; the colour is on the icon, beside the words.
+    expect(declarations(page, ".ppg-invite-error")).toMatch(/color:\s*var\(--ink\)/);
+    expect(declarations(page, ".ppg-invite-icon--critical")).toMatch(
+      /color:\s*var\(--critical\)/,
+    );
+    expect(declarations(page, ".ppg-invite-icon--verified")).toMatch(
+      /color:\s*var\(--verified\)/,
+    );
+    // A field with a mistake also changes border, and aria-invalid says so.
+    expect(declarations(page, '.ppg-invite-input[aria-invalid="true"]')).toMatch(
+      /border-color:\s*var\(--critical\)/,
+    );
+    // The open button is filled and bordered, as the current view is.
+    const open = declarations(page, '.ppg-invite-toggle[aria-expanded="true"]');
+    expect(open).toMatch(/border-color/);
+    expect(open).toMatch(/background-color/);
+  });
+
+  it("takes no room while the live region is empty", () => {
+    expect(declarations(page, ".ppg-invite-done:empty")).toMatch(/display:\s*none/);
+  });
+});
+
 describe("selectors", () => {
   it("all start from a ppg class, so nothing leaks into other features", () => {
     const selectors = blocks(page.rules)

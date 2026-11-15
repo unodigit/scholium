@@ -26,6 +26,10 @@
  * The Versions tab links to `/p/{id}/compare/{from}..{to}`, the paragraph diff
  * the node computes for that pair (`GET /v1/papers/{id}/compare`): changed,
  * added and removed paragraphs plus both versions' change notes.
+ *
+ * Authors on the byline also get an **Invite reviewer** action under the
+ * header's four, which sends a reviewer's DID to
+ * `POST /v1/papers/{id}/review-invitations` for the version on screen.
  */
 
 export {
@@ -43,6 +47,28 @@ export {
 
 export { MarginPanel, type MarginPanelProps } from "./margin-panel";
 export { PaperActions, type PaperActionsProps } from "./paper-actions";
+export { InviteReviewer, type InviteReviewerProps } from "./invite-reviewer";
+export {
+  INVITEE_PROBLEMS,
+  INVITE_LABEL,
+  INVITE_SUBMIT_LABEL,
+  NOT_INVITED,
+  canInvite,
+  checkInvitee,
+  describeInviteError,
+  inviteBody,
+  invitationsPath,
+  parseInvitation,
+  sendInvitation,
+  type Invitation,
+  type InviteBody,
+  type InviteClient,
+  type InviteFailure,
+  type InviteRequest,
+  type InviteeCheck,
+  type InviteeProblem,
+  type SendInvitation,
+} from "./invitation";
 export { PaperHeader, type PaperHeaderProps } from "./paper-header";
 export { ReadingColumn, type ReadingColumnProps } from "./reading-column";
 
