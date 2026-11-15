@@ -424,7 +424,7 @@ skills:
 
 state:
   # database_url: sqlite+aiosqlite:///path/to/state.db  # (default)
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8420
   # Self-reclaim for an orphaned state service.  The service is started
   # detached so Ctrl+C on a run never reaches it, and the run's own reap is
