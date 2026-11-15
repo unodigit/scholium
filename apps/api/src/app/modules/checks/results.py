@@ -1,7 +1,7 @@
-"""Writing and reading a version's row in ``check_results`` (feature 68).
+"""Writing and reading a version's row in ``check_results`` (features 67, 68).
 
-The automated checks each own one column of a version's row, so they can run
-in any order and in any combination::
+The automated checks each own their columns of a version's row, so they can
+run in any order and in any combination::
 
     from app.modules import checks
 
@@ -9,6 +9,21 @@ in any order and in any combination::
     checks.save_metadata_match(version_cid, signed_title, pdf_cid=pdf_cid)   # from a PDF
     checks.save_metadata_match(version_cid)   # title + manuscript from the signed record
     checks.get_check_result(version_cid).metadata_match
+
+    checks.save_reference_check(version_cid)  # from the text saved in version_texts
+    checks.get_check_result(version_cid).references_total
+    checks.get_check_result(version_cid).references_unresolved
+
+``save_reference_check`` is the feature-67 entry point: it extracts the
+reference list from the version's saved text (see
+:mod:`app.modules.checks.references`) and saves ``references_total`` and
+``references_unresolved``.  A reference is *unresolved* unless Crossref
+confirms its DOI, and Crossref is asked (see :mod:`app.modules.checks.crossref`)
+only when ``CROSSREF_ENABLED=1``.  Without the flag nothing leaves the
+process, nothing is confirmed, and so ``references_unresolved`` equals
+``references_total``: it means "none resolved", and is how a consumer of the
+row sees that resolution was not run.  Both columns are written in one
+transaction, so they always describe the same run.
 
 ``save_metadata_match`` is the feature-68 entry point: it compares the signed
 title with the first page text (see :mod:`app.modules.checks.metadata`), saves
@@ -31,22 +46,28 @@ Where the inputs come from:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Optional
 
+import httpx
 from sqlalchemy.exc import IntegrityError
 
 from app import db
 
+from .crossref import crossref_enabled, resolve_dois
 from .errors import MetadataMatchError
 from .extract import extract_first_page_text
 from .metadata import metadata_match as _metadata_match
 from .models import CheckResult, ensure_check_results_table
-from .service import _check_version_cid
+from .references import Reference, extract_references
+from .service import _check_version_cid, get_version_text
 
 __all__ = [
+    "ReferenceCheck",
     "get_check_result",
     "save_check_result",
     "save_metadata_match",
+    "save_reference_check",
 ]
 
 #: Distinguishes "leave this column alone" from an explicit ``None`` (NULL)
@@ -226,6 +247,82 @@ def _first_page_text(version_cid: str, pdf_cid: Optional[str]) -> str:
         raise content.BlobNotFound(f"no blob with cid {_show(cid)}")
     with content.open_blob(cid) as pdf:
         return extract_first_page_text(pdf)
+
+
+# --------------------------------------------------------------------------- #
+# References (feature 67)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class ReferenceCheck:
+    """What :func:`save_reference_check` saved."""
+
+    #: Entries in the reference list (``check_results.references_total``).
+    total: int
+    #: Entries not confirmed by Crossref (``check_results.references_unresolved``):
+    #: those with no DOI, those whose DOI Crossref does not know, and -- when
+    #: ``CROSSREF_ENABLED`` is not ``1`` and nothing is looked up -- all of them.
+    unresolved: int
+
+
+def save_reference_check(
+    version_cid: str, *, client: Optional[httpx.Client] = None
+) -> ReferenceCheck:
+    """Extract ``version_cid``'s references and save the reference counts.
+
+    Reads the paragraphs saved for the version (:func:`~.save_version_text`
+    must have run), extracts the reference list from them and writes
+    ``references_total`` -- and ``references_unresolved`` too, in the same
+    transaction -- to ``check_results``.  Writing again replaces both; the
+    other checks' columns are left alone.
+
+    A reference is *unresolved* unless Crossref confirms its DOI: it has no
+    DOI, or Crossref does not know the DOI, or Crossref was not asked.
+    Crossref is asked only when the environment has ``CROSSREF_ENABLED=1``;
+    otherwise no request is made and every reference counts as unresolved
+    (see the module docstring).  A version with no saved text, or text with
+    no reference list, has 0 references and 0 unresolved.
+
+    Args:
+        version_cid: the version's record cid (canonical base32).
+        client: an ``httpx.Client`` for the Crossref requests (tests, or an
+            operator's own ``User-Agent``).  Ignored unless the flag is on:
+            passing a client does not enable the network.
+
+    Returns:
+        The saved counts.
+
+    Raises:
+        InvalidVersionCid: if ``version_cid`` is not a canonical CID.
+        CrossrefError: if Crossref is enabled but cannot answer for some DOI.
+            Nothing is saved, so the previous row (if any) stands and the
+            check can simply be run again.
+    """
+    version_cid = _check_version_cid(version_cid)
+    references = extract_references(get_version_text(version_cid))
+
+    unresolved = _count_unresolved(references, client)
+
+    save_check_result(
+        version_cid,
+        references_total=len(references),
+        references_unresolved=unresolved,
+    )
+    return ReferenceCheck(total=len(references), unresolved=unresolved)
+
+
+def _count_unresolved(
+    references: Sequence[Reference], client: Optional[httpx.Client]
+) -> int:
+    """How many of ``references`` Crossref does not confirm.
+
+    With ``CROSSREF_ENABLED`` off nothing is looked up, so none is confirmed.
+    """
+    resolved: dict[str, bool] = {}
+    if crossref_enabled():
+        resolved = resolve_dois((ref.doi for ref in references if ref.doi), client=client)
+    return sum(1 for ref in references if ref.doi is None or not resolved.get(ref.doi, False))
 
 
 # --------------------------------------------------------------------------- #
