@@ -35,6 +35,7 @@ import {
   type KeyRotation,
   type SecurityData,
 } from "./security";
+import { eraseProfile as defaultEraseProfile } from "./profile";
 import "./dashboard-page.css";
 import "./security-page.css";
 
@@ -49,6 +50,8 @@ export interface SecurityPageProps {
   loadSecurity?: LoadSecurity;
   /** Replace the rotation, for tests. */
   rotate?: RotateKey;
+  /** Replace the profile erasure, for tests. */
+  eraseProfile?: (did: string) => Promise<void>;
   /**
    * Called once the key has changed. The default reloads the page: the app's
    * in-memory device key still holds the old key until it is read again.
@@ -73,6 +76,7 @@ export function SecurityPage({
   initialSecurity,
   loadSecurity,
   rotate = defaultRotateKey,
+  eraseProfile = defaultEraseProfile,
   onRotated = reloadPage,
   signedIn,
 }: SecurityPageProps = {}) {
@@ -144,11 +148,14 @@ export function SecurityPage({
       ) : null}
 
       {state.status === "ready" ? (
-        <div className="db-grid">
-          <DevicesCard data={state.data} />
-          <GuardiansCard guardians={state.data.guardians} />
-          <KeyRotationCard data={state.data} rotate={rotate} onRotated={onRotated} />
-        </div>
+        <>
+          <div className="db-grid">
+            <DevicesCard data={state.data} />
+            <GuardiansCard guardians={state.data.guardians} />
+            <KeyRotationCard data={state.data} rotate={rotate} onRotated={onRotated} />
+          </div>
+          <EraseProfileCard did={state.data.did} eraseProfile={eraseProfile} />
+        </>
       ) : null}
     </div>
   );
@@ -492,5 +499,53 @@ function RotateKeyAction({
         </div>
       )}
     </form>
+  );
+}
+
+
+// ---- Erase profile ---------------------------------------------------------
+
+function EraseProfileCard({
+  did,
+  eraseProfile,
+}: {
+  did: string;
+  eraseProfile: (did: string) => Promise<void>;
+}) {
+  const [phase, setPhase] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [message, setMessage] = useState<string | null>(null);
+
+  const handleErase = useCallback(async () => {
+    setPhase("working");
+    setMessage(null);
+    try {
+      await eraseProfile(did);
+      setPhase("done");
+      setMessage("Your profile has been erased.");
+    } catch (error) {
+      setPhase("error");
+      setMessage(error instanceof Error ? error.message : "Could not erase your profile.");
+    }
+  }, [did, eraseProfile]);
+
+  return (
+    <section className="db-card" aria-labelledby="erase-profile-heading">
+      <h2 className="db-card-heading" id="erase-profile-heading">
+        Erase my profile
+      </h2>
+      <p className="db-cred-note meta">
+        Remove your name, affiliation, email and ORCID from this profile. Your
+        signed reviews and trust tier remain.
+      </p>
+      <button
+        type="button"
+        className="db-button"
+        onClick={handleErase}
+        disabled={phase === "working" || phase === "done"}
+      >
+        {phase === "working" ? "Erasing…" : "Erase my profile"}
+      </button>
+      {message ? <p className="db-note" role="status">{message}</p> : null}
+    </section>
   );
 }

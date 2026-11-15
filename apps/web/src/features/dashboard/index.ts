@@ -100,3 +100,40 @@ export {
 } from "./rotate-key";
 
 export { SecurityPage, type LoadSecurity, type SecurityPageProps } from "./security-page";
+export {
+  PROFILE_PATH,
+  USER_PATH,
+  PUBLIC_PROFILE_PATH,
+  U_PATH,
+  profilePath,
+  PROFILE_ENDPOINT,
+  PROFILE_TITLE,
+  USER_TITLE,
+  PUBLIC_PROFILE_TITLE,
+  PROFILE_SIGNIN_HREF,
+  ProfileError,
+  ProfilePageError,
+  PublicProfileError,
+  UserProfileError,
+  parseProfile,
+  loadProfile,
+  loadProfilePage,
+  loadPublicProfile,
+  loadUserProfile,
+  fetchProfile,
+  eraseProfile,
+  deleteProfile,
+  eraseMyProfile,
+  describeProfileError,
+  describeProfilePageError,
+  describePublicProfileError,
+  describeUserProfileError,
+  type SignedReview,
+  type ProfileData,
+  type ProfilePageData,
+  type PublicProfileData,
+  type UserProfileData,
+  type ProfileClient,
+} from "./profile";
+
+export { ProfilePage, UserProfilePage, PublicProfilePage, type LoadProfile, type ProfilePageProps } from "./profile-page";
