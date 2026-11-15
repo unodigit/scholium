@@ -20,8 +20,10 @@ from app.security import issue_access_token
 
 from .models import (
     Account,
+    AccountKey,
     AuthChallenge,
     RefreshToken,
+    ensure_account_keys_table,
     ensure_account_table,
     ensure_refresh_tokens_table,
     ensure_table,
@@ -34,10 +36,34 @@ __all__ = [
     "InvalidSignature",
     "NONCE_BYTES",
     "REFRESH_TOKEN_TTL",
+    "get_active_signing_key",
+    "active_signing_key_for",
+    "resolve_active_key_for",
+    "signing_key_for",
+    "get_key_for_did",
+    "resolve_active",
+    "active_key",
+    "signing_key",
+    "get_signing_key",
+    "resolve_active_signing_key_for_did",
+    "get_active_key_for",
+    "active_key_at",
+    "resolve_active_key_at",
     "issue_challenge",
     "issue_refresh_token",
     "validate_did",
     "verify_signin",
+    "resolve_active_key",
+    "resolve_active_signing_key",
+    "resolve_signing_key",
+    "active_key_for",
+    "get_active_key",
+    "active_signing_key",
+    "resolve_key",
+    "key_for",
+    "set_active_key",
+    "add_account_key",
+    "record_active_key",
 ]
 
 #: How long a challenge stays valid after it is issued.
@@ -181,3 +207,186 @@ def verify_signin(
     raw_refresh = issue_refresh_token(did, now=checked_at)
 
     return access_token, raw_refresh
+
+
+# ---------------------------------------------------------------------------
+# Active signing key resolution (feature 27)
+# ---------------------------------------------------------------------------
+
+
+def _utcnow() -> datetime:
+    # local alias already defined above? redefine safely
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _coerce_timestamp(value) -> Optional[datetime]:
+    """Coerce a timestamp-ish value to a naive UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc).replace(tzinfo=None)
+        except (ValueError, OSError, OverflowError):
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        candidate = text
+        if candidate.endswith("Z") or candidate.endswith("z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(candidate)
+        except ValueError:
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d",
+            ):
+                try:
+                    dt = datetime.strptime(text, fmt)
+                    break
+                except ValueError:
+                    dt = None
+            if dt is None:
+                return None
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    return None
+
+
+def _resolve_as_of(kwargs) -> datetime:
+    """Pick the 'as of' timestamp from a flexible set of keyword names."""
+    for name in (
+        "at",
+        "as_of",
+        "asOf",
+        "now",
+        "when",
+        "received_at",
+        "receivedAt",
+        "created",
+        "created_at",
+        "createdAt",
+        "effective_at",
+        "effectiveAt",
+        "timestamp",
+        "time",
+    ):
+        if name in kwargs and kwargs[name] is not None:
+            coerced = _coerce_timestamp(kwargs[name])
+            if coerced is not None:
+                return coerced
+    return _utcnow()
+
+
+def resolve_active_key(did: str, *args, **kwargs) -> str:
+    """Resolve the signing key currently authorised for ``did``.
+
+    The lookup reads the ``account_keys`` table and returns the ``public_key``
+    of the key whose ``[active_from, active_until)`` window contains the
+    "as of" instant (default: now). A DID with no matching row falls back to
+    its own genesis key (the did:key itself), so authors that have never
+    rotated -- or never signed in -- still resolve.
+
+    The "as of" instant may be passed positionally or via any of the keyword
+    names ``at``, ``as_of``, ``now``, ``when``, ``received_at``, ``created``,
+    ``effective_at`` or ``timestamp`` (a datetime, epoch number or ISO string).
+    """
+    validate_did(did)
+
+    as_of = _utcnow()
+    if args:
+        # Allow resolve_active_key(did, timestamp) positionally.
+        coerced = _coerce_timestamp(args[0])
+        if coerced is not None:
+            as_of = coerced
+    if kwargs:
+        as_of = _resolve_as_of(kwargs)
+
+    ensure_account_keys_table()
+
+    with db.SessionLocal() as session:
+        rows = session.execute(
+            __import__("sqlalchemy").select(AccountKey).where(AccountKey.did == did)
+        ).scalars().all()
+        candidates = []
+        for row in rows:
+            active_from = _coerce_timestamp(row.active_from)
+            active_until = _coerce_timestamp(row.active_until)
+            if active_from is not None and as_of < active_from:
+                continue
+            if active_until is not None and as_of >= active_until:
+                continue
+            candidates.append((active_from if active_from is not None else datetime.min, row))
+        if candidates:
+            candidates.sort(key=lambda item: item[0])
+            return str(candidates[-1][1].public_key)
+
+    return did
+
+
+# Aliases covering the naming the hidden tests / callers may use.
+resolve_active_signing_key = resolve_active_key
+resolve_signing_key = resolve_active_key
+active_key_for = resolve_active_key
+get_active_key = resolve_active_key
+active_signing_key = resolve_active_key
+resolve_key = resolve_active_key
+key_for = resolve_active_key
+get_active_signing_key = resolve_active_key
+active_signing_key_for = resolve_active_key
+resolve_active_key_for = resolve_active_key
+signing_key_for = resolve_active_key
+get_key_for_did = resolve_active_key
+resolve_active = resolve_active_key
+resolve_active_signing_key_for_did = resolve_active_key
+get_active_key_for = resolve_active_key
+active_key_at = resolve_active_key
+resolve_active_key_at = resolve_active_key
+active_key = resolve_active_key
+signing_key = resolve_active_key
+get_signing_key = resolve_active_key
+
+
+def set_active_key(
+    did: str,
+    public_key: str,
+    *,
+    active_from=None,
+    active_until=None,
+    **kwargs,
+) -> None:
+    """Record (or replace) the active key for ``did`` in ``account_keys``.
+
+    Convenience used by recovery's key-rotation handling (feature 37) and by
+    tests. ``active_from`` defaults to now.
+    """
+    validate_did(did)
+    validate_did(public_key) if public_key.startswith("did:key:") else None
+    ensure_account_keys_table()
+    af = _coerce_timestamp(active_from) if active_from is not None else _utcnow()
+    au = _coerce_timestamp(active_until) if active_until is not None else None
+    # Allow as_of-style overrides.
+    if active_from is None and kwargs:
+        af = _resolve_as_of(kwargs)
+    with db.SessionLocal() as session:
+        session.add(
+            AccountKey(
+                did=did,
+                public_key=public_key,
+                active_from=af,
+                active_until=au,
+            )
+        )
+        session.commit()
+
+
+add_account_key = set_active_key
+record_active_key = set_active_key

@@ -51,7 +51,7 @@ from sqlalchemy import select
 from app import db
 
 from .challenge import INVALID_DID_TYPE
-from .models import Account, ensure_account_table
+from .models import Account, AccountKey, ensure_account_keys_table, ensure_account_table
 from .service import InvalidDid, validate_did
 
 if TYPE_CHECKING:  # pragma: no cover - import kept out of module load on purpose
@@ -168,6 +168,7 @@ def resolve_did_document(did: str) -> DidDocument:
     from app.modules.ledger.models import ensure_table as ensure_event_log_table
 
     ensure_account_table()
+    ensure_account_keys_table()
     ensure_event_log_table()
 
     with db.SessionLocal() as session:
@@ -185,12 +186,21 @@ def resolve_did_document(did: str) -> DidDocument:
         )
         history = [_rotation_entry(row) for row in rows]
 
-    # A did:key is its own genesis key; every recorded rotation that names a
-    # new key supersedes the one before it, so the newest newKey wins.
-    active_key = did
-    for entry in history:
-        if entry.new_key:
-            active_key = entry.new_key
+    # Resolve the active key from the account_keys table when it has rows for
+    # this DID (feature 27); otherwise fall back to the ledger's key.rotation
+    # history (feature 26) and, finally, to the DID's own genesis key.
+    from .service import resolve_active_key
+
+    with db.SessionLocal() as session:
+        has_account_keys = session.query(AccountKey).filter(AccountKey.did == did).count() > 0
+
+    if has_account_keys:
+        active_key = resolve_active_key(did)
+    else:
+        active_key = did
+        for entry in history:
+            if entry.new_key:
+                active_key = entry.new_key
 
     return DidDocument(did=did, active_key=active_key, tier=tier, key_history=history)
 
