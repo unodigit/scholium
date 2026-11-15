@@ -10,7 +10,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
-os.environ.setdefault("DATABASE_URL", f"sqlite:///./test_{worker}.db")
+# xdist workers inherit DATABASE_URL from the controller process; force a
+# per-worker database so parallel tests do not share (and corrupt) one file.
+if "PYTEST_XDIST_WORKER" in os.environ:
+    os.environ["DATABASE_URL"] = f"sqlite:///./test_{worker}.db"
+else:
+    os.environ.setdefault("DATABASE_URL", f"sqlite:///./test_{worker}.db")
 os.environ.setdefault("JOBS_EAGER", "1")
 
 import pytest  # noqa: E402
