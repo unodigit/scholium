@@ -24,7 +24,9 @@ no-op, so re-importing a module is harmless.
 
 What is persisted (``event_log``): ``seq`` (assigned by the database),
 ``record_cid``, ``record_type``, ``author_did``, ``body``, ``raw`` (the
-canonical DAG-CBOR bytes the record id was computed over), ``prev_hash``,
+canonical DAG-CBOR bytes the record id was computed over), ``sig`` (the
+author's signature over those bytes, so an export can carry the signed
+record), ``prev_hash``,
 ``entry_hash = sha256(prev_hash || record_cid || raw)``, ``received_at`` and
 ``origin_node``.  See :mod:`app.modules.ledger.hashing` for the chain rule and
 :mod:`app.modules.ledger.origin` for how the node's DID is resolved.
@@ -96,12 +98,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _normalise_envelope(envelope: Mapping[str, Any]) -> tuple[str, str, dict, str, bytes]:
-    """Return ``(record_type, author_did, body, record_cid, raw)``.
+def _normalise_envelope(envelope: Mapping[str, Any]) -> tuple[str, str, dict, str, bytes, Optional[str]]:
+    """Return ``(record_type, author_did, body, record_cid, raw, sig)``.
 
     ``raw`` is the canonical DAG-CBOR encoding of the seven id-relevant
-    envelope fields -- the bytes the record id commits to.  Validation of the
-    envelope's shape is delegated to :mod:`scholium_record_core`.
+    envelope fields -- the bytes the record id commits to.  ``sig`` is the
+    author's detached signature over those bytes when the envelope carries
+    one; keeping it lets an export hand an offline verifier the signed record.
+    Validation of the envelope's shape is delegated to
+    :mod:`scholium_record_core`.
     """
     if not isinstance(envelope, Mapping):
         raise TypeError(f"a record envelope must be a mapping, got {type(envelope).__name__}")
@@ -110,6 +115,9 @@ def _normalise_envelope(envelope: Mapping[str, Any]) -> tuple[str, str, dict, st
     record_type = envelope["type"]
     author_did = envelope["author"]
     body = envelope["body"]
+    sig = envelope.get("sig")
+    if sig is not None and not isinstance(sig, str):
+        raise ValueError("envelope field 'sig' must be a string when present")
 
     record_cid = envelope.get("id")
     if record_cid is None:
@@ -117,7 +125,7 @@ def _normalise_envelope(envelope: Mapping[str, Any]) -> tuple[str, str, dict, st
     elif not isinstance(record_cid, str) or not record_cid:
         raise ValueError("envelope field 'id' must be a non-empty string when present")
 
-    return record_type, author_did, dict(body), record_cid, raw
+    return record_type, author_did, dict(body), record_cid, raw, sig
 
 
 def _previous_hash(session: Any) -> bytes:
@@ -166,7 +174,7 @@ def append(
     record, and ``sqlalchemy.exc.IntegrityError`` when its CID is already in
     the log.
     """
-    record_type, author_did, body, record_cid, raw = _normalise_envelope(envelope)
+    record_type, author_did, body, record_cid, raw, sig = _normalise_envelope(envelope)
     when = received_at if received_at is not None else _utcnow()
     if when.tzinfo is not None:
         when = when.astimezone(timezone.utc).replace(tzinfo=None)
@@ -188,6 +196,7 @@ def append(
                 author_did=author_did,
                 body=body,
                 raw=raw,
+                sig=sig,
                 prev_hash=prev_hash,
                 entry_hash=compute_entry_hash(prev_hash, record_cid, raw),
                 received_at=when,

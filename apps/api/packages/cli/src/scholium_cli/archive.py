@@ -12,9 +12,11 @@ A paper's CAR carries three kinds of block:
     the content and compares.
   - a *canonical* record: exactly the bytes the record id is computed over
     (what the ledger keeps as ``raw``).  The block CID is the record id, so
-    it is used as ``id``.  Such a block carries no ``sig``, and the record
-    cannot be authenticated unless the signature is supplied some other way;
-    the verifier reports it as unsigned rather than guessing.
+    it is used as ``id``.  Such a block carries no ``sig`` of its own; when
+    the archive also carries its log entry, that entry's ``sig`` is attached
+    here so the author's signature can still be checked over these bytes.
+    Without either, the verifier reports the record as unsigned rather than
+    guessing.
 
 * **files** -- raw-codec blocks holding the bytes of a manuscript, figure,
   dataset, ... named by their sha2-256 file id.
@@ -37,6 +39,7 @@ from typing import Any
 import dag_cbor
 from dag_cbor.decoding.err import CBORDecodingError
 from multiformats import CID
+from scholium_record_core import record_bytes
 
 from .car import Car, block_problem
 
@@ -117,6 +120,41 @@ def _decode_log_entry(data: bytes) -> dict[str, Any] | None:
     return value
 
 
+def _attach_signatures(
+    records: list[dict[str, Any]], log_entries: list[dict[str, Any]]
+) -> None:
+    """Give each canonical record the ``sig`` its log entry carries, in place.
+
+    A canonical record block is the bytes the record id hashes, and the id
+    deliberately excludes ``sig``.  Nodes export the signature on the record's
+    log entry instead.  Only a signature whose entry names this record *and*
+    whose ``raw`` decodes to exactly these bytes is attached, so a log entry
+    cannot lend its signature to a different record; the signature itself is
+    still checked cryptographically later.
+    """
+    by_id = {
+        record["id"]: record
+        for record in records
+        if isinstance(record.get("id"), str)
+    }
+    for entry in log_entries:
+        record_id = entry.get("record_cid")
+        signature = entry.get("sig")
+        raw = entry.get("raw")
+        if not isinstance(record_id, str) or not isinstance(signature, str):
+            continue
+        record = by_id.get(record_id)
+        if record is None or record.get("sig") is not None:
+            continue  # a full envelope already has its own signature
+        if isinstance(raw, (bytes, bytearray)):
+            try:
+                if record_bytes(record) != bytes(raw):
+                    continue
+            except (ValueError, KeyError, TypeError):
+                continue
+        record["sig"] = signature
+
+
 def load_archive(car: Car) -> Archive:
     """Sort the blocks of ``car`` and hash-check every one of them."""
     records: list[dict[str, Any]] = []
@@ -150,6 +188,7 @@ def load_archive(car: Car) -> Archive:
             entry = _decode_log_entry(block.data)
             if entry is not None:
                 log_entries.append(entry)
+    _attach_signatures(records, log_entries)
     return Archive(
         block_count=len(car.blocks),
         records=tuple(records),

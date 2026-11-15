@@ -20,9 +20,9 @@ What the archive holds
   head's ``seq`` with no gaps, in the layout of :mod:`app.modules.export.paper`.
   They are what ``scholium rebuild`` rechecks the hash chain over.
 * **records** -- the canonical record bytes of every entry, filed under the
-  record id.  As in the per-paper archive, the ledger does not retain a
-  record's ``sig`` (it is checked at ingest), so the archive carries the
-  canonical record and not the author's signature.
+  record id.  As in the per-paper archive, a record's ``sig`` is not part of
+  those bytes; it rides in the record's log-entry block, so a reader can check
+  the author's signature over the canonical record.
 * **files** -- the bytes of every file any record names, filed under its
   raw-codec file id.  A file is left out, and nothing else changes, when
 

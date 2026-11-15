@@ -18,11 +18,10 @@ Three kinds of block, one per content id:
 
 * **records** -- the paper's signed records.  Each block is the canonical
   DAG-CBOR bytes the record id commits to (what the ledger keeps in
-  ``event_log.raw``), filed under the record id.  The ledger deliberately
-  does not retain envelopes' ``sig`` field, so a node can export the
-  canonical record but not re-attach the author's signature; an offline
-  reader sees the content the record id names and checks it against that
-  hash.  This is the "canonical record" layout
+  ``event_log.raw``), filed under the record id.  ``sig`` is not part of those
+  bytes, so it travels in the record's log-entry block instead (below): a
+  reader joins the two and checks the author's signature over the canonical
+  record.  This is the "canonical record" layout
   :mod:`scholium_cli.archive` reads.
 * **files** -- the bytes of every file the paper's records name, filed under
   their raw-codec ``file id`` (:mod:`scholium_record_core.file_id`).  Only
@@ -32,8 +31,9 @@ Three kinds of block, one per content id:
 * **log entries** -- one DAG-CBOR block per included record holding the
   ``event_log`` row (``seq``, ``record_cid``, ``record_type``, ``author_did``,
   ``body``, ``raw``, ``prev_hash``, ``entry_hash``, ``received_at``,
-  ``origin_node``).  These are what ``scholium rebuild`` needs to recheck the
-  hash chain; ``scholium verify`` ignores them.
+  ``origin_node``, and the author's ``sig``).  They are what
+  ``scholium rebuild`` needs to recheck the hash chain; ``scholium verify``
+  reads the ``sig`` from them and checks it over the canonical record.
 
 Which records are "for the paper"
 ---------------------------------
@@ -359,7 +359,12 @@ def _received_at(moment: datetime) -> str:
 
 
 def _log_entry_block(entry: ledger.EventLog) -> Block:
-    """One ``event_log`` row as a DAG-CBOR block (what ``scholium rebuild`` reads)."""
+    """One ``event_log`` row as a DAG-CBOR block (what ``scholium rebuild`` reads).
+
+    ``sig`` rides along when the row kept one.  The chain does not hash it, but
+    a canonical record block carries no signature of its own, so this is how an
+    offline verifier learns the signature the author gave the record.
+    """
     payload = {
         "seq": int(entry.seq),
         "record_cid": entry.record_cid,
@@ -372,6 +377,9 @@ def _log_entry_block(entry: ledger.EventLog) -> Block:
         "received_at": _received_at(entry.received_at),
         "origin_node": entry.origin_node,
     }
+    sig = entry.get("sig")
+    if isinstance(sig, str) and sig:
+        payload["sig"] = sig
     data = dag_cbor.encode(payload)
     return Block(cid=block_cid(data), data=data)
 

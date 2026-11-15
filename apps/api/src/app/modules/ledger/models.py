@@ -58,6 +58,12 @@ class EventLog(db.Base):
     author_did = Column(Text, nullable=False)
     body = Column(JSON, nullable=False)
     raw = Column(LargeBinary, nullable=False)
+    #: The author's detached signature over ``raw``, kept so an export can carry
+    #: the signed record: the chain covers the canonical bytes, not the
+    #: signature, and an offline verifier cannot authenticate a record without
+    #: it.  ``None`` for records appended without one (tests and internal
+    #: callers may append unsigned envelopes; ingest always passes a signed one).
+    sig = Column(Text, nullable=True)
     prev_hash = Column(LargeBinary, nullable=False)
     entry_hash = Column(LargeBinary, nullable=False)
     received_at = Column(DateTime, nullable=False)
@@ -71,6 +77,7 @@ class EventLog(db.Base):
         "author_did",
         "body",
         "raw",
+        "sig",
         "prev_hash",
         "entry_hash",
         "received_at",
