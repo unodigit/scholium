@@ -7,8 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test": "vitest run && tsc --noEmit -p tsconfig.json",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "next": "^15.5.29",
@@ -22,7 +23,7 @@
     "tus-js-client": "^4.1.0"
   },
   "devDependencies": {
-    "typescript": "latest",
+    "typescript": "^5.9.3",
     "vitest": "^5.1.0",
     "@testing-library/react": "^16.0.0",
     "@playwright/test": "^1.48.0",

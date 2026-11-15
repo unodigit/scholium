@@ -1,6 +1,7 @@
 """SQLAlchemy engine, session and declarative base."""
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .settings import settings
@@ -16,4 +17,15 @@ Base = declarative_base()
 
 
 def create_all() -> None:
-    Base.metadata.create_all(bind=engine)
+    """Create every registered table.
+
+    ``checkfirst`` is not atomic: another process sharing the database (a second
+    worker or test runner) may create a table between the existence check and
+    the CREATE. A second pass sees that table and is a no-op.
+    """
+    try:
+        Base.metadata.create_all(bind=engine)
+    except OperationalError as exc:
+        if "already exists" not in str(exc):
+            raise
+        Base.metadata.create_all(bind=engine)
