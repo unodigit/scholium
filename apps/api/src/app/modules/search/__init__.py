@@ -27,16 +27,58 @@ ledger.
 The table is ``search_fts(version_cid UNINDEXED, title, abstract, body)``.
 Only SQLite has FTS5; on another database the plugin does nothing.
 
-This package exposes no ``router``: the search endpoints are features 86 and
-87.  The module loader still discovers it, which creates the FTS5 table with
-the rest at ``create_app`` and subscribes the index.  See
-:mod:`app.modules.search.index` for the table and its writes.
+Feature 87 adds semantic search on top of the same listed-version projection::
+
+    GET /v1/search/semantic?q=<text>[&limit=<1-100>]
+
+returns listed versions ranked by cosine similarity between the query's
+embedding and the embeddings stored in the ``embeddings`` table.  The embedder
+is pluggable: the deterministic :class:`~.embedder.HashingEmbedder` by default,
+:class:`~.embedder.OllamaEmbedder` when the ``OLLAMA_URL`` environment variable
+is set (``OLLAMA_EMBED_MODEL`` picks the model)::
+
+    search.semantic_search("pulsar timing").hits     # SemanticHit, best first
+    search.get_embedder()                            # the embedder in force
+    search.sync_embedding(version_cid)               # make the vector agree with paper_versions
+    search.rebuild_embeddings()                      # ... for every version
+
+The same two subscriptions that keep ``search_fts`` current keep ``embeddings``
+current; the endpoint embeds any listed version that has no vector from the
+embedder in force.  See :mod:`app.modules.search.embedder`,
+:mod:`app.modules.search.embeddings` and :mod:`app.modules.search.semantic`.
+
+The module loader mounts this package's ``router`` under ``/v1``.  It is built
+by including each endpoint's own router, so the full-text endpoint (feature 86)
+joins it with one more ``router.include_router(...)``.  The loader also creates
+the FTS5 table and the ``embeddings`` table with the rest at ``create_app`` and
+subscribes the index.  See :mod:`app.modules.search.index` for the FTS table and
+its writes.
 """
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
+from .embedder import (
+    Embedder,
+    EmbedderError,
+    HashingEmbedder,
+    OllamaEmbedder,
+    cosine_similarity,
+    get_embedder,
+    set_embedder,
+)
+from .embeddings import (
+    Embedding,
+    StoredEmbedding,
+    embed_versions,
+    ensure_table as ensure_embeddings_table,
+    get_embedding,
+    put_embedding,
+    rebuild_embeddings,
+    remove_embedding,
+    sync_embedding,
+)
 from .index import (
     BODY_SEPARATOR,
     TABLE_NAME,
@@ -50,36 +92,63 @@ from .index import (
     sync_version,
     upsert_entry,
 )
+from .semantic import SemanticHit, SemanticResult, semantic_search
+from .semantic_router import router as _semantic_router
 from .subscribers import install, on_state_changed, on_version_record, uninstall
 
 __all__ = [
     "BODY_SEPARATOR",
+    "Embedder",
+    "EmbedderError",
+    "Embedding",
+    "HashingEmbedder",
     "IndexedVersion",
+    "OllamaEmbedder",
+    "SemanticHit",
+    "SemanticResult",
+    "StoredEmbedding",
     "TABLE_NAME",
+    "cosine_similarity",
+    "embed_versions",
+    "ensure_embeddings_table",
     "ensure_table",
+    "get_embedder",
+    "get_embedding",
     "get_entry",
     "install",
     "is_indexed",
     "on_state_changed",
     "on_startup",
     "on_version_record",
+    "put_embedding",
+    "rebuild_embeddings",
     "rebuild_index",
+    "remove_embedding",
     "remove_entry",
+    "router",
+    "semantic_search",
+    "set_embedder",
     "supported",
+    "sync_embedding",
     "sync_version",
     "uninstall",
     "upsert_entry",
 ]
 
+#: Mounted under ``/v1`` by the module loader.  One sub-router per endpoint.
+router = APIRouter()
+router.include_router(_semantic_router)
+
 
 def on_startup(app: FastAPI) -> None:
-    """Module-loader hook: make sure the table exists and the index is subscribed.
+    """Module-loader hook: make sure the tables exist and the index is subscribed.
 
     Runs on every ``create_app``, which matters because the subscriber
     registries are process-global and may have been cleared since this package
     was first imported.  Both steps are idempotent.
     """
     ensure_table()
+    ensure_embeddings_table()
     install()
 
 

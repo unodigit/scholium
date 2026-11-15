@@ -354,9 +354,24 @@ def test_the_index_follows_the_database_not_the_event():
 # --------------------------------------------------------------------------- #
 
 
+def other_ledger_subscribers() -> int:
+    """How many ``paper.version`` ledger subscribers are not the search index's.
+
+    The ``imports`` plugin subscribes when it is imported, which happens as soon
+    as anything in the process builds or imports the app, so the index cannot
+    assume it is the only one.  Measured by taking the index's own out and
+    putting it back.
+    """
+    search.uninstall()
+    try:
+        return ledger.subscriber_count(PAPER_VERSION_TYPE)
+    finally:
+        search.install()
+
+
 def test_the_index_subscribes_to_paper_version_records_on_the_ledger():
     assert PAPER_VERSION_TYPE in ledger.subscribed_types()
-    assert ledger.subscriber_count(PAPER_VERSION_TYPE) == 1
+    assert ledger.subscriber_count(PAPER_VERSION_TYPE) == other_ledger_subscribers() + 1
     assert state_changed_subscriber_count() == 1
 
 
@@ -616,17 +631,21 @@ def test_rebuild_index_is_idempotent():
 
 
 def test_install_is_idempotent():
+    others = other_ledger_subscribers()
+
     search.install()
     search.install()
 
-    assert ledger.subscriber_count(PAPER_VERSION_TYPE) == 1
+    assert ledger.subscriber_count(PAPER_VERSION_TYPE) == others + 1
     assert state_changed_subscriber_count() == 1
 
 
 def test_uninstall_removes_both_subscriptions():
+    others = other_ledger_subscribers()
+
     search.uninstall()
 
-    assert ledger.subscriber_count(PAPER_VERSION_TYPE) == 0
+    assert ledger.subscriber_count(PAPER_VERSION_TYPE) == others
     assert state_changed_subscriber_count() == 0
 
 
@@ -649,9 +668,11 @@ def test_the_module_loader_discovers_the_plugin_and_resubscribes_it():
     assert match(word) == [cid]
 
 
-def test_the_plugin_serves_no_route_of_its_own():
-    # The search endpoints are features 86 and 87.
-    assert getattr(search, "router", None) is None
+def test_the_plugin_routes_are_exposed_for_the_loader_to_mount():
+    # The index itself serves nothing; the endpoints that read it (feature 87's
+    # ``/v1/search/semantic``, tested in test_semantic_search.py) are exposed as
+    # the package's ``router``, which the module loader mounts under ``/v1``.
+    assert getattr(search, "router", None) is not None
 
 
 def test_nothing_is_subscribed_or_written_on_a_database_without_fts5(monkeypatch):

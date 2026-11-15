@@ -26,9 +26,19 @@ Neither handler trusts the notification's content: the version's state is read
 from ``paper_versions``, so the index only ever holds versions the database
 says are listed.
 
+The same two handlers also keep the ``embeddings`` table (feature 87) current
+-- :func:`~.embeddings.sync_embedding` for the same version -- so a listed
+version is embedded when it is listed and its vector is deleted when it is
+held or rejected.  They are the *same* subscriptions rather than two more, so
+one notification drives both projections.  The full-text write goes first and
+an embedder that cannot answer (Ollama configured but down) only costs the
+vector: it is logged, never raised, and the search endpoint embeds whatever is
+missing the next time it runs.
+
 Both dispatchers log and skip a subscriber that raises, so an index failure
 never rolls back a log entry or a transition.  The price is that the index can
-miss a notification; :func:`~.index.rebuild_index` repairs that.
+miss a notification; :func:`~.index.rebuild_index` and
+:func:`~.embeddings.rebuild_embeddings` repair that.
 
 The registries are process-global and tests (and ``create_app``) clear and
 rebuild them, so :func:`install` is idempotent and is called both when this
@@ -47,6 +57,7 @@ from app.modules.submissions import (
     unsubscribe_version_state_changed,
 )
 
+from .embeddings import sync_embedding
 from .index import supported, sync_version
 
 __all__ = [
@@ -59,14 +70,30 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+def _sync_embedding(version_cid: str) -> None:
+    """Reconcile the version's embedding; an embedder failure is logged, not raised."""
+    try:
+        sync_embedding(version_cid)
+    except Exception:
+        logger.warning(
+            "could not update the embedding of %s; search will retry", version_cid, exc_info=True
+        )
+
+
 def on_version_record(entry: Any) -> None:
     """Ledger subscriber: reconcile the version a ``paper.version`` record created."""
-    sync_version(entry.record_cid)
+    try:
+        sync_version(entry.record_cid)
+    finally:
+        _sync_embedding(entry.record_cid)
 
 
 def on_state_changed(event: Any) -> None:
     """``version.state_changed`` subscriber: index a listed version, drop any other."""
-    sync_version(event.version_cid)
+    try:
+        sync_version(event.version_cid)
+    finally:
+        _sync_embedding(event.version_cid)
 
 
 def install() -> bool:
