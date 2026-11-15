@@ -1,0 +1,543 @@
+/* ============================================================================
+   Submit wizard — docs/design.md §5.4.
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work.
+
+   Colour rules (src/styles/README.md):
+   - Status text is --ink on a soft tint; the status colour is carried by the
+     icon and the border. Status is never colour alone: every chip has an icon
+     of its own shape and a word.
+   - --ai is never used here.
+
+   Unlayered on purpose, like the other feature stylesheets: it outranks
+   Tailwind's base resets without re-declaring the cascade layers.
+   ============================================================================ */
+
+.sw-shell {
+  box-sizing: border-box;
+  max-width: calc(var(--reading-column) + var(--space-unit) * 24);
+  margin-inline: auto;
+  padding: calc(var(--space-unit) * 8) calc(var(--space-unit) * 4) calc(var(--space-unit) * 16);
+}
+
+.sw-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 6);
+}
+
+.sw-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-unit);
+}
+
+.sw-crumb {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sw-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  line-height: var(--leading-title);
+  font-weight: var(--weight-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--ink);
+}
+
+.sw-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Progress rail ------------------------------------------------------ */
+
+.sw-rail__list {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sw-rail__step {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* The line between one step and the next. */
+.sw-rail__step:not(:last-child)::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: calc(var(--space-unit) * 2);
+  height: 1px;
+  background: var(--rule);
+}
+
+.sw-rail__marker {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: calc(var(--space-unit) * 6);
+  height: calc(var(--space-unit) * 6);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-rail__step[data-state="current"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.sw-rail__step[data-state="current"] .sw-rail__marker {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.sw-rail__step[data-state="done"] .sw-rail__marker {
+  border-color: var(--verified);
+  color: var(--verified);
+}
+
+/* Labels fold away on a phone so the five markers still fit; the current step keeps its name. */
+@media (max-width: 639px) {
+  .sw-rail__step:not([data-state="current"]) .sw-rail__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+}
+
+/* ---- Step --------------------------------------------------------------- */
+
+.sw-step {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+}
+
+.sw-step__title {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.sw-step__lede {
+  margin: 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+}
+
+/* ---- Size limits -------------------------------------------------------- */
+
+.sw-limits {
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background: var(--surface);
+}
+
+.sw-limits__title {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+}
+
+.sw-limits__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-unit) calc(var(--space-unit) * 6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sw-limits__note {
+  margin: calc(var(--space-unit) * 3) 0 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- Drop zones --------------------------------------------------------- */
+
+.sw-zones {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 640px) {
+  .sw-zones {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.sw-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 6) calc(var(--space-unit) * 4);
+  /* --ink-2, not --rule: a drop target's edge should be easy to see (3:1 or better). */
+  border: 1px dashed var(--ink-2);
+  border-radius: var(--corner-card);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: center;
+  transition:
+    border-color var(--duration-fast) var(--ease-decel),
+    background-color var(--duration-fast) var(--ease-decel);
+}
+
+.sw-drop[data-dragging="true"] {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-soft);
+}
+
+.sw-drop .sw-icon--large {
+  color: var(--ink-2);
+}
+
+.sw-drop__title {
+  margin: 0;
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+}
+
+.sw-drop__prompt,
+.sw-drop__limit {
+  margin: 0;
+  max-width: 32ch;
+  text-wrap: balance;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- Buttons ------------------------------------------------------------ */
+
+.sw-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.sw-button:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.sw-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sw-button--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.sw-button--primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.sw-button--quiet {
+  min-height: calc(var(--space-unit) * 9);
+  padding-inline: calc(var(--space-unit) * 3);
+  font-size: var(--type-meta);
+}
+
+/* ---- Notices and summary ------------------------------------------------ */
+
+.sw-notice {
+  margin: 0;
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--pending);
+  border-radius: var(--corner-control);
+  background: var(--pending-soft);
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sw-notice a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.sw-summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- File list ---------------------------------------------------------- */
+
+.sw-files {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sw-file {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background: var(--surface);
+}
+
+.sw-file__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.sw-file__name {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sw-file__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sw-file__role select {
+  min-height: calc(var(--space-unit) * 8);
+  padding-inline: calc(var(--space-unit) * 2);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--type-meta);
+}
+
+.sw-file__meters {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.sw-file__note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sw-file__note--error {
+  color: var(--ink);
+}
+
+.sw-file__cid {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
+.sw-file__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+}
+
+/* ---- Status chip -------------------------------------------------------- */
+
+.sw-chip {
+  --chip-icon: var(--ink-2);
+  --chip-fill: var(--surface);
+  --chip-edge: var(--rule);
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-unit);
+  box-sizing: border-box;
+  min-height: calc(var(--space-unit) * 6);
+  padding-inline: calc(var(--space-unit) * 2);
+  border: 1px solid var(--chip-edge);
+  border-radius: var(--corner-pill);
+  background: var(--chip-fill);
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sw-chip .sw-icon {
+  color: var(--chip-icon);
+}
+
+.sw-chip[data-tone="active"] {
+  --chip-icon: var(--accent);
+  --chip-fill: var(--accent-soft);
+  --chip-edge: var(--accent);
+}
+
+.sw-chip[data-tone="pending"] {
+  --chip-icon: var(--pending);
+  --chip-fill: var(--pending-soft);
+  --chip-edge: var(--pending);
+}
+
+.sw-chip[data-tone="verified"] {
+  --chip-icon: var(--verified);
+  --chip-fill: var(--verified-soft);
+  --chip-edge: var(--verified);
+}
+
+.sw-chip[data-tone="critical"] {
+  --chip-icon: var(--critical);
+  --chip-fill: var(--critical-soft);
+  --chip-edge: var(--critical);
+}
+
+/* ---- Progress meters ---------------------------------------------------- */
+
+.sw-meter {
+  display: grid;
+  grid-template-columns: calc(var(--space-unit) * 22) 1fr;
+  grid-template-areas:
+    "label bar"
+    "label text";
+  align-items: center;
+  column-gap: calc(var(--space-unit) * 3);
+  row-gap: calc(var(--space-unit) * 1);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+@media (min-width: 640px) {
+  .sw-meter {
+    grid-template-columns: calc(var(--space-unit) * 22) minmax(0, 1fr) minmax(0, 18rem);
+    grid-template-areas: "label bar text";
+  }
+}
+
+.sw-meter__label {
+  grid-area: label;
+  color: var(--ink-2);
+}
+
+.sw-meter__bar {
+  grid-area: bar;
+  width: 100%;
+  height: calc(var(--space-unit) * 2);
+  border: 0;
+  border-radius: var(--corner-pill);
+  background: var(--rule);
+  overflow: hidden;
+  appearance: none;
+  accent-color: var(--accent);
+}
+
+.sw-meter__bar::-webkit-progress-bar {
+  background: var(--rule);
+}
+
+.sw-meter__bar::-webkit-progress-value {
+  background: var(--accent);
+  transition: width var(--duration-base) var(--ease-decel);
+}
+
+.sw-meter__bar::-moz-progress-bar {
+  background: var(--accent);
+}
+
+.sw-meter__text {
+  grid-area: text;
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Footer ------------------------------------------------------------- */
+
+.sw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.sw-actions__hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-drop,
+  .sw-button,
+  .sw-meter__bar::-webkit-progress-value {
+    transition: none;
+  }
+}
