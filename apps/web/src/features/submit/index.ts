@@ -1,17 +1,20 @@
 /**
  * `submit` — the /submit wizard (docs/design.md §5.4).
  *
- * Steps 1 to 3 are built: Files (drag-and-drop PDF, LaTeX, code and data,
+ * Steps 1 to 4 are built: Files (drag-and-drop PDF, LaTeX, code and data,
  * resumable tus uploads, a per-file fingerprint), Details (title, abstract,
- * categories, and a licence picker that defaults to CC BY 4.0) and Authors
+ * categories, and a licence picker that defaults to CC BY 4.0), Authors
  * (co-authors by DID, ORCID iD or email, CRediT roles, byline order, and a
- * consent tracker showing Waiting, Signed or Declined).
+ * consent tracker showing Waiting, Signed or Declined) and Checks (live file
+ * safety, references resolved, similarity and metadata match, with a place to
+ * fix each problem).
  *
  * ```tsx
- * import { ConsentTracker, FilesStep, SubmitWizard } from "@/features/submit";
+ * import { ChecksStep, ConsentTracker, FilesStep, SubmitWizard } from "@/features/submit";
  *
  * <SubmitWizard />                       // the whole page
  * <FilesStep onFilesChange={setFiles} /> // just step 1
+ * <ChecksStep checksFor={{ paper, version }} /> // just step 4, with live results
  * <ConsentTracker entries={entries} />   // the tracker alone, for step 5 or /consent
  * ```
  *
@@ -21,11 +24,43 @@
 
 export { SubmitWizard, type SubmitWizardProps } from "./submit-wizard";
 export { AuthorsStep, type AuthorsStepProps } from "./authors-step";
+export { ChecksStep, type ChecksStepProps } from "./checks-step";
 export { ConsentTracker, type ConsentTrackerProps } from "./consent-tracker";
 export { DetailsStep, type DetailsStepProps } from "./details-step";
 export { FilesStep, type FilesStepProps } from "./files-step";
 export { WizardRail } from "./wizard-rail";
 export { WIZARD_STEPS, nextStep, stepIndex, type WizardStepId } from "./wizard-steps";
+
+export {
+  CHECK_TITLES,
+  SIMILARITY_HIGH_PCT,
+  SIMILARITY_NOTICE_PCT,
+  checkItems,
+  checksAreRunning,
+  checksBlockers,
+  checksErrorMessage,
+  checksFinished,
+  checksPendingReason,
+  checksSummary,
+  checksWarnings,
+  describeFailedCheck,
+  fetchVersionChecks,
+  fileProblem,
+  formatPercent,
+  normalizeVersionChecks,
+  referencesResolved,
+  type CheckFix,
+  type CheckId,
+  type CheckItem,
+  type CheckState,
+  type ChecksVersionRef,
+  type DraftCheckFile,
+  type FetchChecks,
+  type FileSafety,
+  type FileScanStatus,
+  type VersionChecks,
+} from "./checks";
+export { DEFAULT_CHECK_POLL_MS, useChecks, type ChecksState, type UseChecksOptions } from "./use-checks";
 
 export {
   CREDIT_ROLES,

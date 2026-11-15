@@ -17,6 +17,9 @@ export const metadata: Metadata = {
  * Step 3 (Authors) takes co-authors by DID, ORCID iD or email with their CRediT
  * roles and byline order, and shows a consent tracker (Waiting, Signed or
  * Declined).
+ * Step 4 (Checks) shows the version's file safety, references resolved,
+ * similarity and metadata match, live while the node is still working, with a
+ * place to fix each problem.
  */
 export default function SubmitPage() {
   return <SubmitWizard />;

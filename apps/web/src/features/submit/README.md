@@ -4,10 +4,11 @@
 3 Authors · 4 Checks · 5 Sign**. This feature owns it; the route is
 `apps/web/src/app/(submit)/submit/page.tsx`, the shell is `SubmitWizard`.
 
-**Steps 1, Files, 2, Details and 3, Authors** are built so far. `SubmitWizard`
-keeps the Files step mounted while later steps are open, so going back finds the
-same uploads, and it owns the Details draft and the author roster so stepping
-back and forward keeps what was typed.
+**Steps 1, Files, 2, Details, 3, Authors and 4, Checks** are built so far.
+`SubmitWizard` keeps the Files step mounted while later steps are open, so
+going back finds the same uploads, and it owns the Details draft, the author
+roster and the finished files so stepping back and forward keeps what was
+typed.
 
 ## Step 1 — Files
 
@@ -110,8 +111,47 @@ a tracker of who has agreed to be listed.
   the version back to draft, in a notice that says so). A failed poll keeps the
   last good report on screen and says it will try again.
 - **Continue** names the first thing missing (the submitter's DID, a co-author
-  with no DID, an author with no role); with no step 4 to go to it stays closed
-  and says so. **Back to Details** keeps everything.
+  with no DID, an author with no role) and opens step 4, Checks. **Back to
+  Details** keeps everything.
+
+## Step 4 — Checks
+
+The version's automated results: **file safety**, **references resolved**,
+**similarity** and **metadata match**. All four rows are always shown; a check
+that has not run says **Not run yet**, it does not disappear or turn green.
+
+- **File safety** is the sanitizer's verdict on every file of the version's
+  manifest (`blobs.scan_status` and the `scan_reports` behind it). Each file
+  gets its own chip — **Passed**, **Failed**, **Scanning** or **Not scanned
+  yet** — and a failing check is named in plain words ("JavaScript", "embedded
+  files", "hidden or near-invisible text", "a path that escapes the archive").
+  A failure offers **Replace in Files**, which takes the author back to step 1.
+- **References** reads `check_results.references_total` and
+  `references_unresolved`: "6 of 10 references resolved". An entry is unresolved
+  when it has no DOI or Crossref does not know it; a version with no recognised
+  reference list says **Nothing to resolve**. Unresolved references are shown,
+  never hidden, and do not block.
+- **Similarity** reads `check_results.similarity_pct` and says **Low overlap**,
+  **Worth a look** (15% and above) or **High overlap** (30% and above), with a
+  sentence explaining that it is a signal for moderators, not a verdict. It does
+  not block.
+- **Metadata match** reads `check_results.metadata_match`: whether the title in
+  Details appears in the text of the PDF's first page. A miss offers **Edit the
+  title** and a note to replace the PDF, and blocks until fixed.
+- **Live, but quiet when nothing is changing.** `useChecks` asks once, then
+  every 5 s while the version is `scanning` or a file is still being scanned,
+  and stops when the checks settle. **Check again** asks on demand after a file
+  is replaced. A failed request keeps the last report on screen, says it will
+  try again, and does not invent a verdict.
+- **Before the version exists** (the draft wizard) there is nothing to ask the
+  node, so the step says the checks run on the signed version and lists the
+  draft files with **Not scanned yet**. Pass `checksFor={{ paper, version }}` —
+  the version the node holds, as with `consentsFor` on step 3 — and the step
+  shows the version's real results and polls them.
+- **Continue** to Sign stays closed while any check has no verdict, after a
+  failed file safety scan, and after a title that is not on page 1; the hint
+  names the first problem and where to fix it. With no step 5 to go to in this
+  release it stays closed and says so. **Back to Authors** keeps everything.
 
 ## For the next steps
 
@@ -126,9 +166,12 @@ licence }` — through `onChange` for the wizard's draft and `onContinue` for st
 `AuthorsStep` reports the roster as `DraftAuthor[]` through `onChange`, and
 through `onContinue`. `recordAuthors(authors)` turns it into the byline the
 signed `paper.version` lists — `{ did, name?, orcid?, creditRoles, position }`
-per author, in order. Steps 4 (Checks) and 5 (Sign) plug into `SubmitWizard`
-beside the current three: pass an `onContinue` to `AuthorsStep` and render the
-new step when `step` becomes `"checks"`. `ConsentTracker` is exported on its own
+per author, in order.
+
+`ChecksStep` reports the last `VersionChecks` through `onContinue` once every
+check has a verdict and nothing blocks. Step 5 (Sign) plugs into `SubmitWizard`
+beside the current four: pass an `onContinue` to `ChecksStep` and render the
+new step when `step` becomes `"sign"`. `ConsentTracker` is exported on its own
 for step 5 and the post-submit status page.
 
 ## Layout
@@ -147,6 +190,9 @@ for step 5 and the post-submit status page.
 | `authors-step.tsx` | the Authors form: add, roles, order, lookup state, Continue |
 | `consents.ts`, `use-consents.ts` | consent report types and fetch, tracker rows and wording; polling hook |
 | `consent-tracker.tsx`, `icons.tsx` | the Waiting / Signed / Declined tracker and its icons |
+| `checks.ts` | the check report's types, wire normalisation, fetch, and the four verdicts and blockers |
+| `use-checks.ts` | polls the report while the node is scanning |
+| `checks-step.tsx` | the Checks step: four results, per-file safety, fix actions, Continue |
 | `use-submitter-did.ts` | the submitter's DID, from this device's key |
 | `wizard-rail.tsx`, `wizard-steps.ts`, `submit-wizard.tsx` | the shell, progress rail and step switching |
 | `submit.css` | styles; global design tokens only |
@@ -161,8 +207,40 @@ and exposes `Location`, `Upload-Offset` and `Upload-Cid`. The API has no CORS
 configuration yet; the change needed in `apps/api/src/app/main.py` was reported
 to the operator rather than made here.
 
+Step 4 asks for `GET /v1/papers/{id}/v/{n}/checks`, and the API exposes no such
+route yet: the checks plugin writes `check_results` and the sanitizer writes each
+file's scan status, but neither mounts a router. The step therefore takes its
+fetcher as a prop (`fetchChecks`) and defaults to that path. The response the
+step normalises is:
+
+```json
+{
+  "paper": "sch:xxxx-xxxx-xxxx",
+  "version": 1,
+  "versionCid": "bafyrei…",
+  "state": "scanning",
+  "files": [
+    { "path": "paper.pdf", "cid": "bafkrei…", "role": "pdf",
+      "scan": "failed", "checks": ["javascript"], "detail": "…" }
+  ],
+  "references": { "total": 42, "unresolved": 3 },
+  "similarity": { "pct": 7.4 },
+  "metadata": { "match": true, "signedTitle": "…" },
+  "checkedAt": "2026-11-15T12:00:00Z"
+}
+```
+
+The flat `check_results` spellings (`similarity_pct`, `references_total`,
+`references_unresolved`, `metadata_match`) and `scan_status` are accepted too,
+so the route can return the table's own column names. Until the route exists,
+passing `checksFor` against a real node shows "This node does not have that
+version yet" rather than an empty report.
+
 ## Tests
 
 `npm test --workspace apps/web` (or `npx vitest run src/features/submit` in
 `apps/web`). `tus-upload.test.ts` drives the real tus-js-client against an
-in-memory stand-in for the API's tus endpoints.
+in-memory stand-in for the API's tus endpoints. `checks.test.ts` pins the wire
+normalisation and the four verdicts; `use-checks.test.tsx` pins when the step
+polls and when it stops; `checks-step.test.tsx` and `submit-wizard.test.tsx`
+drive the rendered step.

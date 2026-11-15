@@ -134,6 +134,110 @@ describe("SubmitWizard — Files to Details and back", () => {
   });
 });
 
+describe("SubmitWizard — Authors to Checks and back", () => {
+  /** Drive the wizard to step 3 with one finished PDF and the required details. */
+  async function openAuthors(props: Partial<React.ComponentProps<typeof SubmitWizard>> = {}): Promise<void> {
+    await openDetails(props);
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+  }
+
+  /** Give the submitter a CRediT role, which is the last thing step 3 needs. */
+  function chooseSubmitterRole(): void {
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "CRediT roles for You" })).getByRole("button", {
+        name: /^Conceptualization/,
+      }),
+    );
+  }
+
+  it("opens step 4 after Authors, with the rail on Checks", async () => {
+    await openAuthors({ submitterDid: ME });
+    chooseSubmitterRole();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Checks" }));
+
+    expect(screen.getByRole("heading", { level: 2, name: "Checks" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "Authors" })).toBeNull();
+    expect(railSteps().map((step) => step.getAttribute("data-state"))).toEqual([
+      "done",
+      "done",
+      "done",
+      "current",
+      "ahead",
+    ]);
+    expect(railSteps()[3].getAttribute("aria-current")).toBe("step");
+
+    // Before a version exists the step names what will be checked and which
+    // files will be scanned, rather than inventing results.
+    expect(screen.getByText("File safety")).toBeTruthy();
+    expect(screen.getByText("References")).toBeTruthy();
+    expect(screen.getByText("Similarity")).toBeTruthy();
+    expect(screen.getByText("Metadata match")).toBeTruthy();
+    expect(screen.getByText("paper.pdf", { selector: ".sw-check__file-name" })).toBeTruthy();
+    expect(screen.getByText(/The checks run on the signed version/)).toBeTruthy();
+  });
+
+  it("keeps the authors and the files when stepping back to Authors", async () => {
+    await openAuthors({ submitterDid: ME });
+    chooseSubmitterRole();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Checks" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to Authors" }));
+
+    expect(screen.getByRole("heading", { level: 2, name: "Authors" })).toBeTruthy();
+    expect(
+      within(screen.getByRole("group", { name: "CRediT roles for You" }))
+        .getByRole("button", { name: /^Conceptualization/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    // The draft files are still there too.
+    fireEvent.click(screen.getByRole("button", { name: "Back to Details" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to Files" }));
+    expect(screen.getByText("paper.pdf", { selector: ".sw-file__name" })).toBeTruthy();
+  });
+
+  it("shows the version's live results when the wizard is given one", async () => {
+    const report = {
+      paper: "sch:abcd-efgh-ijkl",
+      version: 1,
+      versionCid: "bafyreiexample",
+      state: "moderation",
+      files: [
+        {
+          path: "paper.pdf",
+          cid: CID,
+          role: "pdf",
+          status: "passed" as const,
+          failedChecks: [],
+          detail: null,
+        },
+      ],
+      referencesTotal: 10,
+      referencesUnresolved: 0,
+      similarityPct: 4.2,
+      metadataMatch: true,
+      signedTitle: "Sparse Probing of Reward Models",
+      firstPageTitle: null,
+      checkedAt: null,
+    };
+    const fetchChecks = vi.fn().mockResolvedValue(report);
+
+    await openAuthors({
+      submitterDid: ME,
+      checksFor: { paper: "sch:abcd-efgh-ijkl", version: 1 },
+      fetchChecks,
+      checksPollMs: 0,
+    });
+    chooseSubmitterRole();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Checks" }));
+
+    expect(await screen.findByText("All 4 checks passed.")).toBeTruthy();
+    expect(screen.getByText("10 of 10 references resolved")).toBeTruthy();
+    expect(fetchChecks).toHaveBeenCalledWith({ paper: "sch:abcd-efgh-ijkl", version: 1 }, expect.anything());
+  });
+});
+
 const ME = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const ADA = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
 

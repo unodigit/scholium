@@ -155,6 +155,58 @@ export function ConsentIcon({ status }: { status: ConsentStatus }): ReactElement
   }
 }
 
+/** A warning triangle: something the author should fix, not a crash. */
+export function WarningIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M8 2.8L14 13H2L8 2.8z" />
+      <path d="M8 6.4v3.1" />
+      <path d="M8 11.4v.1" />
+    </Svg>
+  );
+}
+
+/** A shield with a tick: the file safety scan. */
+export function ShieldIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M8 2l5 1.8v4.1c0 2.7-2 5-5 6.1-3-1.1-5-3.4-5-6.1V3.8L8 2z" />
+      <path d="M5.8 8l1.6 1.6L10.4 6.5" />
+    </Svg>
+  );
+}
+
+/** A page with a chain link: the reference check. */
+export function ReferenceIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M4.5 2.5h5l3 3v8h-8z" />
+      <path d="M9.5 2.5v3h3" />
+      <path d="M6.4 10.3l1.1-1.1M9.6 8.8l.6-.6a1.4 1.4 0 0 0-1.9-2l-.6.6M7.1 10.2l-.6.6a1.4 1.4 0 0 0 1.9 2l.6-.6" />
+    </Svg>
+  );
+}
+
+/** Two overlapping rings: how much text is shared with another paper. */
+export function SimilarityIcon(): ReactElement {
+  return (
+    <Svg>
+      <circle cx="6.2" cy="8" r="3.6" />
+      <circle cx="9.8" cy="8" r="3.6" />
+    </Svg>
+  );
+}
+
+/** A tag: the metadata match between the signed title and page one. */
+export function TitleIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M2.8 2.8h5.1l5.3 5.3-5.1 5.1-5.3-5.3V2.8z" />
+      <path d="M5.6 5.6v.1" />
+    </Svg>
+  );
+}
+
 export function ArrowUpIcon(): ReactElement {
   return (
     <Svg>
