@@ -1,0 +1,1 @@
+{"command": "uv run --project apps/api --all-packages pytest -p no:cacheprovider -o python_files='acceptance_*.py' acceptance/api-exposes-get-v1-me-dashboard-that-returns-nee"}
