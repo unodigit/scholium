@@ -5,8 +5,47 @@ persists it in **IndexedDB**, and requires a **WebAuthn passkey assertion**
 before it will sign. The private key never leaves the device: there is no
 code path that exports it.
 
-Later `web-auth` features build the `/signin`, `/onboarding` and `/recover`
-pages on top of this module. Import from `@/features/web-auth`.
+The `/signin` page (feature 141, below) is built on this module; `/onboarding`
+steps and `/recover` follow in later `web-auth` features. Import from
+`@/features/web-auth`.
+
+## Sign-in page (`/signin`)
+
+`apps/web/src/app/(web-auth)/signin/page.tsx` renders `SignInForm`: one
+"Sign in with passkey" button. Clicking it runs `signIn()`:
+
+```text
+did = device key's did:key                  (no prompt)
+POST /v1/auth/challenge {did}            -> {nonce, did, expires_at}
+sig = Ed25519(device key, UTF-8(nonce))     (passkey prompt)
+POST /v1/auth/verify {did, nonce, signature} -> {access_token, refresh_token}
+```
+
+- `signature` is **unpadded base64url** over the nonce's **UTF-8 bytes**, the
+  same encoding record signatures use. Both calls are unauthenticated.
+- The token pair is saved to the shared `tokenStore` (`@/lib/api`).
+- **New account → `/onboarding`.** The API creates the account on the first
+  verify and deliberately never says whether a did already has one, so the
+  browser decides: a did is derived from the device key, therefore *a device
+  key created by this sign-in is a new account*. With no key on the device,
+  `signIn()` first creates it and registers its passkey (that prompt counts as
+  the sign-in's passkey check), then runs the exchange above.
+- **Returning user → `?next=` or `/`.** The passkey is asked for every time.
+  `next` must be a same-site path; `//host`, absolute URLs, backslashes,
+  control characters and `/signin` itself are ignored (`safeRedirectPath`).
+- **A failed first attempt still ends in `/onboarding`.** The key is stored
+  before the network calls, so a retry would otherwise look like a returning
+  user. A `localStorage` marker (`scholium.web-auth.new-account`) is written
+  when the key is created and consumed by the first sign-in that completes.
+  A key created some other way (for example directly via `DeviceKeyManager`)
+  has no marker and is treated as a returning account.
+- Failures are shown in plain language (`describeSignInError`): dismissed
+  passkey prompt, unsupported browser, blocked storage, offline server, a
+  rejected sign-in, a malformed reply. Nothing is signed until the key exists,
+  and a dismissed prompt stops before any signature leaves the device.
+
+`/onboarding` currently shows a short "Welcome" card so the redirect has a
+destination; the onboarding steps replace it in the next `web-auth` feature.
 
 ## Quick start
 
@@ -99,6 +138,9 @@ key").
 | `BrowserPasskeyProvider` | `navigator.credentials.create/get` adapter. |
 | `didKeyFromEd25519PublicKey` | `did:key:z6Mk…` encoding (base58btc + Ed25519 multicodec). |
 | `signRecord` | Build a record envelope, compute its id with `verify-core` and sign it behind a "Sign and submit" passkey prompt. |
+| `signIn` | Challenge-response sign-in with the device key (creating it on first run); returns `{ did, isNewAccount, redirectTo, tokens }`. |
+| `safeRedirectPath`, `signInDestination` | Same-site `next` handling and the new-account → `/onboarding` rule. |
+| `describeSignInError` | One plain-language sentence for any sign-in failure. |
 
 All failures are `DeviceKeyError` with a stable `code`
 (`unsupported`, `storage-unavailable`, `not-found`, `already-exists`,
@@ -115,6 +157,10 @@ All failures are `DeviceKeyError` with a stable `code`
 | `passkey.ts` | WebAuthn registration and assertion validation. |
 | `device-key.ts` | Manager that ties storage, crypto and passkeys together. |
 | `sign-record.ts` | `signRecord`: envelope building, record id, passkey-gated signature. |
+| `signin.ts` | `signIn` flow, new-account marker, `next` sanitising. |
+| `signin-messages.ts` | Progress and failure copy for the sign-in page. |
+| `use-signin.ts` | React hook: one flow at a time, progress, error, navigation. Plain `.ts` so it is unit-testable (see Tests). |
+| `signin-form.tsx` | The `/signin` card (markup only; client component). |
 | `did-key.ts` | Base58btc / `did:key` encoding. |
 | `encoding.ts` | base64url, hex and byte helpers. |
 | `errors.ts` | Typed errors and cancellation detection. |
@@ -122,10 +168,23 @@ All failures are `DeviceKeyError` with a stable `code`
 ## Tests
 
 ```bash
-cd apps/web && pnpm exec vitest run src/features/web-auth
+npm test --workspace apps/web -- src/features/web-auth
 ```
 
 The suite uses real Node WebCrypto for key generation and export-refusal
-checks, and a small in-memory IndexedDB fake for persistence. Browser
-behavior (actual passkey sheets, actual IndexedDB) still needs the Playwright
-journey for `/signin`.
+checks, and a small in-memory IndexedDB fake for persistence. The sign-in
+tests run the whole flow against a fake API that verifies the Ed25519
+signature the way the real one does (key taken from the did, message = nonce
+UTF-8 bytes).
+
+Vitest here cannot transform JSX (`tsconfig.json` sets `jsx: "preserve"`), so
+sign-in behaviour lives in `use-signin.ts` and is tested with `renderHook`;
+`signin-form.tsx` is markup only.
+
+The page was also exercised once in headless Chromium with a CDP virtual
+passkey authenticator against a running API: new account → `/onboarding`,
+returning sign-in following `?next=`, and an off-site `next` ignored. That is
+not an automated test. Running it from this repo needs the browser to reach the
+API on one origin: the API sends no CORS headers (a cross-origin preflight to
+`/v1/auth/challenge` is answered `405`), so with the web app and API on
+different origins the button ends in "Can't reach Scholium".

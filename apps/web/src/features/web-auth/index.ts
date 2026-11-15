@@ -121,3 +121,34 @@ export {
   type SignRecordOptions,
   type SignedRecord,
 } from "./sign-record";
+
+export {
+  DEFAULT_PASSKEY_DISPLAY_NAME,
+  DEFAULT_PASSKEY_USER_NAME,
+  DEFAULT_SIGNIN_REDIRECT,
+  NEW_ACCOUNT_STORAGE_KEY,
+  ONBOARDING_PATH,
+  SIGNIN_PATH,
+  SignInError,
+  hasPendingNewAccount,
+  isSignInError,
+  parseChallenge,
+  safeRedirectPath,
+  signIn,
+  signInDestination,
+  type ChallengeResponse,
+  type SignInClient,
+  type SignInDeviceKey,
+  type SignInErrorCode,
+  type SignInOptions,
+  type SignInResult,
+  type SignInStage,
+} from "./signin";
+
+export {
+  SIGNIN_FALLBACK_MESSAGE,
+  SIGNIN_STAGE_MESSAGES,
+  SIGNIN_SUCCESS_MESSAGE,
+  SIGNIN_UNSUPPORTED_MESSAGE,
+  describeSignInError,
+} from "./signin-messages";

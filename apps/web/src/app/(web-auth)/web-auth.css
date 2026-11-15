@@ -1,0 +1,128 @@
+/*
+ * Styles for the web-auth pages (/signin, /onboarding, /recover).
+ *
+ * Tokens come from docs/design.md §3. They are scoped to `.wa-shell` so this
+ * stylesheet never leaks into, or collides with, the global theme; when the
+ * app-wide tokens land, delete the block below and keep the rules.
+ */
+
+.wa-shell {
+  --wa-bg: #fbfaf7;
+  --wa-surface: #ffffff;
+  --wa-ink: #1b1d22;
+  --wa-ink-2: #5a5f6b;
+  --wa-rule: #e4e1d9;
+  --wa-accent: #2f4ba0;
+  --wa-on-accent: #ffffff;
+  --wa-critical: #b3312b;
+
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--wa-bg);
+  color: var(--wa-ink);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .wa-shell {
+    --wa-bg: #14151a;
+    --wa-surface: #1c1e25;
+    --wa-ink: #ecebe6;
+    --wa-ink-2: #a3a7b2;
+    --wa-rule: #2c2f38;
+    --wa-accent: #8fa6f0;
+    --wa-on-accent: #14151a;
+    --wa-critical: #f08a84;
+  }
+}
+
+.wa-card {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 400px;
+  padding: 32px 24px;
+  background: var(--wa-surface);
+  border: 1px solid var(--wa-rule);
+  border-radius: 10px;
+}
+
+.wa-wordmark {
+  margin: 0 0 24px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--wa-ink-2);
+}
+
+.wa-title {
+  margin: 0 0 8px;
+  font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+  font-size: 30px;
+  line-height: 38px;
+  font-weight: 600;
+}
+
+.wa-lede {
+  margin: 0 0 24px;
+  color: var(--wa-ink-2);
+}
+
+.wa-button {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--wa-accent);
+  border-radius: 6px;
+  background: var(--wa-accent);
+  color: var(--wa-on-accent);
+  font: inherit;
+  font-weight: 500;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 150ms ease-out;
+}
+
+.wa-button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.wa-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.wa-button:focus-visible {
+  outline: 2px solid var(--wa-accent);
+  outline-offset: 2px;
+}
+
+.wa-progress {
+  min-height: 22px;
+  margin: 12px 0 0;
+  color: var(--wa-ink-2);
+}
+
+.wa-error {
+  margin: 12px 0 0;
+  color: var(--wa-critical);
+}
+
+.wa-meta {
+  margin: 24px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--wa-ink-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-button {
+    transition: none;
+  }
+}

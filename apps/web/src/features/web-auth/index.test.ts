@@ -25,6 +25,13 @@ describe("web-auth public surface", () => {
       "RECORD_ENVELOPE_VERSION",
       "RecordSigningError",
       "isRecordSigningError",
+      "signIn",
+      "signInDestination",
+      "safeRedirectPath",
+      "SignInError",
+      "describeSignInError",
+      "ONBOARDING_PATH",
+      "SIGNIN_PATH",
     ]) {
       expect(webAuth).toHaveProperty(name);
     }
