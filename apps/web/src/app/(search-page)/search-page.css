@@ -1,0 +1,18 @@
+/*
+ * The `/search` route-group shell. The layout owns the outer width and
+ * padding; `features/search-page/search-page.css` styles the page itself.
+ */
+
+.sp-shell {
+  width: 100%;
+  max-width: 80rem;
+  margin: 0 auto;
+  padding: calc(var(--space-unit) * 8) calc(var(--space-unit) * 5)
+    calc(var(--space-unit) * 16);
+}
+
+@media (min-width: 640px) {
+  .sp-shell {
+    padding-inline: calc(var(--space-unit) * 8);
+  }
+}
