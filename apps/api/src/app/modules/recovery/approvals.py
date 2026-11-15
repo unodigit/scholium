@@ -15,9 +15,10 @@ from typing import Any, Optional, Sequence
 
 from sqlalchemy import select
 
-from app import db
+from app import db, jobs
 
 from .models import RecoveryRequest, REQUEST_PENDING, ensure_requests_table
+from .finalize import JOB_KIND
 from .service import GUARDIAN_COUNT, get_guardians
 
 __all__ = [
@@ -116,6 +117,14 @@ def approve_recovery_request(
                 row.contest_until = _utcnow() + CONTEST_WINDOW
                 row.status = REQUEST_CONTEST
                 opened = True
+                try:
+                    jobs.enqueue(
+                        JOB_KIND,
+                        {"request_id": request_id, "did": row.did},
+                        run_after=row.contest_until,
+                    )
+                except Exception:
+                    pass
             elif row.status == REQUEST_PENDING and count < APPROVAL_THRESHOLD:
                 row.status = REQUEST_PENDING
 

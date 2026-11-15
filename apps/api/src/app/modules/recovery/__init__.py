@@ -56,6 +56,12 @@ from .approvals import (
     approve_recovery_request,
     get_approval_count,
 )
+from .finalize import (
+    JOB_KIND,
+    finalize_due_requests,
+    finalize_recovery_request,
+    finalize_job,
+)
 from .problems import (
     GUARDIANS_REQUIRED_TYPE,
     INVALID_GUARDIANS_TYPE,
@@ -88,6 +94,7 @@ register(KEY_ROTATION_TYPE, handle_key_rotation, min_tier=0)
 
 __all__ = [
     "APPROVAL_THRESHOLD",
+    "JOB_KIND",
     "CONTEST_WINDOW",
     "ApprovalResult",
     "GUARDIANS_REQUIRED_TYPE",

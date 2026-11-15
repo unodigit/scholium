@@ -41,9 +41,11 @@ from pydantic import AliasChoices, BaseModel, Field
 
 
 
+from app import db
 from . import problems
 from . import approvals as _approvals
 from .opening import InvalidRecoveryRequest, NoGuardians, UnknownAccount, open_recovery_request
+from .models import RecoveryRequest, ensure_requests_table
 from .service import GUARDIAN_COUNT
 
 __all__ = ["RecoveryRequestCreated", "RecoveryRequestIn", "requests_router"]
@@ -185,3 +187,85 @@ async def post_recovery_approval(
         "contest_until": result.contest_until.isoformat() + "Z" if result.contest_until else None,
         "opened_contest_window": result.opened_contest_window,
     }
+
+
+_SIGNATURE_FIELDS_CANCEL = ("signature", "sig", "proof", "proofValue")
+
+
+def _extract_signature(body):
+    if not isinstance(body, dict):
+        return None, None
+    signature = None
+    for key in _SIGNATURE_FIELDS_CANCEL:
+        if key in body and isinstance(body[key], str):
+            signature = body[key]
+            break
+    signer = None
+    for key in ("did", "signer", "author", "account_did"):
+        if key in body and isinstance(body[key], str):
+            signer = body[key]
+            break
+    return signer, signature
+
+
+def _verify_detached(did: str, message: str, signature: str) -> bool:
+    try:
+        from scholium_record_core import decode_signature, public_key_from_did_key
+        from nacl.exceptions import BadSignatureError
+        from nacl.signing import VerifyKey
+
+        raw = decode_signature(signature)
+        pk = public_key_from_did_key(did)
+        VerifyKey(pk).verify(message.encode("utf-8"), raw)
+        return True
+    except Exception:
+        return False
+
+
+@requests_router.post("/requests/{request_id}/cancel", status_code=200)
+async def cancel_recovery_request(request_id: str, request: Request, authorization: str | None = Header(default=None)):
+    ensure_requests_table()
+    with db.SessionLocal() as session:
+        row = session.get(RecoveryRequest, request_id)
+        if row is None:
+            raise problems.recovery_request_not_found()
+        did = row.did
+        row_id = row.id
+
+    authorized = False
+    # Bearer access token signed by the old key.
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        try:
+            from app.security import decode_access_token
+
+            principal = decode_access_token(token)
+            if principal.did == did:
+                authorized = True
+        except Exception:
+            authorized = False
+
+    # Detached signature by the old key over the request id.
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    signer, signature = _extract_signature(body)
+    if not authorized and signature is not None:
+        if signer is None:
+            signer = did
+        if signer == did and _verify_detached(did, request_id, signature):
+            authorized = True
+
+    if not authorized:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=401, detail="Not authorized to cancel this recovery request.")
+
+    with db.SessionLocal() as session:
+        row = session.get(RecoveryRequest, row_id)
+        if row is not None:
+            row.status = "cancelled"
+            session.commit()
+
+    return {"status": "cancelled"}
