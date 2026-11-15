@@ -10,6 +10,13 @@ from .challenge import (
     ChallengeResponse,
     router as challenge_router,
 )
+from .document import (
+    KEY_ROTATION_TYPE,
+    DidDocument,
+    KeyRotationEntry,
+    resolve_did_document,
+    router as document_router,
+)
 from .models import (
     Account,
     AuthChallenge,
@@ -40,6 +47,7 @@ from .verify import (
 #: Router the module loader mounts under ``/v1``.
 router = APIRouter()
 router.include_router(challenge_router)
+router.include_router(document_router)
 router.include_router(verify_router)
 
 __all__ = [
@@ -48,10 +56,13 @@ __all__ = [
     "CHALLENGE_TTL",
     "ChallengeRequest",
     "ChallengeResponse",
+    "DidDocument",
     "INVALID_DID_TYPE",
     "InvalidDid",
     "InvalidNonce",
     "InvalidSignature",
+    "KEY_ROTATION_TYPE",
+    "KeyRotationEntry",
     "NONCE_BYTES",
     "REFRESH_TOKEN_TTL",
     "RefreshToken",
@@ -63,6 +74,7 @@ __all__ = [
     "ensure_table",
     "issue_challenge",
     "issue_refresh_token",
+    "resolve_did_document",
     "router",
     "validate_did",
     "verify_signin",
