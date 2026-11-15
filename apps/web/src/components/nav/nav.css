@@ -1,0 +1,362 @@
+/*
+ * Global navigation — docs/design.md §4 (IA), §5.1 (feed header mock), §10.
+ *
+ * Desktop ≥640px: sticky translucent header — `scholium` wordmark · search
+ * field · Categories · Submit · notifications · avatar. Below 640px the
+ * header is hidden and a fixed bottom tab bar takes over (Home · Search ·
+ * Submit · Inbox · Me). Visibility at the 640px breakpoint is done with the
+ * Tailwind `hidden` / `sm:flex` / `sm:hidden` utilities in the markup, so no
+ * rule here sets `display` — unlayered CSS would otherwise outrank them.
+ *
+ * Every value reads the design tokens (src/styles/tokens.css); the
+ * translucent material is the shared `.material-chrome` role class from
+ * src/styles/base.css. Motion is 150–200 ms ease-out on transform/opacity
+ * only, and `prefers-reduced-motion` is neutralised globally in base.css.
+ * Rules are prefixed `gn-` so nothing leaks into other features.
+ */
+
+/* ---- Desktop header ------------------------------------------------------ */
+
+.gn-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  align-items: center;
+  gap: 12px;
+  height: 64px;
+  padding-inline: 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+@media (min-width: 64rem) {
+  .gn-header {
+    padding-inline: 24px;
+  }
+}
+
+/* Chrome links are not prose links: no underline, ink like a control. */
+.gn-header a,
+.gn-tabbar a {
+  text-decoration: none;
+}
+
+/* The lowercase wordmark is the brand: serif, set tight. */
+.gn-wordmark {
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: lowercase;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* ---- Search field -------------------------------------------------------- */
+
+.gn-search {
+  position: relative;
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: var(--measure-reading);
+  /* Auto margins eat leftover space before the row packs, so the field sits
+     centred between the wordmark and the controls (design.md §5.1) and the
+     Submit/bell/avatar group hugs the right edge at any width. */
+  margin-inline: auto;
+}
+
+.gn-search-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px 0 40px;
+  background-color: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  font: inherit;
+  transition: border-color var(--duration-fast) var(--ease-decel);
+}
+
+.gn-search-input:hover {
+  border-color: color-mix(in srgb, var(--ink) 30%, var(--rule));
+}
+
+/* The global 2px focus ring (base.css) carries keyboard focus; the border
+   swap keeps clicked focus visible in browsers whose :focus-visible heuristics
+   lag behind editable fields. */
+.gn-search-input:focus {
+  border-color: var(--accent);
+}
+
+.gn-search-submit {
+  position: absolute;
+  inset-inline-start: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--corner-control);
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-decel);
+}
+
+.gn-search-submit:hover {
+  color: var(--ink);
+}
+
+/* ---- Header controls ------------------------------------------------------ */
+
+/* Categories trigger. */
+.gn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--corner-control);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.gn-link:hover {
+  background-color: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+/* Submit is the one filled (accent) control in the bar. */
+.gn-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--corner-control);
+  background-color: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    opacity var(--duration-fast) var(--ease-decel),
+    transform var(--duration-fast) var(--ease-decel);
+}
+
+.gn-submit:hover {
+  opacity: 0.9;
+}
+
+.gn-submit:active {
+  transform: scale(0.97);
+}
+
+/* Bell and avatar share a 44px square hit area (design.md §9). */
+.gn-icon-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--corner-control);
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.gn-icon-button:hover {
+  background-color: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+/* ---- Unread badge --------------------------------------------------------- */
+
+/* Page-ink numerals on the status red read at both themes (the badge always
+   carries its number, never colour alone). */
+.gn-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: var(--corner-pill);
+  background-color: var(--critical);
+  color: var(--bg);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: 1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.gn-icon-button .gn-badge {
+  position: absolute;
+  top: 5px;
+  inset-inline-end: 5px;
+}
+
+/* ---- Avatar --------------------------------------------------------------- */
+
+.gn-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--corner-pill);
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--type-meta);
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+/* Signed out: a quiet outline until the profile exists. */
+.gn-avatar--guest {
+  border-color: var(--rule);
+  background: none;
+  color: var(--ink-2);
+}
+
+/* ---- Categories menu ------------------------------------------------------ */
+
+.gn-menu-wrap {
+  position: relative;
+}
+
+.gn-chevron {
+  transition: transform var(--duration-fast) var(--ease-decel);
+}
+
+.gn-chevron--open {
+  transform: rotate(180deg);
+}
+
+/* Grows from its trigger (origin top-left), 200 ms, transform/opacity only. */
+.gn-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-start: 0;
+  z-index: 1;
+  min-width: 15rem;
+  box-sizing: border-box;
+  padding: 4px;
+  background-color: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  transform-origin: top left;
+  animation: gn-menu-in var(--duration-base) var(--ease-decel) both;
+}
+
+@keyframes gn-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.gn-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gn-menu-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px;
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  font-size: var(--type-ui);
+}
+
+.gn-menu-item:hover {
+  background-color: var(--selection);
+}
+
+/* The category id rides along in mono — it is the id users cite. */
+.gn-menu-id {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  color: var(--ink-2);
+}
+
+/* ---- Mobile tab bar (<640px) ----------------------------------------------- */
+
+.gn-tabbar {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 40;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-top: 1px solid var(--rule);
+}
+
+.gn-tab {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--ink-2);
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--duration-fast) var(--ease-decel);
+}
+
+.gn-tab[aria-current="page"] {
+  color: var(--accent);
+}
+
+.gn-tab-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 24px;
+}
+
+.gn-tab-label {
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.gn-tab-icon .gn-badge {
+  position: absolute;
+  top: -6px;
+  inset-inline-end: -14px;
+}
+
+/* Spacer mounted under page content so nothing hides behind the fixed bar. */
+.gn-tabbar-spacer {
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+}
