@@ -27,6 +27,20 @@ ledger.
 The table is ``search_fts(version_cid UNINDEXED, title, abstract, body)``.
 Only SQLite has FTS5; on another database the plugin does nothing.
 
+Feature 86 serves full-text search over the index::
+
+    GET /v1/search?q=<text>[&category=...][&status=...][&has_code=true]
+                   [&from=YYYY-MM-DD][&to=YYYY-MM-DD][&limit=<1-100>]
+
+returns the listed versions matching ``q``, ranked by relevance, with facet
+counts by category and status over everything that matched::
+
+    search.search_versions("pulsar timing").hits     # SearchHit, best first
+    search.search_versions("pulsar").facets          # FacetCounts
+
+See :mod:`app.modules.search.query` for the ranking and filters and
+:mod:`app.modules.search.router` for the endpoint.
+
 Feature 87 adds semantic search on top of the same listed-version projection::
 
     GET /v1/search/semantic?q=<text>[&limit=<1-100>]
@@ -48,11 +62,10 @@ embedder in force.  See :mod:`app.modules.search.embedder`,
 :mod:`app.modules.search.embeddings` and :mod:`app.modules.search.semantic`.
 
 The module loader mounts this package's ``router`` under ``/v1``.  It is built
-by including each endpoint's own router, so the full-text endpoint (feature 86)
-joins it with one more ``router.include_router(...)``.  The loader also creates
-the FTS5 table and the ``embeddings`` table with the rest at ``create_app`` and
-subscribes the index.  See :mod:`app.modules.search.index` for the FTS table and
-its writes.
+by including each endpoint's own router -- the full-text endpoint (feature 86)
+and the semantic one (feature 87).  The loader also creates the FTS5 table and
+the ``embeddings`` table with the rest at ``create_app`` and subscribes the
+index.  See :mod:`app.modules.search.index` for the FTS table and its writes.
 """
 
 from __future__ import annotations
@@ -92,6 +105,16 @@ from .index import (
     sync_version,
     upsert_entry,
 )
+from .query import (
+    FacetCounts,
+    SearchHit,
+    SearchQuery,
+    SearchResult,
+    search_versions,
+    tokenize,
+    version_has_code,
+)
+from .router import router as _search_router
 from .semantic import SemanticHit, SemanticResult, semantic_search
 from .semantic_router import router as _semantic_router
 from .subscribers import install, on_state_changed, on_version_record, uninstall
@@ -101,9 +124,13 @@ __all__ = [
     "Embedder",
     "EmbedderError",
     "Embedding",
+    "FacetCounts",
     "HashingEmbedder",
     "IndexedVersion",
     "OllamaEmbedder",
+    "SearchHit",
+    "SearchQuery",
+    "SearchResult",
     "SemanticHit",
     "SemanticResult",
     "StoredEmbedding",
@@ -126,17 +153,21 @@ __all__ = [
     "remove_embedding",
     "remove_entry",
     "router",
+    "search_versions",
     "semantic_search",
     "set_embedder",
     "supported",
     "sync_embedding",
     "sync_version",
+    "tokenize",
     "uninstall",
     "upsert_entry",
+    "version_has_code",
 ]
 
 #: Mounted under ``/v1`` by the module loader.  One sub-router per endpoint.
 router = APIRouter()
+router.include_router(_search_router)
 router.include_router(_semantic_router)
 
 
