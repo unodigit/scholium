@@ -1,0 +1,192 @@
+/* ============================================================================
+   Scholium design tokens — the single source of truth for colour.
+   ----------------------------------------------------------------------------
+   Values are taken verbatim from docs/design.md §3 (Colour). Every screen reads
+   these custom properties; Tailwind's `@theme` bridge in theme.css turns them
+   into utilities (`bg-surface`, `text-ink-2`, `border-rule`, …) without copying
+   a single hex value.
+
+   Light is the default. Dark applies automatically from the OS preference and
+   can be forced with data-theme="dark" on <html> (the theme toggle the nav task
+   will add lives there). Dark can also be scoped to a subtree; light overrides
+   are intended for the document root. Never hardcode a hex in a component.
+
+   The 11 required design tokens are:
+     bg · surface · ink · ink-2 · rule · accent · verified · pending ·
+     critical · ai · margin-note
+   Everything below them is a derived role (tints, text-on-colour, shadow) so
+   components never invent their own colour.
+   ============================================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- Core palette — light (docs/design.md §3) ---------------------- */
+  --bg: #fbfaf7;           /* page — warm paper */
+  --surface: #ffffff;      /* cards, margin panel */
+  --ink: #1b1d22;          /* body text */
+  --ink-2: #5a5f6b;        /* secondary text */
+  --rule: #e4e1d9;         /* borders, dividers */
+  --accent: #2f4ba0;       /* links, primary buttons — scholar's ink blue */
+  --verified: #1f7a54;     /* Verified, Reviewed */
+  --pending: #9a6b00;      /* Pending, Under review, Contested */
+  --critical: #b3312b;     /* Retracted, failed verification */
+  --ai: #6b4ba8;           /* AI pre-review only — never human status */
+  --margin-note: #fff6d6;  /* annotation highlight */
+
+  /* ---- Derived roles — light ----------------------------------------
+     `-soft` tints are quiet chip/panel FILLS. Pair them with --ink text and
+     carry the status colour in the icon and border: at 13 px, --pending on
+     --pending-soft is 4.13:1, below the 4.5:1 rule in design.md §3, while
+     --ink on any soft tint is comfortably above it. --accent-ink covers text
+     on a filled accent surface; --margin-note-ink covers the annotation
+     highlight. A status is still never colour alone — the icon + word stays
+     mandatory (design.md §9). */
+  --accent-ink: #ffffff;
+  --accent-soft: #e9edf8;
+  --verified-soft: #e6f1eb;
+  --pending-soft: #f9f0da;
+  --critical-soft: #f7e7e5;
+  --ai-soft: #efeaf7;
+  --margin-note-ink: #57430a;
+  --selection: #dce4f7;
+  --focus-ring: var(--accent);
+  --scrim: rgba(20, 21, 26, 0.36);
+
+  /* ---- Elevation — only the floating annotation popover (design.md §3) */
+  --popover-shadow:
+    0 12px 32px -8px rgba(27, 29, 34, 0.24),
+    0 2px 8px rgba(27, 29, 34, 0.08);
+
+  /* ---- Translucent chrome material -----------------------------------
+     Used by sticky header / bottom bar. Solid --bg is the fallback when
+     transparency is reduced or backdrop-filter is unsupported. */
+  --material-chrome-tint: rgba(251, 250, 247, 0.82);
+  --material-blur: 20px;
+  --material-saturate: 180%;
+
+  /* ---- Typography — docs/design.md §3 --------------------------------
+     Raw families and metrics. theme.css maps them onto Tailwind's `--font-*`
+     and `--text-*` namespaces; base.css and component CSS read these directly,
+     so the tokens work with or without Tailwind. */
+  --family-serif: "Source Serif 4", "Source Serif Pro", ui-serif, Georgia,
+    "Times New Roman", serif;
+  --family-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --family-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
+
+  --type-title: 1.875rem;       /* paper title 30 px */
+  --leading-title: 2.375rem;    /* 38 px */
+  --tracking-title: -0.011em;
+  --weight-title: 600;
+
+  --type-reading: 1.125rem;     /* reading text 18 px */
+  --leading-reading: 1.875rem;  /* 30 px */
+  --type-ui: 0.9375rem;         /* UI text 15 px */
+  --leading-ui: 1.375rem;       /* 22 px */
+  --type-meta: 0.8125rem;       /* small / meta 13 px */
+  --leading-meta: 1.125rem;     /* 18 px */
+  --type-mono: 0.8125rem;       /* IDs, hashes, code 13 px */
+  --leading-mono: 1.125rem;     /* 18 px */
+
+  --measure-reading: 72ch;      /* max characters per reading line */
+  --reading-column: 45rem;      /* 720 px reading column */
+  --margin-panel: 22.5rem;      /* 360 px margin panel */
+
+  /* ---- Spacing — 4 px base grid -------------------------------------
+     Scale: 4, 8, 12, 16, 24, 32, 48, 64 px. */
+  --space-unit: 0.25rem;
+
+  /* ---- Shape — 6 px controls, 10 px cards --------------------------- */
+  --corner-control: 6px;
+  --corner-card: 10px;
+  --corner-pill: 999px;
+
+  /* ---- Motion — 150–200 ms ease-out (docs/design.md §3) -------------
+     Deceleration only; never ease-in on UI. Reduced-motion overrides at the
+     bottom of base.css collapse these to ~0. */
+  --ease-decel: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-symmetric: cubic-bezier(0.77, 0, 0.175, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+}
+
+/* ============================================================================
+   DARK — automatic (OS preference), unless the page forces light.
+   ============================================================================ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #14151a;
+    --surface: #1c1e25;
+    --ink: #ecebe6;
+    --ink-2: #a3a7b2;
+    --rule: #2c2f38;
+    --accent: #8fa6f0;
+    --verified: #5cc79a;
+    --pending: #e0b14a;
+    --critical: #f08a84;
+    --ai: #b9a2f2;
+    --margin-note: #3a3320;
+
+    --accent-ink: #101218;
+    --accent-soft: #232a3e;
+    --verified-soft: #1a2a24;
+    --pending-soft: #2d2617;
+    --critical-soft: #301f1e;
+    --ai-soft: #261f36;
+    --margin-note-ink: #f3e6bc;
+    --selection: #2a3350;
+    --focus-ring: var(--accent);
+    --scrim: rgba(0, 0, 0, 0.62);
+
+    --popover-shadow:
+      0 16px 40px -8px rgba(0, 0, 0, 0.6),
+      0 2px 10px rgba(0, 0, 0, 0.4);
+
+    --material-chrome-tint: rgba(20, 21, 26, 0.82);
+  }
+}
+
+/* ============================================================================
+   DARK — forced (data-theme="dark"), for the explicit theme toggle.
+   ============================================================================ */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #14151a;
+  --surface: #1c1e25;
+  --ink: #ecebe6;
+  --ink-2: #a3a7b2;
+  --rule: #2c2f38;
+  --accent: #8fa6f0;
+  --verified: #5cc79a;
+  --pending: #e0b14a;
+  --critical: #f08a84;
+  --ai: #b9a2f2;
+  --margin-note: #3a3320;
+
+  --accent-ink: #101218;
+  --accent-soft: #232a3e;
+  --verified-soft: #1a2a24;
+  --pending-soft: #2d2617;
+  --critical-soft: #301f1e;
+  --ai-soft: #261f36;
+  --margin-note-ink: #f3e6bc;
+  --selection: #2a3350;
+  --focus-ring: var(--accent);
+  --scrim: rgba(0, 0, 0, 0.62);
+
+  --popover-shadow:
+    0 16px 40px -8px rgba(0, 0, 0, 0.6),
+    0 2px 10px rgba(0, 0, 0, 0.4);
+
+  --material-chrome-tint: rgba(20, 21, 26, 0.82);
+}
+
+/* Forced light on a dark-OS machine: keep native controls light too. */
+[data-theme="light"] {
+  color-scheme: light;
+}

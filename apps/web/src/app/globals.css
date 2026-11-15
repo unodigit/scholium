@@ -1,11 +1,4 @@
-@import "tailwindcss";
-
-:root {
-  color-scheme: light dark;
-}
-
-body {
-  margin: 0;
-  font-family: system-ui, -apple-system, sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
+/* Scholium design system — docs/design.md §3.
+   The token layer lives in src/styles/; this file is the single entry point
+   imported by the root layout so every screen inherits it. */
+@import "../styles/index.css";

@@ -10,6 +10,8 @@
     "apps/web"
   ],
   "overrides": {
-    "postcss": "^8.5.33"
+    "postcss": "^8.5.33",
+    "@tailwindcss/node": "4.0.0",
+    "@tailwindcss/oxide": "4.0.0"
   }
 }

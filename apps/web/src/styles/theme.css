@@ -1,0 +1,110 @@
+/* ============================================================================
+   Tailwind v4 theme bridge — design.md tokens as Tailwind utilities.
+   ----------------------------------------------------------------------------
+   Tailwind v4 is CSS-first: this @theme block is the authoritative Tailwind
+   theme. It maps the raw custom properties from tokens.css onto Tailwind's
+   namespaces, so every utility follows light/dark/forced themes automatically —
+   no `dark:` variants are needed for colour.
+
+   Utilities this generates (examples):
+     bg-bg, bg-surface, text-ink, text-ink-2, border-rule, text-accent,
+     bg-verified-soft, text-critical, border-ai, bg-margin-note,
+     rounded-control, rounded-card, p-1 … p-16,
+     font-serif / font-sans / font-mono,
+     text-paper-title / text-reading / text-ui / text-meta / text-mono,
+     max-w-reading, max-w-measure, shadow-popover, ease-out.
+
+   Why `@theme inline`: every value below is a reference to a token in
+   tokens.css. A plain `@theme` would emit `--color-ink: var(--ink)` on :root,
+   and a custom property that holds var() is resolved where it is declared, so a
+   nested `[data-theme="dark"]` subtree would redefine --ink but keep inheriting
+   the root's already-resolved --color-ink — `text-ink` would stay light-theme
+   inside it. `inline` makes each utility read the token directly
+   (`color: var(--ink)`), so utilities follow the theme of the element they sit
+   on, at the root or in any subtree.
+   ============================================================================ */
+
+@theme inline {
+  /* ---- Font families — vendored in public/fonts, loaded by fonts.css -- */
+  --font-sans: var(--family-sans);
+  --font-serif: var(--family-serif);
+  --font-mono: var(--family-mono);
+
+  /* ---- Typography roles — docs/design.md §3 ---------------------------
+     Each role is size + line height (+ weight/tracking where the design
+     specifies it). Prefer these over raw text-sm/text-lg so the reading
+     experience stays exact. */
+  --text-paper-title: var(--type-title);
+  --text-paper-title--line-height: var(--leading-title);
+  --text-paper-title--font-weight: var(--weight-title);
+  --text-paper-title--letter-spacing: var(--tracking-title);
+
+  --text-reading: var(--type-reading);
+  --text-reading--line-height: var(--leading-reading);
+
+  --text-ui: var(--type-ui);
+  --text-ui--line-height: var(--leading-ui);
+
+  --text-meta: var(--type-meta);
+  --text-meta--line-height: var(--leading-meta);
+
+  --text-mono: var(--type-mono);
+  --text-mono--line-height: var(--leading-mono);
+
+  /* ---- Spacing — 4 px base grid (docs/design.md §3) ------------------
+     Every numeric spacing utility is a multiple of --space-unit, so the scale
+     is exactly 4, 8, 12, 16, 24, 32, 48, 64 px at
+     p-1, p-2, p-3, p-4, p-6, p-8, p-12, p-16. */
+  --spacing: var(--space-unit);
+
+  /* ---- Shape — 6 px controls, 10 px cards, pill for chips/IDs -------- */
+  --radius-control: var(--corner-control);
+  --radius-card: var(--corner-card);
+  --radius-pill: var(--corner-pill);
+
+  /* ---- Colour bridge — tokens.css owns the values --------------------- */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-rule: var(--rule);
+  --color-accent: var(--accent);
+  --color-verified: var(--verified);
+  --color-pending: var(--pending);
+  --color-critical: var(--critical);
+  --color-ai: var(--ai);
+  --color-margin-note: var(--margin-note);
+
+  /* Derived roles (tints, text on colour, overlays) */
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-verified-soft: var(--verified-soft);
+  --color-pending-soft: var(--pending-soft);
+  --color-critical-soft: var(--critical-soft);
+  --color-ai-soft: var(--ai-soft);
+  --color-margin-note-ink: var(--margin-note-ink);
+  --color-scrim: var(--scrim);
+
+  /* ---- Layout — reading column + margin panel (docs/design.md §5.2) -- */
+  --container-reading: var(--reading-column);
+  --container-margin: var(--margin-panel);
+  --container-measure: var(--measure-reading);
+
+  /* ---- Breakpoints — phone / tablet / desktop-margin (design.md §10)
+     These stay literal: CSS media queries cannot resolve var(). ---------- */
+  --breakpoint-sm: 40rem;                     /* 640 */
+  --breakpoint-lg: 64rem;                     /* 1024 */
+  --breakpoint-xl: 80rem;                     /* 1280 */
+
+  /* ---- Motion — 150–200 ms, ease-out (docs/design.md §3) -------------
+     Apple-style deceleration curve; never ease-in on UI. Components that can
+     be grabbed (drawers, bottom sheets) should use a spring in JS and read
+     the same durations for their fallback. */
+  --ease-out: var(--ease-decel);
+  --ease-in-out: var(--ease-symmetric);
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: var(--ease-decel);
+
+  /* ---- Elevation — only the floating annotation popover -------------- */
+  --shadow-popover: var(--popover-shadow);
+}

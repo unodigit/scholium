@@ -1,0 +1,24 @@
+/* ============================================================================
+   Scholium style entry point.
+   ----------------------------------------------------------------------------
+   Imported once by src/app/globals.css, so every route (and every later
+   feature directory) inherits the same tokens, fonts, Tailwind theme and
+   accessible base layer.
+
+   Order matters:
+     1. Tailwind (theme/base/components/utilities layers)
+     2. fonts.css   — @font-face for the vendored variable fonts
+     3. tokens.css  — design.md §3 custom properties, light + dark
+     4. theme.css   — @theme bridge: tokens → Tailwind utilities
+     5. base.css    — element defaults, role classes, reduced-motion/contrast
+   ============================================================================ */
+
+@import "tailwindcss";
+@import "./fonts.css";
+@import "./tokens.css";
+@import "./theme.css";
+@import "./base.css";
+
+/* Tailwind v4 content detection, pinned to the app source so classes in every
+   future feature directory are generated (and node_modules is never scanned). */
+@source "../**/*.{ts,tsx,mdx}";

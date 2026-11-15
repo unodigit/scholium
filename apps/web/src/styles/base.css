@@ -1,0 +1,237 @@
+/* ============================================================================
+   Base layer — sensible defaults so every screen reads as Scholium.
+   ----------------------------------------------------------------------------
+   Only global, role-level styling belongs here. Components, chips, cards and
+   layout live in their own tasks; this file makes raw HTML (papers, reviews,
+   server-rendered fallbacks) already look like docs/design.md.
+   ============================================================================ */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: var(--family-sans);
+    font-size: var(--type-ui);
+    line-height: var(--leading-ui);
+    font-weight: 400;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    accent-color: var(--accent);
+  }
+
+  /* The paper comes first: headings are serif, body copy is sans. */
+  h1,
+  h2 {
+    font-family: var(--family-serif);
+    color: var(--ink);
+    text-wrap: balance;
+  }
+
+  h1 {
+    font-size: var(--type-title);
+    line-height: var(--leading-title);
+    font-weight: var(--weight-title);
+    letter-spacing: var(--tracking-title);
+  }
+
+  h2 {
+    font-size: var(--type-reading);
+    line-height: var(--leading-reading);
+    font-weight: var(--weight-title);
+  }
+
+  h3,
+  h4 {
+    font-family: var(--family-sans);
+    font-size: var(--type-ui);
+    line-height: var(--leading-ui);
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  p {
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  strong,
+  b {
+    font-weight: 600;
+  }
+
+  small {
+    font-size: var(--type-meta);
+    line-height: var(--leading-meta);
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--family-mono);
+    font-size: var(--type-mono);
+    line-height: var(--leading-mono);
+    font-variant-ligatures: none;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+    text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  }
+
+  a:hover {
+    text-decoration-color: currentColor;
+  }
+
+  ::selection {
+    background-color: var(--selection);
+    color: var(--ink);
+  }
+
+  /* Focus rings — 2 px accent, on keyboard focus only (design.md §9). */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  hr {
+    border: 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  img,
+  svg,
+  video {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Margin-note highlight — the scholium itself. */
+  mark {
+    background-color: var(--margin-note);
+    color: var(--ink);
+    border-radius: var(--corner-control);
+    padding-inline: 0.12em;
+  }
+
+  /* Native controls follow the active theme. */
+  ::placeholder {
+    color: var(--ink-2);
+    opacity: 1;
+  }
+}
+
+/* ============================================================================
+   Role classes — reusable across features without inventing sizes.
+   ============================================================================ */
+@layer components {
+  .paper-title {
+    font-family: var(--family-serif);
+    font-size: var(--type-title);
+    line-height: var(--leading-title);
+    font-weight: var(--weight-title);
+    letter-spacing: var(--tracking-title);
+    text-wrap: balance;
+  }
+
+  .reading {
+    font-family: var(--family-serif);
+    font-size: var(--type-reading);
+    line-height: var(--leading-reading);
+    max-width: var(--measure-reading);
+    text-wrap: pretty;
+  }
+
+  .meta {
+    font-family: var(--family-sans);
+    font-size: var(--type-meta);
+    line-height: var(--leading-meta);
+    color: var(--ink-2);
+  }
+
+  .mono-id {
+    font-family: var(--family-mono);
+    font-size: var(--type-mono);
+    line-height: var(--leading-mono);
+    font-variant-ligatures: none;
+    letter-spacing: -0.01em;
+  }
+
+  /* Translucent chrome for the sticky header / bottom bar. Falls back to a
+     solid surface when transparency is reduced or backdrop-filter is absent;
+     pairing this with a 1px --rule border keeps the edge legible. */
+  .material-chrome {
+    background-color: var(--material-chrome-tint);
+    -webkit-backdrop-filter: blur(var(--material-blur))
+      saturate(var(--material-saturate));
+    backdrop-filter: blur(var(--material-blur))
+      saturate(var(--material-saturate));
+  }
+
+  @supports not (
+    (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+  ) {
+    .material-chrome {
+      background-color: var(--bg);
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .material-chrome {
+      background-color: var(--bg);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+}
+
+/* ============================================================================
+   Accessibility preferences.
+   ============================================================================ */
+
+/* Reduced motion: collapse transitions/animations to imperceptible, and zero
+   the motion tokens JS reads. Tap feedback stays (it is a state change, not a
+   journey). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0.01ms;
+    --duration-base: 0.01ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Higher contrast: strengthen rules and secondary text without changing the
+   palette's meaning. Status still carries an icon + word (design.md §9). */
+@media (prefers-contrast: more) {
+  :root {
+    --rule: color-mix(in srgb, var(--ink) 40%, var(--bg));
+    --ink-2: color-mix(in srgb, var(--ink) 82%, var(--bg));
+  }
+
+  :focus-visible {
+    outline-width: 3px;
+  }
+}
