@@ -16,6 +16,17 @@ The module loader mounts this router under ``/v1``:
   out (the stance ``GET /v1/auth/orcid/start`` takes).  A usable token changes
   nothing: the answer is the same for the owner and a stranger.  Personal
   data makes the response uncacheable (``no-store``), as with the PUT.
+* ``POST /v1/profiles/{did}/verify-email`` (feature 178) -- redeems the token
+  from a verification link and returns ``200`` with ``email_verified: true``.
+  The token is the credential: it reaches the address's owner by email and is
+  bound to this DID and this address, so the route works from a mail client
+  without a signed-in session.  A caller who *does* send a token must be this
+  DID (a ``403`` otherwise, like the PUT); one that is sent and unusable is a
+  ``401``.  A missing, forged, expired or address-changed token is ``400``
+  problem details, and a DID with no readable profile is ``404``.
+* ``PUT /v1/profiles/{did}`` also emails a fresh verification link to the saved
+  address (feature 178); a save with a different address clears an earlier
+  verification.
 
 Authorization for the PUT is the caller's access token, and only the owner may
 write: the token's DID must equal ``{did}``.  Any trust tier may save a
@@ -37,14 +48,22 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.security import Principal, get_current_principal
 
 from .crypto import ProfileDecryptionError
-from .schemas import ProfileIn, ProfileOut, PublicProfileOut
-from .service import ProfileData, erase_profile, save_profile
+from .schemas import EmailVerificationOut, ProfileIn, ProfileOut, PublicProfileOut, VerifyEmailIn
+from .service import (
+    InvalidEmailVerificationToken,
+    ProfileData,
+    ProfileNotFound,
+    erase_profile,
+    mark_email_verified,
+    save_profile,
+    send_verification_email,
+)
 from .views import public_profile
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
@@ -113,14 +132,60 @@ def put_profile(
     response: Response,
     _owner: Principal = Depends(require_owner),
 ) -> ProfileOut:
-    """Encrypt and save the owner's name, affiliation and email."""
+    """Encrypt and save the owner's name, affiliation and email.
+
+    Saving also emails a verification link to the address just stored
+    (feature 178).  The mail is best-effort: the save is already committed, so
+    a transport problem must not turn a successful PUT into a failure.
+    """
     saved = save_profile(
         did,
         ProfileData(name=body.name, affiliation=body.affiliation, email=body.email),
     )
+    send_verification_email(did, saved.email)
     # Personal data: keep it out of shared caches and the browser's history cache.
     response.headers["Cache-Control"] = "no-store"
     return ProfileOut(did=did, name=saved.name, affiliation=saved.affiliation, email=saved.email)
+
+
+@router.post("/{did}/verify-email", response_model=EmailVerificationOut)
+def verify_email(
+    did: str,
+    response: Response,
+    token: Optional[str] = Query(default=None, description="the token from the emailed link"),
+    body: Optional[VerifyEmailIn] = Body(default=None),
+    caller: Optional[Principal] = Depends(optional_principal),
+) -> EmailVerificationOut:
+    """Redeem the emailed verification token and mark the address verified."""
+    if caller is not None and caller.did != did:
+        raise HTTPException(
+            status_code=403,
+            detail="A profile's email can only be verified by its owner.",
+        )
+
+    resolved = token if token is not None else (body.token if body is not None else None)
+    if resolved is None or not resolved.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="A verification token is required.",
+        )
+
+    try:
+        mark_email_verified(did, resolved.strip())
+    except ProfileNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="There is no profile to verify for this DID.",
+        ) from exc
+    except InvalidEmailVerificationToken as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="The email verification link is invalid or has expired.",
+        ) from exc
+
+    # The answer reflects personal state (whether this DID's address was proven).
+    response.headers["Cache-Control"] = "no-store"
+    return EmailVerificationOut(did=did, email_verified=True)
 
 
 @router.delete("/{did}", status_code=202)

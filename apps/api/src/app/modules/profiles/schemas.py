@@ -27,6 +27,16 @@ in :mod:`app.modules.profiles.views`::
 Every personal member is nullable: "nothing to show" is a normal answer for a
 DID that never saved a profile, and it is the *only* answer after erasure.
 ``tier`` and ``reviews`` are never personal data, so they always appear.
+
+``POST /v1/profiles/{did}/verify-email`` (feature 178) takes the token from the
+emailed link either as a query parameter (the link itself) or as a small JSON
+body::
+
+    {"token": "v1.…"}
+
+and answers ``200`` with the state it just set::
+
+    {"did": "did:key:z6Mk...", "email_verified": true}
 """
 
 from __future__ import annotations
@@ -42,10 +52,12 @@ __all__ = [
     "AFFILIATION_MAX",
     "EMAIL_MAX",
     "NAME_MAX",
+    "EmailVerificationOut",
     "ProfileIn",
     "ProfileOut",
     "PublicProfileOut",
     "PublicReviewOut",
+    "VerifyEmailIn",
 ]
 
 NAME_MAX = 200
@@ -92,6 +104,21 @@ class ProfileOut(BaseModel):
     name: str
     affiliation: str
     email: str
+
+
+class VerifyEmailIn(BaseModel):
+    """The token carried by an emailed verification link (JSON-body form)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    token: str = Field(min_length=1)
+
+
+class EmailVerificationOut(BaseModel):
+    """The state ``POST /v1/profiles/{did}/verify-email`` leaves behind."""
+
+    did: str
+    email_verified: bool = True
 
 
 class PublicReviewOut(BaseModel):
