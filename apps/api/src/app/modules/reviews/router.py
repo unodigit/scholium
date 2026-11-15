@@ -4,18 +4,21 @@ The module loader mounts this router under ``/v1``, so this package serves:
 
 * ``POST /v1/papers/{paper_id}/review-invitations`` -- save an invitation to
   the ``review_invitations`` table.
+* ``GET /v1/papers/{paper_id}/coi-check`` -- the conflict-of-interest checks
+  (not an author, no co-authorship in 3 years, different institution) for the
+  calling reviewer; see :mod:`app.modules.reviews.coi`.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Response
 
 from app.errors import ProblemException
 from app.security import Principal, get_current_principal, Tier
 
-from . import service
+from . import coi, service
 from .models import ensure_table, ensure_tables
 
 __all__ = ["router"]
@@ -92,3 +95,23 @@ def create_review_invitation(
         "status": invitation.status,
         "paper": getattr(paper, "short_id", None),
     }
+
+
+@router.get("/papers/{paper_id}/coi-check")
+def get_coi_check(
+    paper_id: str,
+    response: Response,
+    principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    """Return the three conflict-of-interest checks for the calling reviewer.
+
+    Any signed-in caller may ask: the answer is about the caller and the
+    paper, and it names no one else.  The checks are advisory -- they never
+    refuse the request, a conflict shows up as ``"passed": false``.
+    """
+    paper = service.resolve_paper(paper_id)
+    if paper is None:
+        raise _not_found(paper_id)
+    # The answer depends on who asks and on the profiles as they stand now.
+    response.headers["Cache-Control"] = "private, no-store"
+    return coi.check_conflicts(paper, principal.did).as_dict()
