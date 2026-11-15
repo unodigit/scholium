@@ -133,3 +133,106 @@ describe("SubmitWizard — Files to Details and back", () => {
     expect(steps()[0].getAttribute("aria-current")).toBe("step");
   });
 });
+
+const ME = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+const ADA = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+
+const railSteps = (): HTMLElement[] =>
+  within(screen.getByRole("navigation", { name: "Submission progress" })).getAllByRole("listitem");
+
+/** Drive the wizard to step 2 with one finished PDF. */
+async function openDetails(props: Partial<React.ComponentProps<typeof SubmitWizard>> = {}): Promise<void> {
+  const { deps, uploads, hashes } = fakeManagerDeps();
+  render(<SubmitWizard signedIn managerDeps={deps} {...props} />);
+  fireEvent.change(screen.getByLabelText("Choose paper files"), {
+    target: { files: [new File(["x"], "paper.pdf", { type: "application/pdf" })] },
+  });
+  await act(async () => {
+    uploads[0].callbacks.onSuccess({ cid: CID, url: null });
+    hashes[0].resolve(CID);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Continue to Details" }));
+}
+
+function fillDetails(): void {
+  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Sparse Probing of Reward Models" } });
+  fireEvent.change(screen.getByLabelText("Abstract"), { target: { value: "We study whether sparse probes work." } });
+  fireEvent.click(screen.getByRole("button", { name: /^cs\.AI/ }));
+}
+
+describe("SubmitWizard — Details to Authors and back", () => {
+  it("opens step 3 after Details, with the rail on Authors and the submitter first", async () => {
+    await openDetails({ submitterDid: ME });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+
+    expect(screen.getByRole("heading", { level: 2, name: "Authors" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "Details" })).toBeNull();
+    expect(railSteps().map((step) => step.getAttribute("data-state"))).toEqual([
+      "done",
+      "done",
+      "current",
+      "ahead",
+      "ahead",
+    ]);
+    expect(railSteps()[2].getAttribute("aria-current")).toBe("step");
+    const byline = screen.getByRole("list", { name: "Authors, in byline order" });
+    expect(within(byline).getByText("You")).toBeTruthy();
+    expect(within(byline).getByText(/DID · did:key:z6MkhaXg/)).toBeTruthy();
+  });
+
+  it("keeps the details and the author list when stepping back and forward", async () => {
+    await openDetails({ submitterDid: ME });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+
+    fireEvent.change(screen.getByLabelText("DID, ORCID iD or email"), { target: { value: ADA } });
+    fireEvent.change(screen.getByLabelText("Name (optional)"), { target: { value: "Ada Lovelace" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add co-author" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "CRediT roles for Ada Lovelace" })).getByRole("button", {
+        name: /^Software/,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to Details" }));
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Sparse Probing of Reward Models");
+    expect(railSteps()[1].getAttribute("aria-current")).toBe("step");
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+    const byline = screen.getByRole("list", { name: "Authors, in byline order" });
+    expect(within(byline).getByText("Ada Lovelace")).toBeTruthy();
+    expect(
+      within(screen.getByRole("group", { name: "CRediT roles for Ada Lovelace" }))
+        .getByRole("button", { name: /^Software/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("is still on Files, intact, after going back all the way", async () => {
+    await openDetails({ submitterDid: ME });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to Details" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to Files" }));
+    expect(screen.getByText("paper.pdf", { selector: ".sw-file__name" })).toBeTruthy();
+  });
+
+  it("says the submitter has no DID yet when none is known", async () => {
+    await openDetails({ submitterDid: null });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+    expect(screen.getByText("No DID yet")).toBeTruthy();
+  });
+
+  it("passes an ORCID/email lookup through to the step", async () => {
+    const resolveAuthor = vi.fn(async () => ({ did: ADA, name: "Ada Lovelace" }));
+    await openDetails({ submitterDid: ME, resolveAuthor });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+    fireEvent.change(screen.getByLabelText("DID, ORCID iD or email"), { target: { value: "ada@example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add co-author" }));
+    expect(resolveAuthor).toHaveBeenCalledWith({ kind: "email", value: "ada@example.org" });
+    expect(await screen.findByText("Matched to an account")).toBeTruthy();
+  });
+});

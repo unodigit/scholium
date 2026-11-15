@@ -14,6 +14,9 @@ export const metadata: Metadata = {
  * Step 1 (Files) takes the PDF and/or LaTeX source plus optional code and
  * data, uploads each resumably and fingerprints it on the author's device.
  * Step 2 (Details) takes the title, abstract, categories and licence.
+ * Step 3 (Authors) takes co-authors by DID, ORCID iD or email with their CRediT
+ * roles and byline order, and shows a consent tracker (Waiting, Signed or
+ * Declined).
  */
 export default function SubmitPage() {
   return <SubmitWizard />;

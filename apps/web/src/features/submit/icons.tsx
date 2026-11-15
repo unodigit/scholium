@@ -6,6 +6,7 @@
 
 import type { ReactElement } from "react";
 
+import type { ConsentStatus } from "./consents";
 import type { EntryStatus } from "./upload-manager";
 
 function Svg({ children }: { children: ReactElement | ReactElement[] }): ReactElement {
@@ -121,4 +122,69 @@ export function StatusIcon({ status }: { status: EntryStatus }): ReactElement {
         </Svg>
       );
   }
+}
+
+/** Waiting for a co-author: a clock face, like a queued file. */
+export function ClockIcon(): ReactElement {
+  return (
+    <Svg>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 4.8V8l2.2 1.4" />
+    </Svg>
+  );
+}
+
+export function CrossIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </Svg>
+  );
+}
+
+/** One silhouette per consent status, so the chip reads without colour. */
+export function ConsentIcon({ status }: { status: ConsentStatus }): ReactElement {
+  switch (status) {
+    case "signed":
+      return <CheckIcon />;
+    case "declined":
+      return <CrossIcon />;
+    case "waiting":
+    default:
+      return <ClockIcon />;
+  }
+}
+
+export function ArrowUpIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M8 13V3.5M4.5 7L8 3.5 11.5 7" />
+    </Svg>
+  );
+}
+
+export function ArrowDownIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M8 3v9.5M4.5 9L8 12.5 11.5 9" />
+    </Svg>
+  );
+}
+
+export function PlusIcon(): ReactElement {
+  return (
+    <Svg>
+      <path d="M8 3.5v9M3.5 8h9" />
+    </Svg>
+  );
+}
+
+/** A head and shoulders, for an avatar with no letters to show. */
+export function PersonIcon(): ReactElement {
+  return (
+    <Svg>
+      <circle cx="8" cy="5.5" r="2.5" />
+      <path d="M3 13.5c.5-2.4 2.4-3.8 5-3.8s4.5 1.4 5 3.8" />
+    </Svg>
+  );
 }

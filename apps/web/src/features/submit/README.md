@@ -4,9 +4,10 @@
 3 Authors · 4 Checks · 5 Sign**. This feature owns it; the route is
 `apps/web/src/app/(submit)/submit/page.tsx`, the shell is `SubmitWizard`.
 
-**Steps 1, Files and 2, Details** are built so far. `SubmitWizard` keeps the
-Files step mounted while Details is open, so going back finds the same uploads,
-and it owns the Details draft so stepping back and forward keeps what was typed.
+**Steps 1, Files, 2, Details and 3, Authors** are built so far. `SubmitWizard`
+keeps the Files step mounted while later steps are open, so going back finds the
+same uploads, and it owns the Details draft and the author roster so stepping
+back and forward keeps what was typed.
 
 ## Step 1 — Files
 
@@ -70,6 +71,48 @@ page and travel inside the signed record.
 - **Continue** names the first thing missing; with no step 3 to go to it stays
   closed and says so. **Back to Files** returns to the same file list.
 
+## Step 3 — Authors
+
+Co-authors by DID, ORCID iD or email, their CRediT roles, the byline order, and
+a tracker of who has agreed to be listed.
+
+- **One box to add.** The identifier box takes a DID (`did:key:…`), an ORCID iD
+  (`0000-0002-1825-0097`, also pasted as `orcid.org/…` or with the `ORCID:`
+  label) or an email, tells them apart by shape and says which it saw while
+  typing. An ORCID iD is checked against its ISO 7064 check digit, so a mistyped
+  number is refused with that reason. An optional name sets how the author reads
+  in the byline. The same person cannot be added twice.
+- **The submitter is author 1.** Their DID comes from this device's key
+  (`use-submitter-did.ts`); they cannot be removed. If a co-author was added by
+  that DID first, the two rows are folded together.
+- **Who can be listed.** A signed `paper.version` lists authors by DID, so an
+  author added by ORCID iD or email is only a candidate until something matches
+  them to an account. The API has no such lookup in this release; they show as
+  **Not matched** and block Continue until removed (or re-added by DID).
+  `SubmitWizard` and `AuthorsStep` take a `resolveAuthor` prop, the one place a
+  lookup plugs in; it also drives the "Looking for an account…" state and a
+  **Check again** button.
+- **CRediT roles.** All fourteen roles of the taxonomy as toggle chips
+  (`aria-pressed` plus a check icon, so a choice is never colour alone), each
+  with its one-line meaning read out to a screen reader. At least one role per
+  author is required, because a co-author accepts a named role when they
+  consent. Roles are stored in the taxonomy's own order.
+- **Order.** The list is the byline. Move up and Move down are buttons, so
+  reordering never depends on dragging; focus stays on the button that was
+  pressed and the new position is announced.
+- **Consent tracker.** An avatar, a name and a chip reading **Waiting**,
+  **Signed** or **Declined** for each author — an icon and a word, never colour
+  alone — under a polite "2 of 3 signed" summary. With no version yet nothing has
+  been sent, so everyone is shown as waiting. Pass `consentsFor={{ paper,
+  version }}` and the tracker shows the node's real status from
+  `GET /v1/papers/{id}/v/{n}/consents`, polling every 15 s while anyone is
+  waiting and stopping when everyone has signed or someone declines (which sends
+  the version back to draft, in a notice that says so). A failed poll keeps the
+  last good report on screen and says it will try again.
+- **Continue** names the first thing missing (the submitter's DID, a co-author
+  with no DID, an author with no role); with no step 4 to go to it stays closed
+  and says so. **Back to Details** keeps everything.
+
 ## For the next steps
 
 `FilesStep` reports the finished files as `SubmitFile[]` — `{ id, path, size,
@@ -78,9 +121,15 @@ mediaType, role, cid }`, the shape a manifest is built from — through
 
 `DetailsStep` reports `DetailsValues` — `{ title, abstract, categories,
 licence }` — through `onChange` for the wizard's draft and `onContinue` for step
-3. Step 3 (Authors) plugs into `SubmitWizard` beside the current two: pass an
-`onContinue` to `DetailsStep` and render the new step when `step` becomes
-`"authors"`.
+3.
+
+`AuthorsStep` reports the roster as `DraftAuthor[]` through `onChange`, and
+through `onContinue`. `recordAuthors(authors)` turns it into the byline the
+signed `paper.version` lists — `{ did, name?, orcid?, creditRoles, position }`
+per author, in order. Steps 4 (Checks) and 5 (Sign) plug into `SubmitWizard`
+beside the current three: pass an `onContinue` to `AuthorsStep` and render the
+new step when `step` becomes `"checks"`. `ConsentTracker` is exported on its own
+for step 5 and the post-submit status page.
 
 ## Layout
 
@@ -94,6 +143,11 @@ licence }` — through `onChange` for the wizard's draft and `onContinue` for st
 | `files-step.tsx`, `drop-zone.tsx`, `file-row.tsx`, `file-view.ts` | the Files step's UI and its wording |
 | `details.ts` | licence options and ids, category groups, the step's rules |
 | `details-step.tsx` | the Details form: title, abstract, categories, licence |
+| `authors.ts` | CRediT roles, identifier parsing (DID / ORCID / email), the roster's rules, `recordAuthors` |
+| `authors-step.tsx` | the Authors form: add, roles, order, lookup state, Continue |
+| `consents.ts`, `use-consents.ts` | consent report types and fetch, tracker rows and wording; polling hook |
+| `consent-tracker.tsx`, `icons.tsx` | the Waiting / Signed / Declined tracker and its icons |
+| `use-submitter-did.ts` | the submitter's DID, from this device's key |
 | `wizard-rail.tsx`, `wizard-steps.ts`, `submit-wizard.tsx` | the shell, progress rail and step switching |
 | `submit.css` | styles; global design tokens only |
 
