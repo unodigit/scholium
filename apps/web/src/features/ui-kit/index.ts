@@ -7,11 +7,12 @@
  * `apps/web/src/app/(ui-kit)/`.
  *
  * ```tsx
- * import { DecisionBanner, EmptyState, RecordLink, StatusChip, UnderReviewChip } from "@/features/ui-kit";
+ * import { DecisionBanner, EmptyState, IdPill, RecordLink, StatusChip, UnderReviewChip } from "@/features/ui-kit";
  *
  * <StatusChip status={paper.status} count={paper.reviewers} />
  * <UnderReviewChip count={3} />
  * <RecordLink cid={paper.recordCid} />
+ * <IdPill schId="sch:k3f9-q2xz-7mwd/v3" />   // click copies; toast says "Copied"
  * <DecisionBanner kind="retracted" recordCid={notice.id} clause="MOD-03" reason={notice.body.reason} />
  * <EmptyState sentence="No reviews yet." action={{ label: "Write a review", href: "/papers/123/review" }} />
  * ```
@@ -65,6 +66,25 @@ export {
   type RecordLinkProps,
   type RecordLoader,
 } from "./record-link";
+
+export {
+  COPIED_MESSAGE,
+  COPIED_RESET_MS,
+  COPY_FAILED_MESSAGE,
+  IdPill,
+  type IdPillProps,
+} from "./id-pill";
+
+export {
+  TOAST_DURATION_MS,
+  TOAST_REGION_ID,
+  dismissToast,
+  ensureToastRegion,
+  showToast,
+  type ShowToastOptions,
+} from "./toast";
+
+export { copyText } from "./clipboard";
 
 export {
   DecisionBanner,

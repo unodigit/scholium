@@ -19,6 +19,7 @@ export default function UiKitLayout({
         <a href="/ui-kit/record-link">Record link</a>
         <a href="/ui-kit/empty-state">Empty state</a>
         <a href="/ui-kit/decision-banner">Decision banner</a>
+        <a href="/ui-kit/id-pill">ID pill</a>
       </nav>
       {children}
     </main>

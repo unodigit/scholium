@@ -67,6 +67,21 @@ export const ICON_SHAPES = {
     { tag: "path", attrs: { d: "M4.5 13.25v-5a3.5 3.5 0 0 1 7 0v5z" } },
     { tag: "path", attrs: { d: "M6.5 9.75h3" } },
   ],
+  // An action icon rather than a status one: two sheets, the front one whole.
+  copy: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M6.75 5.25h5a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-5a1.5 1.5 0 0 1-1.5-1.5v-5a1.5 1.5 0 0 1 1.5-1.5Z",
+      },
+    },
+    {
+      tag: "path",
+      attrs: {
+        d: "M5.25 10.25h-2.5a1.5 1.5 0 0 1-1.5-1.5v-5a1.5 1.5 0 0 1 1.5-1.5h5a1.5 1.5 0 0 1 1.5 1.5v1.5",
+      },
+    },
+  ],
 } as const satisfies Record<string, readonly IconShape[]>;
 
 export type IconName = keyof typeof ICON_SHAPES;

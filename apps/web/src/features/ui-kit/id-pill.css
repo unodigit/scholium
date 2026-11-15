@@ -1,0 +1,103 @@
+/* ============================================================================
+   IdPill — docs/design.md §2 (ID style), §3 (Type), §7 (ID pill), §9
+   (Accessibility), §10 (Responsive behaviour).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work.
+
+   A quiet pill: the id in monospace, a hairline border, a faint ink tint, and
+   a copy glyph at the inline end. It is neutral on purpose. The id is
+   reference text, not a status, so it takes no status colour; after a copy
+   the glyph changes shape (copy → tick) and darkens, and the toast carries
+   the word.
+
+   Focus uses the global 2 px `--focus-ring` (base.css); nothing here resets
+   `outline`.
+
+   Unlayered on purpose: a stylesheet imported from a component must not
+   re-declare Tailwind's cascade layers, and unlayered rules outrank them.
+   ============================================================================ */
+
+.sch-id-pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 1.5);
+
+  max-inline-size: 100%;
+  min-block-size: calc(var(--space-unit) * 6);
+  padding-block: 0;
+  padding-inline: calc(var(--space-unit) * 2.5);
+
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background-color: color-mix(in srgb, var(--ink) 4%, transparent);
+  appearance: none;
+
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
+  text-align: start;
+  cursor: pointer;
+  /* The browser's default tap flash is a square that ignores the pill's
+     radius; :active below and the tick after a copy are the feedback. */
+  -webkit-tap-highlight-color: transparent;
+
+  transition:
+    border-color var(--duration-fast) var(--ease-decel),
+    background-color var(--duration-fast) var(--ease-decel);
+}
+
+/* Hover only where there is a hover: on touch it would stay lit after a tap. */
+@media (hover: hover) {
+  .sch-id-pill:hover {
+    border-color: var(--ink-2);
+    background-color: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+}
+
+.sch-id-pill:active {
+  background-color: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+/* The id wraps rather than outgrowing a narrow column or a phone screen. */
+.sch-id-pill__id {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.sch-id-pill__icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 3.5);
+  block-size: calc(var(--space-unit) * 3.5);
+  color: var(--ink-2);
+}
+
+.sch-id-pill[data-copied="true"] .sch-id-pill__icon {
+  color: var(--ink);
+}
+
+/* Touch targets are at least 44 px (design.md §9). */
+@media (pointer: coarse) {
+  .sch-id-pill {
+    min-block-size: calc(var(--space-unit) * 11);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sch-id-pill {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .sch-id-pill {
+    border-color: ButtonText;
+  }
+
+  .sch-id-pill__icon {
+    color: ButtonText;
+  }
+}
