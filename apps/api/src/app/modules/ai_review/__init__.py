@@ -120,6 +120,7 @@ from .providers import (
     get_provider,
 )
 from .reproducibility import run_reproducibility_agent
+from .router import ADVISORY_LABEL, router
 from .models import AIReview, ensure_ai_reviews_table
 from .background import (
     JOB_KIND,
@@ -143,6 +144,7 @@ from .verification import (
 )
 
 __all__ = [
+    "ADVISORY_LABEL",
     "AGENT_NAMES",
     "AgentOutputError",
     "AgentReport",
@@ -201,5 +203,6 @@ __all__ = [
     "run_pipeline",
     "run_review",
     "review_version",
+    "router",
     "verify_findings",
 ]
