@@ -33,6 +33,14 @@ creation specs (https://tus.io/protocols/resumable-upload.html):
 * a ``PATCH`` that would take the upload past its length is a ``413``
   and changes nothing.
 
+The ``PATCH`` that delivers the last byte also moves the upload into the content
+store (see :mod:`.finalize`) and answers ``204`` with ``Upload-Cid``: the raw-codec
+CIDv1 of the whole file, under which it is now stored and recorded in ``blobs``.
+Earlier ``PATCH`` responses carry no ``Upload-Cid``. If that response is lost, or
+the move fails (``503``), the client repeats the ``PATCH`` with the same
+``Upload-Offset`` and an empty body: a stored upload answers ``204`` with the same
+``Upload-Cid`` and still refuses any bytes (``413``).
+
 Beyond the protocol: bytes that arrive before a connection drops are kept
 and counted, so the client resumes from where the server really is; two
 requests appending to one upload at once cannot both write (the second is
@@ -58,7 +66,7 @@ from starlette.requests import ClientDisconnect
 from app.db import SessionLocal
 from app.security import InvalidAccessToken, decode_access_token
 
-from . import limits, store
+from . import finalize, limits, store
 
 router = APIRouter(tags=["uploads"])
 
@@ -257,6 +265,39 @@ def _commit_append(
     return advanced
 
 
+async def _move_into_content_store(upload_id: str, upload: store.Upload, staged: Any) -> str:
+    """Move the completed upload's staged bytes into the content store; return the raw CID.
+
+    Once started it runs to the end even if the request is cancelled, so the CID
+    is never left unrecorded with the staged file already deleted.
+    """
+    try:
+        with anyio.CancelScope(shield=True):
+            return await run_in_threadpool(
+                finalize.move_into_content_store, upload_id, upload.upload_metadata, staged
+            )
+    except OSError as exc:
+        # The upload is complete and its staged bytes are untouched: repeating
+        # the final PATCH redoes the move.
+        raise _reject(
+            503,
+            "The upload is complete but could not be moved into the content store; "
+            "repeat the PATCH with the same Upload-Offset and an empty body.",
+            headers=_tus_headers({"Retry-After": "1"}),
+        ) from exc
+
+
+async def _answer_stored_upload(request: Request, upload: store.Upload, too_large: HTTPException) -> Response:
+    """Answer a ``PATCH`` to an upload already in the content store: its CID, and no bytes accepted."""
+    async for chunk in request.stream():
+        if chunk:
+            raise too_large
+    return Response(
+        status_code=204,
+        headers=_tus_headers({"Upload-Offset": str(upload.upload_offset), "Upload-Cid": str(upload.cid)}),
+    )
+
+
 @router.options("/uploads")
 def upload_options() -> Response:
     """tus server discovery: which version and extensions we speak."""
@@ -387,6 +428,11 @@ async def _append_body(
     upload = await run_in_threadpool(_load_upload, upload_id)
     if upload is None:
         raise _not_found()
+    if upload.cid is not None:
+        # Its bytes are in the content store and nothing is staged. Taking the
+        # lock just created an empty staging file, which must not outlive this
+        # request whatever the answer to it turns out to be.
+        await run_in_threadpool(store.discard_staged, upload_id)
     current = upload.upload_offset
     if offset != current:
         raise _problem(
@@ -432,6 +478,11 @@ async def _append_body(
     )
     if body_length is not None and body_length > room:
         raise too_large
+
+    # Its bytes already moved into the content store, so there is no staged file
+    # to append to (or to find missing): all that is left is to say where they are.
+    if upload.cid is not None:
+        return await _answer_stored_upload(request, upload, too_large)
 
     # The file may hold bytes past the offset the database recorded: an
     # earlier request wrote them and then died before recording them. They
@@ -482,10 +533,21 @@ async def _append_body(
             "The upload changed while this request was being applied; ask for its Upload-Offset and retry.",
             type=UPLOAD_OFFSET_MISMATCH_TYPE,
         )
+
+    # The last byte is in: the upload is finished, so file it under its CID. This
+    # also runs when the connection dropped right after the final byte, so a
+    # client that never retries still leaves a stored upload, not a stranded one.
+    cid: Optional[str] = None
+    if length is not None and current + written == length:
+        cid = await _move_into_content_store(upload_id, upload, staged)
+
     if interrupted:
         raise _reject(
             400,
             f"The request body ended early; {written} bytes were kept. Ask for the Upload-Offset and continue.",
             headers=_tus_headers({"Upload-Offset": str(current + written)}),
         )
-    return Response(status_code=204, headers=_tus_headers({"Upload-Offset": str(current + written)}))
+    headers = {"Upload-Offset": str(current + written)}
+    if cid is not None:
+        headers["Upload-Cid"] = cid
+    return Response(status_code=204, headers=_tus_headers(headers))

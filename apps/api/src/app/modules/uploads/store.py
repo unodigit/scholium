@@ -8,7 +8,9 @@ upload up again after the creation response is gone.
 The model is declared at import time: the module loader imports every
 package under ``app.modules`` before ``db.Base.metadata.create_all``
 runs, so the ``uploads`` table is created with the rest of the schema
-without touching any shared file.
+without touching any shared file. ``create_all`` never alters a table that
+already exists, so columns added after the table first shipped are added by
+:func:`ensure_columns`, which the module's ``on_startup`` hook runs.
 """
 
 from __future__ import annotations
@@ -20,7 +22,8 @@ import secrets
 from pathlib import Path
 from typing import BinaryIO, Optional
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text, func, update
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text, func, inspect, text, update
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.db import Base
@@ -70,6 +73,37 @@ class Upload(Base):
     #: The DID of the caller, when the creation request was authenticated.
     owner_did = Column(String(256), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    #: The raw-codec CID of the bytes once the completed upload has been moved
+    #: into the content store; NULL until then. Its presence is what says the
+    #: staged file is gone and the upload can only be answered, not appended to.
+    cid = Column(String(128), nullable=True)
+
+
+#: Columns added to ``uploads`` after it first shipped: ``name -> DDL type``.
+#: Every one must be nullable, since existing rows get NULL.
+_ADDED_COLUMNS = {"cid": "VARCHAR(128)"}
+
+
+def ensure_columns(bind: Engine) -> list[str]:
+    """Add any :data:`_ADDED_COLUMNS` a pre-existing ``uploads`` table lacks.
+
+    ``create_all`` skips a table that exists, so a database created before a
+    column was added would otherwise fail every upload query with "no such
+    column". A missing table is left alone (``create_all`` is about to build it
+    whole). Returns the names of the columns it added; safe to call repeatedly.
+    """
+    inspector = inspect(bind)
+    if not inspector.has_table(Upload.__tablename__):
+        return []
+    present = {column["name"] for column in inspector.get_columns(Upload.__tablename__)}
+    added = []
+    for name, ddl_type in _ADDED_COLUMNS.items():
+        if name in present:
+            continue
+        with bind.begin() as connection:
+            connection.execute(text(f"ALTER TABLE {Upload.__tablename__} ADD COLUMN {name} {ddl_type}"))
+        added.append(name)
+    return added
 
 
 def create_upload(
@@ -137,6 +171,24 @@ def advance_offset(
     return result.rowcount == 1
 
 
+def record_cid(session: Session, upload_id: str, cid: str) -> bool:
+    """Record that ``upload_id``'s bytes now live in the content store as ``cid``.
+
+    Also marks the upload ``completed``: having its bytes stored is the end of
+    an upload, including a zero-length one that never advanced its offset.
+    Recording is idempotent for the same ``cid``; an upload already stored
+    under a different one is left alone. Returns whether the upload now has
+    exactly this ``cid``.
+    """
+    result = session.execute(
+        update(Upload)
+        .where(Upload.id == upload_id, (Upload.cid.is_(None)) | (Upload.cid == cid))
+        .values(cid=cid, state=STATE_COMPLETED)
+    )
+    session.commit()
+    return result.rowcount == 1
+
+
 def staging_dir() -> Path:
     """Where in-flight upload bytes live, from ``settings.CONTENT_DIR`` (read on every call)."""
     configured = settings.CONTENT_DIR
@@ -182,3 +234,15 @@ def open_staged(upload_id: str) -> BinaryIO:
     except BaseException:
         os.close(fd)
         raise
+
+
+def discard_staged(upload_id: str) -> None:
+    """Delete the staged bytes of ``upload_id``; a no-op when there are none.
+
+    Best effort: the bytes are either already safe in the content store or not
+    wanted, so failing to free the space must not fail the request.
+    """
+    try:
+        staged_path(upload_id).unlink()
+    except OSError:
+        pass

@@ -14,6 +14,7 @@ import hashlib
 
 import pytest
 
+from app.modules import content
 from app.modules.uploads import limits, store
 
 TUS_HEADERS = {"Tus-Resumable": "1.0.0"}
@@ -54,6 +55,12 @@ def staged_bytes(upload_id) -> bytes:
     return store.staged_path(upload_id).read_bytes()
 
 
+def stored_bytes(response) -> bytes:
+    """The bytes the content store holds under the ``Upload-Cid`` of a final PATCH response."""
+    with content.open_blob(response.headers["upload-cid"]) as blob:
+        return blob.read()
+
+
 def stored_upload(upload_id):
     from app.db import SessionLocal
 
@@ -91,7 +98,7 @@ def test_a_large_body_is_written_whole(client):
     response = patch(client, upload_id, 0, data)
     assert response.status_code == 204
     assert offset_of(response) == len(data)
-    assert hashlib.sha256(staged_bytes(upload_id)).digest() == hashlib.sha256(data).digest()
+    assert hashlib.sha256(stored_bytes(response)).digest() == hashlib.sha256(data).digest()
 
 
 def test_an_empty_patch_at_the_current_offset_is_a_no_op(client):
@@ -199,8 +206,9 @@ def test_a_resumed_upload_continues_from_the_reported_offset(client):
     patch(client, upload_id, 0, b"01234")
     # The client lost the response; it asks, then continues where the server is.
     resume_at = offset_of(head(client, upload_id))
-    assert patch(client, upload_id, resume_at, b"56789").status_code == 204
-    assert staged_bytes(upload_id) == b"0123456789"
+    final = patch(client, upload_id, resume_at, b"56789")
+    assert final.status_code == 204
+    assert stored_bytes(final) == b"0123456789"
 
 
 # --- header validation --------------------------------------------------------
@@ -258,9 +266,9 @@ def test_the_upload_completes_when_the_last_byte_arrives(client):
     upload_id = create(client, length=6)
     patch(client, upload_id, 0, b"abc")
     assert stored_upload(upload_id).state == "pending"
-    patch(client, upload_id, 3, b"def")
+    final = patch(client, upload_id, 3, b"def")
     assert stored_upload(upload_id).state == "completed"
-    assert staged_bytes(upload_id) == b"abcdef"
+    assert stored_bytes(final) == b"abcdef"
 
 
 def test_a_body_past_the_declared_length_is_413_and_changes_nothing(client):
@@ -295,9 +303,9 @@ def test_an_overflowing_body_without_a_content_length_is_413_and_rolls_back(clie
 
 def test_patching_a_completed_upload_is_413(client):
     upload_id = create(client, length=3)
-    patch(client, upload_id, 0, b"abc")
+    final = patch(client, upload_id, 0, b"abc")
     assert patch(client, upload_id, 3, b"d").status_code == 413
-    assert staged_bytes(upload_id) == b"abc"
+    assert stored_bytes(final) == b"abc"
 
 
 def test_a_deferred_length_is_learned_from_a_patch(client):
@@ -309,9 +317,9 @@ def test_a_deferred_length_is_learned_from_a_patch(client):
     assert after_first.headers["upload-length"] == "6"
     assert "upload-defer-length" not in after_first.headers
 
-    patch(client, upload_id, 3, b"def")
+    final = patch(client, upload_id, 3, b"def")
     assert stored_upload(upload_id).state == "completed"
-    assert staged_bytes(upload_id) == b"abcdef"
+    assert stored_bytes(final) == b"abcdef"
 
 
 def test_a_deferred_upload_without_a_length_accepts_bytes_and_stays_pending(client):
