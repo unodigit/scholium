@@ -15,8 +15,9 @@ Table shape (``app_spec.xml``, ``database_schema/event_log``)::
 
 ``raw`` holds the canonical DAG-CBOR bytes of the record (the bytes the
 record id is computed over); ``prev_hash`` and ``entry_hash`` are 32-byte
-SHA-256 digests.  Rows are never updated or deleted -- a later feature adds
-database triggers that enforce that.
+SHA-256 digests.  Rows are never updated or deleted: database triggers
+(:mod:`app.modules.ledger.triggers`) reject every UPDATE and DELETE with an
+integrity error, and :func:`ensure_table` / ``create_all`` install them.
 
 The model is declared on the application's shared declarative base so that
 ``main.create_app`` -- which creates tables after the module loader has
@@ -36,6 +37,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app import db
+
+from .triggers import install_append_only_triggers, install_on_create_all
 
 __all__ = ["EventLog", "LedgerEntry", "ensure_table"]
 
@@ -127,6 +130,11 @@ class EventLog(db.Base):
 #: Alias: a persisted log entry.
 LedgerEntry = EventLog
 
+# Every ``create_all`` on the shared metadata (``main.create_app`` runs one at
+# startup) also installs the append-only triggers, including on a database
+# whose ``event_log`` table predates them.
+install_on_create_all(db.Base.metadata)
+
 
 # ``main.create_app`` calls ``db.Base.metadata.create_all`` after loading the
 # modules, which covers the normal path.  ``append`` may also be called from
@@ -138,7 +146,7 @@ _table_engine: Optional[Engine] = None
 
 
 def ensure_table() -> None:
-    """Create the ``event_log`` table if it does not exist yet."""
+    """Create the ``event_log`` table, and its append-only triggers, if missing."""
     global _table_engine
     if _table_engine is db.engine:
         return
@@ -152,4 +160,7 @@ def ensure_table() -> None:
                 # existence check and the DDL.  That is success, not failure.
                 if not inspect(db.engine).has_table(EventLog.__tablename__):
                     raise
+            # Idempotent, and needed even when the table already existed: a
+            # database created before the triggers shipped has none.
+            install_append_only_triggers(db.engine)
             _table_engine = db.engine

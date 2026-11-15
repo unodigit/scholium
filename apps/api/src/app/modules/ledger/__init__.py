@@ -28,6 +28,12 @@ of entries and returns the first broken ``seq`` when any entry was
 rewritten, reordered or removed::
 
     broken = ledger.verify_log(ledger.entries())
+
+The log is also append-only at the database level (feature 13): triggers on
+``event_log`` reject every UPDATE and DELETE (and an INSERT that would replace
+a row) with an ``sqlalchemy.exc.IntegrityError`` whose message is
+:data:`UPDATE_REJECTED`, :data:`DELETE_REJECTED` or :data:`REPLACE_REJECTED`.
+See :mod:`app.modules.ledger.triggers`.
 """
 
 from __future__ import annotations
@@ -81,6 +87,14 @@ from .sync_head import (
 from .sync_head import router as _sync_head_router
 from .sync_range import MAX_PAGE, REVERSED_RANGE_TYPE, SyncEntry
 from .sync_range import router as _sync_router
+from .triggers import (
+    APPEND_ONLY_TRIGGERS,
+    DELETE_REJECTED,
+    REPLACE_REJECTED,
+    UPDATE_REJECTED,
+    append_only_triggers_installed,
+    install_append_only_triggers,
+)
 from .verify import verify_log
 
 #: Router the module loader mounts under ``/v1``: every endpoint the ledger
@@ -94,7 +108,9 @@ router.include_router(_proof_router)
 
 __all__ = [
     "ANCHOR_PENDING",
+    "APPEND_ONLY_TRIGGERS",
     "DEFAULT_ORIGIN_NODE",
+    "DELETE_REJECTED",
     "ED25519_MULTICODEC_PREFIX",
     "EventLog",
     "GENESIS_HEAD",
@@ -104,15 +120,18 @@ __all__ = [
     "LedgerEntry",
     "MAX_PAGE",
     "RECORD_NOT_FOUND_TYPE",
+    "REPLACE_REJECTED",
     "REVERSED_RANGE_TYPE",
     "RecordEnvelope",
     "RecordProof",
     "RecordSubscriber",
     "SyncEntry",
     "SyncHead",
+    "UPDATE_REJECTED",
     "WILDCARD",
     "append",
     "append_entry",
+    "append_only_triggers_installed",
     "append_record",
     "clear_subscribers",
     "compute_entry_hash",
@@ -121,6 +140,7 @@ __all__ = [
     "entries",
     "entry_by_cid",
     "head_message",
+    "install_append_only_triggers",
     "latest",
     "node_did",
     "node_signing_key",
