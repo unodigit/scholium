@@ -18,10 +18,12 @@ The module loader mounts this router under ``/v1``, so this package serves:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Response
 
+from app import db
 from app.errors import ProblemException
 from app.modules.ingest.service import ingest
 from app.security import Principal, get_current_principal, require_tier, Tier
@@ -265,4 +267,116 @@ def reveal_review(
         "review": review.review_cid,
         "state": result.state,
         "anchor": result.anchor,
+    }
+
+
+@router.get("/papers/{paper_id}/reviews")
+def get_paper_reviews(paper_id: str) -> dict[str, Any]:
+    """Return the formal reviews of a listed paper's resolved version.
+
+    Report bodies stay hidden until two reviews are committed on the version or
+    21 days have passed since the first commit; anonymous reviewers are labelled
+    ``Reviewer A``, ``Reviewer B`` per paper.
+    """
+    from app.modules import ledger
+    from app.modules.catalog.service import resolve as resolve_listed
+    from .models import Review, ensure_tables
+
+    ensure_tables()
+    view = resolve_listed(paper_id)
+    if view is None:
+        raise _not_found(paper_id)
+
+    version = view.version
+    version_cid = version.version_cid
+
+    # Committed review rows for this version, in commit order.
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Review)
+            .filter(Review.version_cid == version_cid)
+            .order_by(Review.committed_at, Review.review_cid)
+            .all()
+        )
+        for row in rows:
+            session.expunge(row)
+
+    # Map each review key to its revealed review.formal record (latest wins).
+    formal_by_key: dict[str, Any] = {}
+    for entry in ledger.entries():
+        if getattr(entry, "record_type", None) != "review.formal":
+            continue
+        body = getattr(entry, "body", None)
+        if not isinstance(body, dict):
+            continue
+        if body.get("target") != version_cid:
+            continue
+        author = getattr(entry, "author_did", None)
+        if isinstance(author, str) and author:
+            formal_by_key[author] = entry
+
+    # Gate: open once two reviews are committed, or 21 days after the first.
+    committed_times = [r.committed_at for r in rows if r.committed_at is not None]
+    first_commit = min(committed_times) if committed_times else None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    gate_open = len(rows) >= 2 or (
+        first_commit is not None
+        and now >= first_commit + timedelta(days=21)
+    )
+
+    reviews_out: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        letter = chr(ord("A") + index) if index < 26 else str(index + 1)
+        label = f"Reviewer {letter}"
+        formal = formal_by_key.get(row.review_key)
+        formal_body: dict[str, Any] = {}
+        if formal is not None:
+            fb = getattr(formal, "body", None)
+            if isinstance(fb, dict):
+                formal_body = fb
+
+        item: dict[str, Any] = {
+            "review_cid": row.review_cid,
+            "reviewCid": row.review_cid,
+            "label": label,
+            "reviewer": label,
+            "reviewer_label": label,
+            "committed_at": (
+                row.committed_at.isoformat() if row.committed_at is not None else None
+            ),
+            "revealed_at": (
+                row.revealed_at.isoformat() if row.revealed_at is not None else None
+            ),
+            "scores": row.scores,
+            "recommendation": row.recommendation,
+            "confidence": row.confidence,
+            "report_cid": row.report_cid or formal_body.get("reportCid") or formal_body.get("report_cid"),
+            "signed_by": row.signed_by,
+        }
+        if formal is not None:
+            item["reveal_cid"] = getattr(formal, "record_cid", None)
+            item["formal_cid"] = getattr(formal, "record_cid", None)
+            item["id"] = getattr(formal, "record_cid", None)
+
+        # Serve the report body only when the gate is open.
+        if gate_open and row.revealed_at is not None:
+            report = formal_body.get("report")
+            if isinstance(report, str):
+                item["report"] = report
+            report_cid = item.get("report_cid")
+            # Preserve a possible content-stored body reference only.
+        # When closed, 'report' is deliberately absent.
+
+        reviews_out.append(item)
+
+    return {
+        "paper": getattr(view.paper, "short_id", None),
+        "shortId": getattr(view.paper, "short_id", None),
+        "paperCid": getattr(view.paper, "paper_cid", None),
+        "versionCid": version_cid,
+        "version_cid": version_cid,
+        "version": getattr(version, "n", None),
+        "n": getattr(version, "n", None),
+        "reviews": reviews_out,
+        "gate_open": gate_open,
     }
