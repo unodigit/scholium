@@ -1,0 +1,87 @@
+# Scholium moderation policy clauses.
+#
+# Every moderation decision must cite one of these clauses by id. The
+# list is served verbatim by GET /v1/moderation/policies and rendered on
+# the public /policies page; decision banners link to the cited clause.
+#
+# Structure: top-level `clauses` list; each clause has `id`, `title`
+# and `text`. The text uses folded block scalars (`>-`) so paragraphs
+# stay readable while parsing to a single line.
+clauses:
+  - id: "MOD-01"
+    title: Out of scope
+    text: >-
+      Scholium lists scholarly manuscripts within the categories the node
+      has opened. A submission that is not scholarly work, or that falls
+      outside every open category, is reclassified when a fitting category
+      exists and rejected when none does.
+
+  - id: "MOD-02"
+    title: Plagiarism and unattributed overlap
+    text: >-
+      A submission must attribute every source it draws on. When the
+      similarity check reports overlap with prior work that is neither
+      quoted nor cited, moderators hold the version for explanation and
+      reject or delist it when the overlap is unattributed copying.
+
+  - id: "MOD-03"
+    title: Fabrication and paper mills
+    text: >-
+      Results, images or data may not be fabricated, and submissions
+      produced or coordinated by a paper mill are removed. Signals
+      include templated text across unrelated authors, impossible result
+      patterns and review rings; confirmed cases are routed to the
+      integrity committee.
+
+  - id: "MOD-04"
+    title: Hostile files
+    text: >-
+      Every file is sanitized and scanned in a sandbox before anyone can
+      view it. A version whose files contain an active payload is
+      rejected, its bytes are quarantined, and further submissions from
+      the same account are held.
+
+  - id: "MOD-05"
+    title: Unlawful content
+    text: >-
+      Content that is unlawful in the node's operating jurisdiction is
+      delisted and tombstoned. The blob bytes are deleted and the cid is
+      added to the denylist, while the envelope and log entry remain so
+      the decision stays verifiable.
+
+  - id: "MOD-06"
+    title: Privacy and personal data
+    text: >-
+      Submissions must not publish personal data about others without a
+      lawful basis. Versions exposing non-consenting personal data are
+      held for redaction and delisted when the data cannot be removed.
+
+  - id: "MOD-07"
+    title: Unresolved misconduct allegations
+    text: >-
+      While a credible allegation of research misconduct is open against
+      a version, moderators may hold it from listing until the integrity
+      committee concludes its case. The decision cites the allegation
+      record and the version stays resolvable.
+
+  - id: "MOD-08"
+    title: Identity and consent
+    text: >-
+      A submission is published only under real, consenting authors. A
+      version that impersonates another person, or that lists a co-author
+      whose consent is missing, is held until the consent is signed and
+      rejected when it cannot be.
+
+  - id: "MOD-09"
+    title: Spam and promotion
+    text: >-
+      Submissions whose primary purpose is advertising, promotion or link
+      farming, with no scholarly contribution, are rejected. Repeated
+      submissions from the same account are rate limited.
+
+  - id: "MOD-10"
+    title: Misclassification
+    text: >-
+      A version submitted to the wrong category is reclassified to the
+      correct one. Reclassification never changes the content or the
+      version cid, and the author is notified.
