@@ -1,0 +1,785 @@
+"""Assemble the caller's dashboard (feature 126).
+
+``GET /v1/me/dashboard`` answers one question the home screen asks in three
+parts: what needs my attention, what have I written, and what have I reviewed?
+This module builds that view from the projections the other plugins keep; it
+owns no table of its own and never mutates anything.
+
+Needs attention
+---------------
+
+The four categories the feature names, in the order the dashboard shows them:
+
+``consents_to_sign``
+    Every ``authorship`` row naming the caller whose ``coauthor.consent`` is
+    still missing, on a version that is still ``awaiting_consent`` (features
+    54-56).  A consent that has been accepted or declined is no longer owed,
+    so both ``consent_cid`` and ``consent_decision`` must be NULL.
+
+``review_invitations``
+    Every ``review_invitations`` row addressed to the caller whose status is
+    still ``pending`` (feature 105).
+
+``author_replies``
+    Every ``review.response`` the authors of a paper filed against one of the
+    caller's own reviews (feature 114).  "The caller's own reviews" are found
+    without a plaintext reviewer column: the escrow's ``uniqueness_token`` is
+    ``HMAC(reviewer_did || paper_cid)`` (feature 108), so recomputing it for
+    the caller and each paper identifies their review rows without the node
+    ever storing the DID-to-review mapping.  A review the reviewer signed with
+    their name (``review.signed_by``, feature 111) counts too.
+
+``moderation_outcomes``
+    Moderation decisions about the caller's papers -- derived from
+    ``moderation_decisions`` for targets that are one of the caller's papers or
+    versions -- merged with the caller's unread ``moderation.decision`` and
+    ``flag.decided`` notifications (features 71 and 58).  The merge is by
+    decision cid, so a decision that was both stored and notified appears
+    once.  Notifications the caller has read are omitted: a notice they have
+    already seen is not something that still needs attention.
+
+Every item names the paper and version it is about by every identity the
+system gives them -- the ``sch:`` short id, the genesis cid, the version cid
+and the title -- so a client can link to whichever route it has.
+
+My papers
+---------
+
+A paper is the caller's when they are on the byline of any of its versions, or
+when they signed its ``paper.genesis`` (a paper may exist before its first
+version is accepted).  Each row reports the paper's stored lifecycle
+``status``, its latest version's state, the number of versions, and how many
+reviews the whole paper has drawn -- committed and revealed.
+
+My reviews
+----------
+
+Reviews the caller wrote, found with the escrow token above, plus any revealed
+review carrying their name.  Each row is ``sealed`` (no ``review.formal`` yet)
+or ``revealed``, and records whether the authors have replied.  The
+pseudonymity material (``review_key`` and ``nullifier``) is never served.
+
+Tables belonging to other plugins are created if a script or test never built
+the app, exactly as those plugins do for themselves.  ``review_responses`` is
+read by reflection because the feature that writes it may not be deployed on
+every node; an absent table simply means there are no author replies.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from typing import Any, Iterable, Mapping, Optional
+
+from sqlalchemy import MetaData, Table, inspect
+
+from app import db
+from app.modules import ledger
+from app.modules.flags.service import FLAG_DECIDED_KIND
+from app.modules.ledger.models import EventLog
+from app.modules.moderation.decisions import MODERATION_DECISION_KIND
+from app.modules.moderation.models import (
+    ModerationDecision,
+    ensure_tables as ensure_moderation_tables,
+)
+from app.modules.notifications.models import (
+    Notification,
+    ensure_table as ensure_notification_table,
+)
+from app.modules.reviews.escrow import uniqueness_token
+from app.modules.reviews.models import (
+    Review,
+    ReviewEscrow,
+    ReviewInvitation,
+    ensure_tables as ensure_review_tables,
+)
+from app.modules.submissions import AWAITING_CONSENT
+from app.modules.submissions.models import (
+    Authorship,
+    Paper,
+    PaperVersion,
+    ensure_tables as ensure_submission_tables,
+)
+
+__all__ = [
+    "ATTENTION_KINDS",
+    "INVITATION_PENDING",
+    "build_dashboard",
+]
+
+logger = logging.getLogger(__name__)
+
+#: The status an invitation has until the reviewer acts on it (feature 105).
+INVITATION_PENDING = "pending"
+
+#: The four ``needs_attention`` groups, in dashboard order.
+ATTENTION_KINDS = (
+    "consents_to_sign",
+    "review_invitations",
+    "author_replies",
+    "moderation_outcomes",
+)
+
+#: The record type whose signer created a paper, listed on its byline or not.
+PAPER_GENESIS_TYPE = "paper.genesis"
+
+#: ``review_responses`` reflected once per engine.  A missing table is not
+#: cached, so a later feature (or another worker) may create it mid-process.
+_response_tables: dict[int, Table] = {}
+
+
+# --------------------------------------------------------------------------- #
+# Small helpers
+# --------------------------------------------------------------------------- #
+
+
+def _iso(value: Any) -> Optional[str]:
+    """``value`` as an ISO 8601 string when it is a datetime, else ``None``."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return None
+
+
+def _require_did(did: object) -> str:
+    """Return ``did`` as a non-empty string, or raise ``ValueError``."""
+    if not isinstance(did, str) or not did.strip():
+        raise ValueError("a dashboard needs a non-empty did")
+    return did
+
+
+def _ensure_tables() -> None:
+    """Create the projection tables this view reads, if they are absent."""
+    ensure_submission_tables()
+    ensure_review_tables()
+    ensure_notification_table()
+    ensure_moderation_tables()
+
+
+def _item(
+    kind: str,
+    summary: str,
+    *,
+    paper: Optional[Paper] = None,
+    version: Optional[PaperVersion] = None,
+    reason: Optional[str] = None,
+    created_at: Any = None,
+    link: Optional[str] = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """One ``needs_attention`` entry, naming the paper and version it concerns.
+
+    The paper and version identities are spelled twice (snake and camel) the
+    way the sibling aggregate endpoints do, so a client written against
+    either convention can use the item unchanged.
+    """
+    short_id = getattr(paper, "short_id", None) if paper is not None else None
+    version_cid = getattr(version, "version_cid", None) if version is not None else None
+    item: dict[str, Any] = {
+        "kind": kind,
+        "summary": summary,
+        "reason": reason,
+        "paper": short_id,
+        "shortId": short_id,
+        "paperCid": getattr(paper, "paper_cid", None) if paper is not None else None,
+        "version": getattr(version, "n", None) if version is not None else None,
+        "versionCid": version_cid,
+        "version_cid": version_cid,
+        "title": getattr(version, "title", None) if version is not None else None,
+        "link": link if link is not None else (f"/p/{short_id}" if short_id else None),
+        "createdAt": _iso(created_at),
+    }
+    item.update(extra)
+    return item
+
+
+# --------------------------------------------------------------------------- #
+# Loading the projections
+# --------------------------------------------------------------------------- #
+
+
+def _load_catalog() -> tuple[
+    dict[str, Paper], dict[str, PaperVersion], dict[str, list[PaperVersion]]
+]:
+    """Return every paper, every version by cid, and every version by paper."""
+    with db.SessionLocal() as session:
+        papers = list(session.query(Paper).all())
+        versions = list(
+            session.query(PaperVersion).order_by(PaperVersion.paper_cid, PaperVersion.n).all()
+        )
+        for row in papers:
+            session.expunge(row)
+        for row in versions:
+            session.expunge(row)
+
+    paper_by_cid = {paper.paper_cid: paper for paper in papers}
+    version_by_cid = {version.version_cid: version for version in versions}
+    versions_by_paper: dict[str, list[PaperVersion]] = {}
+    for version in versions:
+        versions_by_paper.setdefault(version.paper_cid, []).append(version)
+    return paper_by_cid, version_by_cid, versions_by_paper
+
+
+def _load_reviews() -> dict[str, Review]:
+    """Return every committed review by its cid."""
+    with db.SessionLocal() as session:
+        rows = session.query(Review).all()
+        for row in rows:
+            session.expunge(row)
+    return {row.review_cid: row for row in rows}
+
+
+def _genesis_paper_cids(did: str) -> set[str]:
+    """Every paper whose ``paper.genesis`` the caller signed."""
+    try:
+        ledger.ensure_table()
+        with db.SessionLocal() as session:
+            rows = (
+                session.query(EventLog.record_cid)
+                .filter(
+                    EventLog.record_type == PAPER_GENESIS_TYPE,
+                    EventLog.author_did == did,
+                )
+                .all()
+            )
+        return {row[0] for row in rows if isinstance(row[0], str) and row[0]}
+    except Exception:  # pragma: no cover - a damaged log must not break the dashboard
+        logger.exception("could not read the event log for %s's genesis papers", did)
+        return set()
+
+
+def _paper_cids_for(
+    did: str,
+    paper_by_cid: Mapping[str, Paper],
+    version_by_cid: Mapping[str, PaperVersion],
+) -> set[str]:
+    """Every paper the caller authored, by byline or by ``paper.genesis``."""
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Authorship.version_cid)
+            .filter(Authorship.author_did == did)
+            .distinct()
+            .all()
+        )
+        authored_versions = {row[0] for row in rows if isinstance(row[0], str)}
+
+    paper_cids: set[str] = set()
+    for version_cid in authored_versions:
+        version = version_by_cid.get(version_cid)
+        if version is not None:
+            paper_cids.add(version.paper_cid)
+    # A genesis may be accepted before any version exists; its signer is still
+    # the paper's author.  Only papers this node indexed count.
+    paper_cids |= _genesis_paper_cids(did) & set(paper_by_cid)
+    return paper_cids
+
+
+def _my_review_cids(did: str, paper_cids: Iterable[str], reviews: Mapping[str, Review]) -> set[str]:
+    """The cids of the reviews this caller wrote, without a plaintext mapping.
+
+    Two independent links are honoured: the escrow token (the accountability
+    link the node can compute but not invert, feature 108) and a review the
+    caller revealed under their own name (``signed_by``, feature 111).
+    """
+    tokens: set[str] = set()
+    for paper_cid in paper_cids:
+        try:
+            tokens.add(uniqueness_token(did, paper_cid))
+        except ValueError:  # pragma: no cover - papers are never stored without a cid
+            continue
+
+    found: set[str] = set()
+    if tokens:
+        with db.SessionLocal() as session:
+            rows = (
+                session.query(ReviewEscrow.review_cid)
+                .filter(ReviewEscrow.uniqueness_token.in_(sorted(tokens)))
+                .all()
+            )
+            found |= {row[0] for row in rows if isinstance(row[0], str) and row[0]}
+
+    found |= {
+        review_cid
+        for review_cid, review in reviews.items()
+        if review.signed_by is not None and review.signed_by == did
+    }
+    return found
+
+
+def _review_response_table() -> Optional[Table]:
+    """The ``review_responses`` table, or ``None`` when this node has none."""
+    engine = db.engine
+    cached = _response_tables.get(id(engine))
+    if cached is not None:
+        return cached
+    table: Optional[Table] = None
+    try:
+        if inspect(engine).has_table("review_responses"):
+            table = Table("review_responses", MetaData(), autoload_with=engine)
+    except Exception:  # pragma: no cover - a race with another worker's DDL
+        logger.debug("review_responses is not readable yet", exc_info=True)
+        return None
+    if table is not None:
+        _response_tables[id(engine)] = table
+    return table
+
+
+def _load_review_responses() -> list[dict[str, Any]]:
+    """Every stored ``review.response`` row, or ``[]`` when the table is absent."""
+    table = _review_response_table()
+    if table is None:
+        return []
+    try:
+        with db.SessionLocal() as session:
+            return [dict(row) for row in session.execute(table.select()).mappings().all()]
+    except Exception:  # pragma: no cover - the table vanished mid-request
+        logger.exception("could not read review_responses")
+        # Re-check next time instead of serving a stale reflection of a table
+        # that has since been dropped or replaced.
+        _response_tables.pop(id(db.engine), None)
+        return []
+
+
+# --------------------------------------------------------------------------- #
+# needs_attention
+# --------------------------------------------------------------------------- #
+
+
+def _consents_to_sign(
+    did: str,
+    paper_by_cid: Mapping[str, Paper],
+    version_by_cid: Mapping[str, PaperVersion],
+) -> list[dict[str, Any]]:
+    """Consents the caller still owes on versions waiting for them."""
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Authorship.credit_roles, PaperVersion)
+            .join(PaperVersion, PaperVersion.version_cid == Authorship.version_cid)
+            .filter(
+                Authorship.author_did == did,
+                Authorship.consent_cid.is_(None),
+                Authorship.consent_decision.is_(None),
+                PaperVersion.state == AWAITING_CONSENT,
+            )
+            .order_by(PaperVersion.paper_cid, PaperVersion.n)
+            .all()
+        )
+        pending = [
+            {"version_cid": version.version_cid, "credit_roles": credit_roles}
+            for credit_roles, version in rows
+        ]
+
+    items: list[dict[str, Any]] = []
+    for row in pending:
+        version = version_by_cid.get(row["version_cid"])
+        if version is None:  # pragma: no cover - joined rows always resolve
+            continue
+        paper = paper_by_cid.get(version.paper_cid)
+        short_id = getattr(paper, "short_id", None) or version.paper_cid
+        items.append(
+            _item(
+                "consent_to_sign",
+                f"Sign your co-author consent for {short_id}",
+                paper=paper,
+                version=version,
+                role=row["credit_roles"],
+                creditRoles=row["credit_roles"],
+                status="waiting",
+                link=f"/consent/{version.version_cid}",
+            )
+        )
+    return items
+
+
+def _review_invitations(
+    did: str,
+    paper_by_cid: Mapping[str, Paper],
+    version_by_cid: Mapping[str, PaperVersion],
+) -> list[dict[str, Any]]:
+    """Invitations the caller has been sent and not yet acted on."""
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(ReviewInvitation)
+            .filter(
+                ReviewInvitation.reviewer_did == did,
+                ReviewInvitation.status == INVITATION_PENDING,
+            )
+            .order_by(ReviewInvitation.id)
+            .all()
+        )
+        invitations = [
+            {"id": row.id, "version_cid": row.version_cid, "status": row.status}
+            for row in rows
+        ]
+
+    items: list[dict[str, Any]] = []
+    for invitation in invitations:
+        version = version_by_cid.get(invitation["version_cid"])
+        paper = paper_by_cid.get(version.paper_cid) if version is not None else None
+        short_id = getattr(paper, "short_id", None) or invitation["version_cid"]
+        items.append(
+            _item(
+                "review_invitation",
+                f"You are invited to review {short_id}",
+                paper=paper,
+                version=version,
+                invitationId=invitation["id"],
+                id=invitation["id"],
+                status=invitation["status"],
+                link=f"/review/{short_id}",
+            )
+        )
+    return items
+
+
+def _author_replies(
+    my_review_cids: set[str],
+    reviews: Mapping[str, Review],
+    paper_by_cid: Mapping[str, Paper],
+    version_by_cid: Mapping[str, PaperVersion],
+) -> list[dict[str, Any]]:
+    """The authors' point-by-point replies to the caller's own reviews."""
+    if not my_review_cids:
+        return []
+
+    items: list[dict[str, Any]] = []
+    for row in _load_review_responses():
+        review_cid = row.get("review_cid")
+        if not isinstance(review_cid, str) or review_cid not in my_review_cids:
+            continue
+        review = reviews.get(review_cid)
+        version = version_by_cid.get(review.version_cid) if review is not None else None
+        paper = paper_by_cid.get(version.paper_cid) if version is not None else None
+        short_id = getattr(paper, "short_id", None) or review_cid
+        items.append(
+            _item(
+                "author_reply",
+                f"The authors replied to your review of {short_id}",
+                paper=paper,
+                version=version,
+                reviewCid=review_cid,
+                review_cid=review_cid,
+                responseCid=row.get("response_cid"),
+                responses=row.get("replies"),
+                link=f"/review/{short_id}",
+            )
+        )
+    items.sort(key=lambda item: (item.get("paper") or "", item.get("responseCid") or ""))
+    return items
+
+
+def _decision_reason(decision_cid: str) -> Optional[str]:
+    """The reason text of a decision record, if the ledger still serves it."""
+    try:
+        entry = ledger.entry_by_cid(decision_cid)
+        body = getattr(entry, "body", None) if entry is not None else None
+        if isinstance(body, Mapping):
+            reason = body.get("reason")
+            if isinstance(reason, str) and reason.strip():
+                return reason.strip()
+    except Exception:  # pragma: no cover - the ledger is a shipped plugin
+        logger.debug("could not read decision %s from the ledger", decision_cid, exc_info=True)
+    return None
+
+
+def _moderation_outcomes(
+    did: str,
+    paper_by_cid: Mapping[str, Paper],
+    version_by_cid: Mapping[str, PaperVersion],
+    paper_cids: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Decisions about the caller's papers, merged with their unread notices."""
+    paper_cids = set(paper_cids)
+    targets = set(paper_cids)
+    targets |= {
+        version_cid
+        for version_cid, version in version_by_cid.items()
+        if version.paper_cid in paper_cids
+    }
+
+    merged: dict[str, dict[str, Any]] = {}
+
+    # Decisions stored on this node about one of the caller's papers.
+    if targets:
+        with db.SessionLocal() as session:
+            rows = (
+                session.query(ModerationDecision)
+                .filter(ModerationDecision.target_cid.in_(sorted(targets)))
+                .order_by(ModerationDecision.decided_at.desc())
+                .all()
+            )
+            decisions = [
+                {
+                    "decision_cid": row.decision_cid,
+                    "target_cid": row.target_cid,
+                    "action": row.action,
+                    "clause": row.clause,
+                    "decided_at": row.decided_at,
+                }
+                for row in rows
+            ]
+        for decision in decisions:
+            version = version_by_cid.get(decision["target_cid"])
+            paper = paper_by_cid.get(version.paper_cid) if version is not None else None
+            if paper is None:
+                paper = paper_by_cid.get(decision["target_cid"])
+            short_id = getattr(paper, "short_id", None) or decision["target_cid"]
+            item = _item(
+                "moderation_outcome",
+                f"Moderation decision: {decision['action']} on {short_id}",
+                paper=paper,
+                version=version,
+                reason=_decision_reason(decision["decision_cid"]),
+                created_at=decision["decided_at"],
+                decisionCid=decision["decision_cid"],
+                decision_cid=decision["decision_cid"],
+                action=decision["action"],
+                clause=decision["clause"],
+                targetCid=decision["target_cid"],
+                source="decision",
+                notified=False,
+            )
+            merged[f"decision:{decision['decision_cid']}"] = item
+
+    # Unread notices the moderation and flags plugins sent the caller.
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Notification)
+            .filter(
+                Notification.did == did,
+                Notification.read.is_(False),
+                Notification.kind.in_([MODERATION_DECISION_KIND, FLAG_DECIDED_KIND]),
+            )
+            .order_by(Notification.id.desc())
+            .all()
+        )
+        notices = [(row.id, row.kind, row.payload) for row in rows]
+
+    for notification_id, kind, payload in notices:
+        payload = payload if isinstance(payload, Mapping) else {}
+        decision_cid = payload.get("decision_cid") or payload.get("decisionCid")
+        target_cid = payload.get("target_cid") or payload.get("targetCid")
+        version = version_by_cid.get(target_cid) if isinstance(target_cid, str) else None
+        paper = paper_by_cid.get(version.paper_cid) if version is not None else None
+        if paper is None and isinstance(target_cid, str):
+            paper = paper_by_cid.get(target_cid)
+
+        key = (
+            f"decision:{decision_cid}"
+            if isinstance(decision_cid, str) and decision_cid
+            else f"notification:{notification_id}"
+        )
+        existing = merged.get(key)
+        if existing is not None:
+            # The stored decision is the richer view; note that it was notified.
+            existing["notificationId"] = notification_id
+            existing["notified"] = True
+            continue
+
+        if kind == FLAG_DECIDED_KIND:
+            status = payload.get("status")
+            summary = "An outcome is recorded for a report you filed"
+        else:
+            action = payload.get("action")
+            status = None
+            summary = f"Moderation decision: {action}" if action else "Moderation decision"
+        short_id = getattr(paper, "short_id", None)
+        if short_id:
+            summary = f"{summary} on {short_id}"
+
+        item = _item(
+            "moderation_outcome",
+            summary,
+            paper=paper,
+            version=version,
+            reason=payload.get("reason"),
+            decisionCid=decision_cid,
+            decision_cid=decision_cid,
+            action=payload.get("action"),
+            clause=payload.get("clause"),
+            status=status,
+            flagId=payload.get("flag_id"),
+            targetCid=target_cid,
+            source="flag" if kind == FLAG_DECIDED_KIND else "notification",
+            notificationId=notification_id,
+        )
+        merged[key] = item
+
+    return list(merged.values())
+
+
+# --------------------------------------------------------------------------- #
+# my_papers / my_reviews
+# --------------------------------------------------------------------------- #
+
+
+def _paper_title(paper_cid: str, latest: Optional[PaperVersion]) -> Optional[str]:
+    """The latest version's title, or the genesis record's when there is none."""
+    if latest is not None:
+        return latest.title
+    try:
+        entry = ledger.entry_by_cid(paper_cid)
+        body = getattr(entry, "body", None) if entry is not None else None
+        if isinstance(body, Mapping):
+            title = body.get("title")
+            if isinstance(title, str) and title:
+                return title
+    except Exception:  # pragma: no cover - the ledger is a shipped plugin
+        logger.debug("could not read the genesis record %s", paper_cid, exc_info=True)
+    return None
+
+
+def _my_papers(
+    paper_cids: Iterable[str],
+    paper_by_cid: Mapping[str, Paper],
+    versions_by_paper: Mapping[str, list[PaperVersion]],
+    reviews_by_version: Mapping[str, list[Review]],
+) -> list[dict[str, Any]]:
+    """One row per paper the caller authored, with its status and review counts."""
+    papers: list[dict[str, Any]] = []
+    for paper_cid in paper_cids:
+        paper = paper_by_cid.get(paper_cid)
+        if paper is None:
+            continue
+        versions = versions_by_paper.get(paper_cid, [])
+        latest = max(versions, key=lambda version: version.n) if versions else None
+        paper_reviews = [
+            review
+            for version in versions
+            for review in reviews_by_version.get(version.version_cid, [])
+        ]
+        short_id = paper.short_id
+        papers.append(
+            {
+                "paper": short_id,
+                "shortId": short_id,
+                "paperCid": paper_cid,
+                "paper_cid": paper_cid,
+                "title": _paper_title(paper_cid, latest),
+                "status": paper.status,
+                "categories": list(paper.categories or []),
+                "role": "author",
+                "versionCount": len(versions),
+                "versions": len(versions),
+                "latestVersion": latest.n if latest is not None else None,
+                "latestVersionCid": latest.version_cid if latest is not None else None,
+                "state": latest.state if latest is not None else None,
+                "reviewCount": len(paper_reviews),
+                "reviews": len(paper_reviews),
+                "revealedCount": sum(
+                    1 for review in paper_reviews if review.revealed_at is not None
+                ),
+                "listedAt": _iso(paper.listed_at),
+                "claimed": bool(paper.claimed),
+                "link": f"/p/{short_id}",
+            }
+        )
+
+    papers.sort(
+        key=lambda row: (row.get("listedAt") or "", row.get("paper") or ""),
+        reverse=True,
+    )
+    return papers
+
+
+def _my_reviews(
+    my_review_cids: Iterable[str],
+    reviews: Mapping[str, Review],
+    responses_by_review: Mapping[str, int],
+    paper_by_cid: Mapping[str, Paper],
+    version_by_cid: Mapping[str, PaperVersion],
+) -> list[dict[str, Any]]:
+    """The caller's own reviews and whether each is still sealed."""
+    rows: list[dict[str, Any]] = []
+    for review_cid in my_review_cids:
+        review = reviews.get(review_cid)
+        if review is None:
+            # The escrow knows about a review whose row is missing; nothing to show.
+            continue
+        version = version_by_cid.get(review.version_cid)
+        paper = paper_by_cid.get(version.paper_cid) if version is not None else None
+        short_id = getattr(paper, "short_id", None)
+        revealed = review.revealed_at is not None
+        response_count = responses_by_review.get(review_cid, 0)
+        rows.append(
+            {
+                "reviewCid": review.review_cid,
+                "review_cid": review.review_cid,
+                "state": "revealed" if revealed else "sealed",
+                "sealed": not revealed,
+                "revealed": revealed,
+                "paper": short_id,
+                "shortId": short_id,
+                "paperCid": getattr(paper, "paper_cid", None),
+                "version": getattr(version, "n", None),
+                "versionCid": review.version_cid,
+                "version_cid": review.version_cid,
+                "title": getattr(version, "title", None),
+                "committedAt": _iso(review.committed_at),
+                "revealedAt": _iso(review.revealed_at),
+                "recommendation": review.recommendation if revealed else None,
+                "confidence": review.confidence if revealed else None,
+                "scores": review.scores if revealed else None,
+                "signedBy": review.signed_by,
+                "authorReplied": response_count > 0,
+                "awaitingAuthor": revealed and response_count == 0,
+                "responseCount": response_count,
+                "link": f"/review/{short_id}" if short_id else None,
+            }
+        )
+
+    rows.sort(key=lambda row: (row.get("committedAt") or "", row.get("reviewCid") or ""), reverse=True)
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# The dashboard
+# --------------------------------------------------------------------------- #
+
+
+def build_dashboard(did: str) -> dict[str, Any]:
+    """Assemble ``GET /v1/me/dashboard`` for the authenticated ``did``."""
+    did = _require_did(did)
+    _ensure_tables()
+
+    paper_by_cid, version_by_cid, versions_by_paper = _load_catalog()
+    reviews = _load_reviews()
+    reviews_by_version: dict[str, list[Review]] = {}
+    for review in reviews.values():
+        reviews_by_version.setdefault(review.version_cid, []).append(review)
+
+    paper_cids = _paper_cids_for(did, paper_by_cid, version_by_cid)
+    my_review_cids = _my_review_cids(did, paper_by_cid, reviews)
+
+    responses_by_review: dict[str, int] = {}
+    for row in _load_review_responses():
+        review_cid = row.get("review_cid")
+        if isinstance(review_cid, str) and review_cid in my_review_cids:
+            responses_by_review[review_cid] = responses_by_review.get(review_cid, 0) + 1
+
+    consents = _consents_to_sign(did, paper_by_cid, version_by_cid)
+    invitations = _review_invitations(did, paper_by_cid, version_by_cid)
+    replies = _author_replies(my_review_cids, reviews, paper_by_cid, version_by_cid)
+    outcomes = _moderation_outcomes(did, paper_by_cid, version_by_cid, paper_cids)
+
+    groups = {
+        "consents_to_sign": consents,
+        "review_invitations": invitations,
+        "author_replies": replies,
+        "moderation_outcomes": outcomes,
+    }
+    flat = [item for kind in ATTENTION_KINDS for item in groups[kind]]
+
+    return {
+        "did": did,
+        "needs_attention": {
+            "count": len(flat),
+            **groups,
+            "items": flat,
+        },
+        "my_papers": _my_papers(
+            paper_cids, paper_by_cid, versions_by_paper, reviews_by_version
+        ),
+        "my_reviews": _my_reviews(
+            my_review_cids, reviews, responses_by_review, paper_by_cid, version_by_cid
+        ),
+    }
