@@ -127,6 +127,72 @@
   cursor: pointer;
 }
 
+/* ---- Category page (/c/{category}) -------------------------------------- */
+
+.fd-category-header {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  padding-bottom: calc(var(--space-unit) * 4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.fd-category-kicker {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.fd-category-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+}
+
+.fd-category-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  line-height: var(--leading-title);
+  font-weight: var(--weight-title);
+  letter-spacing: var(--tracking-title);
+}
+
+.fd-category-lede {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* A subscription is navigation, not prose: a quiet control beside the title. */
+.fd-category-feed {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  text-decoration: none;
+  transition:
+    color var(--duration-fast) var(--ease-decel),
+    border-color var(--duration-fast) var(--ease-decel);
+}
+
+.fd-category-feed:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
 /* ---- Rows ---------------------------------------------------------------- */
 
 .fd-list {

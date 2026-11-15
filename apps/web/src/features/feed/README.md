@@ -20,11 +20,30 @@ An evaluation framework for whether meta-agents can identify safer…
 | Path | What |
 | --- | --- |
 | `src/app/(feed)/page.tsx` | The route (`/`). Reads `searchParams`, fetches the first page on the server. |
+| `src/app/(feed)/c/[category]/page.tsx` | The category route (`/c/{category}`). Fetches the category's newest papers on the server. |
 | `src/app/(feed)/layout.tsx` | Shell: `GlobalNav`, the page column, `NavTabBarSpacer`. |
 | `src/features/feed/feed.ts` | Pure data: URL state, the `GET /v1/papers` request and parse, ages, bylines. |
+| `src/features/feed/category.ts` | Pure data for a category: validation, labels, the Atom feed URL and the listing state. |
+| `src/features/feed/category-page.tsx` | `CategoryPage` — the category heading, Atom feed link and the shared rows. Server-safe. |
 | `src/features/feed/feed-row.tsx` | `FeedRow` — one paper. Server-safe; the category pages reuse it. |
 | `src/features/feed/feed-page.tsx` | `FeedPage` — the client component: tabs, selectors, paging, states. |
 | `src/features/feed/feed.css`, `src/app/(feed)/feed-shell.css` | Styles (`fd-*`), design tokens only. |
+
+## Category pages
+
+`/c/{category}` lists that category's papers with the same `FeedRow` layout as
+the home feed: serif title, byline, categories, version, age, a two-line
+abstract and status chips, and no vote counts. The server fetches
+`GET /v1/papers?tab=latest&category={category}&sort=newest`, so the first HTML
+holds the rows and the page works without JavaScript.
+
+The **Atom feed** link beside the heading points at
+`GET /v1/feeds/{category}` on the API (plugin `feeds`, feature 88), made
+absolute against `NEXT_PUBLIC_API_URL`, and the page's metadata also advertises
+it as a `rel="alternate"` feed. An empty category is not an error: it says
+`No papers are listed in {category} yet.` and offers the latest papers. A
+category the API would refuse (longer than 64 characters) is not requested and
+shows a notice instead.
 
 ## URL
 
@@ -80,8 +99,10 @@ arrives after a newer choice, and follows the back button (`popstate`).
 
 `feed.test.ts` (URL, parse, ages, bylines), `feed-page.test.tsx` (component
 behaviour with a stub loader), `feed-route.test.tsx` (the server render with a
-stubbed `fetch`), `feed.css.test.ts` (design-system contract: tokens only,
-serif title, two-line clamp, no shadows, 44px targets).
+stubbed `fetch`), `category.test.ts` (validation, labels, the Atom URL),
+`category-route.test.tsx` (the category render, its rows and its Atom link) and
+`feed.css.test.ts` (design-system contract: tokens only, serif title, two-line
+clamp, no shadows, 44px targets).
 
 The local `tsconfig.json` files exist for the same reason as in the other
 features: the app tsconfig sets `jsx: preserve` for Next.js and Vitest's

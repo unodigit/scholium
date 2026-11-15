@@ -19,6 +19,10 @@
  * and "Show more" change (and the whole Following tab, which needs the
  * browser's session). {@link FeedRow} is server-safe and is the row the
  * category pages (`/c/[category]`) reuse.
+ *
+ * A category page is the feed narrowed to one category: {@link CategoryPage}
+ * renders the same rows and links to the category's Atom feed at
+ * `GET /v1/feeds/{category}`; its route lives at `app/(feed)/c/[category]/`.
  */
 
 export {
@@ -66,6 +70,26 @@ export {
   type FeedTab,
   type RowAge,
 } from "./feed";
+
+export {
+  CATEGORY_FEED_PATH_PREFIX,
+  CATEGORY_MAX_CHARS,
+  categoryDescription,
+  categoryEmptySentence,
+  categoryFeedHref,
+  categoryFeedPath,
+  categoryFeedState,
+  categoryLabel,
+  categoryLede,
+  categoryPageHref,
+  normalizeCategory,
+  type CategoryParamInput,
+} from "./category";
+
+export {
+  CategoryPage,
+  type CategoryPageProps,
+} from "./category-page";
 
 export { FeedRow, type FeedRowProps } from "./feed-row";
 

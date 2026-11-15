@@ -105,6 +105,27 @@ describe("a row", () => {
   });
 });
 
+describe("a category page", () => {
+  it("sets the category id in the serif title face", () => {
+    const title = rule(feed, ".fd-category-title");
+    expect(title).toMatch(/font-family:\s*var\(--family-serif\)/);
+    expect(title).toMatch(/font-weight:\s*var\(--weight-title\)/);
+  });
+
+  it("separates the heading from the rows with a 1px rule", () => {
+    expect(rule(feed, ".fd-category-header")).toMatch(
+      /border-bottom:\s*1px solid var\(--rule\)/,
+    );
+  });
+
+  it("makes the Atom feed link a 44px control", () => {
+    const link = rule(feed, ".fd-category-feed");
+    expect(link).toMatch(/min-height:\s*44px/);
+    expect(link).toMatch(/border-radius:\s*var\(--corner-control\)/);
+    expect(link).not.toMatch(/color:\s*var\(--ai\b/);
+  });
+});
+
 describe("tabs and selectors", () => {
   it("marks the current tab by an underline and a darker word, not by colour alone", () => {
     const active = rule(feed, ".fd-tab--active,\n.fd-tab[aria-current=\"page\"]");
