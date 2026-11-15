@@ -7,10 +7,12 @@
  * `apps/web/src/app/(ui-kit)/`.
  *
  * ```tsx
- * import { StatusChip, UnderReviewChip } from "@/features/ui-kit";
+ * import { EmptyState, RecordLink, StatusChip, UnderReviewChip } from "@/features/ui-kit";
  *
  * <StatusChip status={paper.status} count={paper.reviewers} />
  * <UnderReviewChip count={3} />
+ * <RecordLink cid={paper.recordCid} />
+ * <EmptyState sentence="No reviews yet." action={{ label: "Write a review", href: "/papers/123/review" }} />
  * ```
  */
 
@@ -46,3 +48,19 @@ export {
   type IconProps,
   type IconShape,
 } from "./icons";
+
+export {
+  EmptyState,
+  type EmptyStateAction,
+  type EmptyStateProps,
+} from "./empty-state";
+
+export {
+  RECORD_PATH,
+  RecordLink,
+  fetchRecordJson,
+  formatRecordJson,
+  recordErrorMessage,
+  type RecordLinkProps,
+  type RecordLoader,
+} from "./record-link";

@@ -12,5 +12,14 @@ export default function UiKitLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <main className="uk-shell">{children}</main>;
+  return (
+    <main className="uk-shell">
+      <nav className="uk-nav" aria-label="UI kit components">
+        <a href="/ui-kit/status-chip">Status chip</a>
+        <a href="/ui-kit/record-link">Record link</a>
+        <a href="/ui-kit/empty-state">Empty state</a>
+      </nav>
+      {children}
+    </main>
+  );
 }

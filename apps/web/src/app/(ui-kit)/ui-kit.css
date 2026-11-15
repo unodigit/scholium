@@ -12,6 +12,25 @@
     calc(var(--space-unit) * 16);
 }
 
+.uk-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 5);
+  margin-bottom: calc(var(--space-unit) * 8);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.uk-nav a {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.uk-nav a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .uk-header {
   margin-bottom: calc(var(--space-unit) * 8);
 }
@@ -114,4 +133,28 @@
    still reads from its icon shape and its word. */
 .uk-greyscale {
   filter: grayscale(1);
+}
+
+/* Side-by-side examples on a gallery page. */
+.uk-examples {
+  display: grid;
+  gap: calc(var(--space-unit) * 4);
+}
+
+.uk-examples h3 {
+  margin: 0;
+}
+
+.uk-examples .uk-note {
+  margin-block: calc(var(--space-unit) * 1) calc(var(--space-unit) * 3);
+}
+
+.uk-list {
+  margin: 0;
+  padding-inline-start: calc(var(--space-unit) * 5);
+  color: var(--ink);
+}
+
+.uk-list li + li {
+  margin-block-start: calc(var(--space-unit) * 1);
 }

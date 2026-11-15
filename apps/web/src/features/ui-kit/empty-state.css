@@ -1,0 +1,104 @@
+/* ============================================================================
+   EmptyState — docs/design.md §7 (Components) and §9 (Accessibility).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work.
+
+   One sentence and one action. The panel is a quiet surface — a dashed rule
+   says "nothing here yet" without a colour-only signal — and the action is
+   the only accented thing in it, so the way forward is where the eye lands.
+
+   Unlayered on purpose: a stylesheet imported from a component must not
+   re-declare Tailwind's cascade layers, and unlayered rules outrank them.
+   No margin is set, so a consumer's spacing utilities still apply.
+   ============================================================================ */
+
+.sch-empty {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+
+  padding: calc(var(--space-unit) * 6);
+  border: 1px dashed var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--ink);
+
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.sch-empty__icon {
+  flex: none;
+  width: calc(var(--space-unit) * 5);
+  height: calc(var(--space-unit) * 5);
+  color: var(--ink-2);
+}
+
+.sch-empty__sentence {
+  margin: 0;
+  max-width: var(--measure-reading);
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+/* The one action. Styled on both <a> and <button>, because the element is
+   chosen by what the action does, not by how it should look. `font: inherit`
+   normalises the native button font; the size, weight and accent are then set
+   once for both elements. */
+.sch-empty__action {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+
+  min-height: calc(var(--space-unit) * 6);
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+
+  color: var(--accent);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  cursor: pointer;
+}
+
+.sch-empty__action:hover {
+  text-decoration-color: currentColor;
+}
+
+.sch-empty__action:disabled {
+  color: var(--ink-2);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+/* Touch targets are at least 44 px (design.md §9), while the panel keeps its
+   compact text-link look with a mouse. */
+@media (pointer: coarse) {
+  .sch-empty__action {
+    min-height: calc(var(--space-unit) * 11);
+  }
+}
+
+/* Forced colours (Windows High Contrast): the dashed rule is the panel's only
+   shape, so keep it visible; the action falls back to LinkText. */
+@media (forced-colors: active) {
+  .sch-empty {
+    border-color: CanvasText;
+  }
+
+  .sch-empty__action {
+    color: LinkText;
+  }
+}

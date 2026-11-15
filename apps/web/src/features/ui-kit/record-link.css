@@ -1,0 +1,214 @@
+/* ============================================================================
+   RecordLink — docs/design.md §7 (Components), §9 (Accessibility), §10
+   (Responsive behaviour).
+   ----------------------------------------------------------------------------
+   Reads the global tokens from src/styles/tokens.css only; no hex lives here,
+   so light, dark and a scoped `data-theme` subtree all work.
+
+   The trigger looks like a link but is a <button>, because it opens a panel
+   rather than navigating. The sheet is a full-height panel at the inline end
+   (right in LTR, left in RTL) over the scrim, as wide as the design's margin
+   panel and never wider than the viewport — the phone layout gets a full-width
+   sheet.
+
+   Unlayered on purpose: a stylesheet imported from a component must not
+   re-declare Tailwind's cascade layers, and unlayered rules outrank them.
+   ============================================================================ */
+
+.sch-record-link {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+
+  min-height: calc(var(--space-unit) * 6);
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+
+  color: var(--accent);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  cursor: pointer;
+}
+
+.sch-record-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.sch-record-link:disabled {
+  color: var(--ink-2);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  .sch-record-link {
+    min-height: calc(var(--space-unit) * 11);
+  }
+}
+
+/* ---- The side sheet ------------------------------------------------------ */
+
+.sch-record-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  background-color: var(--scrim);
+}
+
+.sch-record-sheet__panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+
+  inline-size: min(100%, calc(var(--margin-panel) * 1.6));
+  block-size: 100%;
+
+  border-inline-start: 1px solid var(--rule);
+  background-color: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--popover-shadow);
+}
+
+.sch-record-sheet__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 4);
+
+  padding: calc(var(--space-unit) * 6);
+  border-block-end: 1px solid var(--rule);
+}
+
+.sch-record-sheet__heading {
+  min-inline-size: 0;
+}
+
+.sch-record-sheet__kicker {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
+.sch-record-sheet__title {
+  margin: calc(var(--space-unit) * 1) 0 0;
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  font-weight: var(--weight-title);
+}
+
+.sch-record-sheet__cid {
+  margin: calc(var(--space-unit) * 1) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
+  overflow-wrap: anywhere;
+}
+
+.sch-record-sheet__close,
+.sch-record-sheet__retry {
+  box-sizing: border-box;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 3);
+
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--bg);
+  color: var(--ink);
+
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.sch-record-sheet__retry {
+  margin-block-start: calc(var(--space-unit) * 4);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sch-record-sheet__body {
+  flex: 1;
+  overflow: auto;
+  padding: calc(var(--space-unit) * 6);
+}
+
+.sch-record-sheet__status {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.sch-record-sheet__error p {
+  margin: 0;
+  color: var(--ink);
+}
+
+.sch-record-sheet__json {
+  margin: 0;
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--bg);
+  color: var(--ink);
+
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The sheet arrives from its own edge. Reduced-motion users get no animation:
+   src/styles/base.css collapses the duration tokens, and the motion is also
+   gated here so nothing is left to a global. */
+@media (prefers-reduced-motion: no-preference) {
+  .sch-record-sheet {
+    animation: sch-record-sheet-fade var(--duration-fast) var(--ease-decel);
+  }
+
+  .sch-record-sheet__panel {
+    animation: sch-record-sheet-in var(--duration-base) var(--ease-decel);
+  }
+}
+
+@keyframes sch-record-sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sch-record-sheet-in {
+  from {
+    transform: translateX(calc(var(--space-unit) * 8));
+  }
+}
+
+@media (forced-colors: active) {
+  .sch-record-sheet__panel,
+  .sch-record-sheet__close,
+  .sch-record-sheet__retry {
+    border-color: CanvasText;
+  }
+}
