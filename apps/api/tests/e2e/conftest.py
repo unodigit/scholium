@@ -24,7 +24,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app import db
 from app.main import create_app
+from app.modules import ledger, moderation
 from app.modules.admin.cli import main as admin_cli
+from app.modules.ai_review.background import ensure_subscribed as ensure_ai_review
 from app.modules.notifications import clear_outbox
 from app.settings import settings
 
@@ -72,8 +74,21 @@ def node(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(node):
-    """A TestClient over a freshly assembled app, running on the hermetic node."""
+    """A TestClient over a freshly assembled app, running on the hermetic node.
+
+    The process-wide subscriber registries outlive a single app: other suites
+    clear them (``clear_state_changed_subscribers``/``ledger.clear_subscribers``)
+    and not every plugin restores its own subscription from an ``on_startup``
+    hook.  Moderation applies a ``moderation.decision`` through its ledger
+    subscriber, so without re-registering it a decision submitted as a signed
+    record (``POST /v1/records``) would be logged but never take effect.  The
+    AI pre-review trigger is restored the same way, so the journey does not
+    race the plugin's deferred import-time wiring.  Both registrations are
+    idempotent, exactly as the plugins' own import-time wiring.
+    """
     with TestClient(create_app()) as c:
+        ledger.subscribe(moderation.DECISION_TYPE, moderation.persist_entry)
+        ensure_ai_review()
         yield c
 
 

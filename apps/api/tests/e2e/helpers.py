@@ -172,7 +172,7 @@ class Actor:
 
     # --- records -------------------------------------------------------------
 
-    def record(self, record_type: str, body: dict, *, signer: Optional[SigningKey] = None) -> dict:
+    def record(self, record_type: str, body: dict, *, signer: Optional[SigningKey] = None, prev: Any = None) -> dict:
         """A ``record_type`` record with ``body``, authored by this actor's DID.
 
         It is signed by this actor's key unless ``signer`` names another: after
@@ -186,7 +186,7 @@ class Actor:
             "type": record_type,
             "author": self.did,
             "created": now(),
-            "prev": None,
+            "prev": prev,
             "body": body,
             "proofs": [],
         }
