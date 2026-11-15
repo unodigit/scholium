@@ -1,0 +1,65 @@
+/* ============================================================================
+   Shell for the standalone AI pre-review page (`/ai/…`).
+   ----------------------------------------------------------------------------
+   Only the outer page frame and the page header live here: the global
+   navigation is mounted by the layout, and the panel's own styles live with
+   the feature (`features/paper-ai/ai-tab.css`). Every value is a design
+   token; no colour is set here — the panel carries its own purple.
+   ============================================================================ */
+
+.pai-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--margin-panel) + var(--space-unit) * 16);
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 64rem) {
+  .pai-shell {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
+
+.pai-header {
+  margin-block-end: calc(var(--space-unit) * 6);
+}
+
+.pai-kicker {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}
+
+.pai-title {
+  margin: 0;
+}
+
+.pai-lede {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.pai-notice {
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+}
+
+.pai-notice__title {
+  margin: 0;
+  font-weight: 500;
+}
+
+.pai-notice__text {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
