@@ -4,9 +4,10 @@
  * The feature owns the route group `app/(dashboard)/` and this module.
  *
  * ```tsx
- * import { ME_PATH, DashboardPage } from "@/features/dashboard";
+ * import { ME_PATH, DashboardPage, SECURITY_PATH, SecurityPage } from "@/features/dashboard";
  *
- * <DashboardPage />
+ * <DashboardPage />   // /me
+ * <SecurityPage />    // /me/security: devices, guardians 3 of 5, key rotation
  * ```
  */
 
@@ -46,3 +47,56 @@ export {
   Dashboard,
   type DashboardPageProps,
 } from "./dashboard-page";
+
+export {
+  GUARDIANS_ENDPOINT,
+  GUARDIANS_SETUP_HREF,
+  GUARDIAN_SCHEME,
+  GUARDIAN_THRESHOLD,
+  GUARDIAN_TOTAL,
+  SECURITY_PATH,
+  SECURITY_SIGNIN_HREF,
+  SECURITY_TITLE,
+  SecurityError,
+  describeGuardianSource,
+  describeGuardians,
+  describeSecurityError,
+  didEndpoint,
+  formatDay,
+  formatInstant,
+  guardiansComplete,
+  guardiansSet,
+  loadDevices,
+  loadGuardians,
+  loadSecurity,
+  parseGuardianList,
+  parseKeyState,
+  type DeviceInfo,
+  type GuardianSource,
+  type GuardianState,
+  type KeyRotation,
+  type KeyState,
+  type LoadSecurityOptions,
+  type SecurityClient,
+  type SecurityData,
+  type SecurityDevice,
+} from "./security";
+
+export {
+  KEY_ROTATION_RECORD_TYPE,
+  ROTATION_REASON_MAX_LENGTH,
+  RotationError,
+  TERMINAL_ROTATION_CODES,
+  defaultRotationSeams,
+  describeRotationError,
+  isRotationError,
+  rotateKey,
+  type ReplacementKey,
+  type RotateKey,
+  type RotateKeyInput,
+  type RotationErrorCode,
+  type RotationResult,
+  type RotationSeams,
+} from "./rotate-key";
+
+export { SecurityPage, type LoadSecurity, type SecurityPageProps } from "./security-page";

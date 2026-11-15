@@ -179,7 +179,7 @@ afterEach(() => {
 });
 
 describe("DashboardPage with server data", () => {
-  it("shows the page title and the five cards", () => {
+  it("shows the page title and its cards", () => {
     render(<DashboardPage initialDashboard={DATA} signedIn />);
 
     expect(screen.getByRole("heading", { level: 1, name: "Me" })).toBeTruthy();
@@ -188,10 +188,21 @@ describe("DashboardPage with server data", () => {
       "My papers",
       "My reviews",
       "Credentials",
+      "Security",
       "Notifications",
     ]) {
       expect(card(name)).toBeTruthy();
     }
+  });
+
+  it("links the Security card to /me/security", () => {
+    render(<DashboardPage initialDashboard={DATA} signedIn />);
+
+    const security = within(card("Security"));
+    expect(security.getByRole("link", { name: "Manage security" }).getAttribute("href")).toBe(
+      "/me/security",
+    );
+    expect(security.getByText(/recovery guardians/)).toBeTruthy();
   });
 
   it("does not fetch when the route already supplied the document", () => {

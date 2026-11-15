@@ -1,0 +1,274 @@
+/*
+ * `/me/security` — devices, recovery guardians, key rotation
+ * (docs/design.md §5.6).
+ *
+ * Adds only what the dashboard's cards do not already have; the card, list,
+ * chip, link and button rules come from `dashboard-page.css`. Every value is a
+ * design token, so light, dark and a forced `data-theme` re-theme the screen.
+ * Rules keep the `db-` prefix so nothing leaks into other features.
+ */
+
+/* ---- Devices -------------------------------------------------------------- */
+
+.db-device {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 1.5);
+  padding-block: calc(var(--space-unit) * 3);
+  border-top: 1px solid var(--rule);
+}
+
+.db-device:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.db-device:last-child {
+  padding-bottom: 0;
+}
+
+.db-device-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2);
+  width: 100%;
+  min-width: 0;
+}
+
+.db-device-name {
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+
+.db-device-meta {
+  margin: 0;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Notes and errors ----------------------------------------------------
+   A note is plain information; an error says something went wrong. Both lead
+   with a word and a border, so neither leans on colour alone. */
+
+.db-note,
+.db-error {
+  margin: 0;
+  padding-block: calc(var(--space-unit) * 2);
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  max-width: var(--measure-reading);
+}
+
+.db-error {
+  border-color: var(--critical);
+  background: var(--critical-soft);
+}
+
+/* ---- Recovery guardians -------------------------------------------------- */
+
+.db-stat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.db-stat-value {
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  line-height: var(--leading-title);
+  font-weight: var(--weight-title);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-stat-label {
+  color: var(--ink-2);
+}
+
+.db-guardian-status {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  max-width: var(--measure-reading);
+}
+
+.db-guardians {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- Key rotation --------------------------------------------------------- */
+
+.db-facts {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+}
+
+.db-fact {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 1);
+  min-width: 0;
+}
+
+.db-fact dt,
+.db-fact dd {
+  margin: 0;
+}
+
+.db-fact dd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 1);
+  min-width: 0;
+}
+
+.db-fact-value {
+  color: var(--ink);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-rotate-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.db-rotate-action a {
+  color: var(--accent);
+}
+
+/* The confirmation sits inside the card, set off by a rule, so it reads as
+   part of the action rather than a separate dialog the page has to manage. */
+.db-rotate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  padding-top: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--rule);
+}
+
+.db-rotate-title {
+  margin: 0;
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  font-weight: var(--weight-title);
+}
+
+/* The heading takes focus when the question opens; it is not a control, so
+   it needs no ring of its own. */
+.db-rotate-title:focus {
+  outline: none;
+}
+
+.db-rotate-text {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  max-width: var(--measure-reading);
+}
+
+.db-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  width: 100%;
+  max-width: var(--measure-reading);
+}
+
+.db-field-label {
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.db-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-block-size: calc(var(--space-unit) * 10);
+  padding-block: calc(var(--space-unit) * 2);
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.db-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.db-input:disabled {
+  color: var(--ink-2);
+}
+
+.db-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 3);
+}
+
+/* The one action that does the thing is filled; the other is a plain button. */
+.db-button[data-variant="primary"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.db-button[data-variant="primary"]:hover {
+  background: var(--accent);
+  border-color: var(--ink);
+}
+
+/* A disabled button keeps its label legible and says so in its border, not
+   only in its colour. */
+.db-button:disabled {
+  border-style: dashed;
+  border-color: var(--rule);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: not-allowed;
+}
+
+.db-button:disabled:hover {
+  background: var(--surface);
+}
+
+@media (pointer: coarse) {
+  .db-input {
+    min-block-size: 44px;
+  }
+}

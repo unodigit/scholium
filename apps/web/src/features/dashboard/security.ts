@@ -1,0 +1,417 @@
+/**
+ * The member's security screen (`/me/security`).
+ *
+ * The page answers four questions: which key signs for me, when did it last
+ * change, who can help me recover, and which device holds it. No single API
+ * document answers all four, so this module reads what exists and says where
+ * each answer came from:
+ *
+ * - **Who and which key** — `GET /v1/me/dashboard` names the caller, then
+ *   `GET /v1/did/{did}` gives the active key, the tier and the key history
+ *   (one entry per `key.rotation` record).
+ * - **Guardians** — `GET /v1/me/guardians` when the server offers it. The API
+ *   only has `PUT /v1/me/guardians` today, so a missing read route falls back
+ *   to the list this browser saved during onboarding and the page labels it
+ *   as such rather than claiming the server confirmed it.
+ * - **Devices** — the key held by this browser. The API keeps no device list.
+ *
+ * Pure data and functions, no React, so the route and the client component
+ * share them and vitest can test them without a JSX transform.
+ */
+
+import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+import {
+  RECOVERY_APPROVAL_THRESHOLD,
+  RECOVERY_GUARDIAN_COUNT,
+  deviceKey,
+  loadPersistedOnboarding,
+  type DeviceKeySummary,
+} from "../web-auth";
+
+import { DashboardError, SECURITY_PATH, loadDashboard } from "./dashboard";
+
+export { SECURITY_PATH };
+
+/** Human-facing label for the page and its links. */
+export const SECURITY_TITLE = "Security";
+
+/** Sign-in, returning to this page afterwards. */
+export const SECURITY_SIGNIN_HREF = `/signin?next=${encodeURIComponent(SECURITY_PATH)}`;
+
+/** Where guardians are set (the onboarding checklist owns that form). */
+export const GUARDIANS_SETUP_HREF = "/onboarding";
+
+/** Guardian list endpoint, relative to `/v1`. Only `PUT` exists server-side today. */
+export const GUARDIANS_ENDPOINT = "/me/guardians";
+
+/** Approvals a recovery needs: the "3" in "3 of 5" (the API's threshold). */
+export const GUARDIAN_THRESHOLD = RECOVERY_APPROVAL_THRESHOLD;
+
+/** Guardians an account names: the "5" in "3 of 5" (the API's count). */
+export const GUARDIAN_TOTAL = RECOVERY_GUARDIAN_COUNT;
+
+/** `3 of 5`, the scheme as the design names it. */
+export const GUARDIAN_SCHEME = `${GUARDIAN_THRESHOLD} of ${GUARDIAN_TOTAL}`;
+
+/** DID document path for `did`, relative to `/v1`. */
+export function didEndpoint(did: string): string {
+  return `/did/${encodeURIComponent(did)}`;
+}
+
+/** Anything that can fetch the security documents; tests pass a narrow `get`. */
+export type SecurityClient = Pick<ApiClient, "get">;
+
+/** The slice of the device key manager this screen reads. Never prompts. */
+export interface SecurityDevice {
+  load(): Promise<DeviceKeySummary | null>;
+  didKey(): Promise<string>;
+}
+
+/** Raised when the API answers with something that is not what the page needs. */
+export class SecurityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SecurityError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function readInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
+}
+
+/** One `key.rotation` record in the account's history. */
+export interface KeyRotation {
+  /** The rotation record's id; open it with the record link. */
+  readonly recordCid: string;
+  /** Position in the server's log, when it said. */
+  readonly seq: number | null;
+  readonly oldKey: string | null;
+  readonly newKey: string | null;
+  /** When it took effect, as recorded. Null when the record carried none. */
+  readonly effectiveAt: string | null;
+  readonly reason: string | null;
+}
+
+/** The account's signing key and its history, from `GET /v1/did/{did}`. */
+export interface KeyState {
+  readonly did: string;
+  /** The key allowed to sign for the account right now. */
+  readonly activeKey: string;
+  readonly tier: number | null;
+  /** Every rotation, oldest first. */
+  readonly rotations: readonly KeyRotation[];
+}
+
+function parseRotation(value: unknown, index: number): KeyRotation {
+  if (!isRecord(value)) {
+    throw new SecurityError(`Key rotation ${index + 1} is not an object.`);
+  }
+  const recordCid = readText(value.record_cid) ?? readText(value.recordCid);
+  if (recordCid === null) {
+    throw new SecurityError(`Key rotation ${index + 1} has no record id.`);
+  }
+  return {
+    recordCid,
+    seq: readInt(value.seq),
+    oldKey: readText(value.old_key) ?? readText(value.oldKey),
+    newKey: readText(value.new_key) ?? readText(value.newKey),
+    effectiveAt: readText(value.effective_at) ?? readText(value.effectiveAt),
+    reason: readText(value.reason),
+  };
+}
+
+/**
+ * Validate a DID document into a {@link KeyState}.
+ *
+ * A document without an active key is rejected rather than shown as "never
+ * rotated": a blank would read as "nothing to worry about" when the truth is
+ * "we don't know which key signs for you".
+ */
+export function parseKeyState(payload: unknown): KeyState {
+  if (!isRecord(payload)) {
+    throw new SecurityError("The API did not return a key document.");
+  }
+  const did = readText(payload.did);
+  if (did === null) {
+    throw new SecurityError("The key document did not name the account.");
+  }
+  const activeKey = readText(payload.active_key) ?? readText(payload.activeKey);
+  if (activeKey === null) {
+    throw new SecurityError("The key document did not name the active key.");
+  }
+  const history = payload.key_history ?? payload.keyHistory;
+  const rotations = (Array.isArray(history) ? history : []).map(parseRotation);
+  // The API lists oldest first; sort only when every entry says where it sits.
+  if (rotations.every((rotation) => rotation.seq !== null)) {
+    rotations.sort((a, b) => (a.seq as number) - (b.seq as number));
+  }
+  return { did, activeKey, tier: readInt(payload.tier), rotations };
+}
+
+/** Where the guardian list on screen came from. */
+export type GuardianSource =
+  /** The server's own list. */
+  | "server"
+  /** What this browser saved while setting guardians up. */
+  | "this-browser"
+  /** Neither knows: this browser never saved a list and the server has no read route. */
+  | "unknown";
+
+/** The recovery guardians, and how sure we are of them. */
+export interface GuardianState {
+  /** Approvals needed to recover (3). */
+  readonly required: number;
+  /** Guardians an account names (5). */
+  readonly total: number;
+  /** The guardians' DIDs, in the order they were set. Empty when unknown. */
+  readonly dids: readonly string[];
+  readonly source: GuardianSource;
+}
+
+/**
+ * Read a guardian list out of a `GET /v1/me/guardians` body.
+ *
+ * Accepts `{"guardians": [...]}` or `{"guardian_dids": [...]}` (the two names
+ * `PUT` accepts) or a bare array. Anything else is `null`: not a list.
+ */
+export function parseGuardianList(payload: unknown): string[] | null {
+  const list = Array.isArray(payload)
+    ? payload
+    : isRecord(payload)
+      ? (payload.guardians ?? payload.guardian_dids)
+      : undefined;
+  if (!Array.isArray(list)) {
+    return null;
+  }
+  return list.map(readText).filter((did): did is string => did !== null);
+}
+
+function guardianState(dids: readonly string[], source: GuardianSource): GuardianState {
+  return { required: GUARDIAN_THRESHOLD, total: GUARDIAN_TOTAL, dids, source };
+}
+
+/**
+ * The guardians, from the server when it can say and from this browser's
+ * onboarding record otherwise. A failed read never fails the page: the
+ * guardians are one card of three, and the card says where its answer came
+ * from.
+ */
+export async function loadGuardians(
+  client: SecurityClient = api,
+  storage?: Parameters<typeof loadPersistedOnboarding>[0],
+): Promise<GuardianState> {
+  try {
+    const list = parseGuardianList(
+      await client.get<unknown>(GUARDIANS_ENDPOINT, { cache: "no-store" }),
+    );
+    if (list !== null) {
+      return guardianState(list, "server");
+    }
+  } catch {
+    // No read route yet (404/405/501), or the read failed: use what we saved.
+  }
+  const saved = loadPersistedOnboarding(storage);
+  return saved.guardians.length > 0
+    ? guardianState(saved.guardians, "this-browser")
+    : guardianState([], "unknown");
+}
+
+/** How many guardians are named, capped at the scheme's total. */
+export function guardiansSet(state: GuardianState): number {
+  return Math.min(state.dids.length, state.total);
+}
+
+/** True when the account has all of its guardians. */
+export function guardiansComplete(state: GuardianState): boolean {
+  return guardiansSet(state) >= state.total;
+}
+
+/** A key held by one of the member's devices. */
+export interface DeviceInfo {
+  /** The passkey's credential id: stable and unique per device key. */
+  readonly id: string;
+  /** `did:key` the device's key signs as. */
+  readonly did: string;
+  /** Epoch milliseconds the key was created, when known. */
+  readonly createdAt: number | null;
+  readonly rpId: string;
+  /** True when this device's key is the one the account currently signs with. */
+  readonly holdsActiveKey: boolean;
+}
+
+/**
+ * The key held by this browser. A browser with no key has no devices to show;
+ * a browser whose storage cannot be read says so instead of looking empty.
+ */
+export async function loadDevices(
+  device: SecurityDevice,
+  activeKey: string,
+): Promise<{ devices: DeviceInfo[]; readable: boolean }> {
+  try {
+    const summary = await device.load();
+    if (summary === null) {
+      return { devices: [], readable: true };
+    }
+    const did = await device.didKey();
+    return {
+      devices: [
+        {
+          id: summary.credentialId,
+          did,
+          createdAt: Number.isFinite(summary.createdAt) ? summary.createdAt : null,
+          rpId: summary.rpId,
+          holdsActiveKey: did === activeKey,
+        },
+      ],
+      readable: true,
+    };
+  } catch {
+    return { devices: [], readable: false };
+  }
+}
+
+/** Everything the security screen shows. */
+export interface SecurityData {
+  /** The account's DID: who the API says you are. */
+  readonly did: string;
+  readonly tier: number | null;
+  /** The key that currently signs for the account. */
+  readonly activeKey: string;
+  /** Every key rotation, oldest first. */
+  readonly rotations: readonly KeyRotation[];
+  /** The most recent rotation, or `null` when the key has never changed. */
+  readonly lastRotation: KeyRotation | null;
+  readonly guardians: GuardianState;
+  /** Keys held by devices Scholium can see: this browser's, when it has one. */
+  readonly devices: readonly DeviceInfo[];
+  /** False when this browser's key store could not be read. */
+  readonly devicesReadable: boolean;
+}
+
+/** Injection points for {@link loadSecurity}. */
+export interface LoadSecurityOptions {
+  client?: SecurityClient;
+  device?: SecurityDevice;
+  storage?: Parameters<typeof loadPersistedOnboarding>[0];
+}
+
+/**
+ * Load the security screen.
+ *
+ * The account's DID comes from the API (`/me/dashboard`), not from the device
+ * key: after a rotation the device holds a different key than the one the
+ * account was created with, and asking about the device's own DID would show
+ * a brand-new identity with no history.
+ */
+export async function loadSecurity(options: LoadSecurityOptions = {}): Promise<SecurityData> {
+  const client = options.client ?? api;
+  const { did } = await loadDashboard(client);
+
+  const [key, guardians] = await Promise.all([
+    client.get<unknown>(didEndpoint(did), { cache: "no-store" }).then(parseKeyState),
+    loadGuardians(client, options.storage),
+  ]);
+  const { devices, readable } = await loadDevices(options.device ?? deviceKey, key.activeKey);
+
+  return {
+    did: key.did,
+    tier: key.tier,
+    activeKey: key.activeKey,
+    rotations: key.rotations,
+    lastRotation: key.rotations.length > 0 ? key.rotations[key.rotations.length - 1]! : null,
+    guardians,
+    devices,
+    devicesReadable: readable,
+  };
+}
+
+/** Sort a failed load into a plain message. */
+export function describeSecurityError(error: unknown): string {
+  if (error instanceof ApiError) {
+    return error.detail || error.title || "The API could not return your security details.";
+  }
+  if (error instanceof NetworkError) {
+    return "Scholium could not reach the server. Check your connection and try again.";
+  }
+  if (error instanceof SecurityError || error instanceof DashboardError) {
+    return error.message;
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return "The API could not return your security details.";
+}
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/**
+ * `12 Nov 2026, 09:00 UTC` for an ISO string or epoch milliseconds.
+ *
+ * Built by hand from UTC fields so the text is the same in every browser and
+ * time zone (an audit trail should not shift with the reader's locale).
+ * Returns `null` for anything that is not a date.
+ */
+export function formatInstant(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return (
+    `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}, ` +
+    `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`
+  );
+}
+
+/** `12 Nov 2026` (date only), for places where the time is noise. */
+export function formatDay(value: string | number | null | undefined): string | null {
+  const instant = formatInstant(value);
+  return instant === null ? null : instant.replace(/,.*$/, "");
+}
+
+/** The status line under the guardian count. */
+export function describeGuardians(state: GuardianState): string {
+  const set = guardiansSet(state);
+  if (state.source === "unknown") {
+    return "No guardians are recorded on this device. If you set them somewhere else, they are not shown here.";
+  }
+  if (set === 0) {
+    return "You have not set any recovery guardians yet.";
+  }
+  if (set < state.total) {
+    return `${set} of ${state.total} guardians set. Name ${state.total - set} more so any ${state.required} can recover your account.`;
+  }
+  return `All ${state.total} guardians set.`;
+}
+
+/** Where a guardian list came from, in words. Empty when the server confirmed it. */
+export function describeGuardianSource(state: GuardianState): string | null {
+  return state.source === "this-browser" ? "Saved from this browser." : null;
+}

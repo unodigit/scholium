@@ -16,6 +16,9 @@ import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
 /** The `/me` route (docs/design.md §4: Dashboard). */
 export const ME_PATH = "/me";
 
+/** The member's security screen: devices, recovery guardians, key rotation. */
+export const SECURITY_PATH = "/me/security";
+
 /** Alias kept for callers that name the feature rather than the route. */
 export const DASHBOARD_PATH = "/me";
 

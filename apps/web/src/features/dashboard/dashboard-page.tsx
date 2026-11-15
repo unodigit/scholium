@@ -7,6 +7,7 @@ import { EmptyState, StatusChip, isPaperStatus } from "../ui-kit";
 
 import {
   DASHBOARD_TITLE,
+  SECURITY_PATH,
   SIGNIN_HREF,
   describeDashboardError,
   loadDashboard as fetchDashboard,
@@ -209,13 +210,14 @@ function DashboardView({
       <MyPapersCard papers={data.my_papers} />
       <MyReviewsCard reviews={data.my_reviews} />
       <CredentialsCard did={data.did} />
+      <SecurityCard />
       <NotificationsCard onRefresh={onRefresh} />
     </div>
   );
 }
 
 /** One card. `anchor` is set where another screen deep-links to it. */
-function Card({
+export function Card({
   title,
   anchor,
   children,
@@ -420,6 +422,20 @@ function CredentialsCard({ did }: { did: string }) {
         ORCID, affiliation, reviewer categories and contribution credentials appear
         here, each with a proof you can share.
       </p>
+    </Card>
+  );
+}
+
+/** Doorway to `/me/security`; the screen itself reads the key and guardian state. */
+function SecurityCard() {
+  return (
+    <Card title="Security" anchor="security">
+      <p className="db-cred-note meta">
+        Your devices, your recovery guardians and your last key rotation.
+      </p>
+      <a className="db-button" href={SECURITY_PATH}>
+        Manage security
+      </a>
     </Card>
   );
 }
