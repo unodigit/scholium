@@ -1,32 +1,53 @@
-"""``GET /v1/feeds/{category}`` -- an Atom feed of newly listed papers.
+"""``GET /v1/feeds/{category}`` -- a feed of newly listed papers.
 
 The module loader mounts ``router`` under ``/v1``, so this package serves::
 
-    GET /v1/feeds/{category}[?limit=1-100]
+    GET /v1/feeds/{category}[?limit=1-100][?format=atom|json]
 
 ``{category}`` is a category exactly as papers are filed under it (``cs.AI``).
-The answer is an Atom 1.0 document (``application/atom+xml``) listing the
-papers filed under that category that have a listed version, newest first --
-newest by the instant the paper first appeared in the catalog, the same order
-as ``GET /v1/papers?category=...`` -- one ``<entry>`` per paper::
+The answer lists the papers filed under that category that have a listed
+version, newest first -- newest by the instant the paper first appeared in the
+catalog, the same order as ``GET /v1/papers?category=...`` -- one entry per
+paper.  Which document carries them depends on ``format``:
 
-    <entry>
-      <id>sch:k3f9-q2xz-7mwd</id>
-      <title>...</title>
-      <link rel="alternate" type="application/json" href=".../v1/papers/sch:k3f9-q2xz-7mwd"/>
-      <updated>2026-02-01T00:00:00Z</updated>
-      <published>2026-01-01T00:00:00Z</published>
-      <author><name>did:key:z6Mk...</name><uri>did:key:z6Mk...</uri></author>
-      <category term="cs.AI"/>
-      <summary type="text">...</summary>
-      <rights>CC-BY-4.0</rights>
-      <sch:status>reviewed</sch:status>
-      <sch:version>2</sch:version>
-    </entry>
+``atom`` (the default, also when the parameter is absent)
+    An Atom 1.0 document (``application/atom+xml``; feature 88)::
 
-The entry's ``<id>`` is the paper's ``sch:`` short id and ``<sch:status>`` its
-stored status, so a reader can tell a retracted paper from a preprint without
-fetching it.  See :mod:`app.modules.feeds.atom` for the document.
+        <entry>
+          <id>sch:k3f9-q2xz-7mwd</id>
+          <title>...</title>
+          <link rel="alternate" type="application/json" href=".../v1/papers/sch:k3f9-q2xz-7mwd"/>
+          <updated>2026-02-01T00:00:00Z</updated>
+          <published>2026-01-01T00:00:00Z</published>
+          <author><name>did:key:z6Mk...</name><uri>did:key:z6Mk...</uri></author>
+          <category term="cs.AI"/>
+          <summary type="text">...</summary>
+          <rights>CC-BY-4.0</rights>
+          <sch:status>reviewed</sch:status>
+          <sch:version>2</sch:version>
+        </entry>
+
+``json``
+    The same papers as a JSON Feed 1.1 document
+    (``application/feed+json``; feature 89), one item per paper::
+
+        {
+          "id": "sch:k3f9-q2xz-7mwd",
+          "url": ".../v1/papers/sch:k3f9-q2xz-7mwd",
+          "title": "...",
+          "content_text": "the abstract",
+          "date_published": "2026-01-01T00:00:00Z",
+          "date_modified": "2026-02-01T00:00:00Z",
+          "authors": [{"name": "did:key:z6Mk..."}],
+          "tags": ["cs.AI"],
+          "_scholium": {"status": "reviewed", "version": 2, "licence": "CC-BY-4.0"}
+        }
+
+In both, the entry's id is the paper's ``sch:`` short id and its status and
+version ride along (``<sch:status>`` in Atom, the ``_scholium`` extension in
+JSON Feed), so a reader can tell a retracted paper from a preprint without
+fetching it.  See :mod:`app.modules.feeds.atom` and
+:mod:`app.modules.feeds.jsonfeed` for the two documents.
 
 Only *listed* versions are ever shown: a paper still in moderation, held or
 rejected is not in the catalog and so is not in the feed.  A category no paper
@@ -47,6 +68,7 @@ from app.modules.catalog import listing
 from app.modules.submissions import authorship_for
 
 from .atom import ATOM_MEDIA_TYPE, FeedAuthor, FeedEntry, render_feed
+from .jsonfeed import JSON_FEED_MEDIA_TYPE, render_json_feed
 
 __all__ = ["DEFAULT_LIMIT", "MAX_LIMIT", "router"]
 
@@ -83,8 +105,8 @@ def _entry(entry: listing.CatalogEntry, base_url: str) -> FeedEntry:
 @router.get(
     "/feeds/{category}",
     response_class=Response,
-    responses={200: {"content": {ATOM_MEDIA_TYPE: {}}}},
-    summary="Atom feed of the newest papers listed in a category",
+    responses={200: {"content": {ATOM_MEDIA_TYPE: {}, JSON_FEED_MEDIA_TYPE: {}}}},
+    summary="Feed of the newest papers listed in a category",
 )
 def get_category_feed(
     request: Request,
@@ -95,8 +117,21 @@ def get_category_feed(
         le=MAX_LIMIT,
         description=f"the most entries in the feed (default {DEFAULT_LIMIT})",
     ),
+    format: Optional[str] = Query(
+        default=None,
+        pattern="^(atom|json)$",
+        description=(
+            "the document the feed comes as: json for JSON Feed 1.1,"
+            " atom (the default) for Atom 1.0"
+        ),
+    ),
 ) -> Response:
-    """Return the Atom feed of ``category``'s newest listed papers."""
+    """Return ``category``'s newest listed papers as a feed.
+
+    ``format=json`` answers a JSON Feed 1.1 document; anything else -- the
+    parameter absent, or ``atom`` -- answers Atom, as before.  Both documents
+    are built from the same page of the same listing in the same order.
+    """
     page = listing.list_papers(
         tab="latest",
         category=category,
@@ -106,11 +141,22 @@ def get_category_feed(
     base_url = str(request.base_url)
     if not base_url.endswith("/"):
         base_url += "/"
-    feed_url = str(request.url.replace(query=""))
+    entries = [_entry(entry, base_url) for entry in page.entries]
+    if format == "json":
+        document = render_json_feed(
+            feed_url=str(request.url),
+            home_page_url=base_url,
+            title=f"Scholium: new papers in {category}",
+            description=(
+                f"Papers newly listed under {category} on Scholium, newest first."
+            ),
+            entries=entries,
+        )
+        return Response(content=document, media_type=JSON_FEED_MEDIA_TYPE)
     document = render_feed(
-        feed_id=feed_url,
+        feed_id=str(request.url.replace(query="")),
         title=f"Scholium: new papers in {category}",
         self_href=str(request.url),
-        entries=[_entry(entry, base_url) for entry in page.entries],
+        entries=entries,
     )
     return Response(content=document, media_type=f"{ATOM_MEDIA_TYPE}; charset=utf-8")

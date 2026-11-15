@@ -53,6 +53,7 @@ __all__ = [
     "PUBLISHER",
     "SCHOLIUM_NAMESPACE",
     "render_feed",
+    "rfc3339",
 ]
 
 ATOM_NAMESPACE = "http://www.w3.org/2005/Atom"
@@ -110,10 +111,12 @@ def _attr(value: object) -> str:
     return quoteattr(_ILLEGAL_XML.sub("", str(value)))
 
 
-def _rfc3339(moment: datetime) -> str:
+def rfc3339(moment: datetime) -> str:
     """``moment`` as the UTC ``YYYY-MM-DDThh:mm:ssZ`` an Atom date requires.
 
     The database stores naive UTC, so a naive value is taken to already be UTC.
+    The JSON Feed renderer ( :mod:`app.modules.feeds.jsonfeed` ) dates its
+    documents the same way: RFC 3339 is what both formats ask for.
     """
     if moment.tzinfo is not None:
         moment = moment.astimezone(timezone.utc)
@@ -127,10 +130,10 @@ def _entry_xml(entry: FeedEntry, fallback: datetime) -> str:
         f"    <id>{_text(entry.short_id)}</id>",
         f"    <title>{_text(entry.title)}</title>",
         f'    <link rel="alternate" type="application/json" href={_attr(entry.href)}/>',
-        f"    <updated>{_rfc3339(updated)}</updated>",
+        f"    <updated>{rfc3339(updated)}</updated>",
     ]
     if entry.published is not None:
-        lines.append(f"    <published>{_rfc3339(entry.published)}</published>")
+        lines.append(f"    <published>{rfc3339(entry.published)}</published>")
     for author in entry.authors:
         lines.append(
             f"    <author><name>{_text(author.did)}</name>"
@@ -169,7 +172,7 @@ def render_feed(
     dates = [moment for moment in dates if moment is not None]
     # Every moment here is naive UTC or aware; compare them on one footing.
     feed_updated = (
-        max(dates, key=lambda moment: _rfc3339(moment)) if dates else stamp
+        max(dates, key=lambda moment: rfc3339(moment)) if dates else stamp
     )
 
     head = [
@@ -177,7 +180,7 @@ def render_feed(
         f'<feed xmlns="{ATOM_NAMESPACE}" xmlns:sch="{SCHOLIUM_NAMESPACE}">',
         f"  <id>{_text(feed_id)}</id>",
         f"  <title>{_text(title)}</title>",
-        f"  <updated>{_rfc3339(feed_updated)}</updated>",
+        f"  <updated>{rfc3339(feed_updated)}</updated>",
         f'  <link rel="self" type="{ATOM_MEDIA_TYPE}" href={_attr(self_href)}/>',
         # RFC 4287 wants an author on every entry *or* on the feed.  The feed's
         # is the publisher, so an entry whose authorship rows are missing is
