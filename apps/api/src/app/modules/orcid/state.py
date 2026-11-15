@@ -1,0 +1,131 @@
+"""Signed OAuth ``state`` values for the ORCID link flow (plugin: orcid).
+
+``GET /v1/auth/orcid/start`` hands the browser an ORCID authorize URL whose
+``state`` query parameter is a compact HS256 JSON Web Token signed with
+``settings.JWT_SECRET``.  The value is self-contained, so the later
+``GET /v1/auth/orcid/callback`` can verify it without server-side storage,
+and a tampered or expired state is refused::
+
+    state = sign_state(did="did:key:z6Mk...")
+    claims = verify_state(state)          # raises InvalidState if unusable
+
+Claims:
+
+``purpose``
+    Always :data:`STATE_PURPOSE`.  The signed value is purpose-bound, so a
+    state cannot be replayed as an access token (or vice versa) even though
+    both are signed with the same secret.
+``iat`` / ``exp``
+    Issue and expiry instants.  A state is good for :data:`STATE_TTL`.
+``jti``
+    A random identifier, unique per issue; two calls never share a state.
+``nonce``
+    A second, independent 256-bit random value for correlating the callback.
+``did``
+    Present only when the caller was authenticated: the DID of the access
+    token that called ``/start``, which the resulting ORCID credential is to
+    be bound to.  It is never copied from a request parameter.
+
+There is deliberately no ``aud`` claim: the value is not a bearer credential
+and the callback authenticates it by its signature and ``purpose`` alone.
+"""
+
+from __future__ import annotations
+
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+
+import jwt
+
+from app.settings import settings
+
+__all__ = [
+    "InvalidState",
+    "NONCE_BYTES",
+    "STATE_ALGORITHM",
+    "STATE_PURPOSE",
+    "STATE_TTL",
+    "sign_state",
+    "verify_state",
+]
+
+#: How long a state handed to ORCID stays valid after it is issued.
+STATE_TTL = timedelta(minutes=10)
+
+#: Random bytes behind each state nonce (256 bits).
+NONCE_BYTES = 32
+
+#: Signature algorithm; symmetric because the same node verifies the state.
+STATE_ALGORITHM = "HS256"
+
+#: Claim that binds a state to this flow and to no other token type.
+STATE_PURPOSE = "scholium:orcid-state"
+
+
+class InvalidState(ValueError):
+    """The state is malformed, forged, expired or not an ORCID state."""
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def sign_state(
+    *,
+    did: Optional[str] = None,
+    nonce: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> str:
+    """Return a fresh signed state, optionally bound to ``did``.
+
+    ``now`` defaults to the current time and exists so callers and tests can
+    mint a state at another instant.  Raising ``ValueError`` for an empty
+    ``did`` (when one is supplied) keeps a blank identifier out of the signed
+    claims.
+    """
+    issued_at = _utcnow() if now is None else now
+    claims: dict[str, Any] = {
+        "purpose": STATE_PURPOSE,
+        "nonce": nonce if nonce is not None else secrets.token_urlsafe(NONCE_BYTES),
+        "jti": uuid.uuid4().hex,
+        "iat": issued_at,
+        "exp": issued_at + STATE_TTL,
+    }
+    if did is not None:
+        if not isinstance(did, str) or not did.strip():
+            raise ValueError("did must be a non-empty string when supplied")
+        claims["did"] = did
+    return jwt.encode(claims, settings.JWT_SECRET, algorithm=STATE_ALGORITHM)
+
+
+def verify_state(state: str) -> dict[str, Any]:
+    """Verify ``state`` and return its claims.
+
+    Raises :class:`InvalidState` when the value is not a state this node
+    signed, has expired, or carries another purpose.
+    """
+    if not isinstance(state, str) or not state:
+        raise InvalidState("The OAuth state is missing.")
+
+    options: dict[str, Any] = {
+        "require": ["exp", "iat", "jti", "purpose"],
+        "verify_aud": False,
+    }
+
+    try:
+        claims = jwt.decode(
+            state,
+            settings.JWT_SECRET,
+            algorithms=[STATE_ALGORITHM],
+            options=options,
+        )
+    except jwt.ExpiredSignatureError:
+        raise InvalidState("The OAuth state has expired.") from None
+    except jwt.InvalidTokenError:
+        raise InvalidState("The OAuth state is invalid.") from None
+
+    if claims.get("purpose") != STATE_PURPOSE:
+        raise InvalidState("The OAuth state is not an ORCID state.")
+    return claims
