@@ -8,11 +8,12 @@ response with no extra wiring:
   :class:`RecordIdMismatch` -- ``422``;
 * :class:`InvalidIdempotencyKey` and :class:`IdempotencyKeyReused` -- ``422``;
 * :class:`InvalidRecordSignature` -- ``401``;
+* :class:`InsufficientAuthorTier` -- ``403``;
 * :class:`DuplicateRecord` -- ``409``.
 
-The classes are also plain Python exceptions (``LookupError``, ``ValueError``
-and ``RuntimeError`` respectively) for callers that would rather catch them
-without FastAPI.
+The classes are also plain Python exceptions (``LookupError``, ``ValueError``,
+``PermissionError`` and ``RuntimeError``) for callers that would rather catch
+them without FastAPI.
 """
 
 from __future__ import annotations
@@ -20,11 +21,16 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from app.errors import ProblemException
+from app.security import MAX_TIER, MIN_TIER, Tier
 
 UNKNOWN_RECORD_TYPE = "urn:scholium:problem:unknown-record-type"
 INVALID_RECORD = "urn:scholium:problem:invalid-record"
 RECORD_ID_MISMATCH = "urn:scholium:problem:record-id-mismatch"
 INVALID_RECORD_SIGNATURE = "urn:scholium:problem:record-signature-invalid"
+#: The author of the record holds a tier below the handler's ``min_tier``.
+#: The same problem type the app-wide ``require_tier`` 403 uses: it is the one
+#: problem "this principal's trust tier is too low", whoever the principal is.
+INSUFFICIENT_AUTHOR_TIER = "urn:scholium:problem:insufficient-tier"
 DUPLICATE_RECORD = "urn:scholium:problem:duplicate-record"
 INVALID_IDEMPOTENCY_KEY = "urn:scholium:problem:invalid-idempotency-key"
 IDEMPOTENCY_KEY_REUSED = "urn:scholium:problem:idempotency-key-reused"
@@ -141,6 +147,62 @@ class InvalidRecordSignature(ProblemException, ValueError):
             "signing key."
         )
         super().__init__(401, message, type=INVALID_RECORD_SIGNATURE)
+
+
+def _describe_tier(tier: int) -> str:
+    """Name a tier the way the app-wide 403s do: ``tier 3 (Reviewer)``."""
+    label = Tier(tier).label if MIN_TIER <= tier <= MAX_TIER else "unknown"
+    return f"tier {int(tier)} ({label})"
+
+
+class InsufficientAuthorTier(ProblemException, PermissionError):
+    """The record's author holds a tier below the handler's ``min_tier``: ``403``.
+
+    A record's authority comes from its signature, not from the access token of
+    whoever relays it, so the tier this names is the *author's* account tier
+    (0 for a DID with no account row) -- not the caller's.  The ``detail`` (and
+    the ``errors`` entry located at ``body.author``) state both the tier the
+    record type requires and the tier its author holds; ``required_tier`` and
+    ``author_tier`` carry the same numbers as extension members, mirroring the
+    app-wide ``require_tier`` 403.
+
+    It is also a ``PermissionError`` for callers that would rather catch it in
+    plain Python.
+    """
+
+    def __init__(
+        self,
+        record_type: object,
+        author: object,
+        required: int,
+        author_tier: int,
+    ) -> None:
+        self.record_type = record_type
+        self.author = author
+        self.required_tier = int(required)
+        self.author_tier = int(author_tier)
+        shown_type = _show(record_type if isinstance(record_type, str) else repr(record_type))
+        shown_author = _show(author if isinstance(author, str) else repr(author))
+        message = (
+            f"A {shown_type!r} record may only be submitted by "
+            f"{_describe_tier(self.required_tier)} or higher; its author "
+            f"{shown_author} is {_describe_tier(self.author_tier)}."
+        )
+        super().__init__(
+            403,
+            message,
+            type=INSUFFICIENT_AUTHOR_TIER,
+            required_tier=self.required_tier,
+            author_tier=self.author_tier,
+            errors=[
+                {
+                    "loc": ["body", "author"],
+                    "msg": message,
+                    "type": "insufficient_author_tier",
+                    "input": shown_author,
+                }
+            ],
+        )
 
 
 class DuplicateRecord(ProblemException, ValueError):

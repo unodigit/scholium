@@ -243,6 +243,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     instance = getattr(exc, "instance", None)
     errors = getattr(exc, "errors", None)
     detail = getattr(exc, "detail", None)
+    extensions = getattr(exc, "extensions", None)
 
     if isinstance(exc, ProblemException):
         if title is None:
@@ -270,6 +271,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         errors=errors,
         request=request,
         headers=headers,
+        **(extensions or {}),
     )
 
 

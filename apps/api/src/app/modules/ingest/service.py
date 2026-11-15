@@ -25,13 +25,16 @@ Every write on this API is a client-signed record envelope::
 5. **Signature.**  ``sig`` is verified over those same bytes against the
    author's *active* signing key (:func:`active_signing_key`); a signature
    made by any other key is :class:`InvalidRecordSignature` (401).
-6. **Duplicate.**  A cid already in the event log is :class:`DuplicateRecord`
+6. **Author tier.**  The author's account tier must reach the handler's
+   ``min_tier``; below it the record is :class:`InsufficientAuthorTier` (403).
+   A type open to tier 0 skips the lookup.
+7. **Duplicate.**  A cid already in the event log is :class:`DuplicateRecord`
    (409), checked before the handler runs so a repeat cannot make the handler
    act twice.
-7. **Handler.**  The registered handler runs with a copy of the validated
+8. **Handler.**  The registered handler runs with a copy of the validated
    envelope before anything is persisted, so it can still refuse the record by
    raising a ``ProblemException``.  See below for what it may return.
-8. **Ledger.**  The record is appended to the event log
+9. **Ledger.**  The record is appended to the event log
    (:func:`app.modules.ledger.append`), which notifies ledger subscribers.
    The ledger's UNIQUE constraint covers two submissions racing each other,
    and is reported as :class:`DuplicateRecord` too.
@@ -63,6 +66,19 @@ active now instead -- which is what makes ingest reject records signed by a
 key that was rotated out before the record arrived.  The lookup is imported
 lazily so this package stays importable on its own and a node without that
 plugin still verifies the common case.
+
+The author's tier
+-----------------
+
+The tier this pipeline checks is the *author's* -- the DID the signature
+authenticates -- and not the caller's: relaying an authentic record is
+allowed, so a moderator may submit a tier-1 member's record, but the member's
+own record still needs the tier its type demands.  :func:`author_tier` reads
+the ``accounts`` table the identity plugin owns (a DID that never signed in
+has no row and reads as tier 0, the tier first sign-in creates).  The import
+is lazy for the same reason as the key resolver's: a node without the
+identity plugin reads every author as tier 0, which changes nothing for a
+tier-0 type and refuses everything above it -- deny, rather than guess.
 
 What is returned
 ----------------
@@ -100,8 +116,12 @@ from scholium_record_core import (
     verify_envelope,
 )
 
+from app import db
+from app.security import MAX_TIER, MIN_TIER
+
 from .errors import (
     DuplicateRecord,
+    InsufficientAuthorTier,
     InvalidRecord,
     InvalidRecordSignature,
     RecordIdMismatch,
@@ -115,6 +135,7 @@ __all__ = [
     "PAPER_GENESIS_TYPE",
     "PAPER_VERSION_TYPE",
     "active_signing_key",
+    "author_tier",
     "ingest",
     "record_short_id",
 ]
@@ -199,6 +220,31 @@ def _verification_key(key: str) -> str | bytes:
     return raw if len(raw) == ED25519_PUBLIC_KEY_LENGTH else key
 
 
+def author_tier(did: object) -> int:
+    """Return ``did``'s trust tier from the ``accounts`` table; 0 when unknown.
+
+    An author who never signed in to this node has no account row and reads as
+    tier 0 -- the tier first sign-in creates -- and so does a node without the
+    identity plugin, whose models are imported lazily for the same load-order
+    reason as :func:`active_signing_key`'s resolver.  A tier stored outside
+    0-4 is clamped into range, the way the profiles and endorsements plugins
+    read the same column.
+    """
+    if not isinstance(did, str) or not did:
+        return 0
+    try:
+        from app.modules.identity.models import Account, ensure_account_table
+    except ImportError:
+        return 0
+    ensure_account_table()
+    with db.SessionLocal() as session:
+        account = session.get(Account, did)
+        if account is None:
+            return 0
+        tier = int(account.tier)
+    return min(max(tier, int(MIN_TIER)), int(MAX_TIER))
+
+
 # --------------------------------------------------------------------------- #
 # Validation
 # --------------------------------------------------------------------------- #
@@ -257,6 +303,24 @@ def _check_signature(record: Mapping[str, Any]) -> None:
     key = _verification_key(active_signing_key(author))
     if not verify_envelope(record, signature, did_key=key):
         raise InvalidRecordSignature(author)
+
+
+def _check_author_tier(record: Mapping[str, Any], registration: HandlerRegistration) -> None:
+    """Refuse a record whose author's tier is below the handler's min_tier (403).
+
+    Runs *after* the signature check -- the envelope's ``author`` claim is only
+    trusted once the signature verifies against their active key -- and before
+    the duplicate check and the handler, so an unauthorised author's record is
+    refused with nothing written and no handler side effects.  A type open to
+    tier 0 (``min_tier=0``, the common case) needs no lookup at all: every
+    author, known or not, holds tier 0 or more.
+    """
+    required = registration.min_tier
+    if required <= MIN_TIER:
+        return
+    tier = author_tier(record["author"])
+    if tier < required:
+        raise InsufficientAuthorTier(registration.record_type, record["author"], required, tier)
 
 
 def _check_not_stored(record_id: str) -> None:
@@ -338,10 +402,10 @@ def ingest(record: Mapping[str, Any]) -> IngestResult:
     """Validate ``record`` and append it to the ledger; return what was stored.
 
     Raises :class:`InvalidRecord`, :class:`RecordIdMismatch` (422),
-    :class:`UnknownRecordType` (422), :class:`InvalidRecordSignature` (401) or
-    :class:`DuplicateRecord` (409).  Any error the handler raises propagates
-    unchanged.  Nothing is appended unless every check before the ledger step
-    passed.
+    :class:`UnknownRecordType` (422), :class:`InvalidRecordSignature` (401),
+    :class:`InsufficientAuthorTier` (403) or :class:`DuplicateRecord` (409).
+    Any error the handler raises propagates unchanged.  Nothing is appended
+    unless every check before the ledger step passed.
     """
     if not isinstance(record, Mapping):
         raise InvalidRecord(
@@ -354,6 +418,7 @@ def ingest(record: Mapping[str, Any]) -> IngestResult:
     _check_body(record, registration)
     record_id = _recomputed_id(record)
     _check_signature(record)
+    _check_author_tier(record, registration)
     _check_not_stored(record_id)
 
     # A handler gets its own copy: whatever it does with it cannot change the
