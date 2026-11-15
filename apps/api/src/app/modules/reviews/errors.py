@@ -30,6 +30,7 @@ __all__ = [
     "REVIEW_NOT_AUTHORIZED",
     "REVIEW_NOT_COMMITTED",
     "REVIEW_RESPONSE_NOT_AUTHORIZED",
+    "REVIEW_SIGNATURE_NOT_AUTHORIZED",
     "REVIEW_UPDATE_INVALID",
     "UNKNOWN_REVIEW_TARGET",
     "ReviewAlreadyCommitted",
@@ -39,6 +40,7 @@ __all__ = [
     "ReviewNotAuthorized",
     "ReviewNotCommitted",
     "ReviewResponseNotAuthorized",
+    "ReviewSignatureNotAuthorized",
     "ReviewUpdateInvalid",
     "UnknownReviewTarget",
 ]
@@ -52,6 +54,7 @@ REVIEW_ALREADY_REVEALED = "urn:scholium:problem:review-already-revealed"
 REVIEW_UPDATE_INVALID = "urn:scholium:problem:review-update-invalid"
 REVIEW_ALREADY_UPDATED = "urn:scholium:problem:review-already-updated"
 REVIEW_RESPONSE_NOT_AUTHORIZED = "urn:scholium:problem:review-response-not-authorized"
+REVIEW_SIGNATURE_NOT_AUTHORIZED = "urn:scholium:problem:review-signature-not-authorized"
 
 _MAX_ECHO = 64
 
@@ -310,5 +313,31 @@ class ReviewResponseNotAuthorized(ProblemException, PermissionError):
             403,
             message,
             type=REVIEW_RESPONSE_NOT_AUTHORIZED,
+            review=review_cid,
+        )
+
+
+class ReviewSignatureNotAuthorized(ProblemException, PermissionError):
+    """Only the review's own reviewer may sign it with their name: ``403``.
+
+    A ``review.formal`` is signed by a pseudonymous per-paper review key, so
+    the record cannot say who the reviewer is.  Public credit is claimed with
+    the authenticated caller's DID, and the only link from that DID to the
+    review is the escrow's uniqueness token -- ``HMAC(reviewer_did ||
+    paper_cid)``.  A caller whose token does not match the escrow did not
+    write the review and cannot attach a name to it.
+    """
+
+    def __init__(self, caller: object, review_cid: object) -> None:
+        self.caller = caller
+        self.review_cid = review_cid
+        message = (
+            "Only the reviewer who sealed this review may sign it with their "
+            "name; the caller did not seal it."
+        )
+        super().__init__(
+            403,
+            message,
+            type=REVIEW_SIGNATURE_NOT_AUTHORIZED,
             review=review_cid,
         )

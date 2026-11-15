@@ -32,6 +32,14 @@ review key sealed a review on the version, the record carries that commit's
 reveal fills in the ``review`` row's revealed columns.  See
 :mod:`app.modules.reviews.reveal`.
 
+Feature 111: a ``review.formal`` with ``"signed": true`` takes public credit.
+The authenticated caller's DID -- proved against the escrow's uniqueness token
+to be the review's own reviewer -- is written to ``review.signed_by``, and
+``GET /v1/profiles/{did}/reviews`` (and the ``reviews`` member of
+``GET /v1/profiles/{did}``) serves the revealed, signed reviews.  An anonymous
+review keeps ``signed_by`` NULL and appears on no profile.  See
+:mod:`app.modules.reviews.reveal`.
+
 Feature 112: ``POST /v1/reviews/reveal`` also accepts an updated
 ``review.formal`` -- its ``prev`` names the reviewer's earlier one and its
 ``target`` is a newer version of the paper -- and ``GET /v1/papers/{id}/reviews``
@@ -65,6 +73,7 @@ from .errors import (
     REVIEW_NOT_AUTHORIZED,
     REVIEW_NOT_COMMITTED,
     REVIEW_RESPONSE_NOT_AUTHORIZED,
+    REVIEW_SIGNATURE_NOT_AUTHORIZED,
     REVIEW_UPDATE_INVALID,
     UNKNOWN_REVIEW_TARGET,
     ReviewAlreadyCommitted,
@@ -74,6 +83,7 @@ from .errors import (
     ReviewNotAuthorized,
     ReviewNotCommitted,
     ReviewResponseNotAuthorized,
+    ReviewSignatureNotAuthorized,
     ReviewUpdateInvalid,
     UnknownReviewTarget,
 )
@@ -109,7 +119,9 @@ from .reveal import (
     handle_review_reveal,
     normalise_recommendation,
     persist_review_reveal,
+    require_public_signature,
     review_reveal_fields,
+    reviewer_owns_review,
 )
 from .response import (
     ACCEPTED,
@@ -188,6 +200,7 @@ __all__ = [
     "REVIEW_RESPONSE_NOT_AUTHORIZED",
     "REVIEW_RESPONSE_TYPE",
     "REVIEW_REVEAL_MIN_TIER",
+    "REVIEW_SIGNATURE_NOT_AUTHORIZED",
     "REVIEW_UPDATE_INVALID",
     "RUBRIC_DIMENSIONS",
     "Review",
@@ -204,6 +217,7 @@ __all__ = [
     "ReviewResponseFields",
     "ReviewResponseNotAuthorized",
     "ReviewRevealFields",
+    "ReviewSignatureNotAuthorized",
     "ReviewUpdateInvalid",
     "Revision",
     "UNKNOWN_REVIEW_TARGET",
@@ -251,6 +265,7 @@ __all__ = [
     "persist_review_response",
     "persist_review_reveal",
     "require_not_author",
+    "require_public_signature",
     "require_unique_reviewer",
     "resolve_paper",
     "resolve_review_target",
@@ -258,6 +273,7 @@ __all__ = [
     "review_commit_fields",
     "review_history",
     "review_reveal_fields",
+    "reviewer_owns_review",
     "router",
     "save_invitation",
     "save_review_escrow",

@@ -73,13 +73,32 @@ as given), ``recommendation`` (normalised, see :func:`normalise_recommendation`)
 ``confidence`` (an integer, see :data:`CONFIDENCE_LEVELS`), ``report_cid`` (only
 when the review carries a ``reportCid``; an inline ``report`` stays in the
 record, since the content store is public) and ``revealed_at`` (the record's
-``created``).  ``signed_by`` is left alone: signing a review with a name is
-feature 111.
+``created``).
+
+Signing with a name (feature 111)
+---------------------------------
+
+A reviewer may take public credit by putting ``"signed": true`` in the
+``review.formal`` body.  The record itself is signed by the pseudonymous review
+key, so it cannot say *who* the reviewer is; the authenticated caller can.  On
+an accepted reveal -- or an update of an earlier one -- the caller's DID is
+written to ``review.signed_by``, and ``GET /v1/profiles/{did}`` (and
+``GET /v1/profiles/{did}/reviews``) serves the review on that profile once it is
+revealed.  Only the review's own reviewer may do this: their DID and the paper
+must satisfy the escrow's uniqueness token (:func:`reviewer_owns_review`),
+otherwise the reveal is refused (``403``) before anything is written.  An
+anonymous review leaves ``signed_by`` NULL and never appears on a profile.
+
+The ``signed`` flag is part of the sealed body, so it is covered by the
+commitment of a first reveal; a reviewer decides before sealing whether the
+review carries their name.  An update is not sealed, so a reviewer who revealed
+anonymously may sign a later update, and a reviewer who signed stays signed.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import re
@@ -99,9 +118,11 @@ from .errors import (
     ReviewAlreadyUpdated,
     ReviewCommitmentMismatch,
     ReviewNotCommitted,
+    ReviewSignatureNotAuthorized,
     ReviewUpdateInvalid,
     UnknownReviewTarget,
 )
+from .escrow import uniqueness_token
 from .models import Review, ensure_tables
 from .service import (
     REVIEW_COMMIT_TYPE,
@@ -109,6 +130,7 @@ from .service import (
     entry_prev,
     find_review_on_paper,
     formal_entries,
+    get_escrow,
     resolve_review_target,
     version_number,
 )
@@ -127,7 +149,9 @@ __all__ = [
     "handle_review_reveal",
     "normalise_recommendation",
     "persist_review_reveal",
+    "require_public_signature",
     "review_reveal_fields",
+    "reviewer_owns_review",
 ]
 
 logger = logging.getLogger(__name__)
@@ -381,6 +405,8 @@ class ReviewRevealFields:
     confidence: int
     #: ``body.reportCid`` when the report is carried by reference, else ``None``.
     report_cid: Optional[str]
+    #: Whether the reviewer asks for public credit under their own name.
+    signed: bool
     #: The instant the record is dated (``created``), not when it arrived.
     revealed_at: datetime
 
@@ -473,6 +499,20 @@ def review_reveal_fields(record: Mapping[str, Any]) -> ReviewRevealFields:
             _problem(["author"], "The record needs its review key as 'author'.", "missing_author")
         )
 
+    signed = body.get("signed")
+    if signed is None:
+        signed = False
+    elif not isinstance(signed, bool):
+        problems.append(
+            _problem(
+                ["body", "signed"],
+                "The 'signed' flag must be true or false.",
+                "invalid_signed",
+                signed,
+            )
+        )
+        signed = False
+
     if problems:
         raise InvalidRecord(problems, detail=problems[0]["msg"])
 
@@ -496,6 +536,7 @@ def review_reveal_fields(record: Mapping[str, Any]) -> ReviewRevealFields:
         recommendation=normalise_recommendation(body["recommendation"]),  # type: ignore[arg-type]
         confidence=_confidence(body["confidence"]),  # type: ignore[arg-type]
         report_cid=report_cid if isinstance(report_cid, str) and report_cid else None,
+        signed=signed,
         revealed_at=_created_at(record, subject="review"),
     )
 
@@ -575,6 +616,110 @@ def _check_commitment(record: Mapping[str, Any], fields: ReviewRevealFields, rev
             "content_mismatch",
             "The revealed review is not the content its commitment seals.",
         )
+
+
+# --------------------------------------------------------------------------- #
+# Signing with a name (feature 111)
+# --------------------------------------------------------------------------- #
+
+
+def reviewer_owns_review(review: Review, fields: ReviewRevealFields, did: str) -> bool:
+    """Whether ``did`` is the person who sealed ``review``.
+
+    The ``review`` row is pseudonymous, and the escrow stores the DID only in a
+    sealed box this node cannot open.  What it *can* compare is the uniqueness
+    token -- ``HMAC(did || paper_cid)`` -- which is stable for one person and
+    one paper and reveals neither.
+    """
+    escrow = get_escrow(review.review_cid)
+    if escrow is None:
+        # A review committed without an escrow (a raw record append) has no
+        # accountability link, so there is no way -- and no right -- to name
+        # its reviewer.
+        return False
+    expected = uniqueness_token(did, fields.paper_cid)
+    stored = escrow.uniqueness_token
+    return isinstance(stored, str) and hmac.compare_digest(stored, expected)
+
+
+def _sealed_review_for(fields: ReviewRevealFields) -> Optional[Review]:
+    """The review ``fields`` reveals or updates, or ``None`` when none was sealed.
+
+    A first reveal names its version; an update names a newer one and is backed
+    by the review the key sealed on the paper, wherever that was.
+    """
+    review = find_sealed_review(fields.review_key, fields.version_cid)
+    if review is None:
+        review = find_review_on_paper(fields.review_key, fields.paper_cid)
+    return review
+
+
+def require_public_signature(fields: ReviewRevealFields, signer_did: str) -> None:
+    """Refuse (``403``) a signed reveal by anyone but the review's reviewer.
+
+    Called by the endpoint *before* the record reaches the ledger, so a caller
+    trying to attach their name to someone else's review writes nothing.  When
+    this key sealed nothing, it stays quiet: the handler's ``422`` "not
+    committed" is the truer answer.
+
+    Raises:
+        ReviewSignatureNotAuthorized: ``403`` -- ``signer_did`` did not seal
+            the review ``fields`` reveals.
+    """
+    if not fields.signed:
+        return
+    review = _sealed_review_for(fields)
+    if review is None:
+        return
+    if review.signed_by is not None and review.signed_by != signer_did:
+        raise ReviewSignatureNotAuthorized(signer_did, review.review_cid)
+    if not reviewer_owns_review(review, fields, signer_did):
+        raise ReviewSignatureNotAuthorized(signer_did, review.review_cid)
+
+
+def _public_signature(
+    review: Review, fields: ReviewRevealFields, signer_did: Optional[str]
+) -> Optional[str]:
+    """The DID to write to ``signed_by``, or ``None`` to leave it alone.
+
+    Without a caller DID (the ledger subscriber, which sees only the record)
+    nothing can be attributed, and the endpoint -- which does know the caller --
+    fills the signature in as it applies the reveal.  A caller who is not the
+    reviewer is refused rather than silently ignored.
+    """
+    if not fields.signed or signer_did is None:
+        return None
+    if review.signed_by == signer_did:
+        return signer_did
+    if not reviewer_owns_review(review, fields, signer_did):
+        raise ReviewSignatureNotAuthorized(signer_did, review.review_cid)
+    return signer_did
+
+
+def _save_public_signature(
+    review: Review, fields: ReviewRevealFields, signer_did: Optional[str]
+) -> Review:
+    """Write the caller's DID to ``signed_by`` when the review is signed.
+
+    The row is otherwise left as it is: an update writes no row of its own,
+    and a review already revealed by the ledger subscriber only needs its
+    public signature added.
+    """
+    signed_by = _public_signature(review, fields, signer_did)
+    if signed_by is None or review.signed_by == signed_by:
+        return review
+    with db.SessionLocal() as session:
+        session.execute(
+            update(Review)
+            .where(Review.review_cid == review.review_cid)
+            .values(signed_by=signed_by)
+        )
+        session.commit()
+        saved = session.get(Review, review.review_cid)
+        if saved is None:  # pragma: no cover - the row was read a moment ago
+            raise ReviewNotCommitted(fields.review_key, fields.version_cid)
+        session.expunge(saved)
+    return saved
 
 
 # --------------------------------------------------------------------------- #
@@ -730,46 +875,63 @@ def handle_review_reveal(record: Mapping[str, Any]) -> str:
     return REVEALED
 
 
-def apply_review_reveal(record: Mapping[str, Any]) -> Review:
+def apply_review_reveal(
+    record: Mapping[str, Any], *, signer_did: Optional[str] = None
+) -> Review:
     """Fill in the sealed review's revealed columns; return its row.
 
-    Idempotent: a review that is already revealed is returned as it is, so the
-    ledger subscriber and the endpoint may both call this for the same record.
-    The record is validated again first -- including its commitment -- so no
-    row is filled in for a reveal the handler would have refused.
+    Idempotent: a review that is already revealed is returned as it is -- save
+    for a public signature the caller may still be adding -- so the ledger
+    subscriber and the endpoint may both call this for the same record.  The
+    record is validated again first -- including its commitment -- so no row is
+    filled in for a reveal the handler would have refused.
 
-    An update fills in nothing: the row is the review the reviewer sealed, and
-    the update's content lives in its signed record, which the reviews listing
-    reads.  The row is returned, so an update answers with the same review cid
-    as the review it revises.
+    ``signer_did`` is the authenticated caller, when there is one.  A review
+    whose body says ``"signed": true`` is credited to that DID in
+    ``signed_by``; without a caller (the ledger subscriber sees only the
+    record) the signature is left for the endpoint.  A caller who is not the
+    review's reviewer is refused (``403``).
+
+    An update fills in nothing but a signature: the row is the review the
+    reviewer sealed, and the update's content lives in its signed record, which
+    the reviews listing reads.  The row is returned, so an update answers with
+    the same review cid as the review it revises.
 
     Raises:
         InvalidRecord, UnknownReviewTarget, ReviewNotCommitted,
         ReviewCommitmentMismatch, ReviewUpdateInvalid, ReviewAlreadyUpdated:
         as for :func:`handle_review_reveal`.
+        ReviewSignatureNotAuthorized: ``403`` -- the caller asked to sign a
+            review they did not seal.
     """
     fields = review_reveal_fields(record)
     earlier = _earlier_review(fields)
     if earlier is not None:
-        return _require_update(fields, earlier)
+        return _save_public_signature(_require_update(fields, earlier), fields, signer_did)
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:
-        return review
+        # The ledger subscriber normally opened the review already; only the
+        # public signature can still be added.
+        return _save_public_signature(review, fields, signer_did)
     _check_commitment(record, fields, review)
 
+    signed_by = _public_signature(review, fields, signer_did)
+    values: dict[str, Any] = {
+        "scores": fields.scores,
+        "recommendation": fields.recommendation,
+        "confidence": fields.confidence,
+        "report_cid": fields.report_cid,
+        "revealed_at": fields.revealed_at,
+    }
+    if signed_by is not None:
+        values["signed_by"] = signed_by
     with db.SessionLocal() as session:
         # Conditional on the review still being sealed, so two writers racing
         # to open it cannot both fill it in.
         session.execute(
             update(Review)
             .where(Review.review_cid == review.review_cid, Review.revealed_at.is_(None))
-            .values(
-                scores=fields.scores,
-                recommendation=fields.recommendation,
-                confidence=fields.confidence,
-                report_cid=fields.report_cid,
-                revealed_at=fields.revealed_at,
-            )
+            .values(**values)
         )
         session.commit()
         saved = session.get(Review, review.review_cid)

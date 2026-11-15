@@ -18,6 +18,8 @@ The module loader mounts this router under ``/v1``, so this package serves:
 * ``GET /v1/papers/{paper_id}/reviews`` -- the reviews of a listed version,
   each with the reviewer's ``history`` of updates; see
   :mod:`app.modules.reviews.history`.
+* ``GET /v1/profiles/{did}/reviews`` -- the revealed reviews the DID signed
+  with their name, for public credit (feature 111).
 * ``POST /v1/reviews/{cid}/response`` -- accept a signed ``review.response``
   from a paper author with one reply per rubric dimension and save it to
   ``review_responses``; see :mod:`app.modules.reviews.response`.
@@ -37,7 +39,7 @@ from app.security import Principal, get_current_principal, require_tier, Tier
 
 from . import coi, response as responses, reveal, service
 from .errors import ReviewResponseNotAuthorized
-from .models import ensure_table, ensure_tables
+from .models import Review, ensure_table, ensure_tables
 
 __all__ = ["router"]
 
@@ -241,12 +243,20 @@ def reveal_review(
     nobody has replaced yet.  The answer names the same ``review``, and
     ``GET /v1/papers/{id}/reviews`` serves both reviews in its history.
 
+    A body with ``"signed": true`` asks for public credit: the caller's DID is
+    written to the review's ``signed_by``, so ``GET /v1/profiles/{did}`` and
+    ``GET /v1/profiles/{did}/reviews`` serve it once revealed.  Only the
+    reviewer who sealed the review may sign it -- the escrow's uniqueness
+    token is what proves it -- and anyone else is refused (``403``) before
+    their record reaches the log.
+
     Failures are RFC 9457 problem details: ``401`` for a missing token or a bad
-    signature, ``403`` for a caller below tier 3, ``409`` for a review that was
-    revealed (or, for an update, replaced) already, and ``422`` for an
-    incomplete rubric, a review that was never sealed, content that does not
-    match its commitment, a target this node does not hold, or an update whose
-    ``prev`` is not the reviewer's own earlier review of an older version.
+    signature, ``403`` for a caller below tier 3 or one who asks to sign a
+    review they did not seal, ``409`` for a review that was revealed (or, for
+    an update, replaced) already, and ``422`` for an incomplete rubric, a
+    review that was never sealed, content that does not match its commitment,
+    a target this node does not hold, or an update whose ``prev`` is not the
+    reviewer's own earlier review of an older version.
     """
     if record.get("type") != reveal.REVIEW_FORMAL_TYPE:
         raise ProblemException(
@@ -269,20 +279,28 @@ def reveal_review(
     # Whether a sealed review exists, and whether this is it, is decided by the
     # handler once the pipeline has verified who signed the record.
     fields = reveal.review_reveal_fields(record)
+    # A review signed with the caller's name is public credit, so only the
+    # person who sealed it may claim it.  Checked before the append, so a
+    # refused signature writes nothing.
+    reveal.require_public_signature(fields, principal.did)
 
     # The pipeline validates the envelope and body, verifies the signature,
     # runs the handler (which matches the commitment) and appends the record.
     result = ingest(record)
     # The ledger subscriber normally filled in the review as the record was
     # appended; this is a no-op then, and the one that reports a failure when
-    # it did not.
-    review = reveal.apply_review_reveal(record)
+    # it did not.  The caller's DID is what a ``"signed": true`` review is
+    # credited to.
+    review = reveal.apply_review_reveal(record, signer_did=principal.did)
 
     return {
         "id": result.record_id,
         "target": fields.version_cid,
         "review": review.review_cid,
         "prev": fields.prev,
+        "signed": fields.signed,
+        "signed_by": review.signed_by,
+        "signedBy": review.signed_by,
         "state": result.state,
         "anchor": result.anchor,
     }
@@ -465,6 +483,62 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
         "n": getattr(version, "n", None),
         "reviews": reviews_out,
         "gate_open": gate_open,
+    }
+
+
+@router.get("/profiles/{did}/reviews")
+def get_profile_reviews(did: str) -> dict[str, Any]:
+    """Return the reviews ``did`` signed with their name, for public credit.
+
+    Feature 111: a reviewer who reveals a review with ``"signed": true`` has
+    their DID written to the review's ``signed_by``, and this route serves those
+    reviews -- revealed only, so a signed review whose commitment is still
+    sealed appears nowhere yet -- oldest reveal first.
+
+    ``signed_by`` is the *account* DID the reveal was submitted with, not the
+    pseudonymous review key the record is signed by; the escrow ties the two
+    together.  The items carry the same public columns as the reviews on
+    ``GET /v1/profiles/{did}``.  The route is public and answers ``200`` with an
+    empty list for a DID that signed nothing.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Review)
+            .filter(Review.signed_by == did, Review.revealed_at.is_not(None))
+            .order_by(Review.revealed_at, Review.review_cid)
+            .all()
+        )
+        for row in rows:
+            session.expunge(row)
+
+    reviews_out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            scores = row.scores
+        except (TypeError, ValueError):  # pragma: no cover - undecodable JSON cell
+            scores = None
+        reviews_out.append(
+            {
+                "review_cid": row.review_cid,
+                "version_cid": row.version_cid,
+                "recommendation": row.recommendation,
+                "confidence": row.confidence,
+                "scores": scores,
+                "report_cid": row.report_cid,
+                "committed_at": (
+                    row.committed_at.isoformat() if row.committed_at is not None else None
+                ),
+                "revealed_at": (
+                    row.revealed_at.isoformat() if row.revealed_at is not None else None
+                ),
+            }
+        )
+
+    return {
+        "did": did,
+        "count": len(reviews_out),
+        "reviews": reviews_out,
     }
 
 

@@ -119,6 +119,8 @@ class Review(db.Base):
     recommendation = Column(Text, nullable=True)
     confidence = Column(Integer, nullable=True)
     report_cid = Column(Text, nullable=True)
+    #: The reviewer's own DID when they signed the review with their name
+    #: (feature 111); NULL keeps it pseudonymous.
     signed_by = Column(Text, nullable=True)
     #: When the ``review.commit`` record was dated (its ``created``).
     committed_at = Column(DateTime, nullable=True)
