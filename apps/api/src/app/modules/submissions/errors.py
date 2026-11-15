@@ -27,12 +27,16 @@ __all__ = [
     "MANIFEST_FILE_NOT_STORED",
     "MANIFEST_FILE_SIZE_MISMATCH",
     "SHORT_ID_COLLISION",
+    "UNKNOWN_PAPER",
+    "VERSION_OUT_OF_SEQUENCE",
     "CategoryNotEndorsed",
     "GenesisRateLimited",
     "ManifestFileError",
     "ManifestFileNotStored",
     "ManifestFileSizeMismatch",
     "ShortIdCollision",
+    "UnknownPaper",
+    "VersionOutOfSequence",
 ]
 
 #: A manifest file's cid has no row in the ``blobs`` table.
@@ -49,6 +53,12 @@ SHORT_ID_COLLISION = "urn:scholium:problem:short-id-collision"
 
 #: A young tier-2 author already started a paper inside the weekly window.
 GENESIS_RATE_LIMITED = "urn:scholium:problem:genesis-rate-limited"
+
+#: A ``paper.version`` does not extend the paper's current version chain.
+VERSION_OUT_OF_SEQUENCE = "urn:scholium:problem:version-out-of-sequence"
+
+#: A ``paper.version`` names a paper this node has no ``paper.genesis`` for.
+UNKNOWN_PAPER = "urn:scholium:problem:unknown-paper"
 
 _MAX_ECHO = 64
 
@@ -220,6 +230,106 @@ class ShortIdCollision(ProblemException, ValueError):
             "to a different paper."
         )
         super().__init__(409, message, type=SHORT_ID_COLLISION, short_id=short_id)
+
+
+class VersionOutOfSequence(ProblemException, ValueError):
+    """A ``paper.version`` does not extend the paper's version chain: ``409``.
+
+    The chain is linear: version 1's ``prev`` is the paper's genesis cid and
+    version *n*'s ``prev`` is version *n-1*'s cid, with ``n`` one more than the
+    version ``prev`` names.  A record that points ``prev`` somewhere else --
+    an already-superseded version, the genesis after a version exists, a
+    version that is not here -- or claims the wrong ``n`` for the version it
+    points at would fork the timeline, so it is refused rather than stored.
+
+    The expected and submitted values are carried as extension members
+    (``expected_prev``/``expected_n``/``submitted_prev``/``submitted_n``) and
+    as one field error per mismatched field, so a client that was editing a
+    stale draft can see the version it has to extend.
+    """
+
+    def __init__(
+        self,
+        paper_cid: object,
+        *,
+        expected_prev: object,
+        expected_n: int,
+        submitted_prev: object,
+        submitted_n: object,
+    ) -> None:
+        self.paper_cid = paper_cid
+        self.expected_prev = expected_prev
+        self.expected_n = expected_n
+        self.submitted_prev = submitted_prev
+        self.submitted_n = submitted_n
+        shown_expected = _clip(expected_prev if isinstance(expected_prev, str) else repr(expected_prev))
+        shown_submitted = _clip(submitted_prev if isinstance(submitted_prev, str) else repr(submitted_prev))
+        message = (
+            "This paper.version does not extend the paper's current version "
+            f"chain: version {expected_n} with prev {shown_expected!r} was "
+            f"expected, but the record is version {submitted_n!r} with prev "
+            f"{shown_submitted!r}."
+        )
+        errors = []
+        if submitted_prev != expected_prev:
+            errors.append(
+                {
+                    "loc": ["prev"],
+                    "msg": f"The prev must be the current latest version {shown_expected!r}.",
+                    "type": "version_out_of_sequence",
+                    "input": shown_submitted,
+                }
+            )
+        if submitted_n != expected_n:
+            errors.append(
+                {
+                    "loc": ["body", "n"],
+                    "msg": f"The version number must be {expected_n} for this prev.",
+                    "type": "version_out_of_sequence",
+                    "input": _clip(submitted_n),
+                }
+            )
+        super().__init__(
+            409,
+            message,
+            type=VERSION_OUT_OF_SEQUENCE,
+            paper_cid=paper_cid,
+            expected_prev=expected_prev,
+            expected_n=int(expected_n),
+            submitted_prev=submitted_prev,
+            submitted_n=submitted_n,
+            errors=errors,
+        )
+
+
+class UnknownPaper(ProblemException, LookupError):
+    """A ``paper.version`` names a paper this node has no genesis for: ``422``.
+
+    ``body.paper`` must be the cid of an accepted ``paper.genesis`` record; a
+    version cannot create the paper it belongs to.  The error names the cid at
+    ``body.paper`` so the author can tell it apart from a bad envelope.
+    """
+
+    def __init__(self, paper_cid: object) -> None:
+        self.paper_cid = paper_cid
+        shown = _clip(paper_cid if isinstance(paper_cid, str) else repr(paper_cid))
+        message = (
+            f"The paper.version names paper {shown!r}, which is not a paper "
+            "this node holds a paper.genesis record for."
+        )
+        super().__init__(
+            422,
+            message,
+            type=UNKNOWN_PAPER,
+            errors=[
+                {
+                    "loc": ["body", "paper"],
+                    "msg": message,
+                    "type": "unknown_paper",
+                    "input": shown,
+                }
+            ],
+        )
 
 
 def _iso(value: datetime) -> str:
