@@ -12,13 +12,30 @@ from __future__ import annotations
 
 from .models import Flag, ensure_table, ensure_tables
 from .router import router
-from .service import create_flag, get_flag, list_flags, save_flag
+from .service import (
+    DECIDED,
+    FLAG_DECIDED_KIND,
+    PENDING,
+    create_flag,
+    decide_flag,
+    decide_flags_for_target,
+    flag_decided_payload,
+    get_flag,
+    list_flags,
+    save_flag,
+)
 
 __all__ = [
+    "DECIDED",
+    "FLAG_DECIDED_KIND",
     "Flag",
+    "PENDING",
     "create_flag",
+    "decide_flag",
+    "decide_flags_for_target",
     "ensure_table",
     "ensure_tables",
+    "flag_decided_payload",
     "get_flag",
     "list_flags",
     "router",

@@ -1,28 +1,65 @@
-"""Create and read user-submitted flags (plugin: flags).
+"""Create, read and decide user-submitted flags (plugin: flags).
 
 A flag names a target (paper, post, review or version) and a reason
 category.  :func:`create_flag` stores it in the ``flags`` table with status
-``pending``; a moderator later acts on it and links a decision cid.
+``pending``; a moderator later acts on it.
+
+Deciding (feature 78)
+---------------------
+When a moderation decision resolves a flag, the moderation side calls
+:func:`decide_flag` (one flag) or :func:`decide_flags_for_target` (every
+pending flag against the decided target)::
+
+    from app.modules import flags
+
+    flags.decide_flags_for_target(decision.target_cid, decision.decision_cid)
+
+Each call moves the flag from ``pending`` to a decided status, links the
+decision cid, and notifies the reporter with a ``flag.decided`` notification.
+The move is a compare-and-set on ``status = 'pending'``, so a flag is decided
+(and its reporter told) exactly once however often the call is repeated or
+raced.  The notification is a side effect of a decision that has already
+been committed: if it cannot be delivered the failure is logged and the
+decision stands.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app import db
+from app.modules.notifications.service import notify
 
 from .models import Flag, ensure_table, ensure_tables
 
 __all__ = [
-    "Flag",
+    "DECIDED",
+    "FLAG_DECIDED_KIND",
+    "PENDING",
     "create_flag",
+    "decide_flag",
+    "decide_flags_for_target",
+    "flag_decided_payload",
     "get_flag",
     "list_flags",
     "save_flag",
 ]
+
+logger = logging.getLogger(__name__)
+
+#: Status of a flag nobody has acted on yet.
+PENDING = "pending"
+
+#: Default status of a flag a moderation decision has resolved.
+DECIDED = "decided"
+
+#: Kind of the notification the reporter receives once their flag is decided.
+FLAG_DECIDED_KIND = "flag.decided"
+
 
 def create_flag(
     *,
@@ -30,7 +67,7 @@ def create_flag(
     reporter_did: str,
     reason: str,
     flag_id: Optional[str] = None,
-    status: str = "pending",
+    status: str = PENDING,
 ) -> Flag:
     """Insert a new flag row and return it detached."""
     ensure_table()
@@ -74,5 +111,121 @@ def list_flags(*, reporter_did: Optional[str] = None, target_cid: Optional[str] 
         for row in rows:
             session.expunge(row)
         return rows
+
+
+# --------------------------------------------------------------------------- #
+# Deciding a flag
+# --------------------------------------------------------------------------- #
+
+
+def flag_decided_payload(flag: Flag) -> dict[str, Any]:
+    """The payload of the ``flag.decided`` notification for ``flag``.
+
+    ``flag_id`` and ``decision_cid`` let the reporter's client open the flag
+    (``GET /v1/flags/{flag_id}``) and the public decision record; ``status``,
+    ``reason`` and ``target_cid`` say what was decided and about what.
+    """
+    return {
+        "flag_id": flag.id,
+        "target_cid": flag.target_cid,
+        "reason": flag.reason,
+        "status": flag.status,
+        "decision_cid": flag.decision_cid,
+    }
+
+
+def _clean(value: Any, what: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{what} must be a non-empty string")
+    return value.strip()
+
+
+def _clean_status(status: Any) -> str:
+    status = _clean(status, "status")
+    if status == PENDING:
+        raise ValueError(f"a decided flag cannot have status {PENDING!r}")
+    return status
+
+
+def _notify_reporter(flag: Flag) -> None:
+    """Tell the reporter their flag was decided; never raises.
+
+    The decision is already committed, so a notification that cannot be
+    stored must not turn into a failed decision for the moderator.
+    """
+    try:
+        notify(flag.reporter_did, FLAG_DECIDED_KIND, flag_decided_payload(flag))
+    except Exception:
+        logger.exception(
+            "could not notify %s that flag %s was decided", flag.reporter_did, flag.id
+        )
+
+
+def _decide(flag_id: str, decision_cid: str, status: str) -> Optional[Flag]:
+    """Compare-and-set one pending flag to decided; ``None`` if it was not pending."""
+    with db.SessionLocal() as session:
+        result = session.execute(
+            update(Flag)
+            .where(Flag.id == flag_id, Flag.status == PENDING)
+            .values(status=status, decision_cid=decision_cid)
+        )
+        session.commit()
+        if result.rowcount != 1:
+            return None
+        row = session.get(Flag, flag_id)
+        if row is None:  # pragma: no cover - deleted between UPDATE and read
+            return None
+        session.expunge(row)
+    return row
+
+
+def decide_flag(flag_id: str, decision_cid: str, *, status: str = DECIDED) -> Optional[Flag]:
+    """Mark a pending flag decided, link ``decision_cid`` and notify its reporter.
+
+    Returns the decided flag, or ``None`` when there is nothing to do: no such
+    flag, or one that was decided already (its first decision, and its single
+    notification, are kept).  ``status`` is the decided status to store --
+    e.g. ``actioned`` or ``dismissed`` -- and may be anything but ``pending``.
+    Raises ``ValueError`` for an empty ``decision_cid`` or an invalid
+    ``status``.
+    """
+    decision_cid = _clean(decision_cid, "decision_cid")
+    status = _clean_status(status)
+    ensure_tables()
+    flag = _decide(flag_id, decision_cid, status)
+    if flag is not None:
+        _notify_reporter(flag)
+    return flag
+
+
+def decide_flags_for_target(
+    target_cid: str, decision_cid: str, *, status: str = DECIDED
+) -> list[Flag]:
+    """Decide every pending flag against ``target_cid`` with one decision.
+
+    The bridge for moderation decisions, which name a target rather than a
+    flag.  Each flag's reporter gets their own notification.  Returns the
+    flags this call decided (empty when none were pending).  Raises
+    ``ValueError`` as :func:`decide_flag` does.
+    """
+    target_cid = _clean(target_cid, "target_cid")
+    decision_cid = _clean(decision_cid, "decision_cid")
+    status = _clean_status(status)
+    ensure_tables()
+    with db.SessionLocal() as session:
+        pending_ids = list(
+            session.execute(
+                select(Flag.id).where(Flag.target_cid == target_cid, Flag.status == PENDING)
+            ).scalars()
+        )
+    decided: list[Flag] = []
+    for flag_id in pending_ids:
+        flag = _decide(flag_id, decision_cid, status)
+        if flag is not None:
+            _notify_reporter(flag)
+            decided.append(flag)
+    return decided
+
+
 # Alias matching the naming used by sibling plugins (``save_paper``, ...).
 save_flag = create_flag

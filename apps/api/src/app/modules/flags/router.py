@@ -13,7 +13,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends
 
 from app.errors import ProblemException
-from app.security import Principal, get_current_principal
+from app.security import Principal, Tier, get_current_principal
 
 from . import service
 from .models import ensure_table, ensure_tables
@@ -88,9 +88,21 @@ def get_flag(
     flag_id: str,
     principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
-    """Return a flag's status and linked decision cid."""
+    """Return a flag's status and linked decision cid.
+
+    ``status`` is ``pending`` until a moderation decision resolves the flag,
+    after which it carries the decided status and ``decision_cid`` the cid of
+    that decision (``null`` while pending).  The reporter is notified with a
+    ``flag.decided`` notification at the moment the flag is decided.
+
+    A flag exposes its reporter's DID, so only the reporter and moderators
+    (tier 4) can read it.  Anyone else gets the same 404 as for a flag that
+    does not exist, so the endpoint cannot be used to probe for flag ids.
+    """
     ensure_tables()
     flag = service.get_flag(flag_id)
-    if flag is None:
+    if flag is None or not (
+        flag.reporter_did == principal.did or principal.tier >= Tier.MODERATOR
+    ):
         raise ProblemException(404, f"No flag {flag_id!r}")
     return _to_dict(flag)
