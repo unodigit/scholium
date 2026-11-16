@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 5: findings of the focused verification at 8901729 (2026-11-17).
+  Evidence: scratchpad eval4/FINDINGS4.md (headless Chromium, web :13000 -> API :18000).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/content/**,apps/api/src/app/modules/sanitizer/**,apps/api/src/app/modules/uploads/finalize.py,apps/api/src/app/modules/export/paper_car.py,apps/api/src/app/modules/export/paper.py">
+    <title>Co-authors can never see the PDF they must approve: files are scanned only after every consent</title>
+    <symptoms>
+      The consent page now fetches the PDF with the co-author's token, but the API answers 423 "still being scanned": the blob scan starts only when the version leaves awaiting_consent (after every co-author consented), so a co-author is asked to approve a PDF nobody can show them
+      The per-paper CAR export gives authors the unscanned PDF bytes while /v1/content answers 423 for the same file
+    </symptoms>
+    <reproduction_steps>
+      Submit a version listing a co-author; as the co-author open /consent/{cid}: "The server could not send the PDF"; blobs.scan_status = scanning
+    </reproduction_steps>
+    <expected>Each uploaded file is scanned as soon as its upload completes (or at the latest when a manifest naming it is recorded), independent of consent; the version's state machine is unchanged (it still waits in scanning after consent if a scan is pending, and moves on immediately if every file already passed); exports apply the same scan gate as /v1/content (no bytes for files not yet clean)</expected>
+    <actual>423 for co-authors; unscanned bytes via export</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/reviews/router.py,apps/api/src/app/modules/reviews/history.py,apps/web/src/features/paper-reviews/**,apps/web/src/features/review-form/**"
+       creates="apps/api/src/app/modules/reviews/tests/test_review_listing_history.py">
+    <title>"Update for vN" never renders, and the review key file and local seed are stored in plaintext</title>
+    <symptoms>
+      GET /v1/papers/{id}/reviews returns only reviews targeting the latest version ({version: 2, reviews: []}), so the reviews tab never sees the reviewer's revealed v1 review and never shows Update for v2
+      The downloaded "encrypted-at-rest" review key file is plaintext JSON containing the review key seed, scores and justifications; the seed also sits in plaintext in localStorage
+      In a fresh browser the reviewer sees a blank Commit form (which would be refused 409) and no explanation until a key is imported
+    </symptoms>
+    <reproduction_steps>
+      Reveal a review on v1; list v2; as the reviewer open the reviews tab: no Update link; GET .../reviews returns []
+      Download the review key and open the file: plaintext seed
+    </reproduction_steps>
+    <expected>The reviews listing for the latest version also returns each reviewer's newest revealed review on an earlier version (marked with the version it targets), so the tab shows them and offers the signed-in reviewer Update for v{latest}. The review key file is encrypted with a user-chosen passphrase (WebCrypto PBKDF2-SHA256, at least 310000 iterations, then AES-GCM) and import asks for the passphrase; the locally kept seed is encrypted with a non-extractable WebCrypto AES-GCM key stored in IndexedDB, never in plaintext localStorage (existing plaintext entries migrate on first use). When the API reports a sealed review by this reviewer but no local secret exists, the form shows a sealed-review card explaining that and offering Import instead of a Commit form</expected>
+    <actual>Update link unreachable; plaintext secrets; confusing fresh-browser state</actual>
+    <constraints>
+      <constraint>Anonymity (REV-4/escrow) is unchanged: older reviews are listed only once revealed, with the same anonymous labels</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="3" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/submissions/notices.py,apps/api/src/app/modules/moderation/decisions.py">
+    <title>reasonCid still publishes files the signer cannot read; decisions can target versions still awaiting consent</title>
+    <symptoms>
+      reasonCid is refused for files of unlisted versions, but files the signer gets 404/423 for on /v1/content are still accepted: files named only by a standalone manifest, and finished-but-unreferenced uploads; their (unscanned) text is published in /v1/papers/{id}
+      A moderator can hold or reject a version that is still awaiting co-author consent (201)
+    </symptoms>
+    <reproduction_steps>
+      As another user, upload a file and name it in a standalone manifest; as a consented author post a correction with reasonCid = that file -> 201 and its text is public
+      As a moderator post a reject decision on a version in awaiting_consent -> 201
+    </reproduction_steps>
+    <expected>reasonCid is accepted only if the content module's visibility check (the same function /v1/content uses, including the scan gate) would serve that file to the signer; otherwise 422 reason_not_readable. Moderation decisions are accepted only for versions in moderation, listed or held (and tombstones for any file); other states get 409 problem</expected>
+    <actual>Bypass of the reasonCid rule; premature decisions</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="medium"
+       touches_files="apps/web/src/features/submit/new-version.ts,apps/web/src/features/submit/new-version-page.tsx,apps/web/src/features/submit/new-version.test.ts,apps/web/src/features/submit/new-version-page.test.tsx">
+    <title>New version on a held or in-moderation paper is a dead end ("no listed version")</title>
+    <symptoms>
+      The author's paper page for an unlisted paper offers New version, but /submit/new-version/{id} loads the paper anonymously and reports "no listed version"
+    </symptoms>
+    <reproduction_steps>
+      As the author of a held paper click New version
+    </reproduction_steps>
+    <expected>The new-version form loads the paper's latest version with the author's token (listed or not) and lets the author submit v{n+1}; non-authors still see the not-available state</expected>
+    <actual>Dead end</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/identity/**">
+    <title>Cookie-only logout ends every session of the account, not just this browser's</title>
+    <symptoms>
+      POST /v1/auth/logout with only the refresh cookie revokes all refresh-token families of the DID; a second device is signed out (its refresh -> 401)
+    </symptoms>
+    <reproduction_steps>
+      Sign in on two browsers; log out on one with only the cookie; refresh on the other -> 401
+    </reproduction_steps>
+    <expected>Logout revokes only the refresh-token family the presented cookie belongs to; "sign out everywhere" stays available as an explicit action (e.g. on /me/security) that revokes all families</expected>
+    <actual>Global logout</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/consents/**">
+    <title>Co-author list of an unlisted version is public</title>
+    <symptoms>
+      Anonymous GET /v1/papers/{unlisted id}/v/1/consents returns 200 with the co-authors' DIDs, while every other read of an unlisted version is limited to its authors and moderators
+    </symptoms>
+    <reproduction_steps>
+      Anonymously GET the consents route of a version in awaiting_consent or moderation -> 200
+    </reproduction_steps>
+    <expected>Same visibility rule as the reading routes: authors of the version and tier-4 moderators get the consents of an unlisted version; everyone else 404; listed versions unchanged</expected>
+    <actual>Public</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/uploads/reaper.py,apps/api/src/app/modules/uploads/references.py,apps/api/src/app/modules/uploads/tests/**">
+    <title>Bytes named only by an account's own standalone manifests are kept forever</title>
+    <symptoms>
+      The reaper keeps the bytes of any file named by any record, so an account can store up to its daily quota every day indefinitely by naming uploads in its own standalone manifests that never become a version
+    </symptoms>
+    <reproduction_steps>
+      Upload files, name them in a standalone manifest that no paper.version references, run the reaper after the TTL: bytes kept
+    </reproduction_steps>
+    <expected>Bytes referenced only by manifests that no paper.version names (and by no discussion/notice/decision record) are reaped after UPLOAD_ORPHAN_TTL like any orphan</expected>
+    <actual>Kept forever</actual>
+  </bug>
+
+</bug_spec>
