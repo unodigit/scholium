@@ -24,6 +24,11 @@ The module loader mounts ``router`` under ``/v1``, so this package serves:
   An unknown short id, or a paper that has no such version, answers ``404``
   problem details; a malformed short id is simply not a paper this node has
   and answers ``404`` too.  Reading is public, like reading a record.
+* ``GET /v1/papers/{id}/annotations`` -- the same read for the paper's latest
+  (highest-numbered) version, for a client that does not name one.  The body
+  is identical to the versioned route's, and its ``version`` field says which
+  version it resolved to.  An unknown or malformed ``{id}``, or a paper with
+  no version yet, answers ``404`` problem details.
 """
 
 from __future__ import annotations
@@ -97,8 +102,8 @@ class PaperAnnotations(BaseModel):
     annotations: dict[str, list[AnnotationOut]]
 
 
-def _not_found(paper_id: str, n: int) -> HTTPException:
-    """A 404 problem response for a paper/version this node does not hold.
+def _not_found(paper_id: str, n: Optional[int] = None) -> HTTPException:
+    """A 404 problem response for a paper (or paper version) this node does not hold.
 
     Imported at raise time, not module load: importing ``app.errors`` pulls in
     ``app.main``, and doing that while the module loader is importing packages
@@ -107,6 +112,8 @@ def _not_found(paper_id: str, n: int) -> HTTPException:
     """
     from app.errors import ProblemException
 
+    if n is None:
+        return ProblemException(404, f"No paper {paper_id!r} with a version on this node.")
     return ProblemException(
         404,
         f"No paper {paper_id!r} has a version {n} on this node.",
@@ -141,11 +148,32 @@ def get_paper_annotations(paper_id: str, n: int) -> PaperAnnotations:
         version = None
     if version is None:
         raise _not_found(paper_id, n)
+    return _version_annotations(version)
 
+
+@papers_router.get(
+    "/papers/{paper_id}/annotations",
+    response_model=PaperAnnotations,
+    summary="List a paper's latest version's annotations grouped by paragraph",
+)
+def get_latest_paper_annotations(paper_id: str) -> PaperAnnotations:
+    """Return the latest version's annotations, grouped under their paragraph ids."""
+    try:
+        version = service.resolve_latest_version(paper_id)
+    except ValueError:
+        # Not a well-formed sch: id: nothing can be stored under it.
+        version = None
+    if version is None:
+        raise _not_found(paper_id)
+    return _version_annotations(version)
+
+
+def _version_annotations(version: service.VersionRef) -> PaperAnnotations:
+    """The wire response for one resolved paper version."""
     groups = service.annotations_for_version(version.version_cid)
     return PaperAnnotations(
         paper=version.paper,
-        version=n,
+        version=version.n,
         versionCid=version.version_cid,
         count=sum(len(items) for items in groups.values()),
         annotations=groups,

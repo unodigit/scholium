@@ -37,7 +37,8 @@ from datetime import datetime, timedelta, timezone
 from nacl.signing import SigningKey
 from scholium_record_core import did_key_from_signing_key
 
-from app import jobs
+from app import db, jobs
+from app.modules.identity.models import Account, ensure_account_table
 from app.modules.notifications import get_outbox
 from app.modules.recovery import approval_message
 from app.security import issue_access_token
@@ -57,7 +58,8 @@ RECOVERY_NOTIFICATION = "recovery.request"
 #: ``type`` of the problem document for a signature the author's active key did not make.
 RECORD_SIGNATURE_INVALID = "urn:scholium:problem:record-signature-invalid"
 
-#: A tier-0 record type, so only the signature -- never the author's tier -- decides.
+#: A tier-1 record type (REV-1); the holder is promoted to tier 1 below so that
+#: only the signature -- never the author's tier -- decides the outcome.
 RECORD_TYPE = "discussion.post"
 
 WINDOW = timedelta(hours=72)
@@ -100,6 +102,18 @@ def parse_instant(text: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _promote_to_member(did: str) -> None:
+    """Make ``did`` a tier-1 Member so its ``discussion.post`` records pass the tier gate."""
+    ensure_account_table()
+    with db.SessionLocal() as session:
+        account = session.get(Account, did)
+        if account is None:
+            session.add(Account(did=did, tier=1, created_at=datetime.now(timezone.utc).replace(tzinfo=None)))
+        else:
+            account.tier = max(int(account.tier or 0), 1)
+        session.commit()
+
+
 def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(client, node):
     holder = Actor(client)  # the account; its did:key is its genesis key
     new_key = SigningKey.generate()  # what the holder will sign with from now on
@@ -116,6 +130,7 @@ def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(
     )
     assert named.status_code == 200, named.text
     assert named.json() == {"guardians": [g.did for g in guardians]}
+    _promote_to_member(holder.did)
     relay.sign_in()
 
     def submit_signed_by(signer: SigningKey, text: str):

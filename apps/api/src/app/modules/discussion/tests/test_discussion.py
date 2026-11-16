@@ -27,6 +27,7 @@ from scholium_record_core import (
 from app import db
 from app.modules import ledger
 from app.modules.discussion import DiscussionPost, ensure_tables
+from app.modules.identity.models import Account, ensure_account_table
 from app.security import issue_access_token
 
 PROBLEM_JSON = "application/problem+json"
@@ -48,6 +49,14 @@ class Member:
         self.seed = SigningKey.generate()
         self.did = did_key_from_signing_key(self.seed)
         self.headers = {"Authorization": f"Bearer {issue_access_token(self.did, tier)}"}
+        if tier > 0:
+            # Ingest reads the author's tier from the accounts table, not the token.
+            ensure_account_table()
+            with db.SessionLocal() as session:
+                session.add(
+                    Account(did=self.did, tier=tier, created_at=datetime.now(timezone.utc).replace(tzinfo=None))
+                )
+                session.commit()
 
     def sign(self, record_type: str, body: dict, prev: Optional[str] = None) -> dict:
         return sign_record(

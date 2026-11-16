@@ -15,9 +15,9 @@ Features 99-102 own the paper discussion surface:
 
 Persistence hangs off the ledger: importing this package subscribes to
 ``discussion.post``, so a post is saved whichever endpoint accepted it.  The
-annotations plugin owns the record-type registration (it opens
-``discussion.post`` to tier 0 for annotations); where this plugin is installed
-without it, this package registers the type itself at tier 1.
+record type is a tier-1 action (REV-1) wherever it is registered: this package
+and the annotations plugin both register it at tier 1 when nothing has yet, so
+the first one loaded wins and the other leaves its registration alone.
 
 The module loader discovers packages under ``app.modules`` automatically, so
 importing this package mounts the router under ``/v1``.
@@ -72,13 +72,13 @@ def _install_ledger_subscriber() -> None:
 
 
 def _ensure_record_type() -> None:
-    """Register the record type when the annotations plugin has not done so.
+    """Register the record type at tier 1 when the annotations plugin has not done so.
 
-    The annotations plugin registers ``discussion.post`` at tier 0 because an
-    inline annotation is open to any signed-in reader.  Threads are a tier-1
-    action, which the thread route enforces for the caller; registration is
-    only needed on a node built without the annotations plugin, so leave an
-    existing registration untouched rather than conflict with it.
+    The annotations plugin registers ``discussion.post`` at tier 1 too -- an
+    inline annotation is a discussion post, and posting is a tier-1 action --
+    and the module loader imports it first.  Leave an existing registration
+    untouched rather than conflict with it; registration here is only needed
+    on a node built without the annotations plugin.
     """
     from app.modules import ingest
 

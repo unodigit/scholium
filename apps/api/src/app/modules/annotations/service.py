@@ -36,6 +36,7 @@ __all__ = [
     "VersionRef",
     "annotations_for_version",
     "handle_annotation",
+    "resolve_latest_version",
     "resolve_version",
 ]
 
@@ -59,6 +60,8 @@ class VersionRef:
     genesis_cid: str
     #: cid of the ``paper.version`` record for version ``n``.
     version_cid: str
+    #: The version number ``n``.
+    n: int
 
 
 def handle_annotation(record: dict[str, Any]) -> None:
@@ -112,6 +115,62 @@ def _version_cid(rows: list[Any], genesis_cid: str, n: int) -> Optional[str]:
     return None
 
 
+def _latest_version(rows: list[Any], genesis_cid: str) -> Optional[tuple[int, str]]:
+    """``(n, cid)`` of the highest-numbered ``paper.version`` of ``genesis_cid``, if any."""
+    latest: Optional[tuple[int, str]] = None
+    for row in rows:
+        if row.record_type != PAPER_VERSION_TYPE:
+            continue
+        body = _body(row)
+        if body.get("paper") != genesis_cid:
+            continue
+        version = body.get("n")
+        if isinstance(version, bool) or not isinstance(version, int):
+            continue
+        if latest is None or version > latest[0]:
+            latest = (version, row.record_cid)
+    return latest
+
+
+def _paper_rows() -> list[Any]:
+    """Every ``paper.genesis`` and ``paper.version`` log row, in ledger order."""
+    from sqlalchemy import select
+
+    from app import db
+    from app.modules.ledger.models import EventLog, ensure_table
+
+    ensure_table()
+    with db.SessionLocal() as session:
+        return list(
+            session.execute(
+                select(EventLog)
+                .where(EventLog.record_type.in_((PAPER_GENESIS_TYPE, PAPER_VERSION_TYPE)))
+                .order_by(EventLog.seq)
+            ).scalars()
+        )
+
+
+def resolve_latest_version(paper: str) -> Optional[VersionRef]:
+    """Resolve a paper short id to its highest-numbered version.
+
+    Backs the read a client makes without naming a version.  Returns ``None``
+    when the log holds no such paper or the paper has no version; raises
+    ``ValueError`` for a malformed short id, like :func:`resolve_version`.
+    """
+    canonical = parse_short_id(paper)  # ValueError for a malformed/mistyped id
+
+    rows = _paper_rows()
+    genesis_cid = _genesis_cid(rows, canonical)
+    if genesis_cid is None:
+        return None
+    latest = _latest_version(rows, genesis_cid)
+    if latest is None:
+        return None
+
+    n, version_cid = latest
+    return VersionRef(paper=canonical, genesis_cid=genesis_cid, version_cid=version_cid, n=n)
+
+
 def resolve_version(paper: str, n: int) -> Optional[VersionRef]:
     """Resolve ``(paper short id, version number)`` to the records that name it.
 
@@ -121,21 +180,7 @@ def resolve_version(paper: str, n: int) -> Optional[VersionRef]:
     """
     canonical = parse_short_id(paper)  # ValueError for a malformed/mistyped id
 
-    from sqlalchemy import select
-
-    from app import db
-    from app.modules.ledger.models import EventLog, ensure_table
-
-    ensure_table()
-    with db.SessionLocal() as session:
-        rows = list(
-            session.execute(
-                select(EventLog)
-                .where(EventLog.record_type.in_((PAPER_GENESIS_TYPE, PAPER_VERSION_TYPE)))
-                .order_by(EventLog.seq)
-            ).scalars()
-        )
-
+    rows = _paper_rows()
     genesis_cid = _genesis_cid(rows, canonical)
     if genesis_cid is None:
         return None
@@ -143,7 +188,7 @@ def resolve_version(paper: str, n: int) -> Optional[VersionRef]:
     if version_cid is None:
         return None
 
-    return VersionRef(paper=canonical, genesis_cid=genesis_cid, version_cid=version_cid)
+    return VersionRef(paper=canonical, genesis_cid=genesis_cid, version_cid=version_cid, n=n)
 
 
 def _anchor_version(anchor: Mapping[str, Any]) -> Optional[str]:
