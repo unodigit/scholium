@@ -17,6 +17,12 @@ update must target a newer version than the review it names.
 The listing is a view *as of* the version it is asked for: a review of a newer
 version is not part of the history of an older one, and a version that is not
 listed is left out so a reader cannot tell it ever existed.
+
+A reviewer whose newest review is of an earlier version is still one of the
+paper's reviewers, so the listing of a later version carries them too: their
+history ends at the version it targets, which is how the reviews tab knows to
+offer them an update.  A chain is made of ``review.formal`` records only, so a
+review enters it once it is revealed -- a sealed one is never carried.
 """
 
 from __future__ import annotations

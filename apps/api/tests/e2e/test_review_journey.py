@@ -549,8 +549,14 @@ def test_review_journey(client, node, reviewer):
     # The updating reviewer is one entry with both reviews in its history, and
     # the newest review is the one it stands on.
     listing = listed_reviews(client, short_id)
-    [entry] = listing["reviews"]
-    assert entry["review_cid"] == second_commit_cid, entry
+    # The v2 listing also carries the first reviewer's v1 review (it was not
+    # updated), so pick the updating reviewer's entry by its review cid.
+    entries = by_review_cid(listing)
+    assert set(entries) == {first_commit_cid, second_commit_cid}, listing
+    entry = entries[second_commit_cid]
+    assert entries[first_commit_cid]["version"] == 1, entries[first_commit_cid]
+    assert entries[first_commit_cid]["version"] == 1, entries[first_commit_cid]
+    assert entries[first_commit_cid]["version_cid"] == v1, entries[first_commit_cid]
     assert [revision["n"] for revision in entry["history"]] == [1, 2], entry
     assert [revision["id"] for revision in entry["history"]] == [
         second_formal_cid,

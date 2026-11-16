@@ -311,3 +311,166 @@ describe("states", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Update for v{latest} on a review of an earlier version", () => {
+  /** An unsigned JWT: the tab only reads its claims. */
+  function sessionToken(claims: unknown): string {
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    return `${encode({ alg: "HS256" })}.${encode(claims)}.sig`;
+  }
+
+  const REVIEWER = "did:key:z6MkReviewer";
+  const STRANGER = "did:key:z6MkStranger";
+
+  /** The listing of v2 that carries a reviewer's revealed review of v1. */
+  function listingOfV2(overrides: Record<string, unknown> = {}): ReviewsData {
+    return parseReviews({
+      paper: PAPER,
+      version: 2,
+      // v2 has no review committed on it yet: its reports are still sealed.
+      gate_open: false,
+      reviews: [
+        review({
+          review_cid: "bafy-commit",
+          formal_cid: "bafy-formal-1",
+          version: 1,
+          revealed_at: "2027-03-02T05:00:00",
+          ...overrides,
+        }),
+      ],
+    });
+  }
+
+  function ownReviews(...cids: string[]) {
+    return vi.fn(async () =>
+      cids.map((reviewCid) => ({
+        reviewCid,
+        paper: PAPER,
+        versionCid: "bafy-v1",
+        sealed: false,
+      })),
+    );
+  }
+
+  function signIn(did: string): void {
+    tokenStore.set({ accessToken: sessionToken({ sub: did, tier: 3 }) });
+  }
+
+  it("offers the signed-in reviewer an update, though v2's reports are still sealed", async () => {
+    signIn(REVIEWER);
+    const loadOwnReviews = ownReviews("bafy-commit");
+
+    renderTab(listingOfV2(), { loadOwnReviews });
+
+    const link = await screen.findByRole("link", { name: "Update for v2" });
+    // The review they stand on is the one the update revises.
+    expect(link.getAttribute("href")).toBe(
+      `/review/${encodeURIComponent("k3f9-q2xz-7mwd")}?prev=bafy-formal-1`,
+    );
+    expect(loadOwnReviews).toHaveBeenCalledTimes(1);
+  });
+
+  it("says which version the review is of", async () => {
+    renderTab(listingOfV2());
+
+    expect(screen.getByText(/Review of v1/)).toBeTruthy();
+  });
+
+  it("offers nobody else an update, whoever they are", async () => {
+    signIn(STRANGER);
+    const loadOwnReviews = ownReviews("bafy-someone-elses");
+
+    renderTab(listingOfV2(), { loadOwnReviews });
+
+    await waitFor(() => expect(loadOwnReviews).toHaveBeenCalled());
+    expect(screen.queryByRole("link", { name: /Update for/ })).toBeNull();
+  });
+
+  it("offers a signed-out reader nothing and asks the API nothing", () => {
+    const loadOwnReviews = ownReviews("bafy-commit");
+
+    renderTab(listingOfV2(), { loadOwnReviews });
+
+    expect(screen.queryByRole("link", { name: /Update for/ })).toBeNull();
+    expect(loadOwnReviews).not.toHaveBeenCalled();
+  });
+
+  it("offers nothing when the reviewer's own reviews cannot be read", async () => {
+    signIn(REVIEWER);
+    const loadOwnReviews = vi.fn(async () => {
+      throw new Error("offline");
+    });
+
+    renderTab(listingOfV2(), { loadOwnReviews });
+
+    await waitFor(() => expect(loadOwnReviews).toHaveBeenCalled());
+    expect(screen.queryByRole("link", { name: /Update for/ })).toBeNull();
+    // The reviews themselves are still there.
+    expect(screen.getByRole("heading", { name: "Reviewer A" })).toBeTruthy();
+  });
+
+  it("offers nothing on a review of the version being listed", () => {
+    signIn(REVIEWER);
+    const loadOwnReviews = ownReviews("bafy-commit");
+
+    renderTab(listingOfV2({ version: 2 }), { loadOwnReviews });
+
+    expect(screen.queryByRole("link", { name: /Update for/ })).toBeNull();
+    expect(screen.queryByText(/Review of v/)).toBeNull();
+    expect(loadOwnReviews).not.toHaveBeenCalled();
+  });
+
+  it("offers nothing on a review that is still sealed", () => {
+    signIn(REVIEWER);
+    const loadOwnReviews = ownReviews("bafy-commit");
+
+    renderTab(listingOfV2({ revealed_at: null, scores: {} }), { loadOwnReviews });
+
+    expect(screen.queryByRole("link", { name: /Update for/ })).toBeNull();
+    expect(loadOwnReviews).not.toHaveBeenCalled();
+  });
+
+  it("needs no question when the review was signed with the viewer's name", async () => {
+    signIn(REVIEWER);
+    const loadOwnReviews = ownReviews();
+
+    renderTab(listingOfV2({ signed_by: REVIEWER }), { loadOwnReviews });
+
+    expect(await screen.findByRole("link", { name: "Update for v2" })).toBeTruthy();
+    expect(loadOwnReviews).not.toHaveBeenCalled();
+  });
+
+  it("does not offer the update of a review signed with someone else's name", async () => {
+    signIn(REVIEWER);
+    const loadOwnReviews = ownReviews("bafy-commit");
+
+    renderTab(listingOfV2({ signed_by: STRANGER }), { loadOwnReviews });
+
+    expect(screen.queryByRole("link", { name: /Update for/ })).toBeNull();
+    expect(loadOwnReviews).not.toHaveBeenCalled();
+  });
+
+  it("offers the update from the review's own date even when the report is served", async () => {
+    signIn(REVIEWER);
+    const data = parseReviews({
+      paper: PAPER,
+      version: 2,
+      gate_open: true,
+      reviews: [
+        review({
+          review_cid: "bafy-commit",
+          formal_cid: "bafy-formal-1",
+          version: 1,
+          revealed_at: "2027-03-02T05:00:00",
+          report: "A careful report.",
+        }),
+      ],
+    });
+
+    renderTab(data, { loadOwnReviews: ownReviews("bafy-commit") });
+
+    expect(await screen.findByRole("link", { name: "Update for v2" })).toBeTruthy();
+    expect(screen.getByText("Read the report")).toBeTruthy();
+  });
+});

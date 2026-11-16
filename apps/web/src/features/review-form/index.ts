@@ -140,6 +140,9 @@ export {
   COMMIT_LABEL,
   COMMIT_NOTE,
   ReviewForm,
+  SEALED_ELSEWHERE_HEADLINE,
+  SEALED_ELSEWHERE_TEXT,
+  SealedElsewhereNotice,
   SealedNotice,
   type CommitReview,
   type ReviewFormProps,
@@ -254,7 +257,9 @@ export {
   REVIEW_SECRET_LOCAL_NOTE,
   browserReviewKeyStorage,
   buildReviewKeyFile,
+  decryptReviewKeyFile,
   deriveReviewKey,
+  encryptReviewKeyFile,
   forgetReviewKey,
   loadReviewKey,
   nullifierForReviewKey,
@@ -269,6 +274,51 @@ export {
   type ReviewKeyStorage,
   type SignReviewChallenge,
 } from "./review-key";
+
+export {
+  EncryptedReviewKeyStorage,
+  MemoryReviewKeyStorage,
+  createReviewKeyStorage,
+  type LegacySeedStorage,
+} from "./review-key-storage";
+
+export {
+  IndexedDbReviewVault,
+  REVIEW_VAULT_DATABASE,
+  type ReviewVault,
+  type SealedSecret,
+} from "./review-key-vault";
+
+export {
+  KEY_FILE_FORMAT,
+  KEY_FILE_VERSION,
+  KeyFileError,
+  PBKDF2_ITERATIONS,
+  PBKDF2_MIN_ITERATIONS,
+  type KeyFileProblem,
+  type PassphraseBoxOptions,
+  type PassphraseEnvelope,
+} from "./passphrase-box";
+
+export {
+  DownloadReviewKey,
+  ImportReviewKey,
+  MIN_PASSPHRASE_LENGTH,
+  reviewKeyFilename,
+  type DownloadText,
+  type KeyFileSeams,
+} from "./review-key-panels";
+
+export {
+  loadMyReviews,
+  paperKey,
+  parseMyReviews,
+  sealedReviewOf,
+  type LoadMyReviews,
+  type MyReview,
+} from "./my-reviews";
+
+export { useMyReviews, type MyReviewsState } from "./use-my-reviews";
 
 export {
   ReviewNotice,

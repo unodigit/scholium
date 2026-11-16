@@ -49,7 +49,7 @@ import {
 } from "react";
 
 import { useSignedIn } from "../../components/nav/session";
-import { api } from "../../lib/api";
+import { api, tokenStore } from "../../lib/api";
 import { Icon } from "../ui-kit/icons";
 import type { ActionFailure } from "./action-errors";
 import { appendCitation, describeCitation, type Citation } from "./citation";
@@ -69,6 +69,7 @@ import {
   STYLOMETRY_TIP,
 } from "./identity";
 import { reviewSignInHref } from "./links";
+import { sealedReviewOf, type LoadMyReviews } from "./my-reviews";
 import {
   REVEAL_GATE_CLOSED_NOTE,
   REVEAL_LABEL,
@@ -97,16 +98,13 @@ import {
   sealedReviewFromCommit,
   type SealedReview,
 } from "./sealed-review";
+import { REVIEW_SECRET_LOCAL_NOTE, loadReviewKey, saveReviewKey } from "./review-key";
 import {
-  DOWNLOAD_REVIEW_KEY_LABEL,
-  IMPORT_REVIEW_KEY_LABEL,
-  REVIEW_SECRET_LOCAL_NOTE,
-  buildReviewKeyFile,
-  forgetReviewKey,
-  loadReviewKey,
-  parseReviewKeyFile,
-  saveReviewKey,
-} from "./review-key";
+  DownloadReviewKey,
+  ImportReviewKey,
+  type KeyFileSeams,
+} from "./review-key-panels";
+import { useMyReviews } from "./use-my-reviews";
 import {
   CONFIDENCE_OPTIONS,
   RECOMMENDATION_OPTIONS,
@@ -139,6 +137,21 @@ export const COMMIT_LABEL = "Commit review";
 
 /** The button that updates a revealed review (REV-5). */
 export const UPDATE_LABEL = "Update review";
+
+/**
+ * The card a reviewer sees, in place of a blank form, when the API holds a
+ * sealed review of theirs for this paper and this browser holds nothing to
+ * reveal it with (a fresh browser, or another device).
+ */
+export const SEALED_ELSEWHERE_HEADLINE = "You already have a sealed review of this paper";
+
+/** What it says: why there is no Commit form, and what to do instead. */
+export const SEALED_ELSEWHERE_TEXT =
+  "You committed a review of this paper, and it is still sealed. The secret that reveals it is kept only in the browser you committed it from, and this browser does not have it. A paper takes one review from each reviewer, so a new review cannot be committed here.";
+
+/** What it offers. */
+export const SEALED_ELSEWHERE_IMPORT_TEXT =
+  "Import the review key file you downloaded in that browser to reveal your review from here.";
 
 /**
  * Said under the button so the reviewer knows what committing does. (A reviewer
@@ -177,6 +190,10 @@ export interface ReviewFormProps {
   reveal?: RevealReview;
   /** Replace the reveal-gate read, for tests. */
   loadGate?: LoadRevealGate;
+  /** Replace the read of the reviewer's own reviews (the dashboard), for tests. */
+  loadOwnReviews?: LoadMyReviews;
+  /** Replace what writes and reads the encrypted review key file, for tests. */
+  keyFile?: KeyFileSeams;
 }
 
 type Phase = "editing" | "signing" | "sealed";
@@ -219,6 +236,8 @@ function ReviewFormBody({
   revise: reviseOverride,
   reveal: revealOverride,
   loadGate,
+  loadOwnReviews,
+  keyFile,
   session,
 }: ReviewFormProps & { session: ReviewSession }) {
   const uid = useId();
@@ -239,20 +258,9 @@ function ReviewFormBody({
   const [updated, setUpdated] = useState(false);
   const [error, setError] = useState<CommitFailure | null>(null);
 
-  const importInputRef = useRef<HTMLInputElement>(null);
-  const importReviewKeyFile = async (file: File): Promise<void> => {
-    try {
-      const text = await file.text();
-      const parsed = parseReviewKeyFile(JSON.parse(text));
-      if (parsed === null) return;
-      saveSealedReview(parsed.sealed);
-      saveReviewKey(parsed.sealed.paperId, parsed.key);
-      setSealed(parsed.sealed);
-      setPhase("sealed");
-    } catch {
-      // Ignore malformed files.
-    }
-  };
+  // Whether this browser's own storage has been asked for a sealed review yet:
+  // the API is asked only after, and only if, it had none.
+  const [localChecked, setLocalChecked] = useState(false);
 
   // Cite in review: the box a quote goes into, and the last quote placed.
   const citeTarget = useRef<DimensionId>(RUBRIC_DIMENSIONS[0].id);
@@ -301,10 +309,32 @@ function ReviewFormBody({
   useEffect(() => {
     if (sealed !== null || paperId.trim() === "") return;
     const stored = loadSealedReview(paperId);
+    setLocalChecked(true);
     if (stored === null) return;
     setSealed(stored);
     setPhase("sealed");
   }, [paperId, sealed]);
+
+  // This browser holds nothing to reveal a review with, but the API may say
+  // the signed-in reviewer has one sealed: a fresh browser, or another device.
+  // A commit would be refused (one review per reviewer and paper), so the form
+  // gives way to a card that says so. Asked only once this browser has been
+  // found empty; a form with no paper, one that updates a review and one with
+  // nobody signed in have nothing to ask.
+  const isUpdate = typeof prev === "string" && prev.trim() !== "";
+  const mayAskApi =
+    loadOwnReviews !== undefined || (signedIn && tokenStore.isAuthenticated);
+  const own = useMyReviews(
+    mayAskApi &&
+      localChecked &&
+      sealed === null &&
+      !isUpdate &&
+      paperId.trim() !== "",
+    paperId,
+    loadOwnReviews,
+  );
+  const sealedElsewhere =
+    own.status === "ready" && sealedReviewOf(own.reviews, paperId) !== null;
 
   // When updating a revealed review, prefill the form with its current rubric.
   useEffect(() => {
@@ -376,6 +406,21 @@ function ReviewFormBody({
         reveal={revealOverride}
         loadGate={loadGate}
         signInHref={signInHref}
+        keyFile={keyFile}
+        onImported={(imported) => {
+          setSealed(imported);
+          setPhase("sealed");
+        }}
+      />
+    );
+  }
+
+  // Only while the form is at rest: a commit being signed is not interrupted.
+  if (sealedElsewhere && phase === "editing") {
+    return (
+      <SealedElsewhereNotice
+        paperId={paperId}
+        keyFile={keyFile}
         onImported={(imported) => {
           setSealed(imported);
           setPhase("sealed");
@@ -416,7 +461,7 @@ function ReviewFormBody({
       // Nothing is kept for a form used without a paper id (there is no page
       // to return to); the sealed card still offers the reveal.
       if (paperId.trim() !== "") saveSealedReview(stored);
-      if (result.key !== undefined) saveReviewKey(paperId, result.key);
+      if (result.key !== undefined) await saveReviewKey(paperId, result.key);
       setSealed(stored);
       setPhase("sealed");
     } catch (thrown) {
@@ -424,8 +469,6 @@ function ReviewFormBody({
       setPhase("editing");
     }
   };
-
-  const isUpdate = typeof prev === "string" && prev.trim() !== "";
 
   const update = async (): Promise<void> => {
     if (phase === "signing") return;
@@ -460,32 +503,18 @@ function ReviewFormBody({
     }
   };
 
-  const importBlock = (
-    <div className="rf-review-key">
-      <button
-        type="button"
-        className="rf-button"
-        onClick={() => importInputRef.current?.click()}
-      >
-        {IMPORT_REVIEW_KEY_LABEL}
-      </button>
-      <input
-        ref={importInputRef}
-        type="file"
-        accept="application/json"
-        style={{ display: "none" }}
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file !== undefined) void importReviewKeyFile(file);
-          event.target.value = "";
+  return (
+    <>
+      {/* A reviewer with a review key file from another browser can bring it
+          here before writing anything. */}
+      <ImportReviewKey
+        paperId={paperId}
+        seams={keyFile}
+        onImported={(imported) => {
+          setSealed(imported);
+          setPhase("sealed");
         }}
       />
-    </div>
-  );
-
-  return (
-    <> 
-      {importBlock}
       <form
         className="rf-form"
       aria-labelledby={`${uid}-title`}
@@ -706,6 +735,7 @@ export function SealedNotice({
   reveal = revealReview,
   loadGate = loadRevealGate,
   signInHref = "/signin",
+  keyFile,
   onImported,
 }: {
   sealed: SealedReview;
@@ -716,43 +746,27 @@ export function SealedNotice({
   loadGate?: LoadRevealGate;
   /** Where "Sign in" goes when a session has ended. */
   signInHref?: string;
+  /** Replace what writes and reads the encrypted review key file, for tests. */
+  keyFile?: KeyFileSeams;
   /** Called when a review key file is imported. */
   onImported?: (sealed: SealedReview) => void;
 }) {
   const revealDate = formatRevealDate(sealed.revealAt);
   const named = signed || sealed.revealBody.signed === true;
-  const hasSecret = loadReviewKey(sealed.paperId) !== null;
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const downloadKey = (): void => {
-    const key = loadReviewKey(sealed.paperId);
-    const payload = buildReviewKeyFile(sealed, key);
-    if (typeof document === "undefined") return;
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
+  // Whether this browser holds the review key. Read after mount: it is kept in
+  // IndexedDB, and there is nothing to show until it has answered.
+  const [secret, setSecret] = useState<"unknown" | "present" | "absent">("unknown");
+  useEffect(() => {
+    let cancelled = false;
+    setSecret("unknown");
+    void loadReviewKey(sealed.paperId).then((key) => {
+      if (!cancelled) setSecret(key !== null ? "present" : "absent");
     });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `scholium-review-key-${sealed.paperId.trim() || "review"}.json`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
-  };
-
-  const importKey = async (file: File): Promise<void> => {
-    try {
-      const text = await file.text();
-      const parsed = parseReviewKeyFile(JSON.parse(text));
-      if (parsed === null) return;
-      saveSealedReview(parsed.sealed);
-      saveReviewKey(parsed.sealed.paperId, parsed.key);
-      if (onImported !== undefined) onImported(parsed.sealed);
-    } catch {
-      // Ignore malformed files; the page keeps its current state.
-    }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [sealed]);
 
   const [phase, setPhase] = useState<"sealed" | "checking" | "revealing" | "revealed">(
     "sealed",
@@ -856,39 +870,25 @@ export function SealedNotice({
         </button>
       </div>
 
-      <p className="rf-sealed-text">{REVIEW_SECRET_LOCAL_NOTE}</p>
+      <p className="rf-sealed-text">
+        {REVIEW_SECRET_LOCAL_NOTE} It is kept encrypted, and the review key file you
+        can download needs a passphrase you choose.
+      </p>
 
-      <div className="rf-review-key">
-        <button type="button" className="rf-button" onClick={downloadKey}>
-          {DOWNLOAD_REVIEW_KEY_LABEL}
-        </button>
-        {!hasSecret ? (
-          <>
-            <p className="rf-sealed-text">
-              This sealed review exists, but no local secret is available on
-              this device.
-            </p>
-            <button
-              type="button"
-              className="rf-button"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {IMPORT_REVIEW_KEY_LABEL}
-            </button>
-          </>
-        ) : null}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/json"
-          style={{ display: "none" }}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file !== undefined) void importKey(file);
-            event.target.value = "";
-          }}
-        />
-      </div>
+      {secret === "present" ? <DownloadReviewKey sealed={sealed} seams={keyFile} /> : null}
+      {secret === "absent" ? (
+        <>
+          <p className="rf-sealed-text">
+            This sealed review exists, but no local secret is available on this
+            device.
+          </p>
+          <ImportReviewKey
+            paperId={sealed.paperId}
+            seams={keyFile}
+            onImported={(imported) => onImported?.(imported)}
+          />
+        </>
+      ) : null}
 
       {note !== null ? <p className="rf-sealed-text">{note}</p> : null}
 
@@ -908,6 +908,42 @@ export function SealedNotice({
           </span>
         </p>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * What a reviewer sees, in place of a blank Commit form, when the API holds a
+ * sealed review of theirs for this paper and this browser holds nothing to
+ * reveal it with.
+ *
+ * Committing would be refused (`409`: one review per reviewer and paper), and
+ * the reveal needs a secret that never left the browser that committed. So the
+ * card says that, and offers the one thing that helps: importing the review
+ * key file from that browser.
+ */
+export function SealedElsewhereNotice({
+  paperId,
+  keyFile,
+  onImported,
+}: {
+  paperId: string;
+  /** Replace what reads the encrypted review key file, for tests. */
+  keyFile?: KeyFileSeams;
+  /** Called when the review key file is imported. */
+  onImported: (sealed: SealedReview) => void;
+}) {
+  return (
+    <section
+      className="rf-sealed"
+      role="status"
+      aria-live="polite"
+      data-state="sealed-elsewhere"
+    >
+      <h2 className="rf-form-title">{SEALED_ELSEWHERE_HEADLINE}</h2>
+      <p className="rf-sealed-text">{SEALED_ELSEWHERE_TEXT}</p>
+      <p className="rf-sealed-text">{SEALED_ELSEWHERE_IMPORT_TEXT}</p>
+      <ImportReviewKey paperId={paperId} seams={keyFile} onImported={onImported} />
     </section>
   );
 }

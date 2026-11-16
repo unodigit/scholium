@@ -127,6 +127,12 @@ export interface Review {
   readonly replies: readonly AuthorReply[];
   /** The instant the review was committed, as served. */
   readonly committedAt: string | null;
+  /**
+   * The instant the review (its newest one, if revised) was revealed, as served;
+   * `null` while it is only sealed. Unlike the report, which stays out of the
+   * listing until its gate opens, this is served as soon as it is revealed.
+   */
+  readonly revealedAt?: string | null;
   /** The paper version the review is written against, when named. */
   readonly version: number | null;
   /** The reviewer's DID when they signed the review with their name, when named. */
@@ -639,6 +645,7 @@ function reviewOf(value: unknown, index: number): Review {
       record.revealedAt,
       record.created,
     ),
+    revealedAt: firstText(record.revealed_at, record.revealedAt),
     version: firstNumber(record.version, record.n),
     signedBy: firstText(record.signed_by, record.signedBy),
     formalCid: firstText(

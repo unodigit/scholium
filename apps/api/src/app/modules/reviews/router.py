@@ -347,6 +347,14 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     carries every review of theirs, oldest version first, in ``history``.  The
     listing is as of the resolved version, so an older version's listing shows
     the reviews as they stood then.
+
+    A reviewer who revealed a review of an earlier listed version and has not
+    revised it is listed too, with that review marked by the version it targets
+    (``version`` / ``version_cid``): it is their newest, and the reviews tab
+    offers them an update against this version.  An earlier review is listed
+    only once it is revealed; it keeps the label it has on its own version's
+    listing, serves nothing that names its reviewer, and does not count toward
+    this version's report gate.
     """
     from sqlalchemy import and_, or_
 
@@ -379,25 +387,41 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
         for key, chain in chains.items()
         if any(revision.version_cid == version_cid for revision in chain)
     }
+    # So is one who revealed a review of an earlier listed version and has not
+    # revised it since: it is their newest review, and the tab offers them an
+    # update.  A chain is made of ``review.formal`` records, so a review enters
+    # it only once revealed; one still sealed on an earlier version is not here.
+    revealed_keys = {key for key, chain in chains.items() if chain}
     paper_versions = [
         known.version_cid for known in submissions.versions_for_paper(view.paper.paper_cid)
     ]
 
-    # Committed review rows for this version, in commit order.
-    wanted = [Review.version_cid == version_cid]
-    if updated_keys:
+    # Every committed review row of the paper up to this version, in commit
+    # order: the order the anonymous labels follow, so a reviewer is the same
+    # "Reviewer B" on every version's listing.  Only some of them are listed.
+    wanted = [Review.version_cid.in_(list(visible))]
+    if revealed_keys:
         wanted.append(
-            and_(Review.review_key.in_(updated_keys), Review.version_cid.in_(paper_versions))
+            and_(Review.review_key.in_(revealed_keys), Review.version_cid.in_(paper_versions))
         )
     with db.SessionLocal() as session:
-        rows = (
+        paper_rows = (
             session.query(Review)
             .filter(or_(*wanted))
             .order_by(Review.committed_at, Review.review_cid)
             .all()
         )
-        for row in rows:
+        for row in paper_rows:
             session.expunge(row)
+    label_index = {row.review_cid: index for index, row in enumerate(paper_rows)}
+
+    # The reviews this listing shows: those committed on this version (sealed or
+    # not) and the revealed reviews of reviewers who stand on an earlier one.
+    rows = [
+        row
+        for row in paper_rows
+        if row.version_cid == version_cid or row.review_key in revealed_keys
+    ]
 
     # The authors' point-by-point replies, keyed by the review they answer.
     responses_by_review: dict[str, list[ReviewResponse]] = {}
@@ -416,24 +440,38 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
             responses_by_review.setdefault(response_row.review_cid, []).append(response_row)
 
     # Gate: open once two reviews are committed, or 21 days after the first.
-    committed_times = [r.committed_at for r in rows if r.committed_at is not None]
+    # It is the gate of *this* version (REV-4), so it counts the reviews
+    # committed on it and the ones revised to it, as it always has -- not the
+    # earlier reviews the listing merely carries: two reviewers who revealed on
+    # v1 must not open v2's reports by being listed there.
+    gate_rows = [
+        r for r in rows if r.version_cid == version_cid or r.review_key in updated_keys
+    ]
+    committed_times = [r.committed_at for r in gate_rows if r.committed_at is not None]
     first_commit = min(committed_times) if committed_times else None
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    gate_open = len(rows) >= 2 or (
+    gate_open = len(gate_rows) >= 2 or (
         first_commit is not None
         and now >= first_commit + timedelta(days=21)
     )
 
     reviews_out: list[dict[str, Any]] = []
-    for index, row in enumerate(rows):
-        letter = chr(ord("A") + index) if index < 26 else str(index + 1)
-        label = f"Reviewer {letter}"
+    for row in rows:
         # The reviewer's reviews of this paper up to this version, oldest first;
         # the last is the one they stand on.
         reviewer_history = history.review_history(
             row, chains.get(row.review_key, []), report_allowed=gate_open
         )
+        if row.version_cid != version_cid and not reviewer_history:
+            # An earlier review is listed only once it is revealed and readable;
+            # nothing of one that is not is shown.
+            continue
         latest = reviewer_history[-1] if reviewer_history else None
+        # The label is the paper's commit order, so it is the label this
+        # reviewer has on every version's listing.
+        index = label_index[row.review_cid]
+        letter = chr(ord("A") + index) if index < 26 else str(index + 1)
+        label = f"Reviewer {letter}"
 
         item: dict[str, Any] = {
             "review_cid": row.review_cid,

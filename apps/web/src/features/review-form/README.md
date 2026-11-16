@@ -201,8 +201,8 @@ The sealed card is where the reviewer opens it:
   An unreadable gate (or one about a newer version) still proceeds: **the API
   is the gate**, and a refusal is shown in its own words.
 - **The reveal signs with the same per-paper key.** Pressing **Reveal review**
-  derives the review key again from the device key (one passkey prompt; the
-  seed is never stored), signs a `review.formal` with the sealed content plus
+  uses the review key this browser holds, or derives it again from the device
+  key (one passkey prompt), signs a `review.formal` with the sealed content plus
   the commitment (`buildRevealBody`), and posts it to
   `POST /v1/reviews/reveal` with the reviewer's access token. Nothing is sent
   until the record is signed.
@@ -212,8 +212,9 @@ The sealed card is where the reviewer opens it:
   `scholium.sealed-review.v1:{paperId}` in `localStorage`
   (`sealed-review.ts`). Returning to `/review/{id}` therefore shows the sealed
   card again instead of a blank form, with the reveal action. The entry is
-  removed the moment the reveal is accepted. The signing key is not stored:
-  it is derived again, from the device key, at reveal time.
+  removed the moment the reveal is accepted. The review key's seed is kept
+  too, but never in the clear: see [Carrying the review key to another
+  browser](#carrying-the-review-key-to-another-browser).
 - **What it says.** While the gate is read the button reads **Checking…**, and
   while the reveal is signing **Revealing…**. On success the card says **Your
   review is revealed**, that the rubric and report are now public, and names
@@ -221,6 +222,49 @@ The sealed card is where the reviewer opens it:
   the sealed card and the action, and offers **Sign in** when the session has
   ended. The gate's own `409` detail ("The report gate is still closed for
   this version…") is shown as the API wrote it.
+
+## Carrying the review key to another browser
+
+Revealing a sealed review needs two things that only the browser that committed
+it has: the content the commitment covers (`sealed-review.ts`) and the review
+key's seed. A reviewer who commits on one device and opens the paper on another
+would find neither, so the sealed card offers to carry them.
+
+- **The key file is encrypted with a passphrase.** **Download review key** asks
+  for a passphrase (twice, at least 8 characters; Scholium never sees it and
+  cannot recover it) and writes a JSON envelope (`passphrase-box.ts`): WebCrypto
+  PBKDF2-SHA256 with at least 310 000 iterations (600 000 by default) and a
+  random salt stretches the passphrase into an AES-256-GCM key, which encrypts
+  the seed, the scores and the justifications. Nothing of the review is in the
+  file in the clear, and a wrong passphrase, or a file that was changed, fails
+  AES-GCM's authentication. The plaintext files an earlier version wrote are
+  turned away on import (they were never encrypted); download a new one from
+  the browser that still has the review.
+- **Import asks for the passphrase.** **Import review key** takes the file,
+  asks for its passphrase, and restores the sealed review and the key on this
+  device, so the card offers **Reveal review**. A file for another paper is
+  refused.
+- **The seed never rests in `localStorage`.** It is sealed with AES-GCM under a
+  **non-extractable** WebCrypto key kept in IndexedDB (`review-key-vault.ts`,
+  `review-key-storage.ts`): the key's bytes are not available to script, and
+  only ciphertext is stored beside it. Entries an earlier version kept in
+  `localStorage` as `scholium.review-key.v1:{paperId}` are moved into the vault
+  the first time the storage is used in a page, and removed from `localStorage`
+  once the vault has them (one the vault refuses stays, rather than be lost).
+  Where IndexedDB or WebCrypto is missing the seed lives in memory for the page
+  and nothing is written in the clear instead.
+- **A sealed review this browser cannot reveal.** When the API reports a sealed
+  review of this paper by the signed-in reviewer (their dashboard,
+  `GET /v1/me/dashboard`, `my_reviews`) and this browser holds nothing to reveal
+  it with, the form is replaced by a card: **You already have a sealed review
+  of this paper**. A commit would be refused (`409`, one review per reviewer and
+  paper), so it explains where the secret is and offers **Import review key**.
+  A reviewer who is signed out, a form that updates a review, and a browser that
+  does hold the sealed review do not ask.
+
+What is still kept in the clear: the *content* of a sealed review
+(`scholium.sealed-review.v1:{paperId}`, above) stays in `localStorage` until it
+is revealed. It is what the reveal publishes, and it cannot sign anything.
 
 ## Validation
 
@@ -361,7 +405,13 @@ reviews would invite a review of the wrong paper. The page sends
 | `links.ts` | Review and sign-in URLs, kept tiny so client components do not pull in the loader. |
 | `conflict.ts` | Conflict-check wire parsing, status words, summary and failure wording. Pure, no React. |
 | `conflict-check.tsx` | The three checks above the form (client component; loads when signed in). |
-| `review-key.ts` | Per-paper review key derivation and the nullifier. |
+| `review-key.ts` | Per-paper review key derivation, the nullifier, and the encrypted key file (`encryptReviewKeyFile` / `decryptReviewKeyFile`). |
+| `passphrase-box.ts` | PBKDF2-SHA256 → AES-GCM for the key file's envelope. Pure WebCrypto, no React. |
+| `review-key-vault.ts` | The IndexedDB vault: one non-extractable AES-GCM key and the blobs it sealed. |
+| `review-key-storage.ts` | The seed kept on the device, sealed under the vault's key; migration of the plaintext entries an earlier version kept. |
+| `review-key-panels.tsx` | **Download review key** and **Import review key**, each asking for a passphrase (client components). |
+| `my-reviews.ts` | The signed-in reviewer's own reviews, read from their dashboard (identity is escrowed, so nothing else says which are theirs). |
+| `use-my-reviews.ts` | `useMyReviews`: that read as a hook, made only when asked. |
 | `commit.ts` | Canonical JSON, the commitment, the commit body, signing/submission and commit failures. |
 | `reveal.ts` | The reveal: the `review.formal` body, signing with the per-paper key, `POST /v1/reviews/reveal`, the gate read and reveal failures. |
 | `sealed-review.ts` | The committed-but-unrevealed review kept on the device, so a return to the page can reveal it. |

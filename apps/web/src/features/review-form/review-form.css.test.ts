@@ -79,6 +79,13 @@ describe("review-form.css", () => {
     expect(feature).toMatch(/\.rf-sr-only\s*\{[^}]*position:\s*absolute/);
   });
 
+  it("gives the passphrase fields the same 44px target and visible focus ring", () => {
+    expect(feature).toMatch(/\.rf-input\s*\{[^}]*min-height:\s*44px/);
+    expect(feature).toMatch(
+      /\.rf-input:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--focus-ring\)/,
+    );
+  });
+
   it("shows a visible focus ring on the justification box", () => {
     expect(feature).toMatch(
       /\.rf-textarea:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--focus-ring\)/,

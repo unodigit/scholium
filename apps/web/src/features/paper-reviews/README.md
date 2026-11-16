@@ -67,6 +67,18 @@ paper's own id. The payload's `version` and `versionCid` say which version the
 reviews belong to. Report bodies are absent while `gate_open` is false; rubric
 scores are always present.
 
+The listing of a version also carries each reviewer's newest *revealed* review
+of an earlier version, marked by the `version` it targets (a review still sealed
+on an earlier version is not listed there). The card says **Review of v1** and
+offers its reviewer, and only them, **Update for v{latest}**, which opens the
+review form with `?prev=` set to the review they stand on. Who wrote an
+anonymous review is escrowed, so which cards are the viewer's own is read from
+their dashboard (`review-form`'s `useMyReviews`); a review signed with a name is
+the viewer's when the name is theirs. A review counts as revealed by its
+`revealed_at` (or its scores), not by its report: a version listed a moment ago
+has no review committed on it, so its reports are still sealed and the carried
+reviews have none to show.
+
 A `404` is the calm empty state (“No reviews yet… Review this paper”), not a
 failure; a transport or server error is shown with *Try again*.
 

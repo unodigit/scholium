@@ -25,6 +25,11 @@
  * either way, which is what makes the median bar useful before the gate
  * opens.
  *
+ * A reviewer whose newest review is of an earlier version is listed too: the
+ * card says which version it is of, and offers its reviewer (and only them)
+ * **Update for v{latest}**. Who the reviewer is stays escrowed, so ownership is
+ * read from the signed-in account's own dashboard, not guessed from the card.
+ *
  * The server route may pass `initial` (and `initialError` when its read
  * failed) so the first HTML already contains the reviews; on its own the tab
  * loads from `GET /v1/papers/{id}/reviews` and offers a retry. Every network
@@ -33,7 +38,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ReviewCardActions, useViewer } from "../review-form";
+import {
+  ReviewCardActions,
+  useMyReviews,
+  useViewer,
+  type LoadMyReviews,
+} from "../review-form";
 import { SCORE_MAX } from "../review-form/rubric";
 import { EmptyState, Icon, type IconName } from "../ui-kit";
 import {
@@ -101,9 +111,18 @@ export interface ReviewsTabProps {
   latestVersion?: number | null;
   /** Replace the loader, for tests or another source. Keep it stable. */
   load?: LoadReviews;
+  /** Replace the read of the reviewer's own reviews (the dashboard), for tests. */
+  loadOwnReviews?: LoadMyReviews;
 }
 
-export function ReviewsTab({ paperId, initial, initialError, latestVersion, load }: ReviewsTabProps) {
+export function ReviewsTab({
+  paperId,
+  initial,
+  initialError,
+  latestVersion,
+  load,
+  loadOwnReviews,
+}: ReviewsTabProps) {
   const [view, setView] = useState<View>(() => initialView(initial, initialError));
   const [attempt, setAttempt] = useState(0);
 
@@ -177,6 +196,7 @@ export function ReviewsTab({ paperId, initial, initialError, latestVersion, load
           data={view.data}
           paperId={paperId}
           latestVersion={latestVersion ?? view.data.version}
+          loadOwnReviews={loadOwnReviews}
         />
       ) : null}
     </section>
@@ -188,13 +208,34 @@ function ReviewsView({
   data,
   paperId,
   latestVersion,
+  loadOwnReviews,
 }: {
   data: ReviewsData;
   paperId: string;
   latestVersion?: number | null;
+  loadOwnReviews?: LoadMyReviews;
 }) {
   const reviews = data.reviews;
   const medians = dimensionMedians(reviews);
+  const latest = latestVersion ?? data.version;
+
+  // Who wrote an anonymous review is escrowed, so which of the earlier reviews
+  // is the viewer's own is asked of their dashboard; only when there is one to
+  // ask about. A review signed with a name needs no question: the name says.
+  const viewer = useViewer();
+  const askOwnership =
+    viewer.signedIn &&
+    reviews.some((review) => review.signedBy == null && isEarlierRevealed(review, latest));
+  const own = useMyReviews(askOwnership, paperId, loadOwnReviews);
+  const ownCids = new Set<string>(
+    own.status === "ready"
+      ? own.reviews.flatMap((mine) => (mine.reviewCid === null ? [] : [mine.reviewCid]))
+      : [],
+  );
+  const isMine = (review: Review): boolean =>
+    review.signedBy != null
+      ? viewer.did !== null && review.signedBy === viewer.did
+      : review.reviewCid !== null && ownCids.has(review.reviewCid);
 
   if (reviews.length === 0) {
     return (
@@ -232,7 +273,8 @@ function ReviewsView({
               review={review}
               gateOpen={data.gateOpen}
               paperId={paperId}
-              latestVersion={latestVersion ?? data.version}
+              latestVersion={latest}
+              mine={viewer.signedIn && isMine(review)}
             />
           </li>
         ))}
@@ -279,26 +321,57 @@ function MedianSummary({ rows }: { rows: ReturnType<typeof dimensionMedians> }) 
   );
 }
 
+/**
+ * Whether `review` is a revealed review of a version before `latest`: the
+ * reviewer's newest, which an update against `latest` would replace.
+ *
+ * Revealed is read from what the listing serves as soon as a review is
+ * revealed (its date, its scores), never from the report: that stays out of
+ * the listing until the version's gate opens, and a version listed a moment ago
+ * has no review committed on it yet.
+ */
+function isEarlierRevealed(review: Review, latest: number | null): boolean {
+  if (review.version === null || latest === null || review.version >= latest) return false;
+  return (
+    (review.revealedAt !== undefined && review.revealedAt !== null) ||
+    review.scores.length > 0 ||
+    review.report !== null
+  );
+}
+
+/** The review form, set to revise the review `review` stands on. */
+function updateHref(paperId: string, review: Review): string {
+  const prev = review.formalCid ?? review.reviewCid ?? null;
+  return prev !== null
+    ? `${reviewHref(paperId)}?prev=${encodeURIComponent(prev)}`
+    : reviewHref(paperId);
+}
+
 /** One formal review as a card. */
 function ReviewCard({
   review,
   gateOpen,
   paperId,
   latestVersion,
+  mine,
 }: {
   review: Review;
   gateOpen: boolean;
   paperId: string;
   latestVersion: number | null;
+  /** The signed-in viewer wrote this review. */
+  mine: boolean;
 }) {
   const headingId = `pr-review-${review.key.replace(/[^a-z0-9]+/gi, "-").slice(-48)}`;
   const tone = recommendationTone(review.recommendation);
   const date = formatReviewDate(review.committedAt);
-  const viewer = useViewer();
+  const earlier = isEarlierRevealed(review, latestVersion);
 
   const meta: string[] = ["Anonymous reviewer"];
   if (date !== null) meta.push(`Reviewed ${date}`);
   if (review.confidenceLabel !== null) meta.push(`Confidence: ${review.confidenceLabel}`);
+  // A review of an earlier version is listed beside the latest's: say which.
+  if (earlier) meta.push(`Review of v${review.version}`);
 
   return (
     <article className="pr-card" aria-labelledby={headingId}>
@@ -347,29 +420,13 @@ function ReviewCard({
         </section>
       ) : null}
 
-      {(() => {
-        const isOlder =
-          review.report !== null &&
-          review.version !== null &&
-          latestVersion !== null &&
-          review.version < latestVersion;
-        const canUpdate =
-          isOlder &&
-          viewer.signedIn &&
-          (review.signedBy == null || review.signedBy === viewer.did);
-        if (!canUpdate) return null;
-        const prev = review.formalCid ?? review.reviewCid ?? null;
-        const href = prev !== null
-          ? `${reviewHref(paperId)}?prev=${encodeURIComponent(prev)}`
-          : reviewHref(paperId);
-        return (
-          <p className="pr-update">
-            <a className="pr-link" href={href}>
-              {`Update for v${latestVersion}`}
-            </a>
-          </p>
-        );
-      })()}
+      {earlier && mine && latestVersion !== null ? (
+        <p className="pr-update">
+          <a className="pr-link" href={updateHref(paperId, review)}>
+            {`Update for v${latestVersion}`}
+          </a>
+        </p>
+      ) : null}
 
       {/* The reply and the rating for whoever may act (docs/design.md §5.2).
           The component offers nothing on a sealed review, to a signed-out

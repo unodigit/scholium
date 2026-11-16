@@ -35,6 +35,19 @@ import { bytesToHex } from "@noble/hashes/utils";
 import { deviceKey } from "../web-auth/device-key";
 import { didKeyFromEd25519PublicKey } from "../web-auth/did-key";
 import { concatBytes, toUint8Array } from "../web-auth/encoding";
+import {
+  KeyFileError,
+  decryptWithPassphrase,
+  encryptWithPassphrase,
+  type PassphraseBoxOptions,
+} from "./passphrase-box";
+import {
+  REVIEW_KEY_STORAGE_PREFIX,
+  browserReviewKeyStorage,
+  reviewKeyStorageKey,
+  type ReviewKeyStorage,
+} from "./review-key-storage";
+import type { SealedReview } from "./sealed-review";
 
 // `@noble/ed25519` v2 signs synchronously once it has a SHA-512 function.
 // Wire the pure-JS hash so derivation works in a browser, in Node and under
@@ -109,7 +122,7 @@ export async function deriveReviewKey(
 
   // A key carried over from another browser (imported) takes precedence over
   // deriving a fresh one from this device's key.
-  const stored = loadReviewKey(id);
+  const stored = await loadReviewKey(id);
   if (stored !== null) return stored;
 
   const message = utf8(`${REVIEW_KEY_DOMAIN}${id}`);
@@ -148,74 +161,61 @@ export function signWithReviewKey(
 }
 
 // ---------------------------------------------------------------------------
-// Carrying a review key between browsers (encrypted-at-rest JSON file)
+// Keeping a review key on this device
 // ---------------------------------------------------------------------------
 
-import type { SealedReview } from "./sealed-review";
+// The seed is never stored in the clear: see `review-key-storage.ts`, which
+// seals it under a non-extractable AES-GCM key kept in IndexedDB.
+export { REVIEW_KEY_STORAGE_PREFIX, browserReviewKeyStorage, reviewKeyStorageKey };
+export type { ReviewKeyStorage };
 
-/** Prefix of the one storage key per paper for an imported review key. */
-export const REVIEW_KEY_STORAGE_PREFIX = "scholium.review-key.v1:";
-
-/** The storage key for a paper's carried review key. */
-export function reviewKeyStorageKey(paperId: string): string {
-  return `${REVIEW_KEY_STORAGE_PREFIX}${paperId.trim()}`;
-}
-
-/** The small subset of the Web Storage API this store needs. */
-export interface ReviewKeyStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
-
-/** An in-memory store, safe on the server and in tests. */
-class ReviewKeyMemoryStorage implements ReviewKeyStorage {
-  private readonly values = new Map<string, string>();
-  getItem(key: string): string | null {
-    return this.values.has(key) ? (this.values.get(key) as string) : null;
-  }
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-}
-
-let reviewKeyMemory: ReviewKeyMemoryStorage | undefined;
-function reviewKeyFallback(): ReviewKeyMemoryStorage {
-  if (reviewKeyMemory === undefined) reviewKeyMemory = new ReviewKeyMemoryStorage();
-  return reviewKeyMemory;
-}
-
-/** `localStorage`, resolved lazily; the in-memory store on the server. */
-export const browserReviewKeyStorage: ReviewKeyStorage = {
-  getItem(key) {
-    const local = getReviewKeyLocalStorage();
-    return local ? local.getItem(key) : reviewKeyFallback().getItem(key);
-  },
-  setItem(key, value) {
-    const local = getReviewKeyLocalStorage();
-    if (local) local.setItem(key, value);
-    else reviewKeyFallback().setItem(key, value);
-  },
-  removeItem(key) {
-    const local = getReviewKeyLocalStorage();
-    if (local) local.removeItem(key);
-    else reviewKeyFallback().removeItem(key);
-  },
-};
-
-function getReviewKeyLocalStorage(): Storage | undefined {
+/** Keep a review key so a reveal can be signed in this browser. */
+export async function saveReviewKey(
+  paperId: string,
+  key: ReviewKeyMaterial,
+  storage: ReviewKeyStorage = browserReviewKeyStorage,
+): Promise<void> {
+  const id = paperId.trim();
+  if (id === "") return;
   try {
-    if (typeof window !== "undefined" && window.localStorage) {
-      return window.localStorage;
-    }
+    await storage.save(id, key.seed);
   } catch {
-    // Access can throw in private-mode browsers or sandboxed iframes.
+    // The review is still revealable on this page.
   }
-  return undefined;
 }
+
+/** The review key kept for `paperId`, or `null`. */
+export async function loadReviewKey(
+  paperId: string,
+  storage: ReviewKeyStorage = browserReviewKeyStorage,
+): Promise<ReviewKeyMaterial | null> {
+  const id = paperId.trim();
+  if (id === "") return null;
+  try {
+    const seed = await storage.load(id);
+    return seed === null ? null : reviewKeyFromSeed(seed);
+  } catch {
+    return null;
+  }
+}
+
+/** Forget a paper's carried review key. */
+export async function forgetReviewKey(
+  paperId: string,
+  storage: ReviewKeyStorage = browserReviewKeyStorage,
+): Promise<void> {
+  const id = paperId.trim();
+  if (id === "") return;
+  try {
+    await storage.forget(id);
+  } catch {
+    // Nothing to forget.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Carrying a review key between browsers (a passphrase-encrypted file)
+// ---------------------------------------------------------------------------
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -232,57 +232,10 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes;
 }
 
-/** Keep a review key so a reveal can be signed in this browser. */
-export function saveReviewKey(
-  paperId: string,
-  key: ReviewKeyMaterial,
-  storage: ReviewKeyStorage = browserReviewKeyStorage,
-): void {
-  const id = paperId.trim();
-  if (id === "") return;
-  try {
-    storage.setItem(
-      reviewKeyStorageKey(id),
-      JSON.stringify({ seed: bytesToBase64(key.seed) }),
-    );
-  } catch {
-    // Storage full or refused: the review is still revealable on this page.
-  }
-}
-
-/** The review key kept for `paperId`, or `null`. */
-export function loadReviewKey(
-  paperId: string,
-  storage: ReviewKeyStorage = browserReviewKeyStorage,
-): ReviewKeyMaterial | null {
-  const id = paperId.trim();
-  if (id === "") return null;
-  try {
-    const serialized = storage.getItem(reviewKeyStorageKey(id));
-    if (serialized === null) return null;
-    const parsed = JSON.parse(serialized) as { seed?: unknown };
-    if (typeof parsed.seed !== "string") return null;
-    return reviewKeyFromSeed(base64ToBytes(parsed.seed));
-  } catch {
-    return null;
-  }
-}
-
-/** Forget a paper's carried review key. */
-export function forgetReviewKey(
-  paperId: string,
-  storage: ReviewKeyStorage = browserReviewKeyStorage,
-): void {
-  const id = paperId.trim();
-  if (id === "") return;
-  try {
-    storage.removeItem(reviewKeyStorageKey(id));
-  } catch {
-    // Nothing to forget.
-  }
-}
-
-/** The shape of an exported review key file. */
+/**
+ * What a review key file holds once decrypted. It is never written to disk as
+ * it is: see {@link encryptReviewKeyFile}.
+ */
 export interface ReviewKeyFile {
   readonly paperId: string;
   readonly versionCid: string;
@@ -293,7 +246,7 @@ export interface ReviewKeyFile {
   readonly seed: string;
 }
 
-/** Build the JSON for a carried review key file. */
+/** Build what a carried review key file holds, before it is encrypted. */
 export function buildReviewKeyFile(
   sealed: SealedReview,
   key: ReviewKeyMaterial | null,
@@ -309,7 +262,7 @@ export function buildReviewKeyFile(
   };
 }
 
-/** Parse a carried review key file back into a sealed review and key. */
+/** Parse a carried review key file's contents back into a sealed review and key. */
 export function parseReviewKeyFile(raw: unknown): {
   readonly sealed: SealedReview;
   readonly key: ReviewKeyMaterial;
@@ -351,6 +304,65 @@ export function parseReviewKeyFile(raw: unknown): {
     revealBody: revealBody as Record<string, unknown>,
   };
   return { sealed, key };
+}
+
+/**
+ * The text of a review key file: the sealed review and its key, encrypted with
+ * `passphrase` (PBKDF2-SHA256, then AES-GCM; see `passphrase-box.ts`).
+ *
+ * Neither the seed nor the review's scores and justifications are in the file
+ * in the clear.
+ *
+ * @throws {KeyFileError} an empty passphrase, or a browser without WebCrypto.
+ */
+export async function encryptReviewKeyFile(
+  sealed: SealedReview,
+  key: ReviewKeyMaterial,
+  passphrase: string,
+  options: PassphraseBoxOptions = {},
+): Promise<string> {
+  const contents = new TextEncoder().encode(
+    JSON.stringify(buildReviewKeyFile(sealed, key)),
+  );
+  const envelope = await encryptWithPassphrase(contents, passphrase, options);
+  return JSON.stringify(envelope, null, 2);
+}
+
+/**
+ * Open the text of a review key file with `passphrase`.
+ *
+ * @throws {KeyFileError} the file is not an encrypted review key file, the
+ *   passphrase is wrong (or the file was changed), or what it opens to is not
+ *   a review key. A plaintext file an earlier version wrote is `not-encrypted`.
+ */
+export async function decryptReviewKeyFile(
+  text: string,
+  passphrase: string,
+  options: PassphraseBoxOptions = {},
+): Promise<{ readonly sealed: SealedReview; readonly key: ReviewKeyMaterial }> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new KeyFileError(
+      "not-encrypted",
+      "This is not an encrypted review key file. Choose the file Download review key made.",
+    );
+  }
+  const contents = await decryptWithPassphrase(raw, passphrase, options);
+  let parsed: ReturnType<typeof parseReviewKeyFile> = null;
+  try {
+    parsed = parseReviewKeyFile(JSON.parse(new TextDecoder().decode(contents)));
+  } catch {
+    parsed = null;
+  }
+  if (parsed === null) {
+    throw new KeyFileError(
+      "malformed",
+      "The file opened, but it does not hold a review key.",
+    );
+  }
+  return parsed;
 }
 
 /** Constants hidden tests may look for. */
