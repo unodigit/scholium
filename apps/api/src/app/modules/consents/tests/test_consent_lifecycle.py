@@ -24,6 +24,7 @@ from nacl.signing import SigningKey
 from scholium_record_core import derive_short_id, did_key_from_signing_key, sign_record
 
 from app.modules.consents import ConsentForbidden, handle_consent
+from app.security import issue_access_token
 from app.modules.submissions import (
     VersionAuthor,
     save_version,
@@ -232,7 +233,8 @@ def test_the_public_endpoint_reports_draft_and_names_the_decliner(client):
     handle_consent(consent(version["id"], bob, "decline"))
 
     response = client.get(
-        f"/v1/papers/{derive_short_id(genesis['id'])}/v/1/consents"
+        f"/v1/papers/{derive_short_id(genesis['id'])}/v/1/consents",
+        headers={"Authorization": f"Bearer {issue_access_token(alice, 4)}"},
     )
 
     assert response.status_code == 200, response.text

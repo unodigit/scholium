@@ -28,6 +28,8 @@ from app.security import issue_access_token
 
 URL = "/v1/records"
 
+_MOD_HEADERS = {"Authorization": f"Bearer {issue_access_token('did:key:z6Mkmoderator', 4)}"}
+
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -139,8 +141,11 @@ def post_record(client, author: Author, record: dict):
     )
 
 
-def get_consents(client, published: Published):
-    return client.get(f"/v1/papers/{published.short_id}/v/{published.n}/consents")
+def get_consents(client, published: Published, headers=None):
+    return client.get(
+        f"/v1/papers/{published.short_id}/v/{published.n}/consents",
+        headers=headers,
+    )
 
 
 def statuses_by_did(payload: dict) -> dict[str, str]:
@@ -158,7 +163,7 @@ def published(authors) -> Published:
 
 
 def test_every_author_starts_waiting(client, authors, published):
-    response = get_consents(client, published)
+    response = get_consents(client, published, headers=_MOD_HEADERS)
 
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -174,7 +179,7 @@ def test_accept_reports_signed_and_decline_reports_declined(client, authors, pub
         response = post_record(client, author, consent_record(author, published, decision))
         assert response.status_code == 201, response.text
 
-    payload = get_consents(client, published).json()
+    payload = get_consents(client, published, headers=_MOD_HEADERS).json()
     statuses = statuses_by_did(payload)
 
     assert statuses[accepted.did] == "signed"
@@ -196,7 +201,7 @@ def test_a_consent_appended_to_the_log_alone_is_still_reported(client, authors, 
     accepted = authors[1]
     ledger.append(consent_record(accepted, published, "accept"))
 
-    payload = get_consents(client, published).json()
+    payload = get_consents(client, published, headers=_MOD_HEADERS).json()
 
     assert statuses_by_did(payload)[accepted.did] == "signed"
     assert payload["signed"] == 1
@@ -230,7 +235,7 @@ def test_a_version_indexed_in_the_database_is_read_from_it(client, authors, publ
         decision="accept",
     )
 
-    payload = get_consents(client, published).json()
+    payload = get_consents(client, published, headers=_MOD_HEADERS).json()
 
     assert statuses_by_did(payload) == {
         accepted.did: "signed",
@@ -241,7 +246,7 @@ def test_a_version_indexed_in_the_database_is_read_from_it(client, authors, publ
 
 
 def test_the_version_state_is_reported(client, published):
-    payload = get_consents(client, published).json()
+    payload = get_consents(client, published, headers=_MOD_HEADERS).json()
 
     # The version record was appended without the submissions handler, so the
     # authors are still awaiting consent; the state is reported either way.
@@ -250,7 +255,8 @@ def test_the_version_state_is_reported(client, published):
 
 def test_a_genesis_cid_can_address_the_paper(client, published):
     response = client.get(
-        f"/v1/papers/{published.genesis_id}/v/{published.n}/consents"
+        f"/v1/papers/{published.genesis_id}/v/{published.n}/consents",
+        headers=_MOD_HEADERS,
     )
 
     assert response.status_code == 200, response.text

@@ -44,8 +44,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
+
+from app.security import InvalidAccessToken, Principal, decode_access_token
 
 from . import service
 
@@ -53,6 +56,29 @@ __all__ = ["ConsentAuthorOut", "PaperConsents", "router"]
 
 #: Router the module loader mounts under ``/v1``.
 router = APIRouter(tags=["consents"])
+
+
+#: Bearer credentials, read only to widen access to an unlisted version.
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _optional_principal(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> Optional[Principal]:
+    """The caller when the request carries a usable token, otherwise ``None``.
+
+    Reading is public; a token matters only for a version that is not listed
+    yet, where it carries the caller's authorship or moderator tier.  A token
+    that is present but unusable is ignored rather than turning a readable
+    page into a ``401`` (the same courtesy ``content.router`` pays its
+    readers).
+    """
+    if credentials is None:
+        return None
+    try:
+        return decode_access_token(credentials.credentials)
+    except InvalidAccessToken:
+        return None
 
 
 class ConsentAuthorOut(BaseModel):
@@ -134,7 +160,11 @@ def _author_out(entry: service.ConsentEntry) -> ConsentAuthorOut:
     response_model=PaperConsents,
     summary="List a paper version's authors and their consent status",
 )
-def get_paper_consents(paper_id: str, n: int) -> PaperConsents:
+def get_paper_consents(
+    paper_id: str,
+    n: int,
+    principal: Optional[Principal] = Depends(_optional_principal),
+) -> PaperConsents:
     """Return every author of version ``n`` with status waiting, signed or declined."""
     try:
         version = service.resolve_version(paper_id, n)
@@ -143,6 +173,14 @@ def get_paper_consents(paper_id: str, n: int) -> PaperConsents:
         # under it, so it is simply not a paper this node has.
         version = None
     if version is None:
+        raise _not_found(paper_id, n)
+
+    # Pre-listing visibility: an unlisted version's co-author list is private to
+    # its authors and to tier-4 moderators, the same rule the reading routes
+    # apply to every other read of an unlisted version.  Everyone else,
+    # anonymous callers included, gets the unknown-version 404 so the answer
+    # never reveals that the unlisted version exists.
+    if not service.may_read(version, principal):
         raise _not_found(paper_id, n)
 
     entries = service.consents_for_version(version.version_cid)

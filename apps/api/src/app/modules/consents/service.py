@@ -75,6 +75,7 @@ __all__ = [
     "handle_consent",
     "is_listed_author",
     "listed_authors",
+    "may_read",
     "resolve_version",
     "save_coauthor_consent",
     "save_consent",
@@ -666,6 +667,47 @@ def resolve_version(paper: Any, n: Any) -> Optional[VersionRef]:
         version_cid=version_cid,
         state=state if isinstance(state, str) and state else _UNSTORED_VERSION_STATE,
     )
+
+
+def _listed_state() -> str:
+    """The ``listed`` state's name, straight from the submissions plugin."""
+    try:
+        from app.modules import submissions
+
+        return submissions.LISTED
+    except Exception:  # pragma: no cover - a plugin-less node
+        return "listed"
+
+
+def may_read(ref: "VersionRef", principal: Any) -> bool:
+    """Whether ``principal`` may read ``ref``'s co-author (consent) list.
+
+    A ``listed`` version is public, exactly as before.  While the version is not
+    ``listed`` -- ``awaiting_consent``, ``scanning``, ``moderation``, ``held``,
+    ``rejected``, ``draft``, or a state this node never stored -- its co-author
+    list is pre-listing: only the version's authors and moderators (tier 4) may
+    read it.  Everyone else, anonymous callers included, is refused, so a
+    refusal never reveals that the unlisted version exists.
+    """
+    if not hasattr(ref, "state"):
+        return True
+    if ref.state == _listed_state():
+        return True
+    if principal is None:
+        return False
+    tier = getattr(principal, "tier", None)
+    try:
+        if tier is not None and int(tier) >= 4:
+            return True
+    except (TypeError, ValueError):
+        pass
+    did = getattr(principal, "did", None)
+    if not isinstance(did, str) or not did:
+        return False
+    try:
+        return did in listed_authors(getattr(ref, "version_cid", None))
+    except Exception:  # pragma: no cover - a damaged table is not a normal path
+        return False
 
 
 def _version_from_body(body: Mapping[str, Any]) -> Optional[str]:
