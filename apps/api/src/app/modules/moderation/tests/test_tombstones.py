@@ -3,19 +3,11 @@
 A ``moderation.decision`` with ``action: tombstone`` saves the cid to the
 ``denylist`` table and deletes the blob bytes, while the envelope and the log
 entry remain and verification still passes.
-
-The record-core schema does not yet list ``tombstone`` among the actions (a
-shared edit reported for the operator), so ingest would refuse the record
-before this plugin sees it.  The tests that go through ``POST`` therefore use
-the ``tombstone_schema`` fixture: the shipped schemas, copied, with that one
-word added to the action enum -- the schema as it will be once the edit lands.
-``test_the_shipped_schema_lists_every_action`` is the tripwire for that edit.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
 import uuid
 from pathlib import Path
 
@@ -84,20 +76,6 @@ def moderator() -> Moderator:
 def subscribed():
     """Put the package's ledger subscription back (other suites clear it)."""
     moderation._install_ledger_subscriber()
-
-
-@pytest.fixture
-def tombstone_schema(tmp_path, monkeypatch) -> None:
-    """The record-core schemas with ``tombstone`` added to ``moderation.decision``."""
-    copy = tmp_path / "schemas"
-    shutil.copytree(schema_dir(), copy)
-    path = copy / "moderation.decision.json"
-    document = json.loads(path.read_text(encoding="utf-8"))
-    actions = document["properties"]["action"]["enum"]
-    if "tombstone" not in actions:
-        actions.append("tombstone")
-    path.write_text(json.dumps(document), encoding="utf-8")
-    monkeypatch.setenv("SCHOLIUM_SCHEMA_DIR", str(copy))
 
 
 class StoredSubmission(Submission):
@@ -350,7 +328,7 @@ def test_the_handler_refuses_an_unknown_target_and_an_unknown_clause(moderator):
         handle_moderation_decision(no_clause)
 
 
-def test_tombstoning_a_version_through_the_endpoint(client, moderator, tombstone_schema):
+def test_tombstoning_a_version_through_the_endpoint(client, moderator):
     submission = StoredSubmission(state="listed")
     decision = tombstone_decision(moderator, submission.version_cid)
 
@@ -379,7 +357,7 @@ def test_tombstoning_a_version_through_the_endpoint(client, moderator, tombstone
     )
 
 
-def test_tombstoning_a_file_reports_tombstoned(client, moderator, tombstone_schema):
+def test_tombstoning_a_file_reports_tombstoned(client, moderator):
     submission = StoredSubmission(state="listed")
     decision = tombstone_decision(moderator, submission.file_cid)
 
@@ -393,7 +371,7 @@ def test_tombstoning_a_file_reports_tombstoned(client, moderator, tombstone_sche
     assert submission.state == "listed"
 
 
-def test_a_tombstone_arrives_through_post_records_too(client, moderator, tombstone_schema, subscribed):
+def test_a_tombstone_arrives_through_post_records_too(client, moderator, subscribed):
     submission = StoredSubmission(state="listed")
     decision = tombstone_decision(moderator, submission.version_cid)
 
@@ -405,7 +383,7 @@ def test_a_tombstone_arrives_through_post_records_too(client, moderator, tombsto
     assert submission.state == "rejected"
 
 
-def test_an_unknown_target_is_422_and_nothing_is_stored(client, moderator, tombstone_schema):
+def test_an_unknown_target_is_422_and_nothing_is_stored(client, moderator):
     stray = tombstone_decision(moderator, "bafyreiunknowntarget")
 
     response = client.post(DECISIONS_URL, json=stray, headers=moderator.headers)
@@ -416,7 +394,7 @@ def test_an_unknown_target_is_422_and_nothing_is_stored(client, moderator, tombs
     assert get_denylist_entry("bafyreiunknowntarget") is None
 
 
-def test_only_a_moderators_signature_can_tombstone(client, tombstone_schema):
+def test_only_a_moderators_signature_can_tombstone(client):
     submission = StoredSubmission(state="listed")
     reviewer = Moderator(tier=3, token_tier=4)
     decision = tombstone_decision(reviewer, submission.version_cid)
@@ -460,7 +438,7 @@ def test_citing_the_unlawful_content_clause_does_not_tombstone_by_itself(client,
 # --------------------------------------------------------------------------- #
 
 
-def test_the_records_and_the_log_remain_and_history_still_verifies(client, moderator, tombstone_schema):
+def test_the_records_and_the_log_remain_and_history_still_verifies(client, moderator):
     submission = StoredSubmission(state="listed")
     version = submissions.get_version(submission.version_cid)
     record_ids = [submission.paper_cid, version.manifest_cid, submission.version_cid, submission.consent["id"]]
@@ -496,7 +474,7 @@ def test_the_records_and_the_log_remain_and_history_still_verifies(client, moder
     assert after.head == before.head == submission.version_cid
 
 
-def test_the_export_leaves_out_the_tombstoned_bytes_but_keeps_the_records(client, moderator, tombstone_schema):
+def test_the_export_leaves_out_the_tombstoned_bytes_but_keeps_the_records(client, moderator):
     submission = StoredSubmission(state="listed")
     export_url = f"/v1/export/paper/{submission.short_id}.car"
     exported = client.get(export_url)
@@ -519,13 +497,6 @@ def test_the_export_leaves_out_the_tombstoned_bytes_but_keeps_the_records(client
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason=(
-        "shared edit pending: record-core's moderation.decision schema does not list "
-        "'tombstone', so ingest refuses a tombstone before this plugin sees it"
-    ),
-    strict=False,
-)
 def test_the_shipped_schema_lists_every_action():
     document = json.loads((Path(schema_dir()) / "moderation.decision.json").read_text(encoding="utf-8"))
 

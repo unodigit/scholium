@@ -20,7 +20,7 @@
     },
     "action": {
       "type": "string",
-      "enum": ["list", "hold", "reclassify", "reject", "delist", "release"]
+      "enum": ["list", "hold", "reclassify", "reject", "delist", "tombstone", "release"]
     },
     "state": {
       "type": "string",
