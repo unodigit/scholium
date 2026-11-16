@@ -484,15 +484,17 @@ def column_names(engine) -> set[str]:
     return {column["name"] for column in inspect(engine).get_columns("uploads")}
 
 
-def test_ensure_columns_adds_cid_to_an_uploads_table_from_before_it_existed(old_database):
+def test_ensure_columns_adds_cid_and_completed_at_to_an_old_uploads_table(old_database):
     assert "cid" not in column_names(old_database)
+    assert "completed_at" not in column_names(old_database)
 
-    assert store.ensure_columns(old_database) == ["cid"]
+    assert store.ensure_columns(old_database) == ["cid", "completed_at"]
 
     assert "cid" in column_names(old_database)
+    assert "completed_at" in column_names(old_database)
     with old_database.connect() as connection:
-        row = connection.execute(text("SELECT upload_offset, cid FROM uploads WHERE id = 'old'")).one()
-    assert tuple(row) == (2, None)  # existing uploads survive, unstored
+        row = connection.execute(text("SELECT upload_offset, cid, completed_at FROM uploads WHERE id = 'old'")).one()
+    assert tuple(row) == (2, None, None)  # existing uploads survive, unstored
 
 
 def test_ensure_columns_is_idempotent(old_database):

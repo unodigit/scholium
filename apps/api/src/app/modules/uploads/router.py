@@ -54,8 +54,13 @@ that created it, and to nobody else: for any other caller (whatever their tier)
 and for an unowned upload left by an older release it is a ``404``, exactly as if
 the id did not exist, so ids cannot be probed and nobody else's CID is revealed.
 Each DID may have only so many bytes in flight (:mod:`.config`): a creation that
-would take it past that is a ``413`` ``upload-quota-exceeded`` problem. Uploads
-nobody finishes are deleted after a TTL by :mod:`.reaper`.
+would take it past that is a ``413`` ``upload-quota-exceeded`` problem. Each DID
+also has a daily allowance covering bytes in flight and completed bytes that no
+manifest references yet (2 GiB for accounts under 90 days, 20 GiB otherwise), so
+a brand-new account cannot declare a 5 GiB upload; the 5 GiB bundle cap remains
+for accounts old enough to be allowed it. Uploads nobody finishes are deleted
+after a TTL by :mod:`.reaper`, as are completed uploads no manifest references
+after the longer orphan TTL.
 
 Every error leaves this module as an ``HTTPException``, which the
 app-wide RFC 9457 handlers render as ``application/problem+json``.
@@ -64,6 +69,7 @@ app-wide RFC 9457 handlers render as ``application/problem+json``.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import anyio
@@ -76,7 +82,7 @@ from starlette.requests import ClientDisconnect
 from app.db import SessionLocal
 from app.security import Principal, Tier, require_tier
 
-from . import config, finalize, limits, store
+from . import config, finalize, limits, references, store
 
 router = APIRouter(tags=["uploads"])
 
@@ -130,15 +136,28 @@ def _reject_over_quota(exc: store.QuotaExceeded) -> HTTPException:
     # Imported at raise time for the reason given in _reject_too_large.
     from app.errors import ProblemException
 
+    if exc.quota_kind == store.QUOTA_DAILY:
+        detail = (
+            f"You have finished {exc.completed_bytes} bytes of uploads that no manifest references and hold "
+            f"{exc.in_flight_bytes} more in flight against a daily allowance of {exc.quota_bytes} bytes, and this "
+            f"upload needs {exc.requested_bytes} more. Reference the finished uploads in a manifest, or wait for "
+            "the daily allowance to free up, then try again."
+        )
+    else:
+        detail = (
+            f"You have {exc.in_flight_bytes} of your {exc.quota_bytes} bytes of unfinished uploads in flight, and "
+            f"this upload needs {exc.requested_bytes} more. Finish the earlier ones, or wait until the server "
+            "deletes the ones left unfinished, then try again."
+        )
     return ProblemException(
         413,
-        f"You have {exc.in_flight_bytes} of your {exc.quota_bytes} bytes of unfinished uploads in flight, and this "
-        f"upload needs {exc.requested_bytes} more. Finish the earlier ones, or wait until the server deletes the "
-        "ones left unfinished, then try again.",
+        detail,
         type=UPLOAD_QUOTA_EXCEEDED_TYPE,
+        quota_kind=exc.quota_kind,
         quota_bytes=exc.quota_bytes,
         in_flight_bytes=exc.in_flight_bytes,
         requested_bytes=exc.requested_bytes,
+        completed_bytes=exc.completed_bytes,
         headers=_tus_headers(),
     )
 
@@ -225,6 +244,38 @@ def _require_offset_content_type(request: Request) -> None:
             f"A PATCH must send 'Content-Type: {OFFSET_CONTENT_TYPE}', got {media_type or 'none'!r}.",
             headers=_tus_headers(),
         )
+
+
+def _daily_allowance_for(upload: store.Upload) -> tuple[int, int, int]:
+    """``(quota, completed unreferenced bytes, other in-flight bytes)`` for the upload's owner.
+
+    Blocking database and record-log reads: call it from a worker thread.
+    """
+    now = datetime.now(timezone.utc)
+    since = now.replace(tzinfo=None) - config.DAILY_WINDOW
+    quota = config.daily_quota_bytes(store.account_created_at(upload.owner_did), now=now)
+    referenced: set[str] = set()
+    if store.has_completed_upload_since(upload.owner_did, since=since):
+        referenced = references.referenced_cids() or set()
+    completed, others = store.daily_usage_for(
+        upload.owner_did,
+        exclude_upload_id=upload.id,
+        since=since,
+        referenced=referenced,
+    )
+    return quota, completed, others
+
+
+def _reject_daily_quota(*, quota: int, completed: int, others: int, requested: int) -> HTTPException:
+    return _reject_over_quota(
+        store.QuotaExceeded(
+            quota_kind=store.QUOTA_DAILY,
+            quota_bytes=quota,
+            in_flight_bytes=others,
+            requested_bytes=requested,
+            completed_bytes=completed,
+        )
+    )
 
 
 def _load_upload(upload_id: str) -> Optional[store.Upload]:
@@ -350,6 +401,25 @@ def create_upload(request: Request, principal: Principal = Depends(_require_memb
             raise _reject_too_large(kind, upload_length, exceeded)
 
     try:
+        # What the caller may add in a day depends on how old their account is:
+        # a new account gets the strict Phase 1 allowance, which is what stops a
+        # fresh tier-2 sign-up from declaring a 5 GiB upload. Unknown age is
+        # treated as new, the strict end.
+        now = datetime.now(timezone.utc)
+        since = now.replace(tzinfo=None) - config.DAILY_WINDOW
+        daily_quota = config.daily_quota_bytes(store.account_created_at(principal.did), now=now)
+        # Finished bytes only count until a manifest names them; the scan reads
+        # the (append-only) record log, and an unreadable log counts everything,
+        # which can only refuse an upload, never store one unaccounted for.  A
+        # caller with no completed upload today needs no scan at all.
+        referenced: set[str] = set()
+        if store.has_completed_upload_since(principal.did, since=since):
+            referenced = references.referenced_cids() or set()
+        completed = store.completed_unreferenced_bytes_for(
+            principal.did,
+            since=since,
+            referenced=referenced,
+        )
         session = SessionLocal()
         try:
             upload = store.create_upload(
@@ -360,6 +430,8 @@ def create_upload(request: Request, principal: Principal = Depends(_require_memb
                 kind=kind,
                 owner_did=principal.did,
                 quota_bytes=config.quota_bytes(),
+                daily_quota_bytes=daily_quota,
+                completed_bytes=completed,
             )
         finally:
             session.close()
@@ -472,6 +544,17 @@ async def _append_body(
     # The total size, which a deferred-length upload learns from this request.
     length = upload.upload_length
     new_length: Optional[int] = None
+
+    # A deferred-length upload has not spent any of the daily allowance yet
+    # (it reserved nothing at creation), so its growth is checked here: as it
+    # streams, and again if this request declares its total size.  A declared
+    # length was already accounted for when it was created.
+    daily_cap: Optional[int] = None
+    daily_quota = daily_completed = daily_others = 0
+    if length is None:
+        daily_quota, daily_completed, daily_others = await run_in_threadpool(_daily_allowance_for, upload)
+        daily_cap = daily_quota - daily_completed - daily_others
+
     if declared_length is not None:
         if length is not None:
             if declared_length != length:
@@ -484,6 +567,13 @@ async def _append_body(
             exceeded = limits.check_upload_length(declared_length, upload.kind)
             if exceeded is not None:
                 raise _reject_too_large(upload.kind, declared_length, exceeded)
+            if daily_cap is not None and declared_length > daily_cap:
+                raise _reject_daily_quota(
+                    quota=daily_quota,
+                    completed=daily_completed,
+                    others=daily_others,
+                    requested=declared_length,
+                )
             if declared_length < current:
                 raise _reject(
                     400,
@@ -493,8 +583,18 @@ async def _append_body(
             length = new_length = declared_length
 
     # How far this request may take the upload: its length, or until that is
-    # known the largest size the API accepts for its kind.
+    # known the largest size the API accepts for its kind -- and, while the
+    # length is deferred, no more than the owner's remaining daily allowance.
     cap = length if length is not None else limits.limit_for(upload.kind)
+    if daily_cap is not None:
+        cap = min(cap, daily_cap)
+        if daily_cap <= current:
+            raise _reject_daily_quota(
+                quota=daily_quota,
+                completed=daily_completed,
+                others=daily_others,
+                requested=current + 1,
+            )
     room = cap - current
     too_large = _problem(
         413,

@@ -28,6 +28,7 @@ from sqlalchemy import delete, func, select, update
 from app import jobs
 from app.db import SessionLocal
 from app.modules import content, uploads
+from app.modules.identity.models import Account
 from app.modules.uploads import limits, store
 from app.security import issue_access_token
 from app.settings import settings
@@ -42,6 +43,17 @@ QUOTA_TYPE = "urn:scholium:problem:upload-quota-exceeded"
 
 def did(label: str) -> str:
     return f"did:key:z6Mk{label}{uuid.uuid4().hex}"
+
+
+def establish(owner: str, days: int = 100) -> None:
+    """Give ``owner`` an account old enough for the established-account allowances."""
+    created = (utcnow() - timedelta(days=days)).replace(tzinfo=None)
+    session = SessionLocal()
+    try:
+        session.add(Account(did=owner, tier=2, created_at=created))
+        session.commit()
+    finally:
+        session.close()
 
 
 @pytest.fixture
@@ -334,20 +346,26 @@ def test_a_deferred_length_upload_reserves_the_size_limit_of_its_kind(anon_clien
     assert post(anon_client, None, alice).status_code == 413
 
 
-def test_the_default_quota_fits_two_maximum_bundles_and_no_third(anon_client, alice, monkeypatch):
+def test_the_default_quota_fits_two_maximum_bundles_and_no_third(anon_client, monkeypatch):
+    """The 5 GiB bundle cap survives for an account old enough to be allowed it."""
     monkeypatch.delenv("UPLOAD_QUOTA_BYTES", raising=False)
+    owner = did("EstablishedBundles")
+    establish(owner)
+    who = bearer(owner)
     bundle = {"Upload-Metadata": "filename YXJjaGl2ZS56aXA="}  # archive.zip
 
-    assert post(anon_client, limits.BUNDLE_MAX_BYTES, alice, **bundle).status_code == 201
-    assert post(anon_client, limits.BUNDLE_MAX_BYTES, alice, **bundle).status_code == 201
-    assert post(anon_client, 1, alice).status_code == 413
+    assert post(anon_client, limits.BUNDLE_MAX_BYTES, who, **bundle).status_code == 201
+    assert post(anon_client, limits.BUNDLE_MAX_BYTES, who, **bundle).status_code == 201
+    assert post(anon_client, 1, who).status_code == 413
 
 
 @pytest.mark.parametrize("configured", ["banana", "0", "-5"])
-def test_an_unusable_quota_setting_falls_back_to_the_default(anon_client, alice, monkeypatch, configured):
+def test_an_unusable_quota_setting_falls_back_to_the_default(anon_client, monkeypatch, configured):
     monkeypatch.setenv("UPLOAD_QUOTA_BYTES", configured)
+    owner = did("EstablishedFallback")
+    establish(owner)
 
-    assert post(anon_client, limits.BUNDLE_MAX_BYTES, alice).status_code == 201
+    assert post(anon_client, limits.BUNDLE_MAX_BYTES, bearer(owner)).status_code == 201
 
 
 def test_the_size_limits_still_apply_to_an_authenticated_caller(anon_client, alice):
@@ -457,10 +475,15 @@ def test_the_ttl_is_configurable(anon_client, alice, reaper, monkeypatch):
     assert row(upload_id) is None
 
 
-def test_a_finished_upload_is_never_reaped(anon_client, alice, reaper):
+def test_a_finished_upload_is_not_reaped_before_the_orphan_ttl(anon_client, alice, reaper):
+    """The incomplete-upload TTL (24 h) does not touch a finished upload.
+
+    Once it is older than the orphan TTL (7 days) and no manifest names it, the
+    orphan sweep does delete it -- see ``test_upload_storage_quota``.
+    """
     upload_id, cid = finish(anon_client, alice)
 
-    reaper.reap_abandoned_uploads(now=utcnow() + timedelta(days=30))
+    reaper.reap_abandoned_uploads(now=utcnow() + timedelta(days=6))
 
     assert row(upload_id).cid == cid
     with content.open_blob(cid) as blob:

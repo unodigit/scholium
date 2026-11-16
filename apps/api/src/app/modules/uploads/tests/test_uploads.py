@@ -191,11 +191,33 @@ def test_bundle_over_5_gib_rejected_with_413_problem_details(client):
 
 
 def test_bundle_exactly_at_the_limit_is_accepted(client):
+    """The 5 GiB cap is reachable for an established account (20 GiB/day)."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import SessionLocal
+    from app.modules.identity.models import Account
+    from app.security import issue_access_token
+
+    owner = "did:key:z6MkEstablishedBundleOwner"
+    session = SessionLocal()
+    try:
+        session.add(
+            Account(
+                did=owner,
+                tier=2,
+                created_at=(datetime.now(timezone.utc) - timedelta(days=100)).replace(tzinfo=None),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
     response = create(
         client,
         headers={
             "Upload-Length": str(BUNDLE_LIMIT),
             "Upload-Metadata": f"filename {b64('code-and-data.tar.gz')}",
+            "Authorization": f"Bearer {issue_access_token(owner, 2)}",
         },
     )
     assert response.status_code == 201

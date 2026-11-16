@@ -19,8 +19,9 @@ import fcntl
 import os
 import re
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, Optional
+from typing import AbstractSet, BinaryIO, Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -39,9 +40,11 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app import db
 from app.db import Base
 from app.settings import settings
 
@@ -66,16 +69,34 @@ class UploadBusy(Exception):
     """Another request is appending to this upload right now."""
 
 
-class QuotaExceeded(Exception):
-    """Creating the upload would take its owner past their bytes-in-flight quota."""
+#: The two independent per-DID allowances a creation can exhaust.
+QUOTA_IN_FLIGHT = "in_flight"
+QUOTA_DAILY = "daily"
 
-    def __init__(self, *, quota_bytes: int, in_flight_bytes: int, requested_bytes: int) -> None:
+
+class QuotaExceeded(Exception):
+    """Creating the upload would take its owner past one of their quotas."""
+
+    def __init__(
+        self,
+        *,
+        quota_bytes: int,
+        in_flight_bytes: int,
+        requested_bytes: int,
+        quota_kind: str = QUOTA_IN_FLIGHT,
+        completed_bytes: int = 0,
+    ) -> None:
         super().__init__(
-            f"{in_flight_bytes} bytes in flight + {requested_bytes} requested exceeds the {quota_bytes}-byte quota"
+            f"{in_flight_bytes} bytes in flight + {requested_bytes} requested exceeds the {quota_bytes}-byte "
+            f"{quota_kind} quota"
         )
+        self.quota_kind = quota_kind
         self.quota_bytes = quota_bytes
         self.in_flight_bytes = in_flight_bytes
         self.requested_bytes = requested_bytes
+        #: Completed uploads with no manifest reference inside the day, which
+        #: only the daily allowance counts (zero for an in-flight breach).
+        self.completed_bytes = completed_bytes
 
 
 def _new_upload_id() -> str:
@@ -107,11 +128,16 @@ class Upload(Base):
     #: into the content store; NULL until then. Its presence is what says the
     #: staged file is gone and the upload can only be answered, not appended to.
     cid = Column(String(128), nullable=True)
+    #: When the bytes reached the content store (``cid`` was recorded). The
+    #: orphan reaper measures its TTL, and the daily quota its window, from
+    #: here. NULL on rows written before this column existed and on uploads
+    #: that never completed; readers fall back to ``created_at``.
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 #: Columns added to ``uploads`` after it first shipped: ``name -> DDL type``.
 #: Every one must be nullable, since existing rows get NULL.
-_ADDED_COLUMNS = {"cid": "VARCHAR(128)"}
+_ADDED_COLUMNS = {"cid": "VARCHAR(128)", "completed_at": "DATETIME"}
 
 
 def ensure_columns(bind: Engine) -> list[str]:
@@ -151,6 +177,17 @@ def _reserved_bytes() -> ColumnElement:
     return func.coalesce(Upload.upload_length, deferred)
 
 
+def _daily_bytes() -> ColumnElement:
+    """What an in-flight upload really occupies for the daily allowance.
+
+    Unlike :func:`_reserved_bytes`, which reserves the declared length (or the
+    kind's maximum while deferred) to keep disk allocations bounded, the daily
+    allowance measures bytes that exist: a deferred-length upload counts the
+    bytes received so far, and grows its share as it streams.
+    """
+    return func.coalesce(Upload.upload_length, Upload.upload_offset)
+
+
 def _in_flight_filter(owner_did: Optional[str]) -> list[ColumnElement]:
     # An upload is in flight until its bytes have moved into the content store
     # (that is what sets ``cid``): until then it holds staged bytes or may yet.
@@ -164,6 +201,153 @@ def bytes_in_flight(session: Session, owner_did: Optional[str]) -> int:
     return int(total or 0)
 
 
+def _utcnow() -> datetime:
+    """Naive UTC "now": the table stores naive UTC timestamps."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _as_naive_utc(value: object) -> Optional[datetime]:
+    """A stored timestamp as naive UTC; SQLite hands back strings, naive means UTC."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo is not None else value
+
+
+def account_created_at(owner_did: str) -> Optional[datetime]:
+    """``accounts.created_at`` for ``owner_did``, or ``None`` when it is unknown.
+
+    A missing row, a missing ``accounts`` table and an unreachable database all
+    give ``None``, which the quota rules treat as a brand-new account: the
+    strict end. Errors are swallowed because an upload's size allowance must not
+    depend on the account plugin's table being readable.
+    """
+    if not owner_did:
+        return None
+    try:
+        with db.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT created_at FROM accounts WHERE did = :did"), {"did": owner_did}
+            ).first()
+    except SQLAlchemyError:
+        return None
+    return _as_naive_utc(row[0]) if row is not None else None
+
+
+def completed_unreferenced_bytes(
+    session: Session,
+    owner_did: Optional[str],
+    *,
+    since: datetime,
+    referenced: AbstractSet[str],
+) -> int:
+    """Bytes ``owner_did`` completed since ``since`` whose CID no manifest names.
+
+    ``referenced`` is the set from :func:`app.modules.uploads.references.referenced_cids`.
+    A CID that is referenced anywhere in the log is not counted, however
+    recently it was uploaded: it is paper, not anonymous bytes. Rows completed
+    before ``completed_at`` existed fall back to ``created_at``.
+
+    The owner filter matches :func:`bytes_in_flight`, so an unowned legacy
+    upload (``owner_did`` NULL) is counted with the NULL owner's usage rather
+    than leaking out of every account's quota.
+    """
+    owner = Upload.owner_did.is_(None) if owner_did is None else Upload.owner_did == owner_did
+    completed_at = func.coalesce(Upload.completed_at, Upload.created_at)
+    rows = session.execute(
+        select(Upload.cid, func.coalesce(Upload.upload_length, 0)).where(
+            owner,
+            Upload.cid.is_not(None),
+            completed_at >= since,
+        )
+    )
+    return sum(int(size or 0) for cid, size in rows if cid not in referenced)
+
+
+def has_completed_upload_since(owner_did: Optional[str], *, since: datetime) -> bool:
+    """Whether ``owner_did`` completed any upload since ``since``.
+
+    The caller uses this to skip the (record-log-wide) manifest scan when no
+    completed upload could possibly count against the daily allowance.
+    """
+    owner = Upload.owner_did.is_(None) if owner_did is None else Upload.owner_did == owner_did
+    session = db.SessionLocal()
+    try:
+        found = session.scalar(
+            select(Upload.id)
+            .where(owner, Upload.cid.is_not(None), func.coalesce(Upload.completed_at, Upload.created_at) >= since)
+            .limit(1)
+        )
+        return found is not None
+    finally:
+        session.close()
+
+
+def _daily_in_flight(session: Session, owner_did: Optional[str], *, exclude_upload_id: Optional[str] = None) -> int:
+    """Bytes ``owner_did``'s unfinished uploads hold for the daily allowance.
+
+    A deferred-length upload counts what it has received (``_daily_bytes``),
+    and ``exclude_upload_id`` leaves one upload out so its own share can be
+    compared against the allowance as it grows.
+    """
+    owner = Upload.owner_did.is_(None) if owner_did is None else Upload.owner_did == owner_did
+    filters = [owner, Upload.cid.is_(None)]
+    if exclude_upload_id is not None:
+        filters.append(Upload.id != exclude_upload_id)
+    total = session.scalar(select(func.coalesce(func.sum(_daily_bytes()), 0)).where(*filters))
+    return int(total or 0)
+
+
+def daily_usage(
+    session: Session,
+    owner_did: Optional[str],
+    *,
+    exclude_upload_id: Optional[str] = None,
+    since: datetime,
+    referenced: AbstractSet[str],
+) -> tuple[int, int]:
+    """``(completed unreferenced bytes, in-flight bytes)`` for one owner's day."""
+    return (
+        completed_unreferenced_bytes(session, owner_did, since=since, referenced=referenced),
+        _daily_in_flight(session, owner_did, exclude_upload_id=exclude_upload_id),
+    )
+
+
+def daily_usage_for(
+    owner_did: Optional[str],
+    *,
+    exclude_upload_id: Optional[str] = None,
+    since: datetime,
+    referenced: AbstractSet[str],
+) -> tuple[int, int]:
+    """``daily_usage`` in a session of its own (for callers outside the database layer)."""
+    session = db.SessionLocal()
+    try:
+        return daily_usage(
+            session, owner_did, exclude_upload_id=exclude_upload_id, since=since, referenced=referenced
+        )
+    finally:
+        session.close()
+
+
+def completed_unreferenced_bytes_for(
+    owner_did: Optional[str],
+    *,
+    since: datetime,
+    referenced: AbstractSet[str],
+) -> int:
+    """``completed_unreferenced_bytes`` in a session of its own (for callers outside the database layer)."""
+    session = db.SessionLocal()
+    try:
+        return completed_unreferenced_bytes(session, owner_did, since=since, referenced=referenced)
+    finally:
+        session.close()
+
+
 def create_upload(
     session: Session,
     *,
@@ -173,16 +357,22 @@ def create_upload(
     kind: str = "other",
     owner_did: Optional[str] = None,
     quota_bytes: Optional[int] = None,
+    daily_quota_bytes: Optional[int] = None,
+    completed_bytes: int = 0,
 ) -> Upload:
     """Persist a freshly created tus upload resource and return it.
 
     With ``quota_bytes`` the upload is only created if ``owner_did``'s bytes in
-    flight, plus what this upload reserves, stay within it; otherwise
-    :class:`QuotaExceeded` is raised and nothing is stored. The check and the
-    insert are one statement, so concurrent creations cannot both pass it.
+    flight, plus what this upload reserves, stay within it. With
+    ``daily_quota_bytes`` it is only created if those bytes plus
+    ``completed_bytes`` (the caller's unreferenced completed uploads from the
+    day, see :func:`completed_unreferenced_bytes`) and what this upload
+    reserves stay within that allowance too. Either failure raises
+    :class:`QuotaExceeded` and stores nothing. Every check and the insert are
+    one statement, so concurrent creations cannot both pass them.
     """
     upload_id = _new_upload_id()
-    if quota_bytes is None:
+    if quota_bytes is None and daily_quota_bytes is None:
         session.add(
             Upload(
                 id=upload_id,
@@ -201,6 +391,20 @@ def create_upload(
         in_flight = (
             select(func.coalesce(func.sum(_reserved_bytes()), 0)).where(*_in_flight_filter(owner_did)).scalar_subquery()
         )
+        # The daily allowance measures real bytes, so a deferred-length upload
+        # starts with a zero share (and is bounded as it streams; see the
+        # ``PATCH`` path) while a declared one takes its whole length now.
+        daily_in_flight = (
+            select(func.coalesce(func.sum(_daily_bytes()), 0))
+            .where(*_in_flight_filter(owner_did))
+            .scalar_subquery()
+        )
+        wanted_daily = upload_length if upload_length is not None else 0
+        within: list[ColumnElement] = []
+        if quota_bytes is not None:
+            within.append(in_flight + wanted <= quota_bytes)
+        if daily_quota_bytes is not None:
+            within.append(daily_in_flight + completed_bytes + wanted_daily <= daily_quota_bytes)
         row = select(
             literal(upload_id, String(64)),
             literal(upload_length, BigInteger),
@@ -210,15 +414,22 @@ def create_upload(
             literal(kind, String(16)),
             literal(STATE_PENDING, String(16)),
             literal(owner_did, String(256)),
-        ).where(in_flight + wanted <= quota_bytes)
+        ).where(*within)
         columns = ["id", "upload_length", "defer_length", "upload_offset", "upload_metadata", "kind", "state", "owner_did"]
         stored = session.execute(insert(Upload).from_select(columns, row)).rowcount
         if stored != 1:
+            in_flight_bytes = bytes_in_flight(session, owner_did)
+            quota_kind = QUOTA_DAILY if daily_quota_bytes is not None and (
+                quota_bytes is None or in_flight_bytes + wanted <= quota_bytes
+            ) else QUOTA_IN_FLIGHT
+            quota = daily_quota_bytes if quota_kind == QUOTA_DAILY else quota_bytes
             session.rollback()
             raise QuotaExceeded(
-                quota_bytes=quota_bytes,
-                in_flight_bytes=bytes_in_flight(session, owner_did),
+                quota_kind=quota_kind,
+                quota_bytes=int(quota or 0),
+                in_flight_bytes=in_flight_bytes,
                 requested_bytes=wanted,
+                completed_bytes=completed_bytes if quota_kind == QUOTA_DAILY else 0,
             )
         session.commit()
     upload = session.get(Upload, upload_id)
@@ -271,13 +482,14 @@ def record_cid(session: Session, upload_id: str, cid: str) -> bool:
     Also marks the upload ``completed``: having its bytes stored is the end of
     an upload, including a zero-length one that never advanced its offset.
     Recording is idempotent for the same ``cid``; an upload already stored
-    under a different one is left alone. Returns whether the upload now has
-    exactly this ``cid``.
+    under a different one is left alone. ``completed_at`` is stamped the first
+    time the CID is recorded, so retrying a final ``PATCH`` cannot extend the
+    orphan TTL. Returns whether the upload now has exactly this ``cid``.
     """
     result = session.execute(
         update(Upload)
         .where(Upload.id == upload_id, (Upload.cid.is_(None)) | (Upload.cid == cid))
-        .values(cid=cid, state=STATE_COMPLETED)
+        .values(cid=cid, state=STATE_COMPLETED, completed_at=func.coalesce(Upload.completed_at, _utcnow()))
     )
     session.commit()
     return result.rowcount == 1

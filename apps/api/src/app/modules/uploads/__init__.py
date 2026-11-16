@@ -4,9 +4,14 @@ Exposes :data:`router`, which the module loader mounts under ``/v1``. Every
 route below except ``OPTIONS`` needs an access token of trust tier 1 or above
 (``401``/``403`` otherwise), and an upload belongs to the DID that created it:
 another caller's upload is a ``404``. A DID may have a limited number of bytes
-in flight (``UPLOAD_QUOTA_BYTES``, ``413`` ``upload-quota-exceeded``), and an
-upload left unfinished longer than ``UPLOAD_TTL_SECONDS`` (24 hours) is deleted
-by the periodic ``uploads.reap`` job (:mod:`.reaper`).
+in flight (``UPLOAD_QUOTA_BYTES``, ``413`` ``upload-quota-exceeded``) and a
+daily allowance for in-flight plus completed-but-unreferenced bytes (2 GiB for
+accounts under 90 days, 20 GiB otherwise; ``UPLOAD_DAILY_QUOTA_BYTES`` and
+``UPLOAD_DAILY_QUOTA_BYTES_ESTABLISHED``), so a new account cannot take
+delivery of a 5 GiB bundle. An upload left unfinished longer than
+``UPLOAD_TTL_SECONDS`` (24 hours) and a completed upload no manifest references
+after ``UPLOAD_ORPHAN_TTL_SECONDS`` (7 days) are deleted by the periodic
+``uploads.reap`` job (:mod:`.reaper`).
 
 * ``OPTIONS /v1/uploads`` — tus discovery (version, extensions, max size);
 * ``POST /v1/uploads`` — tus creation: answers ``201 Created`` with a
