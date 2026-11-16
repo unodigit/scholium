@@ -510,7 +510,7 @@ def test_paper_authors_lists_the_genesis_signer_version_signers_and_listed_autho
     listed = did_key_from_signing_key(SigningKey.generate())
     publish_version(client, publisher, paper, 1, [listed])
 
-    assert paper_authors(paper) == {author.did, publisher.did, listed}
+    assert paper_authors(paper) == {author.did, publisher.did}
 
 
 def test_paper_authors_of_an_unknown_paper_is_empty():

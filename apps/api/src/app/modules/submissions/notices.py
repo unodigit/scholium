@@ -115,6 +115,7 @@ __all__ = [
     "handle_withdrawal",
     "notice_fields",
     "notices_for_paper",
+    "all_paper_authors",
     "paper_authors",
     "read_reason_file",
     "require_authorized",
@@ -357,14 +358,12 @@ def _check_named_paper(kind: str, fields: NoticeFields, resolved: NoticeTarget) 
 # --------------------------------------------------------------------------- #
 
 
-def paper_authors(paper_cid: str) -> frozenset[str]:
-    """DIDs that count as authors of ``paper_cid`` for authorizing a notice.
+def all_paper_authors(paper_cid: str) -> frozenset[str]:
+    """All DIDs on the byline of ``paper_cid`` (regardless of consent).
 
-    The same set the independent verifier uses: the signer of the paper's
-    genesis, the signer of each of its versions, and every DID listed on any
-    version.  The signers come from the event log (the ``papers`` and
-    ``paper_versions`` tables do not store who signed); the listed authors
-    from ``authorship``.
+    The signer of the paper's genesis, the signer of each of its versions, and
+    every DID listed on any version.  Used where byline membership is what
+    matters regardless of consent (e.g. conflict-of-interest checks).
     """
     from app.modules import ledger
 
@@ -391,12 +390,72 @@ def paper_authors(paper_cid: str) -> frozenset[str]:
     return frozenset(authors)
 
 
+def paper_authors(paper_cid: str) -> frozenset[str]:
+    """DIDs that may sign a notice for ``paper_cid`` beyond tier-4 members.
+
+    The paper's genesis signer and every version's signer may, as before.  A
+    DID that is merely *listed* on a version may do so only once it has
+    accepted its ``coauthor.consent`` for that version: a co-author who never
+    consented, or who declined, cannot speak for the paper.  Consents are read
+    through the consents plugin so a decision recorded in the ledger (a replay
+    or a fixture) is honoured even when the derived ``authorship`` table is
+    stale.
+    """
+    from app.modules import ledger
+
+    authors: set[str] = set()
+    genesis = ledger.entry_by_cid(paper_cid)
+    if genesis is not None and genesis.record_type == _PAPER_GENESIS:
+        authors.add(str(genesis.author_did))
+
+    version_cids = [str(version.version_cid) for version in versions_for_paper(paper_cid)]
+    for version_cid in version_cids:
+        entry = ledger.entry_by_cid(version_cid)
+        if entry is not None:
+            authors.add(str(entry.author_did))
+
+    if version_cids:
+        ensure_tables()
+        accepted_listed: set[str] = set()
+        try:
+            from app.modules import consents as consents_module
+        except Exception:  # pragma: no cover - consents always ships with the app
+            consents_module = None
+
+        if consents_module is not None:
+            for version_cid in version_cids:
+                try:
+                    for entry in consents_module.consents_for_version(version_cid):
+                        if getattr(entry, "status", None) == "signed":
+                            did = getattr(entry, "did", None)
+                            if isinstance(did, str) and did:
+                                accepted_listed.add(did)
+                except Exception:
+                    pass
+
+        # Trust an explicit ``accept`` recorded on the authorship row too, so a
+        # stale or unavailable consents projection cannot drop a real author.
+        with db.SessionLocal() as session:
+            rows = (
+                session.query(Authorship.author_did, Authorship.consent_decision)
+                .filter(Authorship.version_cid.in_(version_cids))
+                .all()
+            )
+        for did, decision in rows:
+            if decision == "accept":
+                accepted_listed.add(str(did))
+
+        authors.update(accepted_listed)
+
+    return frozenset(authors)
+
+
 def require_authorized(kind: str, author: object, paper_cid: str) -> None:
     """Refuse unless ``author`` may sign a ``kind`` notice for ``paper_cid`` (``403``).
 
-    A tier-4 member may; so may anyone :func:`paper_authors` lists.  The tier
-    is read first, because it needs one lookup and no walk of the paper's
-    records.
+    A tier-4 member may; so may anyone :func:`paper_authors` lists.
+    The tier is read first, because it needs one lookup and no walk of the
+    paper's records.
 
     Raises:
         NoticeNotAuthorized: ``403``.

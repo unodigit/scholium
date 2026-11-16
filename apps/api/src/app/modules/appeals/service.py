@@ -327,7 +327,7 @@ def require_appellant(author: object, decision: AppealedDecision) -> None:
     Raises:
         AppealNotAuthorized: ``403``.
     """
-    if isinstance(author, str) and author in submissions.paper_authors(decision.paper_cid):
+    if isinstance(author, str) and author in submissions.all_paper_authors(decision.paper_cid):
         return
     raise AppealNotAuthorized(author, decision.decision_cid, decision.paper_cid)
 
@@ -418,7 +418,7 @@ def panel_exclusions(appeal: Appeal, decision: AppealedDecision) -> frozenset[st
     on who filed it).
     """
     return frozenset(
-        {decision.moderator_did, str(appeal.appellant_did)} | set(submissions.paper_authors(decision.paper_cid))
+        {decision.moderator_did, str(appeal.appellant_did)} | set(submissions.all_paper_authors(decision.paper_cid))
     )
 
 

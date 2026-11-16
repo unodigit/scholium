@@ -143,7 +143,7 @@ def paper_author_dids(paper: Any) -> frozenset[str]:
     from the event log (no ``papers`` row) is covered by the ledger scan
     :func:`service._paper_authors_from_ledger` does.
     """
-    authors = set(submissions.paper_authors(paper.paper_cid))
+    authors = set(submissions.all_paper_authors(paper.paper_cid))
     if isinstance(paper, service._PaperRef):
         authors |= {str(did) for did in service._paper_authors_from_ledger(paper.paper_cid)}
     return frozenset(authors)
