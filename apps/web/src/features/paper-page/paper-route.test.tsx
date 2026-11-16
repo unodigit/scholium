@@ -442,14 +442,12 @@ describe("/p/{id}/v{n}", () => {
 });
 
 describe("a paper that cannot be shown", () => {
-  it("says the node does not list it, with a way back to search", async () => {
+  it("answers 404 for an unknown paper instead of rendering a not-found body with 200", async () => {
     stubApi({ ...HAPPY, paper: () => notFound() });
-    mount(await page(BARE_ID));
 
-    const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("No paper with that id is listed on this node.");
-    expect(within(alert).getByRole("link", { name: "Back to search" }).getAttribute("href")).toBe("/search");
-    expect(screen.queryByRole("tablist")).toBeNull();
+    // Next's `notFound()` throws its 404 control-flow error; the route must not
+    // return a page element that the server would send with a 200.
+    await expect(page(BARE_ID)).rejects.toThrow();
   });
 
   it("says a bad address is not an address, without asking the API", async () => {

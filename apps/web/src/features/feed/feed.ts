@@ -35,6 +35,9 @@ export const FEED_PATH = "/";
 /** Listing endpoint, relative to `/v1`. */
 export const FEED_ENDPOINT = "/papers";
 
+/** Public-profile endpoint, relative to `/v1`; one author's name lives here. */
+export const PROFILE_ENDPOINT = "/profiles";
+
 /** Papers asked for per page (the API caps at 100). */
 export const FEED_PAGE_SIZE = 20;
 
@@ -311,6 +314,92 @@ export function feedQuery(state: FeedState, cursor?: string | null): QueryParams
 /** A narrow interface for the shared API client, so tests can pass a stub. */
 export type FeedClient = Pick<ApiClient, "get">;
 
+/** The part of one author's public profile a row shows. */
+export interface FeedProfile {
+  readonly name: string | null;
+}
+
+/**
+ * Validate a `GET /v1/profiles/{did}` body.
+ *
+ * Only the public name matters to a row. `erased: true` means the person
+ * asked for erasure, so a stale personal field in the body is ignored.
+ */
+export function parseFeedProfile(payload: unknown): FeedProfile {
+  if (!isRecord(payload)) {
+    return { name: null };
+  }
+  return {
+    name:
+      payload.erased === true
+        ? null
+        : readText(payload.name) ??
+          readText(payload.displayName) ??
+          readText(payload.display_name),
+  };
+}
+
+/** Read one author's public name; any failure is simply "no name". */
+async function loadFeedProfileName(
+  did: string,
+  client: FeedClient,
+): Promise<string | null> {
+  try {
+    const payload = await client.get<unknown>(
+      `${PROFILE_ENDPOINT}/${encodeURIComponent(did)}`,
+      { cache: "no-store" },
+    );
+    return parseFeedProfile(payload).name;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fill in author names the list did not carry.
+ *
+ * `GET /v1/papers` names authors by DID only, so each row pairs them with
+ * `GET /v1/profiles/{did}` (plugin: profiles, feature 29). A DID is asked for
+ * once per page however many papers cite it, a name the list already supplied
+ * wins without a request, and a profile that is missing, erased or unreachable
+ * leaves the short DID — the honest fallback after erasure (docs/design.md §2).
+ */
+export async function attachAuthorNames(
+  page: FeedPageData,
+  client: FeedClient = api,
+): Promise<FeedPageData> {
+  const wanted = new Set<string>();
+  for (const item of page.items) {
+    for (const author of item.authors) {
+      if (author.name === null && author.did !== "") {
+        wanted.add(author.did);
+      }
+    }
+  }
+  if (wanted.size === 0) {
+    return page;
+  }
+
+  const names = new Map<string, string | null>();
+  await Promise.all(
+    [...wanted].map(async (did) => {
+      names.set(did, await loadFeedProfileName(did, client));
+    }),
+  );
+
+  return {
+    ...page,
+    items: page.items.map((item) => ({
+      ...item,
+      authors: item.authors.map((author) =>
+        author.name !== null
+          ? author
+          : { ...author, name: names.get(author.did) ?? null },
+      ),
+    })),
+  };
+}
+
 /**
  * Load one page of the feed through the shared API client.
  *
@@ -327,7 +416,7 @@ export async function loadFeedPage(
     query: feedQuery(state, cursor),
     cache: "no-store",
   });
-  return parseFeedPage(payload);
+  return attachAuthorNames(parseFeedPage(payload), client);
 }
 
 /** One plain sentence for a failed load, whichever way it failed. */

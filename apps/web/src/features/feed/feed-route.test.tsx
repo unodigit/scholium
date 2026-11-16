@@ -106,14 +106,64 @@ describe("feed route (server render)", () => {
     expect(html).toContain("Reviewed");
     expect(html).toContain("Preprint");
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const url = String(fetchMock.mock.calls[0][0]);
+    const paperCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/v1/papers?"),
+    );
+    expect(paperCalls).toHaveLength(1);
+    const url = String(paperCalls[0][0]);
     expect(url).toContain("/v1/papers?");
     expect(url).toContain("tab=latest");
     expect(url).toContain("sort=newest");
     expect(url).toContain("limit=20");
     expect(url).not.toContain("category=");
     expect(url).not.toContain("cursor=");
+  });
+
+  it("shows author names read from their public profiles, not raw DIDs", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/v1/papers")) {
+        return new Response(JSON.stringify({ items: [ITEM], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const did = decodeURIComponent(url.pathname.split("/profiles/")[1] ?? "");
+      return new Response(JSON.stringify({ did, name: "Mei Zhang" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const html = await render();
+
+    expect(html).toContain("Mei Zhang");
+    expect(html).not.toContain("z6Mkha…2doK");
+  });
+
+  it("falls back to the short DID when an author has no public profile", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/v1/papers")) {
+        return new Response(JSON.stringify({ items: [ITEM], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({ title: "Not Found", status: 404 }),
+        {
+          status: 404,
+          headers: { "content-type": "application/problem+json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const html = await render();
+
+    expect(html).toContain("z6Mkha…2doK");
   });
 
   it("renders the three tabs and both selectors", async () => {

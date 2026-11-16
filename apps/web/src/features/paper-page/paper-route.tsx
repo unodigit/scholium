@@ -5,8 +5,9 @@
  * here, so the two URLs cannot drift apart.
  *
  * - {@link renderPaperRoute} reads the paper and renders the page, or a notice
- *   saying why there is none. A failed lookup is a message with a way back to
- *   search, never a thrown error.
+ *   saying why there is none. An id the node does not list is a missing page
+ *   and answers 404 through Next's `notFound()`; a read that failed for any
+ *   other reason is a message with a way back to search.
  * - {@link paperRouteMetadata} titles the page with the paper's title.
  *
  * **One read per request.** Next.js asks for the metadata and renders the page
@@ -15,9 +16,11 @@
  */
 
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { cache } from "react";
 import type { ReactElement } from "react";
 
+import { ApiError } from "../../lib/api";
 import { versionOfTotal } from "./paper-facts";
 import { parsePaperAddress } from "./paper-address";
 import {
@@ -27,17 +30,26 @@ import {
 } from "./paper-page-data";
 import { PaperPageNotice, PaperPageView } from "./paper-page-view";
 
-/** What a route read came to: the page's data, or the sentence that says why not. */
+/** What a route read came to: the page's data, or why there is none. */
 type RouteRead =
   | { readonly ok: true; readonly data: PaperPageData }
-  | { readonly ok: false; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly message: string;
+      /** The node answered `404`: there is no such paper on it. */
+      readonly missing: boolean;
+    };
 
 const readPaper = cache(
   async (id: string, version: number | null): Promise<RouteRead> => {
     try {
       return { ok: true, data: await loadPaperPageData({ id, version }) };
     } catch (error) {
-      return { ok: false, message: describePageError(error, { id, version }) };
+      return {
+        ok: false,
+        message: describePageError(error, { id, version }),
+        missing: error instanceof ApiError && error.status === 404,
+      };
     }
   },
 );
@@ -55,11 +67,17 @@ export async function renderPaperRoute(
     return <PaperPageNotice message={NOT_A_PAPER_ADDRESS} />;
   }
   const read = await readPaper(address.id, address.version);
-  return read.ok ? (
-    <PaperPageView data={read.data} />
-  ) : (
-    <PaperPageNotice message={read.message} />
-  );
+  if (!read.ok) {
+    // An id the node does not list has no page: answer 404 rather than a 200
+    // body that only says "not found", for readers and crawlers alike. A
+    // requested version that is missing keeps its notice, since the paper
+    // itself may well exist.
+    if (read.missing && address.version === null) {
+      notFound();
+    }
+    return <PaperPageNotice message={read.message} />;
+  }
+  return <PaperPageView data={read.data} />;
 }
 
 /** The longest description a search result or link preview needs. */

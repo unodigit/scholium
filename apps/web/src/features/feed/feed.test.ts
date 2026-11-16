@@ -312,6 +312,95 @@ describe("loadFeedPage", () => {
   });
 });
 
+describe("author names from public profiles", () => {
+  /** A `get` that answers `GET /v1/papers` and each author's profile. */
+  function feedClient(
+    profiles: Readonly<Record<string, string | null>> = {},
+    pages: unknown[] = [wireItem()],
+  ) {
+    return vi.fn(async (path: string) => {
+      if (path === "/papers") {
+        return { items: pages, nextCursor: null };
+      }
+      const match = /^\/profiles\/(.+)$/.exec(path);
+      if (match === null) {
+        throw new Error(`unexpected ${path}`);
+      }
+      const did = decodeURIComponent(match[1]);
+      if (!(did in profiles)) {
+        throw new ApiError(404, { status: 404, title: "Not Found" });
+      }
+      return { did, name: profiles[did] };
+    });
+  }
+
+  it("fills the name from GET /v1/profiles/{did} when the list carries DIDs only", async () => {
+    const get = feedClient({
+      [DID_A]: "Mei Zhang",
+      "did:key:z6MkB": "A. Okafor",
+    });
+
+    const page = await loadFeedPage(DEFAULT_FEED_STATE, undefined, { get } as never);
+
+    expect(page.items[0].authors.map((author) => author.name)).toEqual([
+      "Mei Zhang",
+      "A. Okafor",
+    ]);
+    expect(page.items[0].authors.map((author) => authorLabel(author))).toEqual([
+      "Mei Zhang",
+      "A. Okafor",
+    ]);
+  });
+
+  it("asks for each DID once and keeps a name the list already supplied", async () => {
+    const get = feedClient({ "did:key:z6MkB": "A. Okafor" }, [
+      wireItem({
+        authors: [
+          { did: DID_A, name: "M. Zhang", position: 1 },
+          { did: "did:key:z6MkB", position: 2 },
+        ],
+      }),
+      wireItem({
+        paper: "sch:abcd-efgh-jklm",
+        shortId: "sch:abcd-efgh-jklm",
+        authors: [{ did: "did:key:z6MkB", position: 1 }],
+      }),
+    ]);
+
+    const page = await loadFeedPage(DEFAULT_FEED_STATE, undefined, { get } as never);
+
+    expect(page.items[0].authors[0].name).toBe("M. Zhang");
+    expect(page.items[0].authors[1].name).toBe("A. Okafor");
+    expect(page.items[1].authors[0].name).toBe("A. Okafor");
+    const profileCalls = get.mock.calls
+      .map(([path]) => path)
+      .filter((path) => path.startsWith("/profiles/"));
+    expect(profileCalls).toEqual([`/profiles/${encodeURIComponent("did:key:z6MkB")}`]);
+  });
+
+  it("falls back to the DID when a profile cannot be read", async () => {
+    const get = feedClient();
+
+    const page = await loadFeedPage(DEFAULT_FEED_STATE, undefined, { get } as never);
+
+    expect(page.items[0].authors.map((author) => author.name)).toEqual([null, null]);
+    expect(authorLabel(page.items[0].authors[0])).toBe(shortDid(DID_A));
+  });
+
+  it("does not let an erased profile reveal a name", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path === "/papers") {
+        return { items: [wireItem()], nextCursor: null };
+      }
+      return { did: DID_A, name: "Stale Name", erased: true };
+    });
+
+    const page = await loadFeedPage(DEFAULT_FEED_STATE, undefined, { get } as never);
+
+    expect(page.items[0].authors.map((author) => author.name)).toEqual([null, null]);
+  });
+});
+
 describe("describeFeedError", () => {
   function apiError(status: number, detail = ""): ApiError {
     return new ApiError(status, {
