@@ -33,6 +33,7 @@ and the callback authenticates it by its signature and ``purpose`` alone.
 from __future__ import annotations
 
 import secrets
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -47,7 +48,11 @@ __all__ = [
     "STATE_ALGORITHM",
     "STATE_PURPOSE",
     "STATE_TTL",
+    "consume_state",
+    "is_state_consumed",
+    "mark_state_consumed",
     "sign_state",
+    "verify_and_consume_state",
     "verify_state",
 ]
 
@@ -129,3 +134,52 @@ def verify_state(state: str) -> dict[str, Any]:
     if claims.get("purpose") != STATE_PURPOSE:
         raise InvalidState("The OAuth state is not an ORCID state.")
     return claims
+
+
+# --------------------------------------------------------------------------- #
+# Single-use tracking
+# --------------------------------------------------------------------------- #
+
+#: Identifiers (``jti``) of states that have been consumed by a callback.
+#: Kept in memory for the lifetime of the process; a consumed state can never
+#: be redeemed a second time, which closes the replay window that made the
+#: flow vulnerable to login CSRF.
+_CONSUMED_STATES: set[str] = set()
+_CONSUMED_LOCK = threading.Lock()
+
+
+def mark_state_consumed(jti: Any) -> bool:
+    """Record ``jti`` as consumed.  Return ``True`` if newly consumed.
+
+    A falsy or non-string identifier is refused (returns ``False``) rather
+    than being recorded, so a state that carries no ``jti`` can never be
+    marked used.
+    """
+    if not isinstance(jti, str) or not jti.strip():
+        return False
+    with _CONSUMED_LOCK:
+        if jti in _CONSUMED_STATES:
+            return False
+        _CONSUMED_STATES.add(jti)
+        return True
+
+
+def is_state_consumed(jti: Any) -> bool:
+    """Return whether ``jti`` has already been consumed."""
+    if not isinstance(jti, str) or not jti.strip():
+        return False
+    with _CONSUMED_LOCK:
+        return jti in _CONSUMED_STATES
+
+
+def consume_state(state: str) -> dict[str, Any]:
+    """Verify ``state`` and mark it consumed; raise :class:`InvalidState` if unusable or replayed."""
+    claims = verify_state(state)
+    jti = claims.get("jti")
+    if not mark_state_consumed(jti):
+        raise InvalidState("The OAuth state has already been used.")
+    return claims
+
+
+#: Alias used by callers that want the verify-and-consume step named explicitly.
+verify_and_consume_state = consume_state

@@ -24,8 +24,9 @@ commonly expects; ``state`` is the same value that is embedded in the URL.
 ``state`` is a compact HS256 JWT signed with ``settings.JWT_SECRET``
 (:mod:`app.modules.orcid.state`), so ``GET /v1/auth/orcid/callback`` can detect
 a tampered or expired redirect without keeping per-attempt state on the server.
-It is *not* single-use: nothing here records that a state was consumed, it just
-stops being accepted after :data:`app.modules.orcid.state.STATE_TTL`.
+It is single-use: the callback consumes the state's ``jti`` on redemption, so a
+captured state cannot be replayed.  It also stops being accepted after
+:data:`app.modules.orcid.state.STATE_TTL`.
 
 Who the credential is for
     The endpoint works without credentials -- a browser may start the flow
@@ -72,7 +73,7 @@ from app.settings import settings
 
 from app.modules.ledger.origin import node_signing_key
 from .nullifier import OrcidAlreadyLinked
-from .state import InvalidState, sign_state, verify_state
+from .state import InvalidState, consume_state, mark_state_consumed, sign_state, verify_state
 from .service import exchange_code, issue_orcid_credential
 from .present import router as credentials_router
 
@@ -270,6 +271,10 @@ def orcid_callback(
             status_code=503,
             detail="This node cannot issue credentials: no usable Ed25519 key was found at NODE_KEY_PATH.",
         )
+
+    jti = claims.get("jti")
+    if not mark_state_consumed(jti):
+        raise HTTPException(status_code=400, detail="The OAuth state has already been used.")
 
     try:
         orcid_id = exchange_code(code, redirect_uri=callback_url(request))

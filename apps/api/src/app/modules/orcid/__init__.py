@@ -72,7 +72,11 @@ from .state import (
     STATE_PURPOSE,
     STATE_TTL,
     InvalidState,
+    consume_state,
+    is_state_consumed,
+    mark_state_consumed,
     sign_state,
+    verify_and_consume_state,
     verify_state,
 )
 
@@ -116,7 +120,11 @@ __all__ = [
     "promote_if_eligible",
     "promotion_eligible",
     "router",
+    "consume_state",
+    "is_state_consumed",
+    "mark_state_consumed",
     "sign_state",
+    "verify_and_consume_state",
     "verify_presentation",
     "verify_state",
 ]
