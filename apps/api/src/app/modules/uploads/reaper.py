@@ -17,9 +17,12 @@ never become paper, for free. Whose records count is decided by
 signed names it (a manifest of the owner's version, or the owner's own
 discussion post, notice or decision). A record anyone else signed -- a
 standalone manifest posted by a stranger, say -- does not keep it. The upload's
-*bytes* are held to a stricter standard: a file that any record names is never
-deleted, so the row goes and the file stays. When the log cannot be read, the
-pass deletes nothing -- bytes are never removed on a guess.
+*bytes* are kept whenever a record that uses the file names it, whoever signed
+that record: a manifest a ``paper.version`` names (inline or by CID), or a
+discussion post, notice or decision. A standalone manifest that no version
+names holds nothing back, so an account cannot keep bytes for ever by posting
+manifests that never become a paper. When the log cannot be read, the pass
+deletes nothing -- bytes are never removed on a guess.
 
 * An upload being appended to right now is skipped, not waited for: the reaper
   asks for the upload's lock the way a ``PATCH`` does and moves on when it is
@@ -188,7 +191,8 @@ def _reap_orphaned_uploads(now: datetime, ttl: timedelta) -> tuple[int, int]:
 def _reap_completed(upload_id: str, cid: str, *, file_named: bool = False) -> tuple[int, int]:
     """Delete one unreferenced completed upload; also its blob when nothing else names it.
 
-    ``file_named`` says some record (anyone's) names the bytes: the upload row
+    ``file_named`` says a record that uses the file (anyone's version manifest,
+    or a discussion post, notice or decision) names the bytes: the upload row
     still goes, but the file stays, since deleting it would leave that record
     pointing at nothing.
     """

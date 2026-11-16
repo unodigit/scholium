@@ -17,10 +17,12 @@ a record **its owner signed** names it:
   ``retraction`` or ``withdrawal`` -- or a ``moderation.decision``
   (``reasonCid``) the owner signed.
 
-A manifest nobody's version names, and a record somebody else signed, make no
-upload referenced. The bytes are another matter: a file that *any* record names
-(any type, any signer) is never deleted, because deleting it would leave that
-record pointing at nothing. So :class:`References` carries both answers:
+A manifest nobody's version names, and a record that does not use a file, make
+neither an upload referenced nor its bytes kept. Only records that actually use
+the file count: a manifest a ``paper.version`` names (inline or by CID),
+whatever its signer -- a standalone manifest is a draft of nothing until a
+version points at it -- and a discussion post, notice or decision, whoever
+signed it. So :class:`References` carries both answers:
 :meth:`References.keeps_upload` for the upload row and
 :meth:`References.names_file` for the bytes.
 
@@ -119,22 +121,6 @@ def _log_rows(session: Session) -> Iterator[tuple[str, str, str, Any]]:
             yield record_type, record_cid, author_did, body
 
 
-def _strings_in(body: Any, wanted: Collection[str]) -> set[str]:
-    """Every string anywhere in ``body`` that is one of ``wanted``."""
-    found: set[str] = set()
-    pending = [body]
-    while pending:
-        node = pending.pop()
-        if isinstance(node, str):
-            if node in wanted:
-                found.add(node)
-        elif isinstance(node, Mapping):
-            pending.extend(node.values())
-        elif isinstance(node, Sequence) and not isinstance(node, (bytes, bytearray)):
-            pending.extend(node)
-    return found
-
-
 def _listed_authors(body: Any) -> set[str]:
     """The DIDs a version body lists in ``authors`` (bare DIDs and author objects)."""
     authors = body.get("authors") if isinstance(body, Mapping) else None
@@ -154,20 +140,22 @@ class References:
 
     #: ``owner DID -> candidate CIDs that DID's own records name``.
     owned: Mapping[str, frozenset[str]]
-    #: Candidate CIDs that some record names, whoever signed it.
+    #: Candidate CIDs that a record which uses the file names, whoever signed
+    #: it: a version's manifest or a discussion/notice/decision record. A
+    #: standalone manifest no version names contributes nothing.
     named: frozenset[str]
 
     def names_file(self, cid: str) -> bool:
-        """Whether any record names ``cid``: its bytes must not be deleted."""
+        """Whether a record that uses ``cid`` names it: its bytes must be kept."""
         return cid in self.named
 
     def keeps_upload(self, owner_did: Optional[str], cid: str) -> bool:
         """Whether an upload of ``cid`` by ``owner_did`` counts as referenced.
 
         True when ``owner_did``'s own records name it. A legacy upload with no
-        recorded owner has no one whose records could, so it is kept while any
-        record names it (such rows predate required authentication and cannot
-        be created any more).
+        recorded owner has no one whose records could, so it is kept while a
+        record that uses the file names it (such rows predate required
+        authentication and cannot be created any more).
         """
         if owner_did is None:
             return cid in self.named
@@ -196,7 +184,6 @@ def scan(candidates: Collection[str]) -> Optional[References]:
             for record_type, record_cid, author_did, body in _log_rows(session):
                 if record_type in NOT_A_REFERENCE:
                     continue
-                named |= _strings_in(body, wanted)
                 if record_type == MANIFEST_TYPE:
                     files = cids_in(body) & wanted
                     if files:
@@ -215,11 +202,15 @@ def scan(candidates: Collection[str]) -> Optional[References]:
                         cid = body.get(field)
                         if isinstance(cid, str) and cid in wanted:
                             owned[author_did].add(cid)
+                            named.add(cid)
 
         # A version's manifest is read only through the version, so a manifest
-        # record nobody's version names -- a stranger's, say -- adds nothing.
+        # record nobody's version names -- a stranger's or the upload owner's
+        # own draft, say -- adds nothing: neither an upload reference nor a
+        # reason to keep the bytes.
         for authors, reference, inline in versions:
             files = inline | manifest_files.get(reference, set()) if reference else inline
+            named |= files
             if files:
                 for author in authors:
                     owned[author] |= files

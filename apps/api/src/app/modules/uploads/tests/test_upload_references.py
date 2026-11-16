@@ -5,7 +5,10 @@ record log name this CID?". Any account -- a tier-0 stranger included -- can
 post a standalone ``manifest`` record naming any CID, so naming someone else's
 upload in one freed the owner's daily quota and kept the upload from the 7-day
 cleanup. Separately the reaper only looked at manifests, so it could delete a
-file that a discussion post, a notice or a moderation decision still names.
+file that a discussion post, a notice or a moderation decision still names. And
+it kept the *bytes* of any file any record named, so an account could keep
+uploads for ever by naming them in standalone manifests that never became a
+version.
 
 The contract these tests pin down:
 
@@ -15,8 +18,10 @@ The contract these tests pin down:
   owner's own records name it: a manifest of a version the owner signed or is
   listed on, or a discussion post, notice or moderation decision the owner
   signed;
-* the reaper deletes every other completed upload past the TTL, but never the
-  *bytes* of a file any record names, whoever signed that record.
+* the reaper deletes every other completed upload past the TTL, and its bytes
+  too unless a record that uses the file names it: a manifest a version names
+  (inline or by CID), or a discussion post, notice or decision, whoever signed
+  it. A standalone manifest no version names uses nothing and holds nothing.
 """
 
 from __future__ import annotations
@@ -224,11 +229,15 @@ def test_the_reported_reproduction_over_http_with_a_tier_zero_stranger(anon_clie
 
     The manifest handler accepts any tier and any file that exists in the
     content store, so this is how the bug was reached. Afterwards X's quota is
-    still spent and the reaper still removes X's upload after the TTL.
+    still spent and the reaper removes X's upload and its bytes after the TTL:
+    a standalone manifest no version names uses nothing.
     """
     monkeypatch.setenv("UPLOAD_DAILY_QUOTA_BYTES", "1000")
     owner, stranger = actor(), actor()
-    data = b"x" * 600
+    # Unique bytes: the test database outlives a test, and another upload naming
+    # the same CID would keep the shared blob alive on its own.
+    data = (b"x" + uuid.uuid4().hex.encode()) * 20
+    data = data[:600]
     upload_id, cid = finish(anon_client, owner, data)
     record = sign_record(
         {
@@ -253,7 +262,7 @@ def test_the_reported_reproduction_over_http_with_a_tier_zero_stranger(anon_clie
     assert create(anon_client, owner, 600).status_code == 413
     reap_after_ttl(upload_id)
     assert row(upload_id) is None
-    assert bytes_kept(cid)  # the stranger's record names it, so the bytes stay
+    assert not bytes_kept(cid)  # a standalone manifest no version names holds nothing
 
 
 # --- the reaper keeps an upload only when its owner's records name it -----------------
@@ -270,8 +279,8 @@ def test_a_strangers_manifest_does_not_keep_an_upload_from_the_reaper(anon_clien
     assert row(upload_id) is None
 
 
-def test_a_file_a_strangers_manifest_names_is_never_deleted(anon_client):
-    """The upload row goes with the owner's claim; a record still names the bytes, so they stay."""
+def test_a_strangers_standalone_manifest_does_not_keep_the_bytes_either(anon_client):
+    """A manifest no version names uses nothing, whoever signed it: the bytes go too."""
     owner, stranger = actor(), actor()
     upload_id, cid = finish(anon_client, owner, b"named by a stranger")
     post_manifest(stranger, cid, len(b"named by a stranger"))
@@ -279,7 +288,7 @@ def test_a_file_a_strangers_manifest_names_is_never_deleted(anon_client):
     reap_after_ttl(upload_id)
 
     assert row(upload_id) is None
-    assert bytes_kept(cid)
+    assert not bytes_kept(cid)
 
 
 def test_a_strangers_version_listing_nobody_else_does_not_keep_the_upload(anon_client):
@@ -335,6 +344,23 @@ def test_a_manifest_the_owner_signed_but_no_version_names_does_not_keep_the_uplo
     reap_after_ttl(upload_id)
 
     assert row(upload_id) is None
+
+
+def test_bytes_named_only_by_the_owners_standalone_manifest_are_reaped(anon_client):
+    """The bug's reproduction: the upload row went, but its bytes were kept for ever.
+
+    A standalone manifest that no ``paper.version`` names is not a record that
+    uses the file, so it must not hold the bytes past the orphan TTL.
+    """
+    owner = actor()
+    upload_id, cid = finish(anon_client, owner, b"loose bytes")
+    post_manifest(owner, cid, len(b"loose bytes"))
+
+    reap_after_ttl(upload_id)
+
+    assert row(upload_id) is None
+    assert content.get_blob(cid) is None
+    assert not content.blob_path(cid).exists()
 
 
 @pytest.mark.parametrize(
