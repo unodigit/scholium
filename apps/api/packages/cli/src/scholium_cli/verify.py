@@ -242,6 +242,14 @@ def _run_node(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
             record = dict(value)
             if "id" not in record:
                 record["id"] = entry.get("record_cid")
+            # ``raw`` is the canonical record: the bytes the id hashes, which
+            # never include ``sig``.  The node serves the author's signature
+            # beside it on the log entry; without it every record is unsigned.
+            # (The signature is still checked cryptographically by
+            # ``verify_paper``; a full envelope keeps the one it carries.)
+            signature = entry.get("sig")
+            if record.get("sig") is None and isinstance(signature, str):
+                record["sig"] = signature
             records.append(record)
 
         # Fetch proofs (best effort: the node must answer, but a failure to
