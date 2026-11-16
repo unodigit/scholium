@@ -33,6 +33,7 @@ from fastapi import APIRouter
 from .archive_car import router as _archive_car_router
 from .cite import router as _cite_router
 from .oai import router as _oai_router
+from .paper_car import papers_router as _papers_router
 from .paper_car import router as _paper_car_router
 from .user_car import router as _user_car_router
 
@@ -44,5 +45,6 @@ router.include_router(_archive_car_router)
 router.include_router(_cite_router)
 router.include_router(_oai_router)
 router.include_router(_paper_car_router)
+router.include_router(_papers_router)
 router.include_router(_user_car_router)
 

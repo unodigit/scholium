@@ -105,35 +105,20 @@ export function recordFromSyncEntry(entry: unknown): SignedRecord | null {
 /** The default source: a node's public read API. */
 export function createNodeProofSource(client: ProofClient = api): ProofSource {
   return {
-    async loadRecords(_ref, signal) {
-      const records: SignedRecord[] = [];
-      let cursor = 0;
-      let complete = false;
-
-      for (let page = 0; page < MAX_SYNC_PAGES && !complete; page += 1) {
-        const entries = await client.get<unknown>("/sync/range", {
-          auth: false,
-          query: { from: cursor, limit: SYNC_PAGE_SIZE },
-          signal,
-        });
-        if (!Array.isArray(entries)) {
-          throw new ProofUnavailableError(
-            "The node's answer was not a list of log entries.",
-          );
-        }
-        for (const entry of entries) {
-          const record = recordFromSyncEntry(entry);
-          if (record !== null) records.push(record);
-        }
-        const last: unknown = entries[entries.length - 1];
-        const seq = isMapping(last) ? last.seq : undefined;
-        complete = entries.length < SYNC_PAGE_SIZE || typeof seq !== "number" || seq <= cursor;
-        if (!complete) cursor = seq as number;
-      }
-      if (!complete) {
+    async loadRecords(ref, signal) {
+      const entries = await client.get<unknown>(`/export/paper/${ref.shortId}/records`, {
+        auth: false,
+        signal,
+      });
+      if (!Array.isArray(entries)) {
         throw new ProofUnavailableError(
-          "This node's log is too long to check in the browser. Use the offline command below.",
+          "The node's answer was not a list of log entries.",
         );
+      }
+      const records: SignedRecord[] = [];
+      for (const entry of entries) {
+        const record = recordFromSyncEntry(entry);
+        if (record !== null) records.push(record);
       }
 
       if (records.length > 0 && records.every((record) => record.sig === undefined)) {

@@ -78,6 +78,7 @@ from scholium_record_core import (
 
 from app.modules import content, ledger
 from app.modules.catalog.service import resolve
+from app.modules.ledger.sync_range import serialise_entry
 
 from .car import Block, block_cid, encode_car
 from .records import local_identifier
@@ -85,6 +86,7 @@ from .records import local_identifier
 __all__ = [
     "PaperArchive",
     "collect_paper",
+    "collect_paper_records",
     "paper_cid_for",
 ]
 
@@ -199,6 +201,22 @@ def paper_cid_for(identifier: object) -> Optional[tuple[str, str]]:
         return view.paper.paper_cid, view.paper.short_id
 
     return _from_log(text)
+
+
+def collect_paper_records(identifier: object) -> Optional[list[Any]]:
+    '''The event-log entries for the paper identifier names, or None.'''
+    resolved = paper_cid_for(identifier)
+    if resolved is None:
+        return None
+    paper_cid, _short_id = resolved
+
+    collected = _included_entries(paper_cid)
+    if collected is None:
+        return None
+    included, _file_ids = collected
+
+    ordered = sorted(included.values(), key=lambda entry: int(entry.seq))
+    return [serialise_entry(entry) for entry in ordered]
 
 
 # --------------------------------------------------------------------------- #

@@ -95,23 +95,8 @@ describe("createNodeProofSource: loadRecords", () => {
 
     expect(records.map((record) => record.id)).toEqual(paper.records.map((record) => record.id));
     expect(calls).toHaveLength(1);
-    expect(calls[0].path).toBe("/sync/range");
-    expect(calls[0].options).toMatchObject({ auth: false, query: { from: 0, limit: SYNC_PAGE_SIZE } });
-  });
-
-  it("follows full pages by the last seq it holds until a short page ends the log", async () => {
-    const filler = entryFor(paper.records[0], 0, { sig: "x" });
-    const page = (from: number, count: number) =>
-      Array.from({ length: count }, (_, i) => ({ ...filler, seq: from + i + 1 }));
-    const { client, calls } = clientOf(({ options }) => {
-      const from = (options.query as { from: number }).from;
-      return from === 0 ? page(0, SYNC_PAGE_SIZE) : page(from, 3);
-    });
-
-    const records = await createNodeProofSource(client).loadRecords(REF);
-
-    expect(calls.map((call) => (call.options.query as { from: number }).from)).toEqual([0, SYNC_PAGE_SIZE]);
-    expect(records).toHaveLength(SYNC_PAGE_SIZE + 3);
+    expect(calls[0].path).toBe(`/export/paper/${REF.shortId}/records`);
+    expect(calls[0].options).toMatchObject({ auth: false });
   });
 
   it("passes the abort signal to every request", async () => {
@@ -119,24 +104,6 @@ describe("createNodeProofSource: loadRecords", () => {
     const { client, calls } = clientOf(() => signed);
     await createNodeProofSource(client).loadRecords(REF, controller.signal);
     expect(calls[0].options.signal).toBe(controller.signal);
-  });
-
-  it("stops when a node ignores the cursor instead of looping forever", async () => {
-    const full = Array.from({ length: SYNC_PAGE_SIZE }, () => entryFor(paper.records[0], 5, { sig: "x" }));
-    const { client, calls } = clientOf(() => full);
-    await createNodeProofSource(client).loadRecords(REF);
-    expect(calls).toHaveLength(2);
-  });
-
-  it("says the log is too long rather than checking part of it", async () => {
-    let seq = 0;
-    const { client, calls } = clientOf(() =>
-      Array.from({ length: SYNC_PAGE_SIZE }, () => ({ seq: (seq += 1), raw: "" })),
-    );
-    await expect(createNodeProofSource(client).loadRecords(REF)).rejects.toThrow(
-      /too long to check in the browser/,
-    );
-    expect(calls).toHaveLength(MAX_SYNC_PAGES);
   });
 
   it("reports a node that sends no signatures as unavailable, not as a forgery", async () => {
@@ -155,7 +122,7 @@ describe("createNodeProofSource: loadRecords", () => {
   });
 
   it("verifies a paper end to end when the node does send signatures", async () => {
-    const { client } = clientOf(({ path }) => (path === "/sync/range" ? signed : null));
+    const { client } = clientOf(({ path }) => (path === `/export/paper/${REF.shortId}/records` ? signed : null));
     const outcome = await runProofCheck({
       ref: REF,
       source: { loadRecords: createNodeProofSource(client).loadRecords },

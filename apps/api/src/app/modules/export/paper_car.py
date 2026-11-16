@@ -31,11 +31,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response
 
-from .paper import collect_paper
+from .paper import collect_paper, collect_paper_records
 
 __all__ = [
     "CAR_MEDIA_TYPE",
     "PAPER_NOT_FOUND_TYPE",
+    "papers_router",
     "router",
 ]
 
@@ -47,6 +48,9 @@ PAPER_NOT_FOUND_TYPE = "urn:scholium:problem:paper-not-found"
 
 #: Router the module loader mounts under ``/v1`` (serves the export routes).
 router = APIRouter(prefix="/export", tags=["export"])
+
+#: Router the module loader mounts under ``/v1`` (serves per-paper record routes).
+papers_router = APIRouter(prefix="/papers", tags=["papers"])
 
 
 def _not_found(identifier: str):
@@ -92,3 +96,19 @@ def export_paper(paper_id: str) -> Response:
             "Content-Disposition": f'attachment; filename="{_filename(archive, paper_id)}"',
         },
     )
+
+
+@papers_router.get(
+    "/{paper_id}/records",
+    summary="The event-log entries of one paper (records with signatures and proofs)",
+)
+@router.get(
+    "/paper/{paper_id}/records",
+    summary="The event-log entries of one paper (records with signatures and proofs)",
+)
+def paper_records(paper_id: str):
+    '''Return the event-log entries for the paper paper_id names.'''
+    entries = collect_paper_records(paper_id)
+    if entries is None:
+        raise _not_found(paper_id)
+    return entries
