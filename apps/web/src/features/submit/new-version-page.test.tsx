@@ -49,18 +49,47 @@ const echoId = async (envelope: unknown): Promise<string> => {
 };
 
 /** Loads the fixture for real: the same pipeline the page uses, with stub reads. */
-function loader(over: Partial<NewVersionPaper> = {}, bodyOver: Record<string, unknown> = {}) {
+function loader(
+  over: Partial<NewVersionPaper> = {},
+  bodyOver: Record<string, unknown> = {},
+  options: { unlisted?: boolean; authored?: boolean } = {},
+) {
   const paper = paperFixture(over);
-  const fetchPaper = vi.fn().mockResolvedValue({
-    paper: paper.shortId,
-    shortId: paper.shortId,
-    paperCid: paper.paperCid,
-    versionCid: paper.versionCid,
-    n: paper.n,
-    version: paper.n,
-    title: paper.title,
-    categories: paper.categories,
-    authors: [],
+  const fetchPaper = options.unlisted
+    ? vi.fn().mockRejectedValue(new ApiError(404, { status: 404, title: "Not Found" }))
+    : vi.fn().mockResolvedValue({
+        paper: paper.shortId,
+        shortId: paper.shortId,
+        paperCid: paper.paperCid,
+        versionCid: paper.versionCid,
+        n: paper.n,
+        version: paper.n,
+        title: paper.title,
+        categories: paper.categories,
+        authors: [],
+      });
+  // The dashboard names the caller's latest version whatever state it is in.
+  // A caller who did not author the paper has no such row.
+  const fetchOwnPapers = vi.fn().mockResolvedValue({
+    did: A,
+    needs_attention: { count: 0, items: [] },
+    my_papers:
+      options.authored === false
+        ? []
+        : [
+            {
+              paper: paper.shortId,
+              shortId: paper.shortId,
+              paperCid: paper.paperCid,
+              title: paper.title,
+              status: "held",
+              categories: paper.categories,
+              latestVersion: paper.n,
+              latestVersionCid: paper.versionCid,
+              state: "held",
+            },
+          ],
+    my_reviews: [],
   });
   const fetchRecord = vi.fn().mockResolvedValue({
     v: 1,
@@ -86,7 +115,13 @@ function loader(over: Partial<NewVersionPaper> = {}, bodyOver: Record<string, un
   return {
     paper,
     loadPaper: vi.fn((id: string, options?: { signal?: AbortSignal }) =>
-      loadNewVersionPaper(id, { fetchPaper, fetchRecord, recordId: echoId, signal: options?.signal }),
+      loadNewVersionPaper(id, {
+        fetchPaper,
+        fetchOwnPapers,
+        fetchRecord,
+        recordId: echoId,
+        signal: options?.signal,
+      }),
     ),
   };
 }
@@ -134,8 +169,9 @@ function renderForm(
   props: Partial<NewVersionPageProps> = {},
   paper: Partial<NewVersionPaper> = {},
   recordBody: Record<string, unknown> = {},
+  loadOptions: { unlisted?: boolean; authored?: boolean } = {},
 ): Harness {
-  const built = loader(paper, recordBody);
+  const built = loader(paper, recordBody, loadOptions);
   const sign = vi.fn(
     async (_type: string, body: Record<string, unknown>, prev: string | null) =>
       signedRecord(props.submitterDid ?? A, body, prev),
@@ -198,6 +234,30 @@ describe("NewVersionPage — loading the paper", () => {
     await titleField();
     expect(screen.getByText(/Pre-filled from version 3/)).toBeTruthy();
     expect(screen.getByText(/becomes version 4/)).toBeTruthy();
+  });
+
+  it("loads the author's latest version when the paper has no listed version, and signs the next one", async () => {
+    const harness = renderForm({}, {}, {}, { unlisted: true });
+    const title = (await titleField()) as HTMLInputElement;
+    expect(title.value).toBe("Sparse Probing of Reward Models");
+    expect(screen.getByText(/Pre-filled from version 3/)).toBeTruthy();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to the change note" }));
+    fireEvent.change(screen.getByLabelText(/change note/i), { target: { value: "Adds the appendix." } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit version 4" }));
+
+    expect(await screen.findByText("Version 4 is signed and submitted")).toBeTruthy();
+    const [type, body, prev] = harness.sign.mock.calls[0];
+    expect(type).toBe("paper.version");
+    expect(prev).toBe(VERSION_CID);
+    expect(body).toMatchObject({ paper: GENESIS, n: 4 });
+  });
+
+  it("keeps the not-available state for a paper the caller did not author", async () => {
+    renderForm({}, {}, {}, { unlisted: true, authored: false });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("no listed version");
+    expect(screen.queryByLabelText("Title")).toBeNull();
   });
 });
 

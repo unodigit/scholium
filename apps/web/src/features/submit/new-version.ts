@@ -13,9 +13,14 @@
  * `GET /v1/records/{versionCid}` returns the record itself, whose id is
  * recomputed and checked before anything is shown, exactly as `/consent` does
  * — an author edits what the previous version committed to, or they are
- * editing a claim nobody signed. The byline and the file manifest are carried
- * over from that version unchanged; this release's form edits the details and
- * asks the one question a new version must answer: what changed.
+ * editing a claim nobody signed. When the catalog has no *listed* version —
+ * the paper is held, in moderation, or awaiting co-author consent — it answers
+ * `404` even to its own author, so the loader asks `GET /v1/me/dashboard` with
+ * the caller's token instead: the author's own papers name the chain tip
+ * whatever state it is in. Everyone else keeps the not-available answer. The
+ * byline and the file manifest are carried over from that version unchanged;
+ * this release's form edits the details and asks the one question a new
+ * version must answer: what changed.
  *
  * No React here; `new-version-page.tsx` is the screen.
  */
@@ -103,7 +108,7 @@ export interface NewVersionPaper {
   shortId: string;
   /** cid of the `paper.genesis` record: what `body.paper` must name. */
   paperCid: string;
-  /** cid of the latest listed `paper.version` record: what `prev` must name. */
+  /** cid of the latest `paper.version` record, listed or not: what `prev` must name. */
   versionCid: string;
   /** The latest version's number, from 1. The new version is `n + 1`. */
   n: number;
@@ -191,7 +196,20 @@ export type FetchNewVersionPaper = (id: string, signal?: AbortSignal) => Promise
 export const fetchNewVersionPaper: FetchNewVersionPaper = (id, signal) =>
   api.get<unknown>(`/papers/${encodeURIComponent(id)}`, { auth: false, signal });
 
-/** What `GET /v1/papers/{id}` told us: which version is the one to extend. */
+/** `GET /v1/me/dashboard`: the caller's own papers, with the latest version's state. */
+export const OWN_PAPERS_PATH = "/me/dashboard";
+
+/**
+ * Reads the caller's dashboard with their token. Unlike the catalog, it names
+ * the latest version of a paper the caller authored whether that version is
+ * listed or not — the chain tip a new version must extend.
+ */
+export type FetchOwnPapers = (signal?: AbortSignal) => Promise<unknown>;
+
+export const fetchOwnPapers: FetchOwnPapers = (signal) =>
+  api.get<unknown>(OWN_PAPERS_PATH, { signal });
+
+/** Which version is the one to extend, from the catalog or the caller's own papers. */
 interface LocatedVersion {
   shortId: string;
   paperCid: string;
@@ -233,6 +251,62 @@ function locateVersion(payload: unknown): LocatedVersion {
     n,
     categories: stringList(payload.categories),
   };
+}
+
+/** True when two spellings name the same paper or version id. */
+function sameRef(left: string, right: string): boolean {
+  return left === right || left.toLowerCase() === right.toLowerCase();
+}
+
+/**
+ * Reads the caller's own paper row out of a `GET /v1/me/dashboard` answer.
+ *
+ * The row names the paper's *latest* version and its number whatever state
+ * that version is in (the dashboard takes the highest `n`), which is exactly
+ * the chain tip `prev` and `n + 1` must name. `null` when the caller authored
+ * no paper matching `id` — the not-available answer then stands.
+ */
+function locateOwnVersion(payload: unknown, id: string): LocatedVersion | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const rows = payload.my_papers ?? payload.myPapers;
+  if (!Array.isArray(rows)) {
+    return null;
+  }
+  for (const row of rows) {
+    if (!isRecord(row)) {
+      continue;
+    }
+    const shortId = text(row.shortId) ?? text(row.short_id) ?? text(row.paper) ?? "";
+    const paperCid = text(row.paperCid) ?? text(row.paper_cid) ?? "";
+    const versionCid = text(row.latestVersionCid) ?? text(row.latest_version_cid);
+    const latest =
+      typeof row.latestVersion === "number" &&
+      Number.isInteger(row.latestVersion) &&
+      row.latestVersion >= 1
+        ? row.latestVersion
+        : typeof row.latest_version === "number" &&
+            Number.isInteger(row.latest_version) &&
+            row.latest_version >= 1
+          ? row.latest_version
+          : null;
+    if (versionCid === null || latest === null) {
+      continue;
+    }
+    const named = [shortId, paperCid, versionCid].some((ref) => ref !== "" && sameRef(ref, id));
+    if (!named) {
+      continue;
+    }
+    return {
+      shortId,
+      paperCid,
+      versionCid,
+      n: latest,
+      categories: stringList(row.categories),
+    };
+  }
+  return null;
 }
 
 /** Computes a record's id from its envelope; verify-core's `computeRecordId`. */
@@ -284,6 +358,7 @@ function paperFromEnvelope(envelope: unknown, located: LocatedVersion): NewVersi
 
 export interface LoadNewVersionOptions {
   fetchPaper?: FetchNewVersionPaper;
+  fetchOwnPapers?: FetchOwnPapers;
   fetchRecord?: FetchRecord;
   recordId?: ComputeRecordId;
   signal?: AbortSignal;
@@ -298,17 +373,42 @@ export type LoadNewVersion = (
  * Reads the paper and the record its latest version signed, checked against its
  * id. What the form pre-fills from is what that cid commits to, whatever the
  * server says — the same rule `/consent` signs under.
+ *
+ * The catalog answers `404` for a paper with no *listed* version, even to its
+ * own author, so that answer falls back to the caller's dashboard: it names
+ * the author's latest version whatever state it is in (held, in moderation,
+ * awaiting consent). A caller who did not author the paper has no such row, so
+ * the `404` — the not-available answer — stands for everyone else.
  */
 export async function loadNewVersionPaper(
   id: string,
   options: LoadNewVersionOptions = {},
 ): Promise<NewVersionPaper> {
   const fetchPaper = options.fetchPaper ?? fetchNewVersionPaper;
+  const ownPapers = options.fetchOwnPapers ?? fetchOwnPapers;
   const fetcher = options.fetchRecord ?? fetchRecord;
   const recordId = options.recordId ?? defaultRecordId;
   const { signal } = options;
 
-  const located = locateVersion(await fetchPaper(id, signal));
+  let located: LocatedVersion;
+  try {
+    located = locateVersion(await fetchPaper(id, signal));
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 404)) {
+      throw error;
+    }
+    let dashboard: unknown;
+    try {
+      dashboard = await ownPapers(signal);
+    } catch {
+      throw error;
+    }
+    const owned = locateOwnVersion(dashboard, id);
+    if (owned === null) {
+      throw error;
+    }
+    located = owned;
+  }
   const envelope = await fetcher(located.versionCid, signal);
 
   let actual: string | null = null;

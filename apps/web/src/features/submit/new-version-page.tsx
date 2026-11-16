@@ -84,7 +84,7 @@ export interface NewVersionPageProps {
 
 /** One plain sentence for where the pre-fill came from and what signing does. */
 function lede(paper: NewVersionPaper): string {
-  return `Pre-filled from version ${paper.n}, the latest this server lists. What you sign becomes version ${paper.n + 1}; version ${paper.n} stays as it is.`;
+  return `Pre-filled from version ${paper.n}, the paper's latest version. What you sign becomes version ${paper.n + 1}; version ${paper.n} stays as it is.`;
 }
 
 export function NewVersionPage(props: NewVersionPageProps): ReactElement {

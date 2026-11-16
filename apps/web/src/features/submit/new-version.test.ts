@@ -83,6 +83,32 @@ function catalogPayload(over: Record<string, unknown> = {}): Record<string, unkn
   };
 }
 
+/** The caller's dashboard: their own papers, with the latest version whatever its state. */
+function dashboardPayload(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    did: A,
+    needs_attention: { count: 0, items: [] },
+    my_papers: [
+      {
+        paper: SHORT_ID,
+        shortId: SHORT_ID,
+        paperCid: GENESIS,
+        paper_cid: GENESIS,
+        title: "Sparse Probing of Reward Models",
+        status: "held",
+        categories: ["cs.AI", "cs.LG"],
+        latestVersion: 3,
+        latest_version: 3,
+        latestVersionCid: VERSION_CID,
+        latest_version_cid: VERSION_CID,
+        state: "held",
+      },
+    ],
+    my_reviews: [],
+    ...over,
+  };
+}
+
 /** A record id function whose envelopes are already the ones asked for. */
 const echoId = async (envelope: unknown): Promise<string> => {
   const id = (envelope as { id?: unknown }).id;
@@ -91,6 +117,9 @@ const echoId = async (envelope: unknown): Promise<string> => {
   }
   return id;
 };
+
+/** The catalog answer for a paper with no *listed* version. */
+const notListed = () => new ApiError(404, { status: 404, title: "Not Found" });
 
 /** Loads the paper against stub reads; `envelope`/`catalog` default to a consistent pair. */
 function load(
@@ -193,6 +222,55 @@ describe("loadNewVersionPaper", () => {
     const bare = versionEnvelope();
     (bare.body as Record<string, unknown>).manifest = null;
     await expect(load(bare)).rejects.toMatchObject({ code: "no-manifest" });
+  });
+
+  it("loads the author's latest version, listed or not, when the catalog lists none", async () => {
+    const fetchPaper = vi.fn().mockRejectedValue(notListed());
+    const fetchOwnPapers = vi.fn().mockResolvedValue(dashboardPayload());
+    const fetchRecord = vi.fn().mockResolvedValue(versionEnvelope());
+
+    const paper = await loadNewVersionPaper(SHORT_ID, {
+      fetchPaper,
+      fetchOwnPapers,
+      fetchRecord,
+      recordId: echoId,
+    });
+
+    expect(fetchOwnPapers).toHaveBeenCalledTimes(1);
+    expect(fetchRecord).toHaveBeenCalledWith(VERSION_CID, undefined);
+    expect(paper).toMatchObject({
+      shortId: SHORT_ID,
+      paperCid: GENESIS,
+      versionCid: VERSION_CID,
+      n: 3,
+      title: "Sparse Probing of Reward Models",
+      categories: ["cs.AI", "cs.LG"],
+      manifest: MANIFEST_CID,
+    });
+  });
+
+  it("keeps the not-available answer when the paper is not one of the caller's", async () => {
+    const fetchPaper = vi.fn().mockRejectedValue(notListed());
+    const fetchOwnPapers = vi.fn().mockResolvedValue(dashboardPayload({ my_papers: [] }));
+    const fetchRecord = vi.fn();
+
+    await expect(
+      loadNewVersionPaper(SHORT_ID, { fetchPaper, fetchOwnPapers, fetchRecord, recordId: echoId }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(fetchRecord).not.toHaveBeenCalled();
+  });
+
+  it("does not consult the caller's own papers when the catalog lists the paper", async () => {
+    const fetchOwnPapers = vi.fn().mockResolvedValue(dashboardPayload());
+    const paper = await loadNewVersionPaper(SHORT_ID, {
+      fetchPaper: vi.fn().mockResolvedValue(catalogPayload()),
+      fetchOwnPapers,
+      fetchRecord: vi.fn().mockResolvedValue(versionEnvelope()),
+      recordId: echoId,
+    });
+
+    expect(paper.versionCid).toBe(VERSION_CID);
+    expect(fetchOwnPapers).not.toHaveBeenCalled();
   });
 });
 
