@@ -6,6 +6,7 @@ import { PasskeyCancelledError } from "../web-auth";
 import {
   ENDORSE_MIN_TIER,
   MY_ENDORSEMENTS_ENDPOINT,
+  NO_ENDORSE_OFFER,
   EndorseInputError,
   WrongEndorsementRecordError,
   describeEndorseError,
@@ -110,9 +111,9 @@ describe("viewerFromAccessToken", () => {
 });
 
 describe("endorseOffer: which categories the viewer may endorse in", () => {
-  it("offers exactly the categories of the viewer's active endorsements", () => {
+  it("offers exactly the categories of the viewer's active endorsements, deduped and sorted", () => {
     const offer = endorseOffer(
-      2,
+      3,
       parseViewerEndorsements([
         { record_cid: "bafyrei1", category: "cs.MA" },
         { record_cid: "bafyrei2", category: "cs.AI" },
@@ -120,7 +121,8 @@ describe("endorseOffer: which categories the viewer may endorse in", () => {
       ]),
     );
     expect(offer.categories).toEqual(["cs.AI", "cs.MA"]);
-    expect(offer.anyCategory).toBe(false);
+    // A viewer who may endorse may pick any category as well as the shortcuts.
+    expect(offer.anyCategory).toBe(true);
   });
 
   it("lets a tier-3 viewer endorse in any category (the API's rule for endorsers)", () => {
@@ -132,10 +134,20 @@ describe("endorseOffer: which categories the viewer may endorse in", () => {
     expect(endorseOffer(null, []).anyCategory).toBe(true);
   });
 
-  it("offers a viewer below the endorser tier nothing but their endorsed categories", () => {
-    expect(endorseOffer(1, []).anyCategory).toBe(false);
-    expect(endorseOffer(0, []).anyCategory).toBe(false);
+  it("offers a viewer below the endorser tier nothing at all", () => {
+    expect(endorseOffer(1, [])).toEqual(NO_ENDORSE_OFFER);
+    expect(endorseOffer(0, [])).toEqual(NO_ENDORSE_OFFER);
     expect(ENDORSE_MIN_TIER).toBe(3);
+  });
+
+  it("offers a tier-2 viewer nothing, even in a category they are endorsed in", () => {
+    // Regression: the API accepts an endorsement only from an author at tier 3
+    // or above (`handle_endorsement`), whatever the category. A tier-2 viewer
+    // endorsed in cs.AI may *submit* in cs.AI, not endorse there.
+    const endorsed = parseViewerEndorsements([
+      { record_cid: "bafyrei1", category: "cs.AI" },
+    ]);
+    expect(endorseOffer(2, endorsed)).toEqual(NO_ENDORSE_OFFER);
   });
 });
 

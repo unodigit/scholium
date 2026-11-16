@@ -9,11 +9,17 @@
  * Category [ cs.AI ▾ ] [ Endorse ]               ← tier 3 may pick any
  * ```
  *
- * What is offered comes from the API, never a guess: the viewer's own active
- * endorsements name the categories they hold standing in
- * (`GET /v1/me/endorsements`), and a viewer at or above the API's endorser
- * tier may name any category at all (see `./endorse`). The API stays the gate
- * — a refusal is shown in its own words, never swallowed.
+ * What is offered comes from the API, never a guess: only a viewer at the
+ * API's endorser tier (or one whose tier the token does not name, whom the
+ * API decides for) is offered anything, because the API refuses an
+ * endorsement record from every lower tier (`ENDORSER_MIN_TIER` in
+ * `apps/api/src/app/modules/endorsements/`). Such a viewer may endorse in any
+ * category, and their own active endorsements — submission rights, not
+ * endorsement rights — are offered as quick actions beside the category
+ * picker (`GET /v1/me/endorsements`, see `./endorse`). A viewer below the
+ * tier an endorsement would grant sees nothing: the action is hidden rather
+ * than offered and refused. The API stays the gate for every record — a
+ * refusal is shown in its own words, never swallowed.
  *
  * Acting signs an `endorsement` record with this device's key (the passkey
  * prompt is the confirmation) and posts it; the ✓ state then replaces the

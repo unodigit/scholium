@@ -6,15 +6,18 @@
  * (`apps/api/src/app/modules/endorsements/`):
  *
  * - `GET /v1/me/endorsements` — the signed-in viewer's own *active*
- *   endorsements, each with its category. A viewer endorsed in a category
- *   holds standing in it, which is what the per-category actions are offered
- *   from.
+ *   endorsements, each with its category. An endorsement there grants the
+ *   right to *submit* in that category; it is a convenience source for the
+ *   per-category quick actions, never a licence to endorse. Only a viewer at
+ *   {@link ENDORSE_MIN_TIER} or above is offered any endorse action at all.
  * - `POST /v1/records` — the standard ingest pipeline for a client-signed
  *   `endorsement` record (`{endorsee, category}`). The API is the gate: it
  *   accepts the record only from an author at
  *   {@link ENDORSE_MIN_TIER} or above, so a tier-3 viewer may endorse in
  *   *any* category ({@link EndorseOffer.anyCategory}) and a refused record is
- *   reported with the API's own words rather than silently swallowed.
+ *   reported with the API's own words rather than silently swallowed. The
+ *   profile mirrors that tier rule so the action is never offered to a
+ *   viewer the API would refuse.
  *
  * {@link endorseResearcher} signs with `web-auth`'s `signRecord` — the
  * passkey prompt *is* the confirmation — and posts the signed envelope.
@@ -197,12 +200,16 @@ export async function loadViewerEndorsements(
 
 /** The endorse actions the profile puts in front of the viewer. */
 export interface EndorseOffer {
-  /** One action per category the viewer holds standing in, sorted. */
+  /**
+   * One action per category the viewer may submit in — a shortcut, offered
+   * only alongside {@link anyCategory}; it never widens what the API grants.
+   */
   readonly categories: readonly string[];
   /**
    * The API accepts an endorsement record from a tier-3 author in *any*
    * category, so such a viewer gets a category choice instead of a list.
-   * An unknown tier is offered the same choice; the API decides.
+   * An unknown tier is offered the same choice; the API decides. A known
+   * tier below {@link ENDORSE_MIN_TIER} gets no offer at all.
    */
   readonly anyCategory: boolean;
 }
@@ -211,17 +218,25 @@ export interface EndorseOffer {
 export const NO_ENDORSE_OFFER: EndorseOffer = { categories: [], anyCategory: false };
 
 /**
- * Which endorse actions `viewer` gets, from the API's rules and the viewer's
- * own endorsements: their endorsed categories, plus any category at all when
- * the viewer is at or above {@link ENDORSE_MIN_TIER}.
+ * Which endorse actions `viewer` gets, from the API's rules: a viewer at
+ * {@link ENDORSE_MIN_TIER} or above (or one whose tier is unknown) may
+ * endorse, with their endorsed categories offered as quick actions and a
+ * category picker beside them. Everyone below that tier gets nothing — the
+ * API would refuse every record they posted.
  */
 export function endorseOffer(
   viewerTier: number | null,
   endorsements: readonly ViewerEndorsement[],
 ): EndorseOffer {
-  const categories = [...new Set(endorsements.map((row) => row.category))].sort();
+  // The API accepts an endorsement record only from an author at
+  // ENDORSE_MIN_TIER or above, in any category (`handle_endorsement`). An
+  // endorsement the viewer holds grants the right to *submit* in its
+  // category, never the right to endorse, so it cannot make up for a tier
+  // the API refuses.
   const anyCategory = viewerTier === null || viewerTier >= ENDORSE_MIN_TIER;
-  if (categories.length === 0 && !anyCategory) return NO_ENDORSE_OFFER;
+  if (!anyCategory) return NO_ENDORSE_OFFER;
+
+  const categories = [...new Set(endorsements.map((row) => row.category))].sort();
   return { categories, anyCategory };
 }
 

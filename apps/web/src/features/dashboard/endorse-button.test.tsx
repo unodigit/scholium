@@ -95,8 +95,8 @@ function stubMyEndorsements(rows: ViewerEndorsement[]): ReturnType<typeof vi.fn>
 /* ------------------------------------------------------------------------- */
 
 describe("ProfilePage: the Endorse action (bug: no UI to endorse a researcher)", () => {
-  it("shows Endorse in cs.AI to a tier-2 viewer endorsed in cs.AI (ID-5 reproduce)", async () => {
-    tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 2 }) });
+  it("shows Endorse in cs.AI to a tier-3 viewer endorsed in cs.AI (ID-5)", async () => {
+    tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 3 }) });
     stubMyEndorsements(endorsedInCsAi());
 
     render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
@@ -106,8 +106,23 @@ describe("ProfilePage: the Endorse action (bug: no UI to endorse a researcher)",
     ).toBeInstanceOf(HTMLElement);
   });
 
-  it("signs and posts the endorsement, then reflects the newcomer's new tier", async () => {
+  it("hides Endorse from a tier-2 viewer endorsed in cs.AI, which the API refuses (regression)", async () => {
+    // Reproduce: as a tier-2 user open another member's `/u/{did}`. The UI
+    // offered "Endorse in cs.AI" from the viewer's own cs.AI endorsement and
+    // the API answered 403 insufficient-tier. The profile must apply the
+    // API's endorser-tier rule and offer nothing.
     tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 2 }) });
+    stubMyEndorsements(endorsedInCsAi());
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.queryByRole("heading", { name: "Endorse" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Endorse/ })).toBeNull();
+  });
+
+  it("signs and posts the endorsement, then reflects the newcomer's new tier", async () => {
+    tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 3 }) });
     stubMyEndorsements(endorsedInCsAi());
 
     let tierNow = 1;
@@ -165,7 +180,7 @@ describe("ProfilePage: the Endorse action (bug: no UI to endorse a researcher)",
   });
 
   it("never offers a viewer the chance to endorse themselves", async () => {
-    tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 2 }) });
+    tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 3 }) });
     stubMyEndorsements(endorsedInCsAi());
 
     render(<ProfilePage did={MEI} initialProfile={{ ...tierOneProfile(MEI), tier: 2 }} />);
@@ -180,13 +195,29 @@ describe("ProfilePage: the Endorse action (bug: no UI to endorse a researcher)",
 /* ------------------------------------------------------------------------- */
 
 describe("EndorseSection", () => {
-  const viewer: ViewerIdentity = { signedIn: true, did: MEI, tier: 2 };
+  const viewer: ViewerIdentity = { signedIn: true, did: MEI, tier: 3 };
 
   const props = {
     did: NEWCOMER,
     viewer,
     loadEndorsements: () => Promise.resolve(endorsedInCsAi()),
   };
+
+  it("hides the section from a tier-2 viewer endorsed in cs.AI (regression)", async () => {
+    // The API accepts an endorsement only from a tier-3+ author
+    // (`handle_endorsement`). Offering "Endorse in cs.AI" to a tier-2 viewer
+    // endorsed there made every click a 403 insufficient-tier refusal.
+    render(
+      <EndorseSection
+        {...props}
+        viewer={{ signedIn: true, did: MEI, tier: 2 }}
+      />,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.queryByRole("heading", { name: "Endorse" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Endorse/ })).toBeNull();
+  });
 
   it("offers one action per category the viewer may endorse in", async () => {
     render(
