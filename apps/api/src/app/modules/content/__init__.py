@@ -27,12 +27,22 @@ version is ``listed``; until then they go only to that version's authors and
 to moderators (:func:`app.modules.content.visibility.may_read`).  The module
 loader discovers the router by convention.
 
+Which manifests list a file is answered from an index, not by reading every
+manifest in the ledger: :mod:`app.modules.content.refs` keeps it current from
+a ledger subscriber and the ``on_startup`` backfill below.
+
 See :mod:`app.modules.content.store` for the on-disk layout and write
 guarantees, :mod:`app.modules.content.service` for the ``blobs`` row
 semantics and :mod:`app.modules.content.router` for the HTTP surface.
 """
 
 from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from fastapi import FastAPI
+from sqlalchemy.exc import SQLAlchemyError
 
 from .errors import (
     BlobConflict,
@@ -63,8 +73,37 @@ from .service import (
     store_bytes,
     store_stream,
 )
+from . import refs
+from .refs import ContentRef, ContentRefProgress
 from .store import blob_path, content_dir, exists, open_blob
 from .visibility import MODERATOR_TIER, may_read
+
+logger = logging.getLogger(__name__)
+
+
+def on_startup(app: Optional[FastAPI] = None) -> None:
+    """Module-loader hook: subscribe the content-reference index and backfill it.
+
+    Runs on every ``create_app``.  The ledger's subscriber registry is
+    process-global and may have been cleared since the last one, so the
+    subscription is installed again; :func:`refs.install` is idempotent.  The
+    backfill indexes the manifests that predate the index (all of them, on the
+    first start after it shipped) and is a no-op once the index is current.
+
+    A backfill that fails (the database is busy, say) does not stop the node
+    from starting: every download brings the index up to date itself before it
+    trusts it, so nothing is served on the strength of an incomplete index.
+    """
+    refs.install()
+    try:
+        refs.backfill()
+    except SQLAlchemyError:
+        logger.warning(
+            "could not backfill the content-reference index at startup; "
+            "downloads will complete it",
+            exc_info=True,
+        )
+
 
 __all__ = [
     "Blob",
@@ -72,6 +111,8 @@ __all__ = [
     "BlobNotFound",
     "CONTENT_SECURITY_POLICY",
     "ContentError",
+    "ContentRef",
+    "ContentRefProgress",
     "InvalidMediaType",
     "InvalidScanStatus",
     "MODERATOR_TIER",
@@ -89,7 +130,9 @@ __all__ = [
     "is_tombstoned",
     "may_read",
     "normalize_media_type",
+    "on_startup",
     "open_blob",
+    "refs",
     "router",
     "set_scan_status",
     "store_bytes",

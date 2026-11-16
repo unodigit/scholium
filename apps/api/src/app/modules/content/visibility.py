@@ -18,24 +18,29 @@ not in the router, so the rule reads in one place:
   unlisted content exists.
 
 A version references a blob when its ``manifest`` record lists the cid among
-its ``files``.  The manifest bodies live in the ledger, so resolving that is
-a read of every ``manifest`` entry -- the same resolution
-:mod:`app.modules.moderation.tombstones` makes when a takedown names a
-version.
+its ``files``.  The manifest bodies live in the ledger, and reading them all
+on every download made a request cost as much as the node was large, so
+:mod:`app.modules.content.refs` keeps the answer -- which manifests list a
+cid -- in an index that the ledger feeds and that this check reads by primary
+key.  The index holds exactly the manifests the scan used to find, so the rule
+above is unchanged.
 
-The submissions and ledger plugins are imported when the check runs, not when
-this package loads: submissions imports this package (a manifest must prove
-its bytes exist), so a module-level import would be circular.  When neither
-plugin is installed the lookups find no rows and every blob stays public,
-which is the standalone behaviour of feature 44.
+The submissions plugin is imported when the check runs, not when this package
+loads: submissions imports this package (a manifest must prove its bytes
+exist), so a module-level import would be circular.  When it is not installed
+the lookups find no rows and every blob stays public, which is the standalone
+behaviour of feature 44.
 """
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Optional
 
 from app import db
 from app.security import Principal
+
+from . import refs
+from .refs import ContentRef
 
 __all__ = [
     "MODERATOR_TIER",
@@ -61,22 +66,20 @@ def may_read(cid: object, principal: Optional[Principal]) -> bool:
 
     # Imported here, not above: submissions imports this package, and doing
     # so while it is still initialising would be circular at load time.
-    from app.modules import ledger, submissions
-    from app.modules.ledger.models import EventLog
+    from app.modules import submissions
     from app.modules.submissions.models import Authorship, PaperVersion
 
-    ledger.ensure_table()
-    submissions.ensure_tables()
+    # Make the content-reference index current before trusting it: when it is
+    # (the normal case) that is two indexed point lookups.  It also creates
+    # the tables the lookups below read.
+    refs.sync()
 
     with db.SessionLocal() as session:
-        # Only the two columns the check needs: a full ``EventLog`` row would
-        # also load the record's raw bytes and chain hashes.
         manifest_cids = {
-            record_cid
-            for record_cid, body in session.query(
-                EventLog.record_cid, EventLog.body
-            ).filter(EventLog.record_type == submissions.MANIFEST_TYPE)
-            if _lists(body, cid)
+            manifest_cid
+            for (manifest_cid,) in session.query(ContentRef.manifest_cid).filter(
+                ContentRef.content_cid == cid
+            )
         }
         if not manifest_cids:
             # No submission ever named these bytes: not pre-listing content.
@@ -105,15 +108,3 @@ def may_read(cid: object, principal: Optional[Principal]) -> bool:
             .first()
         )
         return author is not None
-
-
-def _lists(body: Any, cid: str) -> bool:
-    """Whether a ``manifest`` record ``body`` names file ``cid``."""
-    if not isinstance(body, Mapping):
-        return False
-    files = body.get("files")
-    if not isinstance(files, list):
-        return False
-    return any(
-        isinstance(item, Mapping) and item.get("cid") == cid for item in files
-    )
