@@ -61,6 +61,22 @@ def _not_found(identifier: str) -> Any:
     )
 
 
+def _is_signed_review(review: Optional[AIReview]) -> bool:
+    if review is None:
+        return False
+    rid = getattr(review, "review_cid", None)
+    if not isinstance(rid, str) or not rid.strip():
+        return False
+    if rid.startswith("ai-review-"):
+        return False
+    try:
+        from app.modules import ledger
+
+        return ledger.entry_by_cid(rid) is not None
+    except Exception:
+        return True
+
+
 def _review_for(version_cid: str) -> Optional[AIReview]:
     """The stored review for ``version_cid``, or ``None`` when none exists."""
     ensure_ai_reviews_table()
@@ -68,7 +84,9 @@ def _review_for(version_cid: str) -> Optional[AIReview]:
         row = session.query(AIReview).filter_by(version_cid=version_cid).first()
         if row is not None:
             session.expunge(row)
-        return row
+    if not _is_signed_review(row):
+        return None
+    return row
 
 
 _FINDING_ID_KEYS = ("finding_id", "findingId", "findingID", "id")
@@ -113,7 +131,9 @@ def _review_by_cid(review_cid: str) -> Optional[AIReview]:
         row = session.query(AIReview).filter_by(review_cid=review_cid).first()
         if row is not None:
             session.expunge(row)
-        return row
+    if not _is_signed_review(row):
+        return None
+    return row
 
 
 def _paper_cid_for_review(review: AIReview) -> Optional[str]:
@@ -391,15 +411,16 @@ def post_rebuttal(
         raise ProblemException(404, f"No finding {finding_id!r} in review {review_cid!r}.")
 
     paper_cid = _paper_cid_for_review(review)
-    if paper_cid is not None:
-        try:
-            from app.modules import submissions
+    if paper_cid is None:
+        raise ProblemException(403, "Only a paper author may rebut an AI finding.")
+    try:
+        from app.modules import submissions
 
-            authors = submissions.paper_authors(paper_cid)
-        except Exception:
-            authors = frozenset()
-        if principal.did not in authors:
-            raise ProblemException(403, "Only a paper author may rebut an AI finding.")
+        authors = submissions.paper_authors(paper_cid)
+    except Exception:
+        authors = frozenset()
+    if principal.did not in authors:
+        raise ProblemException(403, "Only a paper author may rebut an AI finding.")
 
     ensure_ai_review_rebuttals_table()
     now = datetime.now(timezone.utc).replace(tzinfo=None)

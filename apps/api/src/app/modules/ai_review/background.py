@@ -194,6 +194,46 @@ def _run_pipeline(
     return ordered, _models_from_reports(ordered), set_hash, final_findings
 
 
+
+def _bundle_cid_for_version(version_cid: Optional[str]) -> Optional[str]:
+    if not isinstance(version_cid, str) or not version_cid:
+        return None
+    try:
+        from app.modules.submissions import models as sm
+
+        sm.ensure_tables()
+        with db.SessionLocal() as session:
+            row = session.get(sm.PaperVersion, version_cid)
+            if row is None:
+                return None
+            manifest_cid = getattr(row, "manifest_cid", None)
+    except Exception:
+        logger.exception("could not resolve manifest for %s", version_cid)
+        return None
+    if not isinstance(manifest_cid, str) or not manifest_cid:
+        return None
+    try:
+        from app.modules import ledger
+
+        entry = ledger.entry_by_cid(manifest_cid)
+        if entry is None:
+            return None
+        body = ledger.stored_envelope(entry).body
+    except Exception:
+        logger.exception("could not read manifest %s", manifest_cid)
+        return None
+    files = body.get("files") if isinstance(body, dict) else None
+    if not isinstance(files, list):
+        return None
+    for item in files:
+        if isinstance(item, dict) and item.get("role") == "code":
+            cid = item.get("cid")
+            if isinstance(cid, str) and cid:
+                return cid
+    return None
+
+
+
 def run_ai_review(
     version_cid: str,
     *,
@@ -219,6 +259,9 @@ def run_ai_review(
                     paper_cid = row.paper_cid
         except Exception:
             logger.exception("could not resolve paper_cid for %s", version_cid)
+
+    if bundle_cid is None:
+        bundle_cid = _bundle_cid_for_version(version_cid)
 
     ordered, models, set_hash, findings_dicts = _run_pipeline(
         version_cid, pdf_cid=pdf_cid, bundle_cid=bundle_cid, listed=listed
@@ -261,18 +304,21 @@ def run_ai_review(
         review_cid = compute_record_id(envelope)
     except Exception:
         review_cid = None
-    if review_cid is None:
-        import uuid
 
-        review_cid = f"ai-review-{version_cid}-{uuid.uuid4().hex}"
-
-    if key is not None:
+    signed = False
+    if key is not None and review_cid is not None:
         try:
             record = sign_record(envelope, key)
             record["id"] = review_cid
             ledger.append(record)
+            signed = True
         except Exception:
             logger.exception("failed to append ai.review record for %s", version_cid)
+            signed = False
+
+    if not signed:
+        logger.warning("ai review for %s was not signed; not storing an unsigned report", version_cid)
+        return None
 
     with db.SessionLocal() as session:
         existing = session.query(AIReview).filter_by(version_cid=version_cid).first()
@@ -358,8 +404,11 @@ def _trigger(event: Any) -> None:
 def ensure_subscribed() -> None:
     global _subscribed
     with _sub_lock:
-        if _subscribed:
-            return
+        # Subscribe on every call: the registry is process-wide and other
+        # suites/plugins may have cleared it, so a "subscribed once" flag is
+        # not proof the trigger is still wired.  ``subscribe_state_changed``
+        # ignores a callback it already holds, so this stays idempotent and
+        # there is still exactly one trigger (and one job per listed version).
         try:
             submissions = importlib.import_module("app.modules.submissions")
         except Exception:
@@ -372,41 +421,6 @@ def ensure_subscribed() -> None:
         except Exception:
             logger.exception("failed to subscribe ai review trigger")
             return
-        # Wrap transition_version so a cleared subscriber registry cannot
-        # disable the trigger.
-        try:
-            if not getattr(submissions, "_ai_review_wrapped", False):
-                original = submissions.transition_version
-
-                def wrapped(version_cid, to_state, *args, **kwargs):
-                    result = original(version_cid, to_state, *args, **kwargs)
-                    try:
-                        if isinstance(to_state, str) and to_state == "listed":
-                            version = version_cid
-                            # Resolve paper_cid lazily.
-                            paper_cid = None
-                            try:
-                                from app.modules.submissions import models as sm
-
-                                with db.SessionLocal() as session:
-                                    row = session.get(sm.PaperVersion, version_cid)
-                                    if row is not None:
-                                        paper_cid = row.paper_cid
-                            except Exception:
-                                pass
-                            jobs.enqueue(
-                                JOB_KIND,
-                                {"version_cid": version, "paper_cid": paper_cid},
-                            )
-                    except Exception:
-                        logger.exception("failed to enqueue ai review for %s", version_cid)
-                    return result
-
-                submissions.transition_version = wrapped
-                submissions.set_version_state = wrapped
-                submissions._ai_review_wrapped = True
-        except Exception:
-            logger.exception("failed to wrap transition_version")
         _subscribed = True
 
 

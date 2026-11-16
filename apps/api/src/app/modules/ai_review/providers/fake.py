@@ -43,10 +43,42 @@ class FakeProvider(LLMProvider):
     def _complete(self, request: LLMRequest) -> LLMResponse:
         digest = self.request_digest(request)
         block_ids = ", ".join(block.id for block in request.data_blocks) or "none"
+        findings = []
+        for block in request.data_blocks:
+            if block.id.startswith("ref:"):
+                findings.append(
+                    {
+                        "claim": "A cited reference may not support the claim made in the paper.",
+                        "severity": "minor",
+                        "confidence": "medium",
+                        "evidence": {"reference_id": block.id},
+                    }
+                )
+            elif block.id == "run_log":
+                lines = [line for line in block.content.splitlines() if line.strip()]
+                log_line = lines[0] if lines else block.content
+                findings.append(
+                    {
+                        "claim": "The code bundle output does not match the paper reported results.",
+                        "severity": "minor",
+                        "confidence": "medium",
+                        "evidence": {"log_line": log_line},
+                    }
+                )
+            else:
+                findings.append(
+                    {
+                        "claim": "The quoted passage may need closer review.",
+                        "severity": "info",
+                        "confidence": "medium",
+                        "evidence": {"span": block.content, "paragraph_id": block.id},
+                    }
+                )
         lines = [
             "fake provider deterministic response",
             f"model: {self.model}",
             f"request_sha256: {digest}",
             f"data_blocks: {block_ids}",
         ]
-        return LLMResponse(text="\n".join(lines), provider=self.name, model=self.model)
+        text = "\n".join(lines) + "\n" + json.dumps({"findings": findings})
+        return LLMResponse(text=text, provider=self.name, model=self.model)

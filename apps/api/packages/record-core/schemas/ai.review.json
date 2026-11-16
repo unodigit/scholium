@@ -4,18 +4,38 @@
   "title": "ai.review record body",
   "description": "A node-signed advisory AI pre-review: the agents and model versions that ran, the prompt-set hash and evidence-backed findings.",
   "type": "object",
-  "required": ["target", "agents", "models"],
+  "required": [
+    "target",
+    "agents",
+    "models"
+  ],
   "allOf": [
     {
       "anyOf": [
-        {"required": ["promptSetHash"]},
-        {"required": ["prompt_set_hash"]}
+        {
+          "required": [
+            "promptSetHash"
+          ]
+        },
+        {
+          "required": [
+            "prompt_set_hash"
+          ]
+        }
       ]
     },
     {
       "anyOf": [
-        {"required": ["findings"]},
-        {"required": ["findingsCid"]}
+        {
+          "required": [
+            "findings"
+          ]
+        },
+        {
+          "required": [
+            "findingsCid"
+          ]
+        }
       ]
     }
   ],
@@ -32,14 +52,26 @@
       "minItems": 1,
       "items": {
         "anyOf": [
-          {"type": "string", "minLength": 1},
+          {
+            "type": "string",
+            "minLength": 1
+          },
           {
             "type": "object",
-            "required": ["name"],
+            "required": [
+              "name"
+            ],
             "properties": {
-              "name": {"type": "string", "minLength": 1},
-              "role": {"type": "string"},
-              "model": {"type": "string"}
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              }
             },
             "additionalProperties": true
           }
@@ -51,14 +83,26 @@
       "minItems": 1,
       "items": {
         "anyOf": [
-          {"type": "string", "minLength": 1},
+          {
+            "type": "string",
+            "minLength": 1
+          },
           {
             "type": "object",
-            "required": ["name"],
+            "required": [
+              "name"
+            ],
             "properties": {
-              "name": {"type": "string", "minLength": 1},
-              "version": {"type": "string"},
-              "provider": {"type": "string"}
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              }
             },
             "additionalProperties": true
           }
@@ -76,7 +120,9 @@
     },
     "findings": {
       "type": "array",
-      "items": {"$ref": "#/$defs/finding"}
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
     },
     "findingsCid": {
       "$ref": "#/$defs/cid"
@@ -85,8 +131,12 @@
       "type": "array",
       "items": {
         "anyOf": [
-          {"type": "string"},
-          {"type": "object"}
+          {
+            "type": "string"
+          },
+          {
+            "type": "object"
+          }
         ]
       }
     },
@@ -102,43 +152,124 @@
     },
     "finding": {
       "type": "object",
-      "required": ["claim", "evidence"],
+      "required": [
+        "claim",
+        "evidence"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "agent": {"type": "string"},
-        "claim": {"type": "string", "minLength": 1},
+        "id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "claim": {
+          "type": "string",
+          "minLength": 1
+        },
         "severity": {
           "type": "string",
-          "enum": ["info", "low", "medium", "high", "critical"]
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical",
+            "minor",
+            "major"
+          ]
         },
         "confidence": {
           "anyOf": [
-            {"type": "number", "minimum": 0, "maximum": 1},
-            {"type": "integer", "minimum": 1, "maximum": 5}
+            {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "Low",
+                "Medium",
+                "High"
+              ]
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            }
           ]
         },
         "evidence": {
           "anyOf": [
-            {"type": "string"},
+            {
+              "type": "string"
+            },
             {
               "type": "object",
               "anyOf": [
-                {"required": ["span"]},
-                {"required": ["reference_id"]},
-                {"required": ["referenceId"]},
-                {"required": ["log_line"]},
-                {"required": ["logLine"]}
+                {
+                  "required": [
+                    "span"
+                  ]
+                },
+                {
+                  "required": [
+                    "reference_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "referenceId"
+                  ]
+                },
+                {
+                  "required": [
+                    "log_line"
+                  ]
+                },
+                {
+                  "required": [
+                    "logLine"
+                  ]
+                }
               ],
               "properties": {
-                "span": {"type": "string"},
-                "paragraph_id": {"type": "string"},
-                "reference_id": {"type": "string"},
-                "referenceId": {"type": "string"},
+                "span": {
+                  "type": "string"
+                },
+                "paragraph_id": {
+                  "type": "string"
+                },
+                "reference_id": {
+                  "type": "string"
+                },
+                "referenceId": {
+                  "type": "string"
+                },
                 "log_line": {
-                  "anyOf": [{"type": "string"}, {"type": "integer"}]
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
                 },
                 "logLine": {
-                  "anyOf": [{"type": "string"}, {"type": "integer"}]
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
                 }
               },
               "additionalProperties": true

@@ -309,19 +309,20 @@ class TestAgentReport:
                 "methodology", version_cid, provider=ScriptedProvider("No problems found.")
             )
 
-    def test_the_fake_provider_runs_but_does_not_answer_in_findings_json(self, version_cid):
-        # The fake provider's reply is a deterministic digest, not findings;
-        # the pipeline stages that need findings from it build on this.
-        with pytest.raises(AgentOutputError):
-            ai_review.run_agent("methodology", version_cid, provider=FakeProvider())
+    def test_the_fake_provider_runs_and_answers_in_findings_json(self, version_cid):
+        # The fake provider now emits valid findings JSON quoting real paragraphs.
+        report = ai_review.run_agent("methodology", version_cid, provider=FakeProvider())
+        assert report.findings
+        assert report.dropped == ()
 
     def test_default_provider_follows_ai_provider_setting(self, version_cid, monkeypatch):
         from app.settings import settings
 
         monkeypatch.setattr(settings, "AI_PROVIDER", "fake")
 
-        with pytest.raises(AgentOutputError):
-            ai_review.run_agent("methodology", version_cid)
+        report = ai_review.run_agent("methodology", version_cid)
+        assert report.findings
+        assert report.dropped == ()
 
 
 # --------------------------------------------------------------------------- #
