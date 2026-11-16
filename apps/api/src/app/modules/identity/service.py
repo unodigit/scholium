@@ -552,14 +552,22 @@ def revoke_refresh_token(refresh_token: str) -> bool:
 
 
 def revoke_refresh_token_family(refresh_token: str) -> int:
-    """Retire the whole token family ``refresh_token`` belongs to.
+    """Retire the token family ``refresh_token`` belongs to.
+
+    A family is one sign-in and every successor it rotated into -- not every
+    token the DID ever received.  Each sign-in starts a new, independent
+    family, so signing out of one browser must leave the account's other
+    sessions (other devices, other browsers) signed in.  Retiring the whole
+    DID is the separate "sign out everywhere" action.
 
     Logout by the ``HttpOnly`` cookie: the cookie is the only credential the
     browser still holds, and it may be a stale copy of a token that has since
     rotated, so revoking just that one row would leave its live successor
-    behind.  The family is every live refresh token of the DID the presented
-    token was issued to -- the same set a replayed token or a bearer logout
-    retires.
+    behind.  The successor of a token is derived deterministically from it
+    (:func:`_successor_refresh_token`), so the family is followed forward from
+    the presented token until no stored row continues the chain.  A family has
+    at most one unrotated (live) token at a time; every other member is
+    already retired, so revoking the live leaf retires the family.
 
     Idempotent and silent about existence, like :func:`revoke_refresh_token`:
     an unknown token revokes nothing and returns ``0``.  Returns how many rows
@@ -570,12 +578,28 @@ def revoke_refresh_token_family(refresh_token: str) -> int:
 
     ensure_refresh_tokens_table()
 
+    revoked = 0
+    seen: set[str] = set()
+    current = refresh_token
     with db.SessionLocal() as session:
-        row = session.get(RefreshToken, _hash_token(refresh_token))
-        did = row.did if row is not None else None
-    if did is None:
-        return 0
-    return revoke_refresh_tokens_for_did(did)
+        while current and current not in seen:
+            seen.add(current)
+            token_hash = _hash_token(current)
+            result = session.execute(
+                update(RefreshToken)
+                .where(
+                    RefreshToken.token_hash == token_hash,
+                    RefreshToken.rotated == False,  # noqa: E712 - SQL boolean
+                )
+                .values(rotated=True)
+            )
+            revoked += result.rowcount
+            session.commit()
+            if session.get(RefreshToken, token_hash) is None:
+                # Not ours: nothing further in this chain is stored either.
+                break
+            current = _successor_refresh_token(current)
+    return revoked
 
 
 def revoke_refresh_tokens_for_did(did: str) -> int:

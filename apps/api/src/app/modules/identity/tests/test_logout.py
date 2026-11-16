@@ -35,7 +35,11 @@ def sign_in(client) -> tuple[str, str, str]:
     The refresh token comes from the ``Set-Cookie`` header: the JSON body no
     longer carries it.
     """
-    seed = SigningKey.generate()
+    return sign_in_as(client, SigningKey.generate())
+
+
+def sign_in_as(client, seed: SigningKey) -> tuple[str, str, str]:
+    """Sign a known key in; a new call is a new browser session."""
     did = did_key_from_signing_key(seed)
 
     challenge = client.post("/v1/auth/challenge", json={"did": did})
@@ -172,6 +176,48 @@ def test_cookie_logout_revokes_the_whole_family_not_just_the_presented_token(cli
     assert response.status_code == 204, response.text
     assert _row(successor).rotated is True
     assert client.post(REFRESH_URL, json={"refresh_token": successor}).status_code == 401
+
+
+def test_cookie_logout_does_not_sign_out_a_second_browser(client):
+    # Two browsers sign in to the same account (same DID, two independent
+    # refresh-token families).  Signing out of one browser must not retire the
+    # other browser's family: that is a "sign out everywhere" action, and
+    # logout with a cookie is not one.
+    seed = SigningKey.generate()
+    _, _, first_browser = sign_in_as(client, seed)
+    _, _, second_browser = sign_in_as(client, seed)
+    assert first_browser != second_browser
+
+    response = client.post(URL, headers=_cookie(first_browser))
+
+    assert response.status_code == 204, response.text
+    assert _row(first_browser).rotated is True
+    assert _row(second_browser).rotated is False
+    still_signed_in = client.post(REFRESH_URL, json={"refresh_token": second_browser})
+    assert still_signed_in.status_code == 200, still_signed_in.text
+
+
+def test_cookie_logout_with_a_bearer_also_only_signs_out_this_browser(client):
+    # The browser may still hold an access token in memory; it identifies the
+    # same session as the cookie, not "every session of the account".
+    seed = SigningKey.generate()
+    _, access_token, first_browser = sign_in_as(client, seed)
+    _, _, second_browser = sign_in_as(client, seed)
+
+    response = client.post(
+        URL,
+        headers={
+            **_cookie(first_browser),
+            "Authorization": f"Bearer {access_token}",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert _row(first_browser).rotated is True
+    assert _row(second_browser).rotated is False
+    assert client.post(
+        REFRESH_URL, json={"refresh_token": second_browser}
+    ).status_code == 200
 
 
 def test_cookie_logout_succeeds_with_an_expired_or_invalid_bearer(client):

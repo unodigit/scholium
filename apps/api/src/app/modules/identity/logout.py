@@ -11,11 +11,13 @@ when a user clicks "sign out"::
     Cache-Control: no-store
     Set-Cookie: scholium_refresh=; Max-Age=0; Path=/v1/auth; ...
 
-The cookie identifies the refresh-token family (every live refresh token of
-the DID it was issued to), and the whole family is retired, so a stale copy of
-the cookie cannot leave its live successor behind.  An ``Authorization`` header
-is optional: a stale or expired bearer token never blocks a logout the cookie
-can serve.
+The cookie identifies one sign-in's refresh-token family -- that browser's
+session and its rotations, not every token the DID ever received -- and the
+whole family is retired, so a stale copy of the cookie cannot leave its live
+successor behind.  Signing out of one browser therefore leaves the account's
+other sessions signed in.  An ``Authorization`` header is optional: a stale or
+expired bearer token never blocks a logout the cookie can serve, and a valid
+one does not widen the logout to the account's other sessions.
 
 Non-browser clients keep presenting the token in the JSON body (read from
 verify's ``Set-Cookie`` header)::
@@ -23,8 +25,9 @@ verify's ``Set-Cookie`` header)::
     POST /v1/auth/logout
     {"refresh_token": "R1..."}
 
-or may identify themselves by access token alone, in which case every live
-refresh token belonging to that DID is retired::
+or may identify themselves by access token alone, which is the explicit
+"sign out everywhere": every live refresh token belonging to that DID is
+retired::
 
     POST /v1/auth/logout
     Authorization: Bearer eyJ...
@@ -128,16 +131,15 @@ def post_logout(
 
     if body is not None:
         revoke_refresh_token(body.refresh_token)
-    elif credentials is not None:
+    elif cookie_token is None and credentials is not None:
         try:
             principal = decode_access_token(credentials.credentials)
         except InvalidAccessToken as exc:
-            # A stale bearer must not turn a logout the cookie can serve into
-            # an error; it only fails when it was the sole credential.
-            if cookie_token is None:
-                raise _unauthorized() from exc
+            # No credential identified the caller at all.
+            raise _unauthorized() from exc
         else:
-            # The whole family goes, which covers the HttpOnly cookie too.
+            # Bearer-only logout has no session to scope to, so it is the
+            # explicit "sign out everywhere": every live family for the DID.
             revoke_refresh_tokens_for_did(principal.did)
 
     response = Response(status_code=204, headers={"Cache-Control": "no-store"})
