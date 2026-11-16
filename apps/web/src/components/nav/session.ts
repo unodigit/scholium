@@ -8,9 +8,10 @@
  * IndexedDB device keys. Consumers that already know the state can pin it.
  */
 
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { tokenStore } from "../../lib/api";
+import { api, resetSessionBootstrap, tokenStore } from "../../lib/api";
 
 /**
  * True when the shared token store holds an access token.
@@ -37,4 +38,44 @@ export function useSignedIn(override?: boolean): boolean {
   }, [override]);
 
   return override ?? storeSignedIn;
+}
+
+/** What {@link useSignOut} exposes to the nav. */
+export interface SignOutState {
+  /** A sign-out is in flight (the button is disabled meanwhile). */
+  signingOut: boolean;
+  /** Revoke the session, clear the in-memory token and go home. */
+  signOut(): Promise<void>;
+}
+
+/**
+ * Sign out from the global nav.
+ *
+ * `POST /v1/auth/logout` retires the refresh token and clears its HttpOnly
+ * cookie; the access token is cleared from memory by the client even if the
+ * call fails.  Navigation is client-side to the public home feed, so the user
+ * lands somewhere that does not need a session.
+ */
+export function useSignOut(): SignOutState {
+  const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
+  const inFlight = useRef(false);
+
+  const signOut = useCallback(async (): Promise<void> => {
+    if (inFlight.current) {
+      return;
+    }
+    inFlight.current = true;
+    setSigningOut(true);
+    try {
+      await api.logout();
+    } finally {
+      // A document that signs out and later checks again must not reuse the
+      // "signed in" answer this page load bootstrapped.
+      resetSessionBootstrap();
+      router.replace("/");
+    }
+  }, [router]);
+
+  return { signingOut, signOut };
 }

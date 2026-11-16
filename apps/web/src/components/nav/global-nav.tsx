@@ -6,8 +6,9 @@
  * One component, two shapes, decided by the 640px breakpoint:
  *
  * - ≥640px: a sticky translucent header — `scholium` wordmark · search field ·
- *   Categories · Submit · notifications · avatar.
- * - <640px: a fixed bottom tab bar — Home · Search · Submit · Inbox · Me.
+ *   Categories · Submit · notifications · avatar · Sign out.
+ * - <640px: a fixed bottom tab bar — Home · Search · Submit · Inbox · Me, plus
+ *   Sign out while signed in.
  *
  * Mount it once in a route-group layout and keep auth screens bare:
  *
@@ -45,9 +46,10 @@ import {
   PersonIcon,
   PlusIcon,
   SearchIcon,
+  SignOutIcon,
 } from "./icons";
 import { countUnread } from "./notifications";
-import { useSignedIn } from "./session";
+import { useSignedIn, useSignOut } from "./session";
 import "./nav.css";
 
 /** Where the notifications card lives (design.md §4: Dashboard → Notifications). */
@@ -128,6 +130,7 @@ export function GlobalNav({
 }: GlobalNavProps) {
   const storeSignedIn = useSignedIn(signedIn);
   const effectiveSignedIn = signedIn ?? storeSignedIn;
+  const { signingOut, signOut } = useSignOut();
 
   const load =
     loadNotifications === undefined
@@ -164,8 +167,15 @@ export function GlobalNav({
         signedIn={effectiveSignedIn}
         displayName={displayName}
         searchPlaceholder={searchPlaceholder}
+        signingOut={signingOut}
+        onSignOut={signOut}
       />
-      <MobileTabBar unread={unread} signedIn={effectiveSignedIn} />
+      <MobileTabBar
+        unread={unread}
+        signedIn={effectiveSignedIn}
+        signingOut={signingOut}
+        onSignOut={signOut}
+      />
     </>
   );
 }
@@ -185,12 +195,16 @@ function DesktopHeader({
   signedIn,
   displayName,
   searchPlaceholder,
+  signingOut,
+  onSignOut,
 }: {
   categories: readonly NavCategory[];
   unread: number;
   signedIn: boolean;
   displayName?: string;
   searchPlaceholder: string;
+  signingOut: boolean;
+  onSignOut: () => void;
 }) {
   const router = useRouter();
 
@@ -250,6 +264,17 @@ function DesktopHeader({
       </Link>
 
       <AvatarLink signedIn={signedIn} displayName={displayName} />
+
+      {signedIn ? (
+        <button
+          type="button"
+          className="gn-signout"
+          onClick={onSignOut}
+          disabled={signingOut}
+        >
+          {signingOut ? "Signing out…" : "Sign out"}
+        </button>
+      ) : null}
     </header>
   );
 }
@@ -374,8 +399,18 @@ interface TabSpec {
   badge?: string;
 }
 
-/** Home · Search · Submit · Inbox · Me (design.md §4). */
-function MobileTabBar({ unread, signedIn }: { unread: number; signedIn: boolean }) {
+/** Home · Search · Submit · Inbox · Me, then Sign out while signed in. */
+function MobileTabBar({
+  unread,
+  signedIn,
+  signingOut,
+  onSignOut,
+}: {
+  unread: number;
+  signedIn: boolean;
+  signingOut: boolean;
+  onSignOut: () => void;
+}) {
   const pathname = usePathname();
   const hash = useHash();
   const meHere = isInside(pathname, "/me");
@@ -444,6 +479,22 @@ function MobileTabBar({ unread, signedIn }: { unread: number; signedIn: boolean 
           <span className="gn-tab-label">{label}</span>
         </Link>
       ))}
+
+      {signedIn ? (
+        <button
+          type="button"
+          className="gn-tab gn-tab--action"
+          onClick={onSignOut}
+          disabled={signingOut}
+        >
+          <span className="gn-tab-icon">
+            <SignOutIcon size={22} />
+          </span>
+          <span className="gn-tab-label">
+            {signingOut ? "Signing out…" : "Sign out"}
+          </span>
+        </button>
+      ) : null}
     </nav>
   );
 }

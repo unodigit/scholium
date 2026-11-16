@@ -39,6 +39,9 @@ export const DEFAULT_API_BASE_URL = "http://localhost:8000";
 /** Path used to rotate an expired access token. */
 export const DEFAULT_REFRESH_PATH = "/v1/auth/refresh";
 
+/** Path used to revoke the refresh token on sign-out. */
+export const DEFAULT_LOGOUT_PATH = "/v1/auth/logout";
+
 /** Anything shaped like `fetch`. */
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -86,7 +89,7 @@ export interface ApiClientOptions {
   refreshPath?: string;
   /** Headers sent with every request. */
   headers?: HeadersInit;
-  /** Forwarded to `fetch`; omitted from the request when undefined. */
+  /** Fetch credentials mode for every request. Defaults to `"include"`. */
   credentials?: RequestCredentials;
   /** Refresh on 401 for requests that opted into auth. Defaults to `true`. */
   retryOnUnauthorized?: boolean;
@@ -344,8 +347,13 @@ export class ApiClient {
       headers,
       body: encodedBody,
     };
-    if (this.credentials && !requestInit.credentials) {
-      requestInit.credentials = this.credentials;
+    // Auth responses set the refresh token as an HttpOnly cookie, and later
+    // calls must send it back.  The API is normally on its own origin (`:8000`
+    // against the web app's `:3000`), where the browser's default
+    // `same-origin` credentials mode would silently drop both, so `include`
+    // is the default here; a caller can still override it per request.
+    if (!requestInit.credentials) {
+      requestInit.credentials = this.credentials ?? "include";
     }
 
     const response = await this.send(url, requestInit);
@@ -445,6 +453,32 @@ export class ApiClient {
     return this.refreshTokens();
   }
 
+  /**
+   * Sign out: revoke the refresh token and clear the in-memory access token.
+   *
+   * `POST /v1/auth/logout` retires every refresh token for the bearer's DID
+   * and clears the HttpOnly refresh cookie, so a later page load cannot
+   * restore the session.  Local state is cleared even when the API is
+   * unreachable: the user asked to be signed out on this device, and a failed
+   * call must not leave the access token in memory.
+   *
+   * Never throws; safe to call from a nav button.
+   */
+  async logout(): Promise<void> {
+    try {
+      await this.request(DEFAULT_LOGOUT_PATH, {
+        method: "POST",
+        prefix: false,
+        parse: "response",
+      });
+    } catch {
+      // Offline, or the server already considers the session gone.  Clearing
+      // the local token is still the right end state.
+    } finally {
+      this.tokenStore.clear();
+    }
+  }
+
   private buildUrl(
     base: string,
     path: string,
@@ -498,6 +532,10 @@ export class ApiClient {
       resolveApiBaseUrl(this.optionsBaseUrl),
       this.refreshPath,
     );
+    // A refresh that started before an explicit sign-in must not clear the
+    // tokens that sign-in just stored: only clear the state this attempt
+    // began with.
+    const startedWith = this.tokenStore.get()?.accessToken ?? null;
 
     let response: Response;
     try {
@@ -517,13 +555,13 @@ export class ApiClient {
     }
 
     if (!response.ok) {
-      this.tokenStore.clear();
+      this.clearIfUnchanged(startedWith);
       return null;
     }
 
     const tokens = tokensFromResponse(await readJson(response));
     if (!tokens) {
-      this.tokenStore.clear();
+      this.clearIfUnchanged(startedWith);
       return null;
     }
 
@@ -539,6 +577,18 @@ export class ApiClient {
       this.onTokensRefreshed?.(stored);
     }
     return stored;
+  }
+
+  /**
+   * Clear the token store only if it still holds the token a refresh started
+   * with.  A refresh racing an explicit sign-in loses the race harmlessly
+   * instead of signing the user back out.
+   */
+  private clearIfUnchanged(startedWith: string | null): void {
+    const current = this.tokenStore.get()?.accessToken ?? null;
+    if (current === startedWith) {
+      this.tokenStore.clear();
+    }
   }
 
   private notifyUnauthorized(error: ApiError): void {

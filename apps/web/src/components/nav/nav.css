@@ -2,9 +2,9 @@
  * Global navigation — docs/design.md §4 (IA), §5.1 (feed header mock), §10.
  *
  * Desktop ≥640px: sticky translucent header — `scholium` wordmark · search
- * field · Categories · Submit · notifications · avatar. Below 640px the
- * header is hidden and a fixed bottom tab bar takes over (Home · Search ·
- * Submit · Inbox · Me). Visibility at the 640px breakpoint is done with the
+ * field · Categories · Submit · notifications · avatar · Sign out. Below 640px
+ * the header is hidden and a fixed bottom tab bar takes over (Home · Search ·
+ * Submit · Inbox · Me, plus Sign out while signed in). Visibility at the 640px breakpoint is done with the
  * Tailwind `hidden` / `sm:flex` / `sm:hidden` utilities in the markup, so no
  * rule here sets `display` — unlayered CSS would otherwise outrank them.
  *
@@ -133,6 +133,39 @@
 
 .gn-link:hover {
   background-color: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+/* Sign out is a quiet control: the destructive consequence is signing out,
+   not losing data, so it stays ink-coloured until hovered.  Matches the
+   Categories trigger's height and radius. */
+.gn-signout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--corner-control);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-decel),
+    color var(--duration-fast) var(--ease-decel);
+}
+
+.gn-signout:hover {
+  background-color: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+
+.gn-signout:disabled,
+.gn-tab:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 /* Submit is the one filled (accent) control in the bar. */
@@ -329,7 +362,14 @@
   align-items: center;
   justify-content: center;
   gap: 2px;
+  /* The Sign out control is a <button>; reset native chrome so it matches
+     the <a> tabs exactly. */
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   color: var(--ink-2);
+  cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: color var(--duration-fast) var(--ease-decel);
 }

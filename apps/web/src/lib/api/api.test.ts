@@ -565,3 +565,66 @@ describe("tokensFromResponse", () => {
     expect(isTokenExpired({ accessToken: "a" })).toBe(false);
   });
 });
+
+describe("cookie credentials and sign-out", () => {
+  it("keeps the refresh cookie when signing in", async () => {
+    // `POST /v1/auth/verify` *sets* the HttpOnly refresh cookie.  A
+    // cross-origin call with the browser's default `same-origin` mode would
+    // discard that Set-Cookie, so the session would not survive the next page
+    // load.
+    const { client, fetchMock } = createHarness();
+    fetchMock.mockResolvedValue(
+      jsonResponse({ access_token: "access", token_type: "Bearer" }),
+    );
+
+    await client.post("/auth/verify", { did: "did:key:z6Mk" }, { auth: false });
+
+    expect(requestUrl(fetchMock)).toBe(`${BASE}/v1/auth/verify`);
+    expect(requestInit(fetchMock).credentials).toBe("include");
+  });
+
+  it("signs out with POST /v1/auth/logout and clears the in-memory token", async () => {
+    const { client, store, fetchMock } = createHarness();
+    store.set({ accessToken: "access-1" });
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+    await client.logout();
+
+    expect(requestUrl(fetchMock)).toBe(`${BASE}/v1/auth/logout`);
+    const init = requestInit(fetchMock);
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(header(init, "Authorization")).toBe("Bearer access-1");
+    expect(store.get()).toBeNull();
+  });
+
+  it("clears the local token even when the logout call fails", async () => {
+    const { client, store, fetchMock } = createHarness();
+    store.set({ accessToken: "access-1" });
+    fetchMock.mockRejectedValue(new TypeError("offline"));
+
+    await expect(client.logout()).resolves.toBeUndefined();
+    expect(store.get()).toBeNull();
+  });
+
+  it("does not clear a token stored by a sign-in racing a stale refresh", async () => {
+    const { client, store, fetchMock } = createHarness();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fetchMock.mockImplementation(async () => {
+      await gate;
+      return problemResponse({ status: 422, title: "Unprocessable" }, 422);
+    });
+
+    // A page-load bootstrap starts with no token; the user signs in while the
+    // refresh is still in flight, and the refresh then fails.
+    const pending = client.refresh();
+    store.set({ accessToken: "fresh-access" });
+    release();
+
+    await expect(pending).resolves.toBeNull();
+    expect(store.accessToken).toBe("fresh-access");
+  });
+});

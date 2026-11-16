@@ -91,3 +91,14 @@ export function ChevronDownIcon(props: NavIconProps) {
     </svg>
   );
 }
+
+/** Door with an arrow — the Sign out action. */
+export function SignOutIcon(props: NavIconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5" />
+      <path d="M10 17l5-5-5-5" />
+      <path d="M15 12H3" />
+    </svg>
+  );
+}

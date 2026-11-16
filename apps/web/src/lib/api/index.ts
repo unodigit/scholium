@@ -23,6 +23,7 @@ export {
   ApiClient,
   NetworkError,
   DEFAULT_API_BASE_URL,
+  DEFAULT_LOGOUT_PATH,
   DEFAULT_REFRESH_PATH,
   api,
   apiClient,
@@ -80,6 +81,20 @@ export {
   tokenStore,
   tokensFromResponse,
 } from "./tokens";
+
+export {
+  PROTECTED_PATH_PREFIXES,
+  bootstrapSession,
+  createSessionBootstrap,
+  isProtectedPath,
+  resetSessionBootstrap,
+} from "./session";
+
+export type {
+  SessionBootstrap,
+  SessionBootstrapOptions,
+  SessionRefreshClient,
+} from "./session";
 
 export type {
   AuthTokens,

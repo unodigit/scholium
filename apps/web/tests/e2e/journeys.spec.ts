@@ -9,9 +9,10 @@
  *
  * Two facts about the system shape the signed-in journeys:
  *
- * - The access token lives in memory only. A full page load starts signed out,
- *   so a journey signs in from the page it wants to use (the "Sign in" link
- *   carries `?next=`), and the redirect after sign-in is client-side.
+ * - The access token lives in memory only, but a full page load restores it
+ *   from the HttpOnly refresh cookie before a protected page renders.  A
+ *   journey therefore stays signed in across reloads and plain `<a href>`
+ *   links, and the refreshed token carries the account's current tier.
  * - A new account is a Reader. Posting to a discussion needs tier 1 and
  *   submitting a paper needs an endorsement in the paper's category, so those
  *   journeys have a seeded reviewer (Dr. Tunde Okafor) endorse the new account
@@ -126,14 +127,6 @@ async function createAccount(page: Page): Promise<string> {
   await expect(page).toHaveURL(/\/onboarding$/);
   await expect(page.getByRole("heading", { name: "Welcome" })).toBeVisible();
   return did;
-}
-
-/** Sign in as the returning user and land on `next` without a page load. */
-async function signInAgain(page: Page, next: string): Promise<{ accessToken: string }> {
-  await visit(page, `/signin?next=${encodeURIComponent(next)}`);
-  const { accessToken } = await signInWithPasskey(page);
-  await expect(page).toHaveURL(next);
-  return { accessToken };
 }
 
 /**
@@ -278,17 +271,26 @@ test.describe("signing in", () => {
     const did = await createAccount(page);
     endorse(did, "cs.AI");
 
-    // Signed out on a fresh page load: the Discussion tab offers to sign in,
-    // and signing in brings the reader back to the paper.
+    // The page load restores the session from the refresh cookie, and the new
+    // access token carries the tier the endorsement just granted — no second
+    // sign-in is needed.  `#discussion` is a tab address, so landing on it
+    // opens Discussion directly.
     await visit(page, "/");
-    await page.getByRole("link", { name: META_AGENT.title }).click();
-    await page.getByRole("tab", { name: "Discussion" }).click();
-    await page.getByRole("tabpanel").getByRole("link", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/\/signin\?next=/);
-    await signInWithPasskey(page);
-    await expect(page).toHaveURL(/\/p\//);
+    const paperHref = await page
+      .getByRole("link", { name: META_AGENT.title })
+      .getAttribute("href");
+    if (!paperHref) {
+      throw new Error("the seeded paper is not linked from the feed");
+    }
+    await visit(page, `${paperHref}#discussion`);
+    await expect(
+      page.getByRole("heading", { name: META_AGENT.title, level: 1 }),
+    ).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
 
-    await page.getByRole("tab", { name: "Discussion" }).click();
     await page.getByRole("button", { name: "Start a thread" }).click();
     await page.getByRole("textbox").fill(post);
     const accepted = page.waitForResponse(
@@ -315,7 +317,8 @@ test.describe("publishing", () => {
 
     const did = await createAccount(page);
     endorse(did, "cs.AI");
-    await signInAgain(page, "/submit");
+    // A page load restores the session (and the tier the endorsement granted).
+    await visit(page, "/submit");
 
     // 1 Files
     await page.locator('input[type="file"]').first().setInputFiles({
@@ -372,7 +375,15 @@ test.describe("the dashboard", () => {
       if (!response.url().startsWith(`${api}/`)) return;
       const call = `${response.request().method()} ${new URL(response.url()).pathname}`;
       answered.add(call);
-      if (response.status() >= 400) failures.push(`${call} -> ${response.status()}`);
+      if (response.status() >= 400) {
+        // A page load asks the cookie for a session.  Before sign-in there is
+        // none, and 401/422 is the API's normal "no session" answer — not a
+        // failure of the dashboard.
+        const noSession =
+          call === "POST /v1/auth/refresh" &&
+          (response.status() === 401 || response.status() === 422);
+        if (!noSession) failures.push(`${call} -> ${response.status()}`);
+      }
     });
 
     // Follow a category the way onboarding offers it.
@@ -384,8 +395,17 @@ test.describe("the dashboard", () => {
     await page.getByRole("button", { name: "Save categories" }).click();
     expect((await followed).status()).toBe(204);
 
-    // The dashboard loads every section, saved searches included.
-    const { accessToken } = await signInAgain(page, "/me");
+    // The dashboard loads every section, saved searches included.  Opening
+    // /me as a page load restores the session from the cookie first.
+    const refreshed = page.waitForResponse((response) =>
+      response.url().endsWith("/v1/auth/refresh"),
+    );
+    await visit(page, "/me");
+    const { access_token: accessToken } = (await (
+      await refreshed
+    ).json()) as {
+      access_token: string;
+    };
     await expect(page.getByRole("heading", { name: "Me", level: 1 })).toBeVisible();
     await expect(page.getByText("Loading your dashboard…")).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Saved searches" })).toContainText("You have no saved searches yet.");

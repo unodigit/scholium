@@ -401,9 +401,23 @@ describe("signIn: bad server replies", () => {
     expect(h.passkeys.assertions).toHaveLength(0);
   });
 
-  it("rejects a verify response without both tokens", async () => {
+  it("accepts a verify response whose only token is the access token", async () => {
+    // The refresh token is delivered as an HttpOnly cookie, not in the body;
+    // the body carries the access token and its lifetime.
     const h = createHarness();
-    h.server.hooks.verify = () => json({ access_token: "only-access" });
+    h.server.hooks.verify = () =>
+      json({ access_token: "only-access", expires_in: 900 });
+
+    const result = await h.run();
+
+    expect(result.tokens.accessToken).toBe("only-access");
+    expect(h.tokenStore.get()).toMatchObject({ accessToken: "only-access" });
+    expect(h.tokenStore.get()).not.toHaveProperty("refreshToken");
+  });
+
+  it("rejects a verify response with no access token", async () => {
+    const h = createHarness();
+    h.server.hooks.verify = () => json({ expires_in: 900 });
 
     await expect(h.run()).rejects.toMatchObject({ code: "invalid-response" });
     expect(h.tokenStore.get()).toBeNull();

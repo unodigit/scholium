@@ -7,8 +7,13 @@
  * did   = device key's did:key
  * POST /v1/auth/challenge {did}                    -> {nonce, did, expires_at}
  * sig   = Ed25519(device key, UTF-8 bytes of nonce)   (behind a passkey prompt)
- * POST /v1/auth/verify    {did, nonce, signature}  -> {access_token, refresh_token}
+ * POST /v1/auth/verify    {did, nonce, signature}  -> {access_token, expires_in}
  * ```
+ *
+ * The refresh token is not in that body: the API delivers it as an HttpOnly,
+ * SameSite cookie (`Set-Cookie: scholium_refresh=…`), which the browser keeps
+ * because the API client sends every auth call with `credentials: "include"`.
+ * The access token it does return is kept in memory only (see `lib/api`).
  *
  * `signature` is unpadded base64url, the same encoding record signatures use.
  *
@@ -27,7 +32,7 @@
  * key is created and consumed by the first sign-in that completes.
  */
 
-import { apiClient, browserTokenStorage, tokenStore } from "../../lib/api";
+import { apiClient, browserTokenStorage, tokenStore, tokensFromResponse } from "../../lib/api";
 import type { ApiClient, AuthTokens, TokenStorage, TokenStore } from "../../lib/api";
 
 import { deviceKey, type DeviceKeyManager } from "./device-key";
@@ -235,20 +240,13 @@ export function parseChallenge(payload: unknown, did: string): ChallengeResponse
 
 /** Validate a verify response and turn it into a token pair. */
 function parseTokens(payload: unknown): AuthTokens {
-  if (
-    !isRecord(payload) ||
-    typeof payload.access_token !== "string" ||
-    payload.access_token === "" ||
-    typeof payload.refresh_token !== "string" ||
-    payload.refresh_token === ""
-  ) {
+  // The body carries the access token and its lifetime; the refresh token
+  // travels only in the Set-Cookie header, so its absence here is normal.
+  const tokens = tokensFromResponse(payload);
+  if (!tokens) {
     throw new SignInError("invalid-response", "The server did not return sign-in tokens");
   }
-  return {
-    accessToken: payload.access_token,
-    refreshToken: payload.refresh_token,
-    tokenType: "Bearer",
-  };
+  return tokens;
 }
 
 /**

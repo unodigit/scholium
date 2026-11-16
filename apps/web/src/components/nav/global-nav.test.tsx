@@ -20,10 +20,11 @@ import { GlobalNav, NavTabBarSpacer } from "./global-nav";
    ------------------------------------------------------------------------- */
 
 const push = vi.fn();
+const replace = vi.fn();
 let pathnameValue: string | null = "/";
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, replace: vi.fn() }),
+  useRouter: () => ({ push, replace }),
   usePathname: () => pathnameValue,
 }));
 
@@ -42,6 +43,7 @@ vi.mock("next/link", async () => {
 
 beforeEach(() => {
   push.mockReset();
+  replace.mockReset();
   pathnameValue = "/";
   window.localStorage.clear();
   window.location.hash = "";
@@ -50,6 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   tokenStore.clear();
+  vi.unstubAllGlobals();
 });
 
 /* ---------------------------------------------------------------------------
@@ -388,5 +391,45 @@ describe("NavTabBarSpacer", () => {
     expect(spacer.className).toContain("gn-tabbar-spacer");
     expect(spacer.className).toContain("sm:hidden");
     expect(spacer.getAttribute("aria-hidden")).toBe("true");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   Sign out
+   ------------------------------------------------------------------------- */
+
+describe("GlobalNav sign out", () => {
+  it("offers the action only to a signed-in visitor", () => {
+    render(<GlobalNav />);
+    expect(screen.queryAllByRole("button", { name: "Sign out" })).toHaveLength(0);
+
+    cleanup();
+    render(<GlobalNav signedIn />);
+    // One in the desktop header, one in the mobile tab bar; CSS hides the
+    // half that does not apply at the current width.
+    expect(screen.getAllByRole("button", { name: "Sign out" })).toHaveLength(2);
+  });
+
+  it("revokes the session, clears the token and goes home", async () => {
+    tokenStore.set({ accessToken: "access-1" });
+    const fetchMock = vi.fn(async (..._args: unknown[]) =>
+      new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GlobalNav signedIn unreadCount={0} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]!);
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+    expect(tokenStore.isAuthenticated).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/v1/auth/logout");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(new Headers(init.headers).get("Authorization")).toBe(
+      "Bearer access-1",
+    );
   });
 });
