@@ -27,6 +27,7 @@ __all__ = [
     "MANIFEST_FILE_NOT_STORED",
     "MANIFEST_FILE_SIZE_MISMATCH",
     "NOTICE_NOT_AUTHORIZED",
+    "VERSION_NOT_AUTHORIZED",
     "SHORT_ID_COLLISION",
     "UNKNOWN_NOTICE_TARGET",
     "UNKNOWN_PAPER",
@@ -38,6 +39,7 @@ __all__ = [
     "ManifestFileNotStored",
     "ManifestFileSizeMismatch",
     "NoticeNotAuthorized",
+    "VersionNotAuthorized",
     "ShortIdCollision",
     "UnknownNoticeTarget",
     "UnknownPaper",
@@ -71,6 +73,9 @@ UNKNOWN_NOTICE_TARGET = "urn:scholium:problem:unknown-notice-target"
 
 #: A withdrawal, correction or retraction is signed by neither a paper author nor a tier-4 member.
 NOTICE_NOT_AUTHORIZED = "urn:scholium:problem:notice-not-authorized"
+
+#: A ``paper.version`` is signed by someone who is not an author of the paper.
+VERSION_NOT_AUTHORIZED = "urn:scholium:problem:version-not-authorized"
 
 _MAX_ECHO = 64
 
@@ -495,4 +500,33 @@ class InvalidVersionState(ValueError):
             f"{shown!r} is not a version state: a version may be "
             "awaiting_consent, scanning, moderation, listed, held, rejected "
             "or draft."
+        )
+
+
+class VersionNotAuthorized(ProblemException, PermissionError):
+    """A version is signed by someone who may not extend the paper: ``403``.
+
+    A new version may be appended only by a consented author of the paper's
+    current head version, or by a tier-4 member acting under policy.  ``author``
+    is the DID the signature authenticates, which is not necessarily whoever
+    relayed the record.
+    """
+
+    def __init__(self, record_type: object, author: object, paper_cid: object, required_tier: int = 4) -> None:
+        self.record_type = record_type
+        self.author = author
+        self.paper_cid = paper_cid
+        self.required_tier = int(required_tier)
+        shown_author = _clip(author if isinstance(author, str) else repr(author))
+        message = (
+            f"A {record_type!r} record may only be submitted by an author of "
+            f"the paper or by a tier-{self.required_tier} member; {shown_author} "
+            "is neither."
+        )
+        super().__init__(
+            403,
+            message,
+            type=VERSION_NOT_AUTHORIZED,
+            paper_cid=paper_cid,
+            required_tier=self.required_tier,
         )

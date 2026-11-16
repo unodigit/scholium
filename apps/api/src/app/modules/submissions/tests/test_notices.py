@@ -405,6 +405,14 @@ def test_a_listed_coauthor_can_post_a_notice(client, author, paper, kind):
     coauthor = Account_(tier=1)  # a co-author need not be tier 2
     publish_version(client, author, paper, 1, [author.did, coauthor.did])
 
+    # The co-author must consent before they speak for the paper.
+    version_cid = latest_version(paper).version_cid
+    consent = coauthor.record(
+        "coauthor.consent",
+        {"version": version_cid, "role": "Author", "decision": "accept"},
+    )
+    assert post(client, consent).status_code == 201
+
     response = post(client, notice(coauthor, kind, paper))
 
     assert response.status_code == 201, response.text
@@ -412,7 +420,7 @@ def test_a_listed_coauthor_can_post_a_notice(client, author, paper, kind):
 
 def test_a_signer_of_a_version_can_post_a_notice(client, author, paper):
     """The verifier counts whoever signed a chain version as an author of the paper."""
-    publisher = Account_(tier=2)
+    publisher = Account_(tier=4)
     other = did_key_from_signing_key(SigningKey.generate())
     publish_version(client, publisher, paper, 1, [other])
 
@@ -498,7 +506,7 @@ def test_an_authors_notice_can_be_relayed_by_anyone(client, author, paper):
 def test_paper_authors_lists_the_genesis_signer_version_signers_and_listed_authors(
     client, author, paper
 ):
-    publisher = Account_(tier=2)
+    publisher = Account_(tier=4)
     listed = did_key_from_signing_key(SigningKey.generate())
     publish_version(client, publisher, paper, 1, [listed])
 

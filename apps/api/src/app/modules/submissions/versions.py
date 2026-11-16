@@ -94,7 +94,7 @@ from app.modules.ingest import (
 )
 from app.security import Tier
 
-from .errors import UnknownPaper, VersionOutOfSequence
+from .errors import UnknownPaper, VersionNotAuthorized, VersionOutOfSequence
 from .events import VersionStateChanged, emit_state_changed
 from .genesis import get_paper
 from .models import Authorship, PaperVersion, ensure_tables
@@ -460,6 +460,50 @@ def expected_chain(paper_cid: str) -> tuple[str, int]:
     return latest.version_cid, int(latest.n) + 1
 
 
+def current_head_authors(paper_cid: str) -> frozenset[str]:
+    """DIDs that may append a version to ``paper_cid`` without being a moderator.
+
+    For a paper with no versions that is the genesis record's signer; for a
+    paper whose current head is a version it is that version's signer plus its
+    listed authors who have consented to it.  Consent is read through the
+    consents plugin so a ledger-replayed or fixture-built node is handled too.
+    """
+    from app.modules import ledger
+
+    allowed: set[str] = set()
+    latest = latest_version(paper_cid)
+    if latest is None:
+        entry = ledger.entry_by_cid(paper_cid)
+        if entry is not None:
+            did = getattr(entry, "author_did", None)
+            if isinstance(did, str) and did:
+                allowed.add(did)
+        return frozenset(allowed)
+
+    entry = ledger.entry_by_cid(str(latest.version_cid))
+    if entry is not None:
+        did = getattr(entry, "author_did", None)
+        if isinstance(did, str) and did:
+            allowed.add(did)
+
+    try:
+        from app.modules import consents
+
+        for consent_entry in consents.consents_for_version(str(latest.version_cid)):
+            if getattr(consent_entry, "status", None) == "signed":
+                did = getattr(consent_entry, "did", None)
+                if isinstance(did, str) and did:
+                    allowed.add(did)
+    except Exception:
+        for row in authorship_for(str(latest.version_cid)):
+            if getattr(row, "consent_decision", None) == "accept":
+                did = getattr(row, "author_did", None)
+                if isinstance(did, str) and did:
+                    allowed.add(did)
+
+    return frozenset(allowed)
+
+
 def require_known_paper(paper_cid: str) -> None:
     """Refuse unless this node holds the paper's ``paper.genesis``: ``422``.
 
@@ -657,6 +701,19 @@ def handle_paper_version(record: Mapping[str, Any]) -> str:
         return AWAITING_CONSENT
 
     require_known_paper(fields.paper_cid)
+
+    author_did = author if isinstance(author, str) else None
+    tier_value = tier
+    if not (
+        tier_value >= int(Tier.MODERATOR)
+        or (author_did is not None and author_did in current_head_authors(fields.paper_cid))
+    ):
+        raise VersionNotAuthorized(
+            PAPER_VERSION_TYPE,
+            author,
+            fields.paper_cid,
+            int(Tier.MODERATOR),
+        )
 
     expected_prev, expected_n = expected_chain(fields.paper_cid)
     submitted_prev = record.get("prev")

@@ -74,6 +74,7 @@ from .errors import (
     SHORT_ID_COLLISION,
     UNKNOWN_NOTICE_TARGET,
     UNKNOWN_PAPER,
+    VERSION_NOT_AUTHORIZED,
     VERSION_OUT_OF_SEQUENCE,
     CategoryNotEndorsed,
     GenesisRateLimited,
@@ -86,6 +87,7 @@ from .errors import (
     UnknownNoticeTarget,
     UnknownPaper,
     UnknownVersion,
+    VersionNotAuthorized,
     VersionOutOfSequence,
 )
 from .events import (
@@ -238,6 +240,7 @@ __all__ = [
     "UNKNOWN_NOTICE_TARGET",
     "UNKNOWN_PAPER",
     "VERSION_MIN_TIER",
+    "VERSION_NOT_AUTHORIZED",
     "VERSION_OUT_OF_SEQUENCE",
     "VERSION_STATES",
     "VERSION_STATE_CHANGED",
@@ -263,6 +266,7 @@ __all__ = [
     "UnknownVersion",
     "VersionAuthor",
     "VersionFields",
+    "VersionNotAuthorized",
     "VersionOutOfSequence",
     "VersionStateChanged",
     "account_created_at",

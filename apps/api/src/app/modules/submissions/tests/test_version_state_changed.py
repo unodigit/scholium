@@ -22,6 +22,7 @@ from nacl.signing import SigningKey
 from scholium_record_core import did_key_from_signing_key, sign_record
 
 from app import db
+from app.modules import ledger
 from app.modules.identity.models import Account, ensure_account_table
 from app.modules.submissions import (
     AWAITING_CONSENT,
@@ -524,7 +525,24 @@ def _tier_two_author() -> tuple[SigningKey, str]:
 
 def test_accepting_a_paper_version_emits_its_first_event():
     seed, did = _tier_two_author()
-    paper_cid = new_paper_cid()
+    genesis = sign_record(
+        {
+            "v": 1,
+            "type": "paper.genesis",
+            "author": did,
+            "created": now(),
+            "prev": None,
+            "body": {
+                "title": "A paper whose versions change state",
+                "categories": ["cs.T0"],
+                "licence": "CC-BY-4.0",
+            },
+            "proofs": [],
+        },
+        seed,
+    )
+    paper_cid = genesis["id"]
+    ledger.append(genesis)
     save_paper(paper_cid=paper_cid, categories=["cs.T0"])
     body = {
         "paper": paper_cid,
