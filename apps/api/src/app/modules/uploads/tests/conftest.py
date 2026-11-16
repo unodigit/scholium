@@ -27,7 +27,17 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
+from app.security import issue_access_token  # noqa: E402
 from app.settings import settings  # noqa: E402
+
+#: The caller ``client`` is signed in as: a tier-2 author, who owns every upload
+#: that ``client`` creates.
+DEFAULT_DID = "did:key:z6MkUploadsTestOwner"
+
+
+def bearer(did: str = DEFAULT_DID, tier: int = 2) -> dict[str, str]:
+    """An ``Authorization`` header carrying a fresh access token for ``did``."""
+    return {"Authorization": f"Bearer {issue_access_token(did, tier)}"}
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +48,36 @@ def content_root(tmp_path, monkeypatch) -> Path:
     return root
 
 
+@pytest.fixture(autouse=True)
+def fresh_default_owner_quota():
+    """Start every test with no uploads in flight for :data:`DEFAULT_DID`.
+
+    The test database outlives a test (and a run), and a caller's bytes in
+    flight are capped, so uploads an earlier test left pending would otherwise
+    count against this one.
+    """
+    from sqlalchemy import delete
+
+    from app.db import SessionLocal
+    from app.modules.uploads.store import Upload
+
+    session = SessionLocal()
+    try:
+        session.execute(delete(Upload).where(Upload.owner_did == DEFAULT_DID))
+        session.commit()
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def anon_client():
+    """A client that sends no credentials unless a request adds them."""
+    with TestClient(app) as c:
+        yield c
+
+
 @pytest.fixture
 def client():
-    with TestClient(app) as c:
+    """A client signed in as :data:`DEFAULT_DID`: uploads need an authenticated owner."""
+    with TestClient(app, headers=bearer()) as c:
         yield c

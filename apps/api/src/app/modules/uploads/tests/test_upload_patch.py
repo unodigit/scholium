@@ -17,6 +17,8 @@ import pytest
 from app.modules import content
 from app.modules.uploads import limits, store
 
+from .conftest import bearer
+
 TUS_HEADERS = {"Tus-Resumable": "1.0.0"}
 OFFSET_CONTENT_TYPE = "application/offset+octet-stream"
 
@@ -398,6 +400,8 @@ def run_patch_over_asgi(upload_id, offset, messages):
             (b"tus-resumable", b"1.0.0"),
             (b"upload-offset", offset if isinstance(offset, bytes) else str(offset).encode()),
             (b"content-type", OFFSET_CONTENT_TYPE.encode()),
+            # The caller ``client`` is signed in as: uploads belong to an authenticated owner.
+            (b"authorization", bearer()["Authorization"].encode()),
         ],
         "client": ("testclient", 5000),
         "server": ("testserver", 80),

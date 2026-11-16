@@ -30,12 +30,18 @@ MODERATION = "moderation"
 LISTED = "listed"
 
 
-def upload_pdf(client, data: bytes) -> str:
-    """Upload ``data`` as a manuscript over tus and return its content id."""
+def upload_pdf(client, data: bytes, *, headers: dict[str, str] | None = None) -> str:
+    """Upload ``data`` as a manuscript over tus and return its content id.
+
+    ``headers`` carries the uploading account's ``Authorization``: an upload
+    belongs to the DID that creates it, so the same caller must also append.
+    """
+    auth = dict(headers or {})
     # tus creation
     r = client.post(
         "/v1/uploads",
         headers={
+            **auth,
             "Tus-Resumable": "1.0.0",
             "Upload-Length": str(len(data)),
         },
@@ -48,6 +54,7 @@ def upload_pdf(client, data: bytes) -> str:
         f"/v1/uploads/{upload_id}",
         content=data,
         headers={
+            **auth,
             "Tus-Resumable": "1.0.0",
             "Content-Type": "application/offset+octet-stream",
             "Upload-Offset": "0",
@@ -109,7 +116,7 @@ def test_publish_journey(client, node, reviewer):
 
     # --- upload the manuscript ----------------------------------------------
     pdf_bytes = blank_pdf()
-    cid = upload_pdf(client, pdf_bytes)
+    cid = upload_pdf(client, pdf_bytes, headers=author.headers)
 
     # --- sign the manifest, genesis and version -----------------------------
     manifest = author.record(

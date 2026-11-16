@@ -79,7 +79,7 @@ def publish_listed_paper(client, reviewer) -> dict:
     co2.sign_in()
 
     pdf = blank_pdf()
-    file_cid = upload_pdf(client, pdf)
+    file_cid = upload_pdf(client, pdf, headers=author.headers)
 
     manifest = author.record(
         "manifest",

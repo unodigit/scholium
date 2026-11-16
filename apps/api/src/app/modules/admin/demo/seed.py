@@ -423,8 +423,10 @@ class _Seeder:
 
     # --- a paper ---------------------------------------------------------
 
-    def _upload(self, data: bytes, what: str) -> str:
-        tus = {"Tus-Resumable": "1.0.0"}
+    def _upload(self, data: bytes, what: str, *, actor: "Actor") -> str:
+        # Uploads belong to the caller who creates them, so the submitter's
+        # access token travels with both requests, not just the signed records.
+        tus = {**actor.headers, "Tus-Resumable": "1.0.0"}
         created = self.http.post("/v1/uploads", headers={**tus, "Upload-Length": str(len(data))})
         location = _require(created, 201, f"starting the upload of {what}").headers["Location"]
         patched = self.http.patch(
@@ -443,7 +445,7 @@ class _Seeder:
         author_dids = [self.actors[slug].did for slug, _ in paper.authors]
 
         pdf = build_pdf(paper.manuscript(self.names))
-        file_cid = self._upload(pdf, f"the manuscript of {paper.title!r}")
+        file_cid = self._upload(pdf, f"the manuscript of {paper.title!r}", actor=submitter)
         manifest = submitter.record(
             "manifest",
             {

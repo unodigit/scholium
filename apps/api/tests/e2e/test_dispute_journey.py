@@ -81,11 +81,16 @@ def blank_pdf() -> bytes:
     return buffer.getvalue()
 
 
-def upload_pdf(client, data: bytes) -> str:
-    """Upload ``data`` as a manuscript over tus and return its content id."""
+def upload_pdf(client, data: bytes, *, headers: dict[str, str] | None = None) -> str:
+    """Upload ``data`` as a manuscript over tus and return its content id.
+
+    ``headers`` carries the uploading account's ``Authorization``: an upload
+    belongs to the DID that creates it, so the same caller must also append.
+    """
+    auth = dict(headers or {})
     created = client.post(
         "/v1/uploads",
-        headers={"Tus-Resumable": "1.0.0", "Upload-Length": str(len(data))},
+        headers={**auth, "Tus-Resumable": "1.0.0", "Upload-Length": str(len(data))},
     )
     assert created.status_code == 201, created.text
     upload_id = created.headers["Location"].rsplit("/", 1)[-1]
@@ -93,6 +98,7 @@ def upload_pdf(client, data: bytes) -> str:
         f"/v1/uploads/{upload_id}",
         content=data,
         headers={
+            **auth,
             "Tus-Resumable": "1.0.0",
             "Content-Type": "application/offset+octet-stream",
             "Upload-Offset": "0",
@@ -248,7 +254,7 @@ def test_dispute_journey(client, node, reviewer):
 
     # --- version 1 and version 2 are published and listed -------------------
     pdf_bytes = blank_pdf()
-    file_cid = upload_pdf(client, pdf_bytes)
+    file_cid = upload_pdf(client, pdf_bytes, headers=author.headers)
     manifest = author.record(
         "manifest",
         {

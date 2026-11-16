@@ -47,6 +47,16 @@ requests appending to one upload at once cannot both write (the second is
 answered ``423 Locked`` and should retry); and a failed ``PATCH`` never
 leaves an offset the file does not back.
 
+Who may do what: creating, inspecting (``HEAD``) and appending to or completing
+(``PATCH``) an upload all need an access token of trust tier 1 (Member) or above
+-- ``401`` without a usable one, ``403`` below tier 1. An upload belongs to the DID
+that created it, and to nobody else: for any other caller (whatever their tier)
+and for an unowned upload left by an older release it is a ``404``, exactly as if
+the id did not exist, so ids cannot be probed and nobody else's CID is revealed.
+Each DID may have only so many bytes in flight (:mod:`.config`): a creation that
+would take it past that is a ``413`` ``upload-quota-exceeded`` problem. Uploads
+nobody finishes are deleted after a TTL by :mod:`.reaper`.
+
 Every error leaves this module as an ``HTTPException``, which the
 app-wide RFC 9457 handlers render as ``application/problem+json``.
 """
@@ -57,22 +67,26 @@ import os
 from typing import Any, Optional
 
 import anyio
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 from app.db import SessionLocal
-from app.security import InvalidAccessToken, decode_access_token
+from app.security import Principal, Tier, require_tier
 
-from . import finalize, limits, store
+from . import config, finalize, limits, store
 
 router = APIRouter(tags=["uploads"])
 
 UPLOAD_TOO_LARGE_TYPE = "urn:scholium:problem:upload-too-large"
 UPLOAD_OFFSET_MISMATCH_TYPE = "urn:scholium:problem:upload-offset-mismatch"
 UPLOAD_LOCKED_TYPE = "urn:scholium:problem:upload-locked"
+UPLOAD_QUOTA_EXCEEDED_TYPE = "urn:scholium:problem:upload-quota-exceeded"
+
+#: Uploads are for signed-in members: tier 1 and above.
+_require_member = require_tier(Tier.MEMBER)
 
 #: The media type tus 1.0.0 requires on a ``PATCH`` carrying bytes.
 OFFSET_CONTENT_TYPE = "application/offset+octet-stream"
@@ -112,6 +126,23 @@ def _reject_too_large(kind: str, upload_length: int, limit: int) -> HTTPExceptio
     )
 
 
+def _reject_over_quota(exc: store.QuotaExceeded) -> HTTPException:
+    # Imported at raise time for the reason given in _reject_too_large.
+    from app.errors import ProblemException
+
+    return ProblemException(
+        413,
+        f"You have {exc.in_flight_bytes} of your {exc.quota_bytes} bytes of unfinished uploads in flight, and this "
+        f"upload needs {exc.requested_bytes} more. Finish the earlier ones, or wait until the server deletes the "
+        "ones left unfinished, then try again.",
+        type=UPLOAD_QUOTA_EXCEEDED_TYPE,
+        quota_bytes=exc.quota_bytes,
+        in_flight_bytes=exc.in_flight_bytes,
+        requested_bytes=exc.requested_bytes,
+        headers=_tus_headers(),
+    )
+
+
 def _require_tus_version(request: Request) -> None:
     """Enforce the tus version handshake, answering 412 for anything but 1.0.0."""
     version = request.headers.get("tus-resumable")
@@ -148,24 +179,6 @@ def _parse_upload_length(request: Request) -> tuple[Optional[int], bool]:
             "or 'Upload-Defer-Length: 1' when it is not yet known.",
         )
     return length, defer_length
-
-
-def _optional_owner_did(request: Request) -> Optional[str]:
-    """The caller's DID when a valid access token came along, else ``None``.
-
-    Creation itself is open: a missing or unusable token never blocks
-    the upload, it only leaves the upload unowned.
-    """
-    authorization = request.headers.get("authorization", "")
-    if not authorization.lower().startswith("bearer "):
-        return None
-    token = authorization[7:].strip()
-    if not token:
-        return None
-    try:
-        return decode_access_token(token).did
-    except (InvalidAccessToken, ValueError):
-        return None
 
 
 def _problem(
@@ -221,6 +234,14 @@ def _load_upload(upload_id: str) -> Optional[store.Upload]:
         return store.get_upload(session, upload_id)
     finally:
         session.close()
+
+
+def _load_owned_upload(upload_id: str, principal: Principal) -> Optional[store.Upload]:
+    """The upload, but only if ``principal`` owns it: anyone else's is ``None``, as if it did not exist."""
+    upload = _load_upload(upload_id)
+    if upload is None or upload.owner_did is None or upload.owner_did != principal.did:
+        return None
+    return upload
 
 
 def _commit_append(
@@ -314,8 +335,8 @@ def upload_options() -> Response:
 
 
 @router.post("/uploads", status_code=201)
-def create_upload(request: Request) -> Response:
-    """Create an upload resource and point the client at it (tus creation)."""
+def create_upload(request: Request, principal: Principal = Depends(_require_member)) -> Response:
+    """Create an upload resource, owned by the caller, and point the client at it (tus creation)."""
     _require_tus_version(request)
     upload_length, defer_length = _parse_upload_length(request)
 
@@ -328,7 +349,6 @@ def create_upload(request: Request) -> Response:
         if exceeded is not None:
             raise _reject_too_large(kind, upload_length, exceeded)
 
-    owner_did = _optional_owner_did(request)
     try:
         session = SessionLocal()
         try:
@@ -338,10 +358,13 @@ def create_upload(request: Request) -> Response:
                 defer_length=defer_length,
                 upload_metadata=metadata_header or "",
                 kind=kind,
-                owner_did=owner_did,
+                owner_did=principal.did,
+                quota_bytes=config.quota_bytes(),
             )
         finally:
             session.close()
+    except store.QuotaExceeded as exc:
+        raise _reject_over_quota(exc) from None
     except SQLAlchemyError as exc:  # pragma: no cover - defensive: storage is down
         raise _reject(503, "Upload storage is unavailable; retry shortly.") from exc
 
@@ -352,11 +375,11 @@ def create_upload(request: Request) -> Response:
 
 
 @router.head("/uploads/{upload_id}")
-def head_upload(upload_id: str, request: Request) -> Response:
+def head_upload(upload_id: str, request: Request, principal: Principal = Depends(_require_member)) -> Response:
     """Report how much of an upload the server has, so an interrupted client can resume."""
     _require_tus_version(request)
     try:
-        upload = _load_upload(upload_id)
+        upload = _load_owned_upload(upload_id, principal)
     except SQLAlchemyError as exc:  # pragma: no cover - defensive: storage is down
         raise _reject(503, "Upload storage is unavailable; retry shortly.") from exc
     if upload is None:
@@ -377,7 +400,9 @@ def head_upload(upload_id: str, request: Request) -> Response:
 
 
 @router.patch("/uploads/{upload_id}")
-async def patch_upload(upload_id: str, request: Request) -> Response:
+async def patch_upload(
+    upload_id: str, request: Request, principal: Principal = Depends(_require_member)
+) -> Response:
     """Append the request body to an upload at ``Upload-Offset`` (tus core PATCH)."""
     _require_tus_version(request)
     _require_offset_content_type(request)
@@ -387,8 +412,9 @@ async def patch_upload(upload_id: str, request: Request) -> Response:
     assert offset is not None  # required=True
 
     try:
-        # Answer 404 before touching the filesystem: an unknown id gets no staged file.
-        if await run_in_threadpool(_load_upload, upload_id) is None:
+        # Answer 404 before touching the filesystem: an unknown id, or one that is
+        # someone else's, gets no staged file and never takes the upload's lock.
+        if await run_in_threadpool(_load_owned_upload, upload_id, principal) is None:
             raise _not_found()
         try:
             staged = await run_in_threadpool(store.open_staged, upload_id)

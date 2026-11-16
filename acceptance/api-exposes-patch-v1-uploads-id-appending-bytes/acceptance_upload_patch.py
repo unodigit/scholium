@@ -26,9 +26,16 @@ content store) is pinned here.
 
 from __future__ import annotations
 
+from app.security import issue_access_token
+
+#: Creating, inspecting and appending to an upload all need an authenticated
+#: member (tier 1 or above), and the upload belongs to the DID the token names.
+#: Every request below therefore carries the same caller's bearer token.
+AUTH_HEADERS = {"Authorization": f"Bearer {issue_access_token('did:key:z6MkUploadAcceptance', 1)}"}
+
 #: Every tus request carries the protocol version; the uploads plugin
 #: already rejects anything but 1.0.0 with 412.
-TUS_HEADERS = {"Tus-Resumable": "1.0.0"}
+TUS_HEADERS = {**AUTH_HEADERS, "Tus-Resumable": "1.0.0"}
 
 #: The media type tus 1.0.0 requires on a PATCH carrying bytes.
 OFFSET_CONTENT_TYPE = "application/offset+octet-stream"

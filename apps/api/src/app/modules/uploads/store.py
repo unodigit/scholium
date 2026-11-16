@@ -22,12 +22,30 @@ import secrets
 from pathlib import Path
 from typing import BinaryIO, Optional
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text, func, inspect, text, update
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    String,
+    Text,
+    case,
+    func,
+    insert,
+    inspect,
+    literal,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db import Base
 from app.settings import settings
+
+from . import limits
 
 #: An upload that has been created but has not yet received all its bytes.
 STATE_PENDING = "pending"
@@ -46,6 +64,18 @@ _UPLOAD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 class UploadBusy(Exception):
     """Another request is appending to this upload right now."""
+
+
+class QuotaExceeded(Exception):
+    """Creating the upload would take its owner past their bytes-in-flight quota."""
+
+    def __init__(self, *, quota_bytes: int, in_flight_bytes: int, requested_bytes: int) -> None:
+        super().__init__(
+            f"{in_flight_bytes} bytes in flight + {requested_bytes} requested exceeds the {quota_bytes}-byte quota"
+        )
+        self.quota_bytes = quota_bytes
+        self.in_flight_bytes = in_flight_bytes
+        self.requested_bytes = requested_bytes
 
 
 def _new_upload_id() -> str:
@@ -106,6 +136,34 @@ def ensure_columns(bind: Engine) -> list[str]:
     return added
 
 
+def requested_bytes(upload_length: Optional[int], kind: str) -> int:
+    """What an upload holds in reserve: its declared length, or while that is deferred the most its kind allows."""
+    return upload_length if upload_length is not None else limits.limit_for(kind)
+
+
+def _reserved_bytes() -> ColumnElement:
+    """SQL for :func:`requested_bytes` over the ``uploads`` table."""
+    deferred = case(
+        {kind: limits.limit_for(kind) for kind in (limits.KIND_PDF, limits.KIND_BUNDLE, limits.KIND_OTHER)},
+        value=Upload.kind,
+        else_=limits.BUNDLE_MAX_BYTES,
+    )
+    return func.coalesce(Upload.upload_length, deferred)
+
+
+def _in_flight_filter(owner_did: Optional[str]) -> list[ColumnElement]:
+    # An upload is in flight until its bytes have moved into the content store
+    # (that is what sets ``cid``): until then it holds staged bytes or may yet.
+    owner = Upload.owner_did.is_(None) if owner_did is None else Upload.owner_did == owner_did
+    return [owner, Upload.cid.is_(None)]
+
+
+def bytes_in_flight(session: Session, owner_did: Optional[str]) -> int:
+    """The bytes ``owner_did``'s unfinished uploads hold in reserve (see :func:`requested_bytes`)."""
+    total = session.scalar(select(func.coalesce(func.sum(_reserved_bytes()), 0)).where(*_in_flight_filter(owner_did)))
+    return int(total or 0)
+
+
 def create_upload(
     session: Session,
     *,
@@ -114,21 +172,57 @@ def create_upload(
     upload_metadata: str = "",
     kind: str = "other",
     owner_did: Optional[str] = None,
+    quota_bytes: Optional[int] = None,
 ) -> Upload:
-    """Persist a freshly created tus upload resource and return it."""
-    upload = Upload(
-        id=_new_upload_id(),
-        upload_length=upload_length,
-        defer_length=defer_length,
-        upload_offset=0,
-        upload_metadata=upload_metadata,
-        kind=kind,
-        state=STATE_PENDING,
-        owner_did=owner_did,
-    )
-    session.add(upload)
-    session.commit()
-    session.refresh(upload)
+    """Persist a freshly created tus upload resource and return it.
+
+    With ``quota_bytes`` the upload is only created if ``owner_did``'s bytes in
+    flight, plus what this upload reserves, stay within it; otherwise
+    :class:`QuotaExceeded` is raised and nothing is stored. The check and the
+    insert are one statement, so concurrent creations cannot both pass it.
+    """
+    upload_id = _new_upload_id()
+    if quota_bytes is None:
+        session.add(
+            Upload(
+                id=upload_id,
+                upload_length=upload_length,
+                defer_length=defer_length,
+                upload_offset=0,
+                upload_metadata=upload_metadata,
+                kind=kind,
+                state=STATE_PENDING,
+                owner_did=owner_did,
+            )
+        )
+        session.commit()
+    else:
+        wanted = requested_bytes(upload_length, kind)
+        in_flight = (
+            select(func.coalesce(func.sum(_reserved_bytes()), 0)).where(*_in_flight_filter(owner_did)).scalar_subquery()
+        )
+        row = select(
+            literal(upload_id, String(64)),
+            literal(upload_length, BigInteger),
+            literal(defer_length, Boolean),
+            literal(0, BigInteger),
+            literal(upload_metadata, Text),
+            literal(kind, String(16)),
+            literal(STATE_PENDING, String(16)),
+            literal(owner_did, String(256)),
+        ).where(in_flight + wanted <= quota_bytes)
+        columns = ["id", "upload_length", "defer_length", "upload_offset", "upload_metadata", "kind", "state", "owner_did"]
+        stored = session.execute(insert(Upload).from_select(columns, row)).rowcount
+        if stored != 1:
+            session.rollback()
+            raise QuotaExceeded(
+                quota_bytes=quota_bytes,
+                in_flight_bytes=bytes_in_flight(session, owner_did),
+                requested_bytes=wanted,
+            )
+        session.commit()
+    upload = session.get(Upload, upload_id)
+    assert upload is not None
     return upload
 
 
