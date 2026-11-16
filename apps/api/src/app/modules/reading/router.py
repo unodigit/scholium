@@ -8,6 +8,10 @@ The module loader mounts ``router`` under ``/v1``, so this package serves:
 * ``GET /v1/papers/{id}/compare?from=1&to=2`` -- paragraph-level diff between
   two versions, with added, removed and changed paragraphs plus both change
   notes.
+
+Both answer ``451`` when moderation has tombstoned a version's manuscript PDF
+(NET-5), as ``GET /v1/content/{cid}`` does for the file itself; for
+``compare``, either side being taken down withholds the diff.
 """
 
 from __future__ import annotations
@@ -76,6 +80,21 @@ def _not_found_compare(paper_id: str, from_n: int, to_n: int):
         f"No paper {paper_id!r} has both versions {from_n} and {to_n} on this node.",
     )
 
+
+def _taken_down(paper_id: str, n: Any):
+    """The ``451`` problem for a version whose manuscript moderation tombstoned.
+
+    The same status ``GET /v1/content/{cid}`` gives the tombstoned file itself.
+    """
+    from app.errors import ProblemException
+
+    return ProblemException(
+        451,
+        f"Version {n} of paper {paper_id!r} is unavailable: its content has been "
+        "removed by moderation.",
+    )
+
+
 @router.get(
     "/papers/{paper_id}/v/{n}/text",
     response_model=VersionText,
@@ -89,6 +108,10 @@ def get_paper_text(paper_id: str, n: int) -> VersionText:
         version = None
     if version is None:
         raise _not_found(paper_id, n)
+    try:
+        service.require_available(version, n)
+    except service.VersionTakenDown:
+        raise _taken_down(paper_id, n) from None
 
     paragraphs = service.paragraphs_for_version(version.version_cid)
     items = [
@@ -121,6 +144,8 @@ def compare_papers(
     """Return a paragraph-level diff between versions ``from`` and ``to``."""
     try:
         result = service.compare_versions(paper_id, from_, to)
+    except service.VersionTakenDown as exc:
+        raise _taken_down(paper_id, exc.n) from None
     except ValueError:
         result = None
     if result is None:

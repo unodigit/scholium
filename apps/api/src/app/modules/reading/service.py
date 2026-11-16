@@ -24,8 +24,11 @@ from typing import Any, Optional
 
 __all__ = [
     "VersionRef",
+    "VersionTakenDown",
     "get_version_text",
+    "is_taken_down",
     "paragraphs_for_version",
+    "require_available",
     "resolve_version",
     "text_for_version",
 ]
@@ -34,6 +37,24 @@ _UNSTORED_VERSION_STATE = "awaiting_consent"
 
 _PAPER_GENESIS_TYPE = "paper.genesis"
 _PAPER_VERSION_TYPE = "paper.version"
+
+
+class VersionTakenDown(Exception):
+    """A version's text is withheld because moderation tombstoned its manuscript (NET-5).
+
+    Deliberately not a :class:`ValueError`: the routes read that as "no such
+    version" (``404``), and a takedown is the opposite -- the version exists
+    and is being withheld (``451``).
+    """
+
+    def __init__(self, paper: str, n: Any, version_cid: str) -> None:
+        super().__init__(f"version {n} of {paper} has been taken down")
+        #: Canonical paper short id.
+        self.paper = paper
+        #: The version number as the caller named it.
+        self.n = n
+        #: cid of the ``paper.version`` record.
+        self.version_cid = version_cid
 
 
 @dataclass(frozen=True)
@@ -234,6 +255,30 @@ def resolve_version(paper: Any, n: Any) -> Optional[VersionRef]:
     )
 
 
+def is_taken_down(ref: VersionRef) -> bool:
+    """Whether moderation has tombstoned the manuscript ``ref``'s text came from.
+
+    ``version_texts`` is extracted from the version's manuscript PDF, so once
+    that file is on the ``denylist`` the text is a copy of removed content --
+    exactly what ``GET /v1/content/{cid}`` refuses with ``451``.  The version's
+    *state* cannot answer this: a takedown naming the file leaves the version
+    ``listed``.  A manifest that names no manuscript has nothing to tombstone.
+
+    Nothing is caught here: a takedown check that failed open on an error
+    would serve text it was meant to withhold.
+    """
+    from app.modules import checks, content
+
+    pdf_cid = checks.manuscript_pdf_cid(ref.version_cid)
+    return pdf_cid is not None and content.is_tombstoned(pdf_cid)
+
+
+def require_available(ref: VersionRef, n: Any) -> None:
+    """Raise :class:`VersionTakenDown` when ``ref``'s text has been taken down (NET-5)."""
+    if is_taken_down(ref):
+        raise VersionTakenDown(ref.paper, n, ref.version_cid)
+
+
 def paragraphs_for_version(version_cid: Any) -> list:
     """Return the checks plugin's paragraphs for ``version_cid`` (``[]`` when none)."""
     from app.modules import checks
@@ -407,6 +452,12 @@ def compare_versions(paper: Any, from_n: Any, to_n: Any) -> Optional[dict[str, A
     to_ref = resolve_version(paper, to_n)
     if to_ref is None:
         return None
+
+    # Both versions exist; a takedown of either withholds the whole diff, since
+    # it would otherwise quote the removed side's text.  After the lookups
+    # above, so a missing version stays a 404.
+    require_available(from_ref, from_n)
+    require_available(to_ref, to_n)
 
     # Version numbers are not stored on VersionRef; resolve from the URL inputs.
     try:
