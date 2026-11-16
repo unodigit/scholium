@@ -5,9 +5,11 @@ listed version ``GET /v1/papers/{id}`` would answer with -- into the text a
 reference manager imports.  Both formats carry the same facts:
 
 * the **title** of the version cited;
-* the **authors** in byline order, each as the DID the signed version lists
-  (the public catalog and the OAI-PMH endpoint name authors the same way; a
-  profile's display name is private and is not read here);
+* the **authors** in byline order.  An author with a readable profile is
+  cited by that profile's display name, as ``Family, Given`` -- the form a
+  reference manager parses; one without a profile (never saved, erased, or
+  saved with a blank name) is cited as the DID the signed version lists,
+  which is how the public catalog and the OAI-PMH endpoint name authors;
 * the **year** the version was listed, when this node recorded it;
 * the **version id** -- ``sch:xxxx-xxxx-xxxx/vN`` -- which is what makes the
   citation resolve to exactly the text that was read, not to whatever the
@@ -41,7 +43,7 @@ from typing import Callable, Optional
 from app.modules.status import STATUS_RETRACTED
 from app.modules.submissions import RETRACTION_TYPE, Notice
 
-from .records import ListedPaper
+from .records import ListedPaper, display_name
 
 __all__ = [
     "BIBTEX",
@@ -135,6 +137,34 @@ def citation_key(record: ListedPaper) -> str:
     return f"{stem}-v{int(record.version.n)}"
 
 
+def _family_first(name: str) -> str:
+    """A profile display name as ``Family, Given``.
+
+    The last whitespace-separated word is read as the family name and the rest
+    as given names, the convention a profile's single free-text name field
+    carries ("Ada Lovelace" becomes "Lovelace, Ada").  A name that already
+    holds a comma, or a single word, is left exactly as saved.
+    """
+    text = _plain(name)
+    if "," in text:
+        return text
+    words = text.split()
+    if len(words) < 2:
+        return text
+    return f"{words[-1]}, {' '.join(words[:-1])}"
+
+
+def _author_entries(record: ListedPaper) -> list[tuple[str, Optional[str]]]:
+    """Each author as ``(did, display name)``, in byline order.
+
+    The display name is ``None`` when there is no readable profile (never
+    saved, erased, or blank); the citation then names the author by DID.  The
+    name is public data -- ``GET /v1/profiles/{did}`` shows it to every
+    reader; only the email is the owner's alone.
+    """
+    return [(did, display_name(did)) for did in record.authors]
+
+
 # --------------------------------------------------------------------------- #
 # BibTeX
 # --------------------------------------------------------------------------- #
@@ -171,8 +201,12 @@ def render_bibtex(record: ListedPaper) -> str:
     ]
     if record.authors:
         # A braced name is a literal: BibTeX will not split a DID into first
-        # and last names.
-        names = " and ".join("{" + _bibtex(author) + "}" for author in record.authors)
+        # and last names.  A profile name is left unbraced in "Family, Given"
+        # form, which BibTeX itself parses into family and given names.
+        names = " and ".join(
+            "{" + _bibtex(did) + "}" if name is None else _bibtex(_family_first(name))
+            for did, name in _author_entries(record)
+        )
         fields.append(("author", _braced(names)))
     listed = _listed_at(record)
     if listed is not None:
@@ -215,7 +249,10 @@ def render_ris(record: ListedPaper) -> str:
         _ris_line("ID", record.version_id),
         _ris_line("TI", record.version.title),
     ]
-    lines.extend(_ris_line("AU", author) for author in record.authors)
+    lines.extend(
+        _ris_line("AU", did if name is None else _family_first(name))
+        for did, name in _author_entries(record)
+    )
     listed = _listed_at(record)
     if listed is not None:
         lines.append(_ris_line("PY", listed.year))

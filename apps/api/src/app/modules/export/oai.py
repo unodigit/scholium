@@ -13,7 +13,7 @@ described in Dublin Core (``oai_dc``)::
              xmlns:oai_dc="http://www.openarchives.org/OAI/2.0/oai_dc/"
              xmlns:dc="http://purl.org/dc/elements/1.1/" ...>
       <responseDate>2026-11-15T12:00:00Z</responseDate>
-      <request verb="ListRecords">http://localhost:8000/v1/oai</request>
+      <request verb="ListRecords">https://scholium.example.org/v1/oai</request>
       <ListRecords>
         <record>
           <header>
@@ -74,6 +74,10 @@ All six OAI-PMH verbs are served: ``Identify``, ``ListMetadataFormats``,
 * A list too long for one response is paginated with an opaque
   ``resumptionToken``; using it with any other argument answers
   ``badArgument``.
+* The ``request`` element and ``Identify``'s ``baseURL`` name the node's
+  configured public base URL (``NEXT_PUBLIC_API_URL``) with the ``/v1/oai``
+  path, never the address the request happened to arrive on: a harvester must
+  be able to reuse the URL this node advertises.
 * Protocol errors are returned as XML with HTTP ``200``, as OAI-PMH requires:
   ``badVerb``, ``badArgument``, ``badResumptionToken``,
   ``cannotDisseminateFormat``, ``idDoesNotExist``, ``noRecordsMatch`` and
@@ -93,6 +97,8 @@ from typing import Optional
 from xml.etree import ElementTree as ET
 
 from fastapi import APIRouter, Request, Response
+
+from app.settings import settings
 
 from .records import EPOCH, ListedPaper, find_listed, listed_papers
 
@@ -214,9 +220,17 @@ def _day(moment: datetime) -> str:
     return moment.strftime("%Y-%m-%d")
 
 
-def _base_url(request: Request) -> str:
-    """The repository's base URL: the request URL without its arguments."""
-    return str(request.url).split("?", 1)[0]
+def _base_url() -> str:
+    """The repository's base URL: the node's configured public base URL.
+
+    Not the URL the request arrived on: a node served behind a proxy would
+    then advertise whatever internal address the proxy forwarded (in
+    development that reads as a hardcoded ``http://localhost:8000``), which no
+    harvester outside can reuse.  ``NEXT_PUBLIC_API_URL`` is the public
+    address every other absolute link this node writes already goes by.
+    """
+    base = (settings.NEXT_PUBLIC_API_URL or "").strip().rstrip("/")
+    return f"{base}/v1/oai"
 
 
 def _sub(parent: ET.Element, tag: str, text: Optional[str] = None) -> ET.Element:
@@ -228,7 +242,6 @@ def _sub(parent: ET.Element, tag: str, text: Optional[str] = None) -> ET.Element
 
 def _request_element(
     parent: ET.Element,
-    request: Request,
     *,
     verb: Optional[str],
     arguments: dict[str, str],
@@ -236,11 +249,10 @@ def _request_element(
     attributes = {name: arguments[name] for name in _ECHOED if name in arguments}
     if verb is not None:
         attributes = {"verb": verb, **attributes}
-    _sub(parent, _q("request"), _base_url(request)).attrib.update(attributes)
+    _sub(parent, _q("request"), _base_url()).attrib.update(attributes)
 
 
 def _document(
-    request: Request,
     *,
     verb: Optional[str],
     arguments: dict[str, str],
@@ -256,17 +268,15 @@ def _document(
         },
     )
     _sub(root, _q("responseDate"), _datestamp(_utcnow()))
-    _request_element(root, request, verb=verb, arguments=arguments)
+    _request_element(root, verb=verb, arguments=arguments)
     root.append(body)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def _error_document(request: Request, error: ProtocolError) -> bytes:
+def _error_document(error: ProtocolError) -> bytes:
     element = ET.Element(_q("error"), {"code": error.code})
     element.text = error.message
-    return _document(
-        request, verb=error.verb, arguments=error.arguments, body=element
-    )
+    return _document(verb=error.verb, arguments=error.arguments, body=element)
 
 
 def _response(xml: bytes) -> Response:
@@ -327,11 +337,11 @@ def _header(parent: ET.Element, record: ListedPaper) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _identify(element: ET.Element, request: Request) -> None:
+def _identify(element: ET.Element) -> None:
     records = listed_papers()
     earliest = min((record.datestamp for record in records), default=EPOCH)
     _sub(element, _q("repositoryName"), REPOSITORY_NAME)
-    _sub(element, _q("baseURL"), _base_url(request))
+    _sub(element, _q("baseURL"), _base_url())
     _sub(element, _q("protocolVersion"), PROTOCOL_VERSION)
     _sub(element, _q("adminEmail"), ADMIN_EMAIL)
     _sub(element, _q("earliestDatestamp"), _datestamp(earliest))
@@ -586,9 +596,7 @@ def _resumption_token(parent: ET.Element, page: _Page) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _verb_body(
-    request: Request, verb: str, arguments: dict[str, str]
-) -> ET.Element:
+def _verb_body(verb: str, arguments: dict[str, str]) -> ET.Element:
     """Build the verb-specific element, raising :class:`ProtocolError`."""
     if verb == "ListSets":
         raise ProtocolError(
@@ -599,7 +607,7 @@ def _verb_body(
         )
     element = ET.Element(_q(verb))
     if verb == "Identify":
-        _identify(element, request)
+        _identify(element)
     elif verb == "ListMetadataFormats":
         _list_metadata_formats(element, arguments)
     elif verb == "GetRecord":
@@ -644,14 +652,12 @@ def oai(request: Request) -> Response:
                     verb=verb,
                     arguments=arguments,
                 )
-        body = _verb_body(request, verb, arguments)
+        body = _verb_body(verb, arguments)
     except ProtocolError as error:
         if error.verb is None and error.code != "badVerb":
             # An error raised deep in the listing still echoes the request.
             error.verb = verb if verb in VERBS else None
             error.arguments = arguments if verb in VERBS else {}
-        return _response(_error_document(request, error))
+        return _response(_error_document(error))
 
-    return _response(
-        _document(request, verb=verb, arguments=arguments, body=body)
-    )
+    return _response(_document(verb=verb, arguments=arguments, body=body))

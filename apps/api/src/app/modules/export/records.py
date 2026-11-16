@@ -18,7 +18,8 @@ Each :class:`ListedPaper` carries everything one Dublin Core record needs:
   OAI datestamp.
 
 Only this module reads the database; :mod:`app.modules.export.oai` renders the
-rows as XML.
+rows as XML.  :func:`display_name` additionally reads the profiles plugin's
+tables, so a citation can name an author the way their public profile does.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from sqlalchemy import select
 
 from app import db
 from app.modules.catalog.service import resolve
+from app.modules.profiles import read_profile
 from app.modules.submissions import (
     LISTED,
     Notice,
@@ -45,6 +47,7 @@ __all__ = [
     "EPOCH",
     "OAI_IDENTIFIER_PREFIX",
     "ListedPaper",
+    "display_name",
     "find_listed",
     "listed_papers",
     "local_identifier",
@@ -167,6 +170,22 @@ def local_identifier(identifier: object) -> str:
     if identifier.startswith(OAI_IDENTIFIER_PREFIX):
         return identifier[len(OAI_IDENTIFIER_PREFIX) :]
     return identifier
+
+
+def display_name(did: str) -> Optional[str]:
+    """The DID's public profile display name, or ``None`` when there is none.
+
+    The name is the DID's public face (``GET /v1/profiles/{did}`` shows it to
+    every reader; only the email is the owner's alone).  ``None`` covers a DID
+    that never saved a profile, one whose profile was erased -- the
+    crypto-shredded blob reads as "no profile" -- and a name that is blank, so
+    a citation built on it falls back to the DID.
+    """
+    profile = read_profile(did)
+    if profile is None:
+        return None
+    name = (profile.name or "").strip()
+    return name or None
 
 
 def find_listed(identifier: object) -> Optional[ListedPaper]:

@@ -20,6 +20,7 @@ from scholium_record_core import derive_short_id, did_key_from_signing_key, sign
 
 from app.modules.export import citation
 from app.modules.export.records import ListedPaper
+from app.modules.profiles import ProfileData, erase_profile, save_profile
 from app.modules.submissions import (
     Paper as ORMPaper,
     PaperVersion,
@@ -206,6 +207,85 @@ def test_bibtex_escapes_latex_and_cannot_open_another_entry(client):
     assert depth == 0
     assert r"R\&D at 100\% of cost\_\$ \#1 \{x\}" in text
     assert "\n@misc{evil" not in text
+
+
+# --------------------------------------------------------------------------- #
+# Author names
+# --------------------------------------------------------------------------- #
+
+
+def test_authors_with_profiles_are_cited_by_name(client):
+    paper = Paper(co_authors=1)
+    paper.add_version(title="Sound proofs")
+    first, second = paper.authors
+    save_profile(
+        first, ProfileData(name="Ada Lovelace", affiliation="", email="ada@example.org")
+    )
+    save_profile(
+        second,
+        ProfileData(name="Charles Babbage", affiliation="", email="charles@example.org"),
+    )
+
+    bibtex = cite(client, paper.short_id, format="bibtex").text
+    ris = cite(client, paper.short_id, format="ris").text
+
+    # The profile's display name, as "Family, Given" -- the form a reference
+    # manager parses -- and not the DID.
+    assert "author = {Lovelace, Ada and Babbage, Charles}," in bibtex
+    assert [line for line in ris.splitlines() if line.startswith("AU  - ")] == [
+        "AU  - Lovelace, Ada",
+        "AU  - Babbage, Charles",
+    ]
+    assert first not in bibtex and second not in bibtex
+    assert first not in ris and second not in ris
+
+
+def test_an_author_without_a_profile_is_cited_by_did(client):
+    paper = Paper(co_authors=1)
+    paper.add_version()
+    known, stranger = paper.authors
+    save_profile(
+        known, ProfileData(name="Ada Lovelace", affiliation="", email="ada@example.org")
+    )
+
+    bibtex = cite(client, paper.short_id, format="bibtex").text
+    ris = cite(client, paper.short_id, format="ris").text
+
+    assert f"author = {{Lovelace, Ada and {{{stranger}}}}}," in bibtex
+    assert [line for line in ris.splitlines() if line.startswith("AU  - ")] == [
+        "AU  - Lovelace, Ada",
+        f"AU  - {stranger}",
+    ]
+
+
+def test_an_erased_profile_falls_back_to_the_did(client):
+    paper = Paper()
+    paper.add_version()
+    save_profile(
+        paper.did,
+        ProfileData(name="Ada Lovelace", affiliation="", email="ada@example.org"),
+    )
+    erase_profile(paper.did)
+
+    bibtex = cite(client, paper.short_id, format="bibtex").text
+    ris = cite(client, paper.short_id, format="ris").text
+
+    assert f"author = {{{{{paper.did}}}}}," in bibtex
+    assert f"AU  - {paper.did}" in ris.splitlines()
+
+
+def test_a_single_word_name_is_cited_without_a_comma(client):
+    paper = Paper()
+    paper.add_version()
+    save_profile(
+        paper.did, ProfileData(name="Hypatia", affiliation="", email="h@example.org")
+    )
+
+    bibtex = cite(client, paper.short_id, format="bibtex").text
+    ris = cite(client, paper.short_id, format="ris").text
+
+    assert f"author = {{Hypatia}}," in bibtex
+    assert "AU  - Hypatia" in ris.splitlines()
 
 
 # --------------------------------------------------------------------------- #

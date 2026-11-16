@@ -21,6 +21,7 @@ from nacl.signing import SigningKey
 from scholium_record_core import derive_short_id, did_key_from_signing_key, sign_record
 
 from app.modules.export import oai as oai_module
+from app.settings import settings
 from app.modules.submissions import (
     AWAITING_CONSENT,
     VersionAuthor,
@@ -155,6 +156,12 @@ def error_code(root: ET.Element) -> Optional[str]:
     return None if error is None else error.get("code")
 
 
+def configured_base_url() -> str:
+    """The OAI URL this node's configured public base URL yields."""
+    base = (settings.NEXT_PUBLIC_API_URL or "").strip().rstrip("/")
+    return f"{base}/v1/oai"
+
+
 def dublin_core(record: ET.Element) -> ET.Element:
     metadata = record.find(f"{OAI}metadata")
     assert metadata is not None
@@ -177,7 +184,7 @@ def test_list_records_serves_dublin_core_for_a_listed_paper(client):
     request = root.find(f"{OAI}request")
     assert request is not None
     assert request.get("verb") == "ListRecords"
-    assert request.text == "http://testserver/v1/oai"
+    assert request.text == configured_base_url()
 
     found = matching(root, paper)
     assert len(found) == 1
@@ -292,10 +299,29 @@ def test_identify_describes_the_repository(client):
     assert identity is not None
     assert identity.findtext(f"{OAI}repositoryName") == "Scholium"
     assert identity.findtext(f"{OAI}protocolVersion") == "2.0"
-    assert identity.findtext(f"{OAI}baseURL") == "http://testserver/v1/oai"
+    assert identity.findtext(f"{OAI}baseURL") == configured_base_url()
     assert identity.findtext(f"{OAI}deletedRecord") == "no"
     assert identity.findtext(f"{OAI}granularity") == "YYYY-MM-DDThh:mm:ssZ"
     assert DATESTAMP.match(identity.findtext(f"{OAI}earliestDatestamp"))
+
+
+def test_responses_use_the_node_configured_public_base_url(client, monkeypatch):
+    """The request element and baseURL follow the node's public base URL.
+
+    A deployment behind a proxy must not advertise whatever host the request
+    arrived on (in development that reads as a hardcoded ``localhost:8000``);
+    the configured ``NEXT_PUBLIC_API_URL`` is the URL a harvester can reuse.
+    """
+    monkeypatch.setattr(settings, "NEXT_PUBLIC_API_URL", "https://scholium.example.org")
+
+    root = harvest(client, verb="ListRecords")
+    assert root.find(f"{OAI}request").text == "https://scholium.example.org/v1/oai"
+
+    identity = harvest(client, verb="Identify").find(f"{OAI}Identify")
+    assert identity.findtext(f"{OAI}baseURL") == "https://scholium.example.org/v1/oai"
+
+    root = harvest(client, verb="Nonsense")
+    assert root.find(f"{OAI}request").text == "https://scholium.example.org/v1/oai"
 
 
 def test_list_metadata_formats_offers_dublin_core(client):
