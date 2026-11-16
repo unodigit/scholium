@@ -77,18 +77,25 @@ class Paper:
         self.short_id = derive_short_id(self.genesis["id"])
         self.versions: list[tuple[int, str, str]] = []
 
-    def _sign(self, record_type: str, body: dict, prev: Optional[str] = None) -> dict:
+    def _sign(
+        self,
+        record_type: str,
+        body: dict,
+        prev: Optional[str] = None,
+        key: Optional[SigningKey] = None,
+    ) -> dict:
+        key = key or self.key
         return sign_record(
             {
                 "v": 1,
                 "type": record_type,
-                "author": self.did,
+                "author": did_key_from_signing_key(key),
                 "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "prev": prev,
                 "body": body,
                 "proofs": [],
             },
-            self.key,
+            key,
         )
 
     def add_version(self) -> tuple[int, str, str]:
@@ -123,14 +130,18 @@ class Paper:
     def hold(self, version) -> None:
         transition_version(version[1], "held")
 
-    def append(self, record_type: str, body: dict, at: datetime) -> None:
+    def append(
+        self, record_type: str, body: dict, at: datetime, key: Optional[SigningKey] = None
+    ) -> None:
         """Append a record to the event log, received at ``at``."""
         ledger.append(
-            self._sign(record_type, body),
+            self._sign(record_type, body, key=key),
             received_at=at.astimezone(timezone.utc).replace(tzinfo=None),
         )
 
-    def review(self, target: str, at: datetime) -> None:
+    def review(
+        self, target: str, at: datetime, reviewer: Optional[SigningKey] = None
+    ) -> None:
         self.append(
             "review.formal",
             {
@@ -140,6 +151,7 @@ class Paper:
                 "recommendation": "minor_revisions",
             },
             at,
+            key=reviewer,
         )
 
 
@@ -286,8 +298,12 @@ def test_tab_category_sort_and_cursor_combine(client, scene):
     reviewed = [scene.listed(hours=h, status="reviewed") for h in (6, 2, 4)]
     scene.listed(hours=1, status="preprint")  # wrong tab
     scene.listed(hours=1, status="reviewed", categories=("cs.ELSE",))  # wrong category
-    reviewed[0].review(reviewed[0].versions[0][1], at=hours_ago(0.5))
-    reviewed[2].review(reviewed[2].versions[0][1], at=hours_ago(1))
+    # Two agreeing reviewers keep a paper *reviewed* in the ledger, so the
+    # status subscription -- which saves what the ledger says -- leaves the tab
+    # as seeded.  One reviewer alone would drop it to ``under_review``.
+    for paper, at in ((reviewed[0], hours_ago(0.5)), (reviewed[2], hours_ago(1))):
+        paper.review(paper.versions[0][1], at=at)
+        paper.review(paper.versions[0][1], at=at, reviewer=SigningKey.generate())
 
     pages = walk(
         client,

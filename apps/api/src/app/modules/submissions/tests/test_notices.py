@@ -334,13 +334,13 @@ def test_a_replacement_does_not_change_what_is_stored(client, author, paper):
     assert client.get(f"/v1/records/{record['id']}").json()["body"]["replacement"] == replacement
 
 
-def test_a_notice_does_not_change_the_papers_status(client, author, paper):
-    """Computing ``papers.status`` is the status plugin's job, not this one's."""
-    before = get_paper(paper).status
+def test_a_retraction_notice_is_saved_to_the_papers_status_by_the_status_plugin(client, author, paper):
+    """The handler saves the notice; ``papers.status`` follows via the status plugin's ledger subscription."""
+    assert get_paper(paper).status == "preprint"
 
     assert post(client, notice(author, RETRACTION_TYPE, paper)).status_code == 201
 
-    assert get_paper(paper).status == before
+    assert get_paper(paper).status == "retracted"
 
 
 # --------------------------------------------------------------------------- #
