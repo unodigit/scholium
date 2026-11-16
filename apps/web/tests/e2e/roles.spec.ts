@@ -379,11 +379,16 @@ test.describe("the roles", () => {
     );
     expect(revised.ok()).toBe(true);
     const data = (await revised.json()) as {
-      reviews: { history?: unknown[]; recommendation?: string }[];
+      reviews: { history?: unknown[]; recommendation?: string; version?: number }[];
     };
-    expect(data.reviews).toHaveLength(1);
-    expect(data.reviews[0]?.history).toHaveLength(2);
-    expect(data.reviews[0]?.recommendation).toBe("fundamentally_flawed");
+    // v2's listing carries the updated review and, marked with the version it
+    // targets, the second reviewer's v1 review that was not updated.
+    expect(data.reviews).toHaveLength(2);
+    const updated = data.reviews.filter((review) => review.version === 2);
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.history).toHaveLength(2);
+    expect(updated[0]?.recommendation).toBe("fundamentally_flawed");
+    expect(data.reviews.filter((review) => review.version === 1)).toHaveLength(1);
   });
 
   test("a member endorses a newcomer and the newcomer's tier changes", async ({
