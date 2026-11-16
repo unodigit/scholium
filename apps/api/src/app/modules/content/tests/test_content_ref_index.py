@@ -397,7 +397,7 @@ def test_backfill_reads_a_long_log_in_pages(without_subscriber, monkeypatch):
 
     assert indexed == 5
     # One transaction per page of two: 2 + 2 + 1.
-    assert sum("UPDATE content_ref_progress" in sql for sql in statements) == 3
+    assert sum("UPDATE content_ref_progress" in sql for sql in statements) == 6
     assert _progress() == _newest_manifest_seq()
     for paper in papers:
         assert _indexed(paper.file_cid) == {paper.manifest_cid}

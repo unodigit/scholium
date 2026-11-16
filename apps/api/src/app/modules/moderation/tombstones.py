@@ -48,6 +48,7 @@ the one on record.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
 from scholium_record_core import parse_file_cid
@@ -170,20 +171,55 @@ def tombstone_cid(cid: str, decision_cid: str) -> Tombstone:
 # --------------------------------------------------------------------------- #
 
 
-def _manifest_file_cids(manifest_cid: object) -> list[str]:
-    """The file cids the ``manifest`` record ``manifest_cid`` lists, in order."""
-    if not isinstance(manifest_cid, str) or not manifest_cid:
-        return []
-    entry = ledger.entry_by_cid(manifest_cid)
-    body: Any = getattr(entry, "body", None)
-    files = body.get("files") if isinstance(body, dict) else None
-    if not isinstance(files, list):
-        return []
-    return [
-        item["cid"]
-        for item in files
-        if isinstance(item, dict) and isinstance(item.get("cid"), str) and item["cid"]
-    ]
+def _manifest_file_cids(manifest_cid: object, version_cid: object = None) -> list[str]:
+    """The file cids a version's manifest (separate or inline) lists, in order."""
+    candidates: list[Any] = []
+    if isinstance(manifest_cid, str) and manifest_cid:
+        entry = ledger.entry_by_cid(manifest_cid)
+        body = getattr(entry, "body", None) if entry is not None else None
+        if body is not None:
+            candidates.append(body)
+    target_version = version_cid if isinstance(version_cid, str) and version_cid else (
+        manifest_cid if isinstance(manifest_cid, str) and manifest_cid else None
+    )
+    if isinstance(target_version, str):
+        entry = ledger.entry_by_cid(target_version)
+        body = getattr(entry, "body", None) if entry is not None else None
+        if isinstance(body, Mapping):
+            manifest = body.get("manifest")
+            if manifest is None:
+                manifest = body.get("manifest_cid", body.get("manifestCid"))
+            candidates.append(manifest)
+            candidates.append(body)
+
+    cids: list[str] = []
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate:
+            entry = ledger.entry_by_cid(candidate)
+            candidate = getattr(entry, "body", None) if entry is not None else None
+        if isinstance(candidate, Mapping):
+            manifest = candidate.get("manifest")
+            if manifest is None:
+                manifest = candidate.get("manifest_cid", candidate.get("manifestCid"))
+            if isinstance(manifest, Mapping) or (
+                isinstance(manifest, Sequence)
+                and not isinstance(manifest, (str, bytes, bytearray))
+            ):
+                candidate = manifest
+        if isinstance(candidate, Mapping):
+            files = candidate.get("files")
+        elif isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes, bytearray)):
+            files = candidate
+        else:
+            files = None
+        if not isinstance(files, list):
+            continue
+        for item in files:
+            if isinstance(item, Mapping):
+                cid = item.get("cid")
+                if isinstance(cid, str) and cid and cid not in cids:
+                    cids.append(cid)
+    return cids
 
 
 def resolve_scope(target: object) -> TombstoneScope:
@@ -213,7 +249,7 @@ def resolve_scope(target: object) -> TombstoneScope:
 
     files: list[str] = []
     for item in versions:
-        files.extend(_manifest_file_cids(item.manifest_cid))
+        files.extend(_manifest_file_cids(item.manifest_cid, item.version_cid))
     return TombstoneScope(
         version_cids=tuple(str(item.version_cid) for item in versions),
         file_cids=tuple(dict.fromkeys(files)),

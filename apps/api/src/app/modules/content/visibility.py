@@ -36,6 +36,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import or_
+
 from app import db
 from app.security import Principal
 
@@ -87,7 +89,12 @@ def may_read(cid: object, principal: Optional[Principal]) -> bool:
 
         versions = (
             session.query(PaperVersion.version_cid, PaperVersion.state)
-            .filter(PaperVersion.manifest_cid.in_(manifest_cids))
+            .filter(
+                or_(
+                    PaperVersion.manifest_cid.in_(manifest_cids),
+                    PaperVersion.version_cid.in_(manifest_cids),
+                )
+            )
             .all()
         )
         if any(state == submissions.LISTED for _cid, state in versions):

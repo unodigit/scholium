@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Optional, cast
 
 from sqlalchemy import Column, Integer, Text, inspect, select, text, update
@@ -65,6 +65,7 @@ from app import db
 
 __all__ = [
     "MANIFEST_RECORD_TYPE",
+    "VERSION_RECORD_TYPE",
     "PAGE_SIZE",
     "VERSIONS_MANIFEST_INDEX",
     "ContentRef",
@@ -85,6 +86,10 @@ logger = logging.getLogger(__name__)
 #: plugin imports this package, so importing it back at load time is circular.
 #: A test pins the two together.
 MANIFEST_RECORD_TYPE = "manifest"
+
+#: The ledger record type that may carry a version's manifest inline (plugin:
+#: submissions).  Such a record is treated as a manifest listing its files.
+VERSION_RECORD_TYPE = "paper.version"
 
 #: How many manifests one transaction indexes.  Bounds memory and the time the
 #: write lock is held while a long log is backfilled.
@@ -122,6 +127,9 @@ class ContentRefProgress(db.Base):
     #: ``seq`` of the newest ``manifest`` entry whose files are in the index;
     #: ``0`` before any is.
     last_seq = Column(Integer, nullable=False, default=0, server_default="0")
+    #: ``seq`` of the newest ``paper.version`` entry whose inline manifest has
+    #: been indexed; ``0`` before any is.
+    last_version_seq = Column(Integer, nullable=False, default=0, server_default="0")
 
 
 # --------------------------------------------------------------------------- #
@@ -165,9 +173,32 @@ def ensure_tables() -> None:
                 # pytest-xdist worker) may have created the table in between.
                 if not inspect(db.engine).has_table(table.name):
                     raise
+        _ensure_version_progress_column()
         _seed_progress()
         _index_versions_by_manifest()
         _table_engine = db.engine
+
+
+def _ensure_version_progress_column() -> None:
+    """Add ``last_version_seq`` to an older ``content_ref_progress`` table."""
+    if not inspect(db.engine).has_table(ContentRefProgress.__tablename__):
+        return
+    columns = {column["name"] for column in inspect(db.engine).get_columns(ContentRefProgress.__tablename__)}
+    if "last_version_seq" in columns:
+        return
+    try:
+        with db.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE content_ref_progress "
+                    "ADD COLUMN last_version_seq INTEGER NOT NULL DEFAULT 0"
+                )
+            )
+    except (OperationalError, ProgrammingError):
+        if "last_version_seq" not in {
+            column["name"] for column in inspect(db.engine).get_columns(ContentRefProgress.__tablename__)
+        }:
+            raise
 
 
 def _seed_progress() -> None:
@@ -208,18 +239,40 @@ def _index_versions_by_manifest() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def file_cids(body: Any) -> list[str]:
-    """The distinct file cids a ``manifest`` record's ``body`` lists, in order.
+def _inline_manifest_body(body: Any) -> Any:
+    """Unwrap an inline manifest carried by a ``paper.version`` body, if any."""
+    if not isinstance(body, Mapping):
+        return body
+    manifest = body.get("manifest")
+    if manifest is None:
+        manifest = body.get("manifest_cid", body.get("manifestCid"))
+    if isinstance(manifest, Mapping) or (
+        isinstance(manifest, Sequence)
+        and not isinstance(manifest, (str, bytes, bytearray))
+    ):
+        return manifest
+    return body
 
+
+def file_cids(body: Any) -> list[str]:
+    """The distinct file cids a ``manifest`` (or inline manifest) body lists.
+
+    A body that carries its manifest inline (a ``paper.version`` record whose
+    ``manifest`` is an object or file list rather than a record cid) is
+    unwrapped first, so inline and separate manifests are treated the same.
     Anything that is not a well-formed entry -- a body that is not an object,
     ``files`` that is not a list, an entry that is not an object or whose
     ``cid`` is not a non-empty string -- names no file, which is what the scan
     this index replaces made of it.  A file listed twice (two paths, one
     content) is one reference.
     """
-    if not isinstance(body, Mapping):
+    body = _inline_manifest_body(body)
+    if isinstance(body, Mapping):
+        files = body.get("files")
+    elif isinstance(body, Sequence) and not isinstance(body, (str, bytes, bytearray)):
+        files = body
+    else:
         return []
-    files = body.get("files")
     if not isinstance(files, list):
         return []
     cids = (item.get("cid") for item in files if isinstance(item, Mapping))
@@ -263,7 +316,7 @@ def sync() -> int:
                 .limit(1)
             ).scalar_one_or_none()
             if newest is None or newest <= mark:
-                return indexed
+                break
 
             page = session.execute(
                 select(EventLog.seq, EventLog.record_cid, EventLog.body)
@@ -272,7 +325,7 @@ def sync() -> int:
                 .limit(PAGE_SIZE)
             ).all()
             if not page:
-                return indexed
+                break
 
             # Move the mark first, and only from the value this page was read
             # for: if another caller moved it meanwhile it has indexed (or is
@@ -302,6 +355,70 @@ def sync() -> int:
                 session.execute(_insert_ignoring_duplicates(session), references)
             session.commit()
             indexed += len(page)
+
+    indexed += _sync_inline_versions()
+    return indexed
+
+
+def _sync_inline_versions() -> int:
+    """Index inline manifests carried by ``paper.version`` records."""
+    ensure_tables()
+    from app.modules.ledger.models import EventLog
+
+    indexed = 0
+    while True:
+        with db.SessionLocal() as session:
+            mark = session.execute(
+                select(ContentRefProgress.last_version_seq).where(
+                    ContentRefProgress.id == _PROGRESS_ID
+                )
+            ).scalar_one_or_none()
+            if mark is None:
+                _seed_progress()
+                continue
+
+            newest = session.execute(
+                select(EventLog.seq)
+                .where(EventLog.record_type == VERSION_RECORD_TYPE)
+                .order_by(EventLog.seq.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if newest is None or newest <= mark:
+                return indexed
+
+            page = session.execute(
+                select(EventLog.seq, EventLog.record_cid, EventLog.body)
+                .where(EventLog.record_type == VERSION_RECORD_TYPE, EventLog.seq > mark)
+                .order_by(EventLog.seq)
+                .limit(PAGE_SIZE)
+            ).all()
+            if not page:
+                return indexed
+
+            claimed = cast(
+                "CursorResult[Any]",
+                session.execute(
+                    update(ContentRefProgress)
+                    .where(
+                        ContentRefProgress.id == _PROGRESS_ID,
+                        ContentRefProgress.last_version_seq == mark,
+                    )
+                    .values(last_version_seq=page[-1].seq)
+                ),
+            )
+            if claimed.rowcount != 1:
+                session.rollback()
+                continue
+
+            references = [
+                {"content_cid": content_cid, "manifest_cid": row.record_cid}
+                for row in page
+                for content_cid in file_cids(row.body)
+            ]
+            if references:
+                session.execute(_insert_ignoring_duplicates(session), references)
+            session.commit()
+            indexed += sum(1 for row in page if file_cids(row.body))
 
 
 def _insert_ignoring_duplicates(session: Any) -> Any:
@@ -340,6 +457,7 @@ def install() -> None:
     from app.modules import ledger
 
     ledger.subscribe(MANIFEST_RECORD_TYPE, on_manifest_record)
+    ledger.subscribe(VERSION_RECORD_TYPE, on_manifest_record)
 
 
 def uninstall() -> None:
@@ -347,3 +465,7 @@ def uninstall() -> None:
     from app.modules import ledger
 
     ledger.unsubscribe(MANIFEST_RECORD_TYPE, on_manifest_record)
+    try:
+        ledger.unsubscribe(VERSION_RECORD_TYPE, on_manifest_record)
+    except Exception:  # pragma: no cover - defensive
+        pass
