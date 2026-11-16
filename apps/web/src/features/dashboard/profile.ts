@@ -30,6 +30,23 @@ export function profilePath(did: string): string {
   return `${PROFILE_PATH}/${encodeURIComponent(did)}`;
 }
 
+/**
+ * Decode the `/u/{did}` route segment once.
+ *
+ * A profile link built with {@link profilePath} carries a `did:key:…` with its
+ * colons percent-encoded (`/u/did%3Akey%3A…`), and Next hands the route the
+ * raw segment. Decoding it here — once, before the loader encodes it again for
+ * the API — is what makes the request name the DID the link pointed at.
+ * Malformed escaping is left untouched, as the other route parsers do.
+ */
+export function decodeProfileDid(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /** Endpoint path relative to `/v1`; the API client adds the prefix. */
 export const PROFILE_ENDPOINT = "/profiles";
 
