@@ -1,4 +1,4 @@
-"""Follows plugin: follow categories and the Following feed (feature 179).
+"""Follows plugin: follow categories, the Following feed and saved searches.
 
 The module loader imports every package under ``app.modules`` and mounts the
 ``router`` it finds under ``/v1``.  This package serves:
@@ -7,6 +7,8 @@ The module loader imports every package under ``app.modules`` and mounts the
   (``204``), idempotently, in the ``follows`` table;
 * ``DELETE /v1/me/follows/{category}`` -- remove that follow (``204``), for the
   follow toggle;
+* ``POST /v1/me/saved-searches`` -- save a search to re-run later (``201``),
+  one row per save, in the ``saved_searches`` table;
 * ``GET /v1/papers?tab=following`` -- the listed papers filed under any
   category the caller follows, in the catalog's usual shape, sorts and cursor.
 
@@ -25,32 +27,41 @@ from typing import Any, Optional
 
 from fastapi import FastAPI
 
-from .models import Follow, ensure_table, ensure_tables
+from .models import Follow, SavedSearch, ensure_table, ensure_tables
 from .router import PAPERS_PATH, router
 from .service import (
     MAX_CATEGORY_LENGTH,
+    MAX_QUERY_CHARS,
     InvalidCategory,
+    InvalidSearchQuery,
     follow_category,
     followed_categories,
     is_following,
     normalise_category,
+    normalise_query,
+    save_search,
     unfollow_category,
 )
 
 __all__ = [
     "Follow",
     "InvalidCategory",
+    "InvalidSearchQuery",
     "MAX_CATEGORY_LENGTH",
+    "MAX_QUERY_CHARS",
     "PAPERS_PATH",
+    "SavedSearch",
     "ensure_table",
     "ensure_tables",
     "follow_category",
     "followed_categories",
     "is_following",
     "normalise_category",
+    "normalise_query",
     "on_startup",
     "prioritise_papers_route",
     "router",
+    "save_search",
     "unfollow_category",
 ]
 

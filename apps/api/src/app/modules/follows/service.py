@@ -1,4 +1,4 @@
-"""Store and read the categories one account follows (plugin: follows).
+"""Store and read the categories one account follows and the searches it saved.
 
 Feature 179: ``PUT /v1/me/follows/{category}`` saves ``(caller did, category)``
 to the ``follows`` table, and ``GET /v1/papers?tab=following`` lists the listed
@@ -7,13 +7,24 @@ and :func:`followed_categories` are the two operations behind those routes;
 :func:`unfollow_category` backs the ``DELETE`` counterpart a follow toggle
 needs.
 
+Feature 180: ``POST /v1/me/saved-searches`` saves a search to re-run later.
+:func:`save_search` writes one ``saved_searches`` row -- a fresh id per save,
+the caller's did, and the query's canonical form from
+:func:`normalise_query`.  The canonical form carries exactly the search
+endpoint's (feature 86) filters -- ``q``, ``category``, ``status``,
+``has_code`` and the ``from``/``to`` date range -- so whatever re-runs a saved
+search (the reader's client, the daily digest of feature 181) can feed the
+stored object straight back to ``GET /v1/search``.
+
 Following is idempotent: the table's ``(did, category)`` primary key makes a
 repeat ``PUT`` -- including one that races another -- the same row, not a
-conflict.
+conflict.  Saving a search is additive: each ``POST`` is its own row.
 """
 
 from __future__ import annotations
 
+import uuid
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import delete, select
@@ -21,20 +32,34 @@ from sqlalchemy.exc import IntegrityError
 
 from app import db
 
-from .models import Follow, ensure_tables
+from .models import Follow, SavedSearch, ensure_tables
 
 __all__ = [
     "InvalidCategory",
+    "InvalidSearchQuery",
     "MAX_CATEGORY_LENGTH",
+    "MAX_QUERY_CHARS",
     "follow_category",
     "followed_categories",
     "is_following",
     "normalise_category",
+    "normalise_query",
+    "save_search",
     "unfollow_category",
 ]
 
 #: The longest category this plugin stores, matching the catalog's filter.
 MAX_CATEGORY_LENGTH = 64
+
+#: The longest a saved ``q`` may be, matching the search endpoint (feature 86).
+MAX_QUERY_CHARS = 2000
+
+#: The filters a saved search may carry: exactly the search endpoint's
+#: (feature 86) narrowing parameters, minus its ``limit`` pagination.
+_QUERY_FILTERS = frozenset({"q", "category", "status", "has_code", "from", "to"})
+
+#: Spellings the search endpoint also answers, folded onto one canonical key.
+_QUERY_ALIASES = {"date_from": "from", "date_to": "to"}
 
 
 class InvalidCategory(ValueError):
@@ -113,3 +138,93 @@ def followed_categories(did: str) -> list[str]:
             .order_by(Follow.category)
         )
         return [row[0] for row in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Saved searches (feature 180)
+# --------------------------------------------------------------------------- #
+
+
+class InvalidSearchQuery(ValueError):
+    """The query is not a search this node could re-run."""
+
+
+def _normalise_string_list(field: str, value: object) -> list[str]:
+    """Return ``value`` as the list of non-blank strings ``field`` names."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise InvalidSearchQuery(f"{field} must be a string or a list of strings.")
+    # Mirror the search endpoint: blank entries narrow nothing and are dropped.
+    return [item.strip() for item in value if item.strip()]
+
+
+def normalise_query(query: object) -> dict:
+    """Return the canonical form of a saved search's ``query`` object.
+
+    A query is the search endpoint's (feature 86) filters as one JSON object.
+    Canonical form: only the filter keys ``q``, ``category``, ``status``,
+    ``has_code``, ``from`` and ``to`` (``date_from``/``date_to`` fold onto
+    ``from``/``to``); ``q`` stripped; ``category``/``status`` always lists of
+    stripped, non-blank strings; dates as ``YYYY-MM-DD``; a filter set to
+    ``null`` absent.  Raises :class:`InvalidSearchQuery` for anything else,
+    including a query that carries no filter at all -- a saved search must
+    still narrow the catalog when it is re-run.
+    """
+    if not isinstance(query, dict):
+        raise InvalidSearchQuery("query must be a JSON object of search filters.")
+    canonical: dict = {}
+    for key, value in query.items():
+        field = _QUERY_ALIASES.get(key, key)
+        if field not in _QUERY_FILTERS:
+            raise InvalidSearchQuery(f"{key!r} is not a search filter.")
+        if value is None:
+            continue
+        if field == "q":
+            if not isinstance(value, str):
+                raise InvalidSearchQuery("q must be a string.")
+            cleaned = value.strip()
+            if not cleaned:
+                raise InvalidSearchQuery("q must not be blank.")
+            if len(cleaned) > MAX_QUERY_CHARS:
+                raise InvalidSearchQuery(
+                    f"q may be at most {MAX_QUERY_CHARS} characters long."
+                )
+            canonical["q"] = cleaned
+        elif field in ("category", "status"):
+            cleaned = _normalise_string_list(field, value)
+            if cleaned:
+                canonical[field] = cleaned
+        elif field == "has_code":
+            if not isinstance(value, bool):
+                raise InvalidSearchQuery("has_code must be true or false.")
+            canonical["has_code"] = value
+        else:  # from / to
+            if not isinstance(value, str):
+                raise InvalidSearchQuery(f"{field} must be a date, YYYY-MM-DD.")
+            try:
+                canonical[field] = date.fromisoformat(value.strip()).isoformat()
+            except ValueError:
+                raise InvalidSearchQuery(
+                    f"{field} must be a date, YYYY-MM-DD."
+                ) from None
+    if not canonical:
+        raise InvalidSearchQuery("query must carry at least one search filter.")
+    return canonical
+
+
+def save_search(did: str, query: object) -> SavedSearch:
+    """Save ``query`` as one of ``did``'s searches; return the stored row.
+
+    Every save is its own row with a fresh id: the reader who saves the same
+    search twice keeps both copies until they delete one.
+    """
+    canonical = normalise_query(query)
+    ensure_tables()
+    search = SavedSearch(id=f"ss_{uuid.uuid4().hex}", did=did, query=canonical)
+    with db.SessionLocal() as session:
+        session.add(search)
+        session.commit()
+        session.refresh(search)
+        session.expunge(search)
+    return search

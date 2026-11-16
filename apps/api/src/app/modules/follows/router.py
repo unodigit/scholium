@@ -1,14 +1,24 @@
-"""HTTP routes for the follows plugin (feature 179).
+"""HTTP routes for the follows plugin (features 179 and 180).
 
 The module loader mounts ``router`` under ``/v1``, so this package serves::
 
     PUT    /v1/me/follows/{category}     -- follow a category (204)
     DELETE /v1/me/follows/{category}     -- unfollow a category (204)
     GET    /v1/papers?tab=following      -- listed papers in followed categories
+    POST   /v1/me/saved-searches         -- save a search to re-run later (201)
 
 ``PUT`` and ``DELETE`` authenticate with the caller's access token; any trust
 tier may manage its own follows.  Both are idempotent: repeating either is
 ``204``.
+
+``POST /v1/me/saved-searches`` (feature 180) saves the caller's search to the
+``saved_searches`` table.  The body carries the search as
+``{"query": {...}}`` -- the filters of ``GET /v1/search`` (feature 86), stored
+in the canonical form :func:`app.modules.follows.service.normalise_query`
+produces so the save can be re-run as entered.  Each save is its own row and
+answers ``201`` with ``{"id": ..., "did": ..., "query": {...}}``; a query that
+could never be re-run (unknown keys, a blank ``q``, no filter at all) is
+``422`` problem details.
 
 ``GET /v1/papers?tab=following`` is the follows plugin's contribution to the
 catalog listing (feature 82).  The catalog router is mounted before this one
@@ -22,10 +32,11 @@ access token because the list is the caller's own; the other tabs stay public.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     Path,
     Query,
@@ -33,6 +44,7 @@ from fastapi import (
     Response,
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 
 from app.modules.catalog import listing as catalog_listing
 from app.modules.catalog.router import (
@@ -44,10 +56,13 @@ from app.security import Principal, get_current_principal
 
 from . import service
 from .listing import list_following
+from .models import SavedSearch
 
 __all__ = [
     "PAPERS_PATH",
+    "SavedSearchOut",
     "list_papers",
+    "save_search",
     "router",
 ]
 
@@ -129,6 +144,58 @@ def delete_follow(
     except service.InvalidCategory as exc:
         raise _problem(422, str(exc)) from None
     return Response(status_code=204)
+
+
+class SavedSearchOut(BaseModel):
+    """A saved search as the client reads it back."""
+
+    #: The save's identifier (``ss_...``).
+    id: str
+    #: The reader who saved the search (the caller).
+    did: str
+    #: The search's filters in canonical form, re-runnable as entered.
+    query: dict[str, Any]
+
+
+@_me_router.post(
+    "/saved-searches",
+    status_code=201,
+    response_model=SavedSearchOut,
+    summary="Save a search",
+)
+def save_search(
+    payload: Any = Body(
+        default=None,
+        examples=[
+            {
+                "query": {
+                    "q": "pulsar timing",
+                    "category": ["cs.CR"],
+                    "status": ["reviewed"],
+                    "has_code": True,
+                    "from": "2026-03-02",
+                    "to": "2026-04-01",
+                }
+            }
+        ],
+    ),
+    principal: Principal = Depends(get_current_principal),
+) -> SavedSearchOut:
+    """Save the caller's search to the ``saved_searches`` table.
+
+    The body is ``{"query": {...}}`` with the filters of ``GET /v1/search``;
+    the response is ``201`` with the stored search, ``query`` in canonical
+    form.  A body without a ``query`` object, or a query this node could not
+    re-run, is ``422`` problem details.
+    """
+    query = payload.get("query") if isinstance(payload, dict) else None
+    if query is None:
+        raise _problem(422, "query is required.")
+    try:
+        search: SavedSearch = service.save_search(principal.did, query)
+    except service.InvalidSearchQuery as exc:
+        raise _problem(422, str(exc)) from None
+    return SavedSearchOut(id=search.id, did=search.did, query=search.query)
 
 
 router.include_router(_me_router)
