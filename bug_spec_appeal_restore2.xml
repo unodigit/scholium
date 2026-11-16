@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Second follow-up from the commit security review of the appeals restoration fix (2026-11-17). -->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/appeals/**,apps/api/src/app/modules/moderation/**">
+    <title>Appeal restoration still logs a "list" decision for a never-listed version; appellant can grind the panel draw</title>
+    <symptoms>
+      appeals/votes.py: when the prior state is moderation, the restoration appends a moderation.decision with action "list" to the public log, then transitions the version back to moderation and wipes listed_at / latest_version_cid after the fact. The log permanently records an approval no moderator made, and any consumer replaying the log (rebuild, sync peers, status rules) lists the unmoderated version
+      appeals/service.py: panel_seed = sha256(decision_cid, appeal_cid, head_hash at the appeal's append). The appellant chooses the appeal body (so its cid) and can predict the current head, so they can grind the appeal until the draw picks the panel they want
+    </symptoms>
+    <reproduction_steps>
+      Version in moderation -> reject -> appeal -> overturn: the ledger contains a node-signed moderation.decision action "list" for that version; `scholium rebuild` from the archive lists it
+      Vary a no-op field of the appeal body offline and compute panel_seed for each candidate: the appellant can pick among many panels before submitting
+    </reproduction_steps>
+    <expected>Restoration appends a dedicated non-state-setting record action ("release") naming the prior state, and the moderation/status subscriber maps "release" to exactly that prior state (moderation stays moderation, listed stays listed); no state-setting "list" record is ever written for a restoration and the after-the-fact field wipe is removed; rebuild from the log yields the same state as the live node. The panel seed is HMAC-SHA256 keyed by a node-held secret derived from the node signing key over the decision cid only, so neither the appellant nor the deciding moderator can grind it; the seed is stored on the Appeal row; tests assert the draw does not depend on the appeal cid or body</expected>
+    <actual>Restoration logs a fake approval; the panel draw is grindable by the appellant</actual>
+    <constraints>
+      <constraint>Keep panel size, majority rule, notifications and the fail-closed / newest-decision guards from the previous fix</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
