@@ -90,6 +90,8 @@ export interface ReviewCommitResult {
   readonly record: SignedRecord;
   /** The body that was signed. */
   readonly body: ReviewCommitBody;
+  /** The per-paper review key used to sign, when the flow returns it. */
+  readonly key?: ReviewKeyMaterial;
 }
 
 /** What the form hands to {@link commitReview}. */
@@ -390,7 +392,7 @@ export async function commitReview(
     readText(accepted.revealAt) ??
     revealDateFor(record.created);
 
-  return { reviewCid, revealAt, revealBody, record, body };
+  return { reviewCid, revealAt, revealBody, record, body, key };
 }
 
 /** What the form shows when a commit fails: a sentence and an optional sign-in. */

@@ -97,11 +97,13 @@ export interface ReviewsTabProps {
   initial?: ReviewsData;
   /** Why the server's read failed; the tab offers a retry. */
   initialError?: string;
+  /** The paper's newest listed version, for the Update action. */
+  latestVersion?: number | null;
   /** Replace the loader, for tests or another source. Keep it stable. */
   load?: LoadReviews;
 }
 
-export function ReviewsTab({ paperId, initial, initialError, load }: ReviewsTabProps) {
+export function ReviewsTab({ paperId, initial, initialError, latestVersion, load }: ReviewsTabProps) {
   const [view, setView] = useState<View>(() => initialView(initial, initialError));
   const [attempt, setAttempt] = useState(0);
 
@@ -170,13 +172,27 @@ export function ReviewsTab({ paperId, initial, initialError, load }: ReviewsTabP
         </div>
       ) : null}
 
-      {view.kind === "ready" ? <ReviewsView data={view.data} paperId={paperId} /> : null}
+      {view.kind === "ready" ? (
+        <ReviewsView
+          data={view.data}
+          paperId={paperId}
+          latestVersion={latestVersion ?? view.data.version}
+        />
+      ) : null}
     </section>
   );
 }
 
 /** The loaded panel: the summary bar, the gate note, and the review cards. */
-function ReviewsView({ data, paperId }: { data: ReviewsData; paperId: string }) {
+function ReviewsView({
+  data,
+  paperId,
+  latestVersion,
+}: {
+  data: ReviewsData;
+  paperId: string;
+  latestVersion?: number | null;
+}) {
   const reviews = data.reviews;
   const medians = dimensionMedians(reviews);
 
@@ -216,7 +232,7 @@ function ReviewsView({ data, paperId }: { data: ReviewsData; paperId: string }) 
               review={review}
               gateOpen={data.gateOpen}
               paperId={paperId}
-              latestVersion={data.version}
+              latestVersion={latestVersion ?? data.version}
             />
           </li>
         ))}

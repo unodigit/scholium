@@ -98,6 +98,16 @@ import {
   type SealedReview,
 } from "./sealed-review";
 import {
+  DOWNLOAD_REVIEW_KEY_LABEL,
+  IMPORT_REVIEW_KEY_LABEL,
+  REVIEW_SECRET_LOCAL_NOTE,
+  buildReviewKeyFile,
+  forgetReviewKey,
+  loadReviewKey,
+  parseReviewKeyFile,
+  saveReviewKey,
+} from "./review-key";
+import {
   CONFIDENCE_OPTIONS,
   RECOMMENDATION_OPTIONS,
   RUBRIC_DIMENSIONS,
@@ -229,6 +239,21 @@ function ReviewFormBody({
   const [updated, setUpdated] = useState(false);
   const [error, setError] = useState<CommitFailure | null>(null);
 
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const importReviewKeyFile = async (file: File): Promise<void> => {
+    try {
+      const text = await file.text();
+      const parsed = parseReviewKeyFile(JSON.parse(text));
+      if (parsed === null) return;
+      saveSealedReview(parsed.sealed);
+      saveReviewKey(parsed.sealed.paperId, parsed.key);
+      setSealed(parsed.sealed);
+      setPhase("sealed");
+    } catch {
+      // Ignore malformed files.
+    }
+  };
+
   // Cite in review: the box a quote goes into, and the last quote placed.
   const citeTarget = useRef<DimensionId>(RUBRIC_DIMENSIONS[0].id);
   const boxes = useRef<Partial<Record<DimensionId, HTMLTextAreaElement | null>>>({});
@@ -351,6 +376,10 @@ function ReviewFormBody({
         reveal={revealOverride}
         loadGate={loadGate}
         signInHref={signInHref}
+        onImported={(imported) => {
+          setSealed(imported);
+          setPhase("sealed");
+        }}
       />
     );
   }
@@ -387,6 +416,7 @@ function ReviewFormBody({
       // Nothing is kept for a form used without a paper id (there is no page
       // to return to); the sealed card still offers the reveal.
       if (paperId.trim() !== "") saveSealedReview(stored);
+      if (result.key !== undefined) saveReviewKey(paperId, result.key);
       setSealed(stored);
       setPhase("sealed");
     } catch (thrown) {
@@ -430,9 +460,34 @@ function ReviewFormBody({
     }
   };
 
+  const importBlock = (
+    <div className="rf-review-key">
+      <button
+        type="button"
+        className="rf-button"
+        onClick={() => importInputRef.current?.click()}
+      >
+        {IMPORT_REVIEW_KEY_LABEL}
+      </button>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file !== undefined) void importReviewKeyFile(file);
+          event.target.value = "";
+        }}
+      />
+    </div>
+  );
+
   return (
-    <form
-      className="rf-form"
+    <> 
+      {importBlock}
+      <form
+        className="rf-form"
       aria-labelledby={`${uid}-title`}
       noValidate
       onSubmit={(event) => {
@@ -630,6 +685,7 @@ function ReviewFormBody({
         </button>
       </div>
     </form>
+    </>
   );
 }
 
@@ -650,6 +706,7 @@ export function SealedNotice({
   reveal = revealReview,
   loadGate = loadRevealGate,
   signInHref = "/signin",
+  onImported,
 }: {
   sealed: SealedReview;
   signed?: boolean;
@@ -659,9 +716,43 @@ export function SealedNotice({
   loadGate?: LoadRevealGate;
   /** Where "Sign in" goes when a session has ended. */
   signInHref?: string;
+  /** Called when a review key file is imported. */
+  onImported?: (sealed: SealedReview) => void;
 }) {
   const revealDate = formatRevealDate(sealed.revealAt);
   const named = signed || sealed.revealBody.signed === true;
+  const hasSecret = loadReviewKey(sealed.paperId) !== null;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const downloadKey = (): void => {
+    const key = loadReviewKey(sealed.paperId);
+    const payload = buildReviewKeyFile(sealed, key);
+    if (typeof document === "undefined") return;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `scholium-review-key-${sealed.paperId.trim() || "review"}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const importKey = async (file: File): Promise<void> => {
+    try {
+      const text = await file.text();
+      const parsed = parseReviewKeyFile(JSON.parse(text));
+      if (parsed === null) return;
+      saveSealedReview(parsed.sealed);
+      saveReviewKey(parsed.sealed.paperId, parsed.key);
+      if (onImported !== undefined) onImported(parsed.sealed);
+    } catch {
+      // Ignore malformed files; the page keeps its current state.
+    }
+  };
 
   const [phase, setPhase] = useState<"sealed" | "checking" | "revealing" | "revealed">(
     "sealed",
@@ -763,6 +854,40 @@ export function SealedNotice({
               ? "Revealing…"
               : REVEAL_LABEL}
         </button>
+      </div>
+
+      <p className="rf-sealed-text">{REVIEW_SECRET_LOCAL_NOTE}</p>
+
+      <div className="rf-review-key">
+        <button type="button" className="rf-button" onClick={downloadKey}>
+          {DOWNLOAD_REVIEW_KEY_LABEL}
+        </button>
+        {!hasSecret ? (
+          <>
+            <p className="rf-sealed-text">
+              This sealed review exists, but no local secret is available on
+              this device.
+            </p>
+            <button
+              type="button"
+              className="rf-button"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {IMPORT_REVIEW_KEY_LABEL}
+            </button>
+          </>
+        ) : null}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json"
+          style={{ display: "none" }}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file !== undefined) void importKey(file);
+            event.target.value = "";
+          }}
+        />
       </div>
 
       {note !== null ? <p className="rf-sealed-text">{note}</p> : null}

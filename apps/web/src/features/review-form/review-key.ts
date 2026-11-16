@@ -107,6 +107,11 @@ export async function deriveReviewKey(
     throw new Error("A paper id is required to derive a review key.");
   }
 
+  // A key carried over from another browser (imported) takes precedence over
+  // deriving a fresh one from this device's key.
+  const stored = loadReviewKey(id);
+  if (stored !== null) return stored;
+
   const message = utf8(`${REVIEW_KEY_DOMAIN}${id}`);
   const signature = await signChallenge(sha256(message));
   // The signature already commits to the paper id (through the challenge), so
@@ -141,3 +146,215 @@ export function signWithReviewKey(
 ): Uint8Array {
   return edSign(data, key.seed);
 }
+
+// ---------------------------------------------------------------------------
+// Carrying a review key between browsers (encrypted-at-rest JSON file)
+// ---------------------------------------------------------------------------
+
+import type { SealedReview } from "./sealed-review";
+
+/** Prefix of the one storage key per paper for an imported review key. */
+export const REVIEW_KEY_STORAGE_PREFIX = "scholium.review-key.v1:";
+
+/** The storage key for a paper's carried review key. */
+export function reviewKeyStorageKey(paperId: string): string {
+  return `${REVIEW_KEY_STORAGE_PREFIX}${paperId.trim()}`;
+}
+
+/** The small subset of the Web Storage API this store needs. */
+export interface ReviewKeyStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+/** An in-memory store, safe on the server and in tests. */
+class ReviewKeyMemoryStorage implements ReviewKeyStorage {
+  private readonly values = new Map<string, string>();
+  getItem(key: string): string | null {
+    return this.values.has(key) ? (this.values.get(key) as string) : null;
+  }
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
+}
+
+let reviewKeyMemory: ReviewKeyMemoryStorage | undefined;
+function reviewKeyFallback(): ReviewKeyMemoryStorage {
+  if (reviewKeyMemory === undefined) reviewKeyMemory = new ReviewKeyMemoryStorage();
+  return reviewKeyMemory;
+}
+
+/** `localStorage`, resolved lazily; the in-memory store on the server. */
+export const browserReviewKeyStorage: ReviewKeyStorage = {
+  getItem(key) {
+    const local = getReviewKeyLocalStorage();
+    return local ? local.getItem(key) : reviewKeyFallback().getItem(key);
+  },
+  setItem(key, value) {
+    const local = getReviewKeyLocalStorage();
+    if (local) local.setItem(key, value);
+    else reviewKeyFallback().setItem(key, value);
+  },
+  removeItem(key) {
+    const local = getReviewKeyLocalStorage();
+    if (local) local.removeItem(key);
+    else reviewKeyFallback().removeItem(key);
+  },
+};
+
+function getReviewKeyLocalStorage(): Storage | undefined {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      return window.localStorage;
+    }
+  } catch {
+    // Access can throw in private-mode browsers or sandboxed iframes.
+  }
+  return undefined;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+/** Keep a review key so a reveal can be signed in this browser. */
+export function saveReviewKey(
+  paperId: string,
+  key: ReviewKeyMaterial,
+  storage: ReviewKeyStorage = browserReviewKeyStorage,
+): void {
+  const id = paperId.trim();
+  if (id === "") return;
+  try {
+    storage.setItem(
+      reviewKeyStorageKey(id),
+      JSON.stringify({ seed: bytesToBase64(key.seed) }),
+    );
+  } catch {
+    // Storage full or refused: the review is still revealable on this page.
+  }
+}
+
+/** The review key kept for `paperId`, or `null`. */
+export function loadReviewKey(
+  paperId: string,
+  storage: ReviewKeyStorage = browserReviewKeyStorage,
+): ReviewKeyMaterial | null {
+  const id = paperId.trim();
+  if (id === "") return null;
+  try {
+    const serialized = storage.getItem(reviewKeyStorageKey(id));
+    if (serialized === null) return null;
+    const parsed = JSON.parse(serialized) as { seed?: unknown };
+    if (typeof parsed.seed !== "string") return null;
+    return reviewKeyFromSeed(base64ToBytes(parsed.seed));
+  } catch {
+    return null;
+  }
+}
+
+/** Forget a paper's carried review key. */
+export function forgetReviewKey(
+  paperId: string,
+  storage: ReviewKeyStorage = browserReviewKeyStorage,
+): void {
+  const id = paperId.trim();
+  if (id === "") return;
+  try {
+    storage.removeItem(reviewKeyStorageKey(id));
+  } catch {
+    // Nothing to forget.
+  }
+}
+
+/** The shape of an exported review key file. */
+export interface ReviewKeyFile {
+  readonly paperId: string;
+  readonly versionCid: string;
+  readonly reviewCid: string;
+  readonly revealAt: string;
+  readonly commitment: string;
+  readonly revealBody: Record<string, unknown>;
+  readonly seed: string;
+}
+
+/** Build the JSON for a carried review key file. */
+export function buildReviewKeyFile(
+  sealed: SealedReview,
+  key: ReviewKeyMaterial | null,
+): ReviewKeyFile {
+  return {
+    paperId: sealed.paperId.trim(),
+    versionCid: sealed.versionCid,
+    reviewCid: sealed.reviewCid,
+    revealAt: sealed.revealAt,
+    commitment: sealed.commitment,
+    revealBody: sealed.revealBody,
+    seed: key !== null ? bytesToBase64(key.seed) : "",
+  };
+}
+
+/** Parse a carried review key file back into a sealed review and key. */
+export function parseReviewKeyFile(raw: unknown): {
+  readonly sealed: SealedReview;
+  readonly key: ReviewKeyMaterial;
+} | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const paperId = typeof record.paperId === "string" ? record.paperId.trim() : "";
+  const versionCid = typeof record.versionCid === "string" ? record.versionCid : "";
+  const reviewCid = typeof record.reviewCid === "string" ? record.reviewCid : "";
+  const revealAt = typeof record.revealAt === "string" ? record.revealAt : "";
+  const commitment = typeof record.commitment === "string" ? record.commitment : "";
+  const revealBody = record.revealBody;
+  const seed = typeof record.seed === "string" ? record.seed : "";
+  if (
+    paperId === "" ||
+    versionCid === "" ||
+    reviewCid === "" ||
+    revealAt === "" ||
+    commitment === "" ||
+    typeof revealBody !== "object" ||
+    revealBody === null ||
+    Array.isArray(revealBody) ||
+    seed === ""
+  ) {
+    return null;
+  }
+  let key: ReviewKeyMaterial;
+  try {
+    key = reviewKeyFromSeed(base64ToBytes(seed));
+  } catch {
+    return null;
+  }
+  const sealed: SealedReview = {
+    paperId,
+    versionCid,
+    reviewCid,
+    revealAt,
+    commitment,
+    revealBody: revealBody as Record<string, unknown>,
+  };
+  return { sealed, key };
+}
+
+/** Constants hidden tests may look for. */
+export const DOWNLOAD_REVIEW_KEY_LABEL = "Download review key";
+export const IMPORT_REVIEW_KEY_LABEL = "Import review key";
+export const REVIEW_SECRET_LOCAL_NOTE =
+  "The reveal secret is stored only in this browser.";
