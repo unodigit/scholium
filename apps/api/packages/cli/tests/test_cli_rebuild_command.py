@@ -392,6 +392,7 @@ def test_a_log_entry_with_an_unreadable_field_fails(car_file, db_path, capsys):
     assert "not well formed" in out
 
 
+@pytest.mark.slow
 def test_no_single_byte_flip_in_the_archive_rebuilds(tmp_path):
     """Altering any one byte after the header never yields a rebuild.
 

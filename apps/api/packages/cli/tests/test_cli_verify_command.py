@@ -269,6 +269,7 @@ def test_an_archive_without_any_paper_fails(car_file, capsys):
     assert "no paper.genesis or paper.version" in out
 
 
+@pytest.mark.slow
 def test_no_single_byte_flip_in_the_archive_goes_unnoticed():
     """Altering any one byte after the header never yields exit 0.
 

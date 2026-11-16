@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "scripts": {
     "test": "cd apps/api && uv run --all-packages pytest && cd ../.. && npm run test --workspace apps/web",
-    "test:e2e": "npm run test:e2e --workspace apps/web"
+    "test:e2e": "npm run test:e2e --workspace apps/web",
+    "test:slow": "cd apps/api && uv run --all-packages pytest -m slow"
   },
   "workspaces": [
     "apps/web"

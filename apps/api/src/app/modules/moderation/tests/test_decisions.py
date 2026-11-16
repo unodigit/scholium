@@ -611,9 +611,16 @@ def test_the_package_registers_the_record_type_and_subscribes_to_the_ledger():
     assert registration.handler is handle_moderation_decision
     assert int(registration.min_tier) == 4
 
+    # Other plugins (e.g. status) may also subscribe to decisions; what matters
+    # is that moderation's own subscriber is installed exactly once.
+    from app.modules.ledger import service as ledger_service
+    from app.modules.moderation.decisions import persist_entry
+
     moderation._install_ledger_subscriber()
+    before = ledger.subscriber_count(DECISION_TYPE)
     moderation._install_ledger_subscriber()  # installing twice is harmless
-    assert ledger.subscriber_count(DECISION_TYPE) == 1
+    assert ledger.subscriber_count(DECISION_TYPE) == before
+    assert ledger_service._subscribers[DECISION_TYPE].count(persist_entry) == 1
 
 
 def test_post_records_still_applies_the_decision_checks(client, moderator):

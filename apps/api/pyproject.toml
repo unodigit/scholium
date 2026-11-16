@@ -24,7 +24,10 @@ dependencies = [
 members = ["packages/*"]
 
 [tool.pytest.ini_options]
-addopts = "-n 2"
+# 4 workers keeps the default suite well under the agents' 2-minute command
+# limit; exhaustive property sweeps are marked slow and run via `npm run test:slow`.
+addopts = "-n 4 -m 'not slow'"
+markers = ["slow: exhaustive sweeps excluded from the default run (npm run test:slow)"]
 testpaths = ["src", "packages", "tests"]
 pythonpath = ["src", "packages", "tests"]
 

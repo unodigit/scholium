@@ -176,6 +176,8 @@ agent:
   # worker/bootstrap overhead. Measured motivation: tasks dominated by
   # dozens of repeated in-task full-suite passes at minutes each.
   # fast_test_command: "make test-fast"
+  # Targeted loop for this repo: one module or feature at a time, seconds not minutes.
+  fast_test_command: "cd apps/api && uv run --all-packages pytest -q -n 0 src/app/modules/<module> (web: npm test --workspace apps/web -- src/features/<feature>)"
   # Task-level acceptance gating: after an agent reports a task complete, run
   # the project's test command in its worktree; a non-zero exit blocks
   # completion (the task flips to `failed` and the retry loop re-runs the agent
