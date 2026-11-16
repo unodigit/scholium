@@ -58,6 +58,24 @@ def _log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def _run_init_node(args: argparse.Namespace) -> int:
+    # Like the demo code, imported only here: ``set-tier`` and the app itself
+    # never pay for (or depend on) any of it.
+    from .node_key import NodeKeyExistsError, init_node_key
+
+    try:
+        made = init_node_key(force=args.force)
+    except NodeKeyExistsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"error: could not write the node key: {exc}", file=sys.stderr)
+        return 1
+    print(f"{made.path} {'created' if made.created else 'replaced'}; the node signs as {made.did}")
+    _log("the node's own records (renditions, AI pre-reviews, imports, the sync head) are signed with it; keep it private")
+    return 0
+
+
 def _run_seed_demo(args: argparse.Namespace) -> int:
     # The demo code signs records, so it needs the record core, which a plain
     # ``uv run`` does not install.  Imported only here: ``set-tier`` and the app
@@ -111,6 +129,8 @@ def _print_seed_summary(result: SeedResult) -> None:
     cast = "a new cast" if result.keys_created else "the same cast as before"
     print(f"Keys for {cast} are in {result.keys_path}")
     print("They sign as these accounts: keep that file private, and out of version control.")
+    if result.node_key_created:
+        print(f"Created the node signing key at {result.node_key_created}; the node's own records are signed with it.")
     if result.node_log:
         total = sum(result.node_log.values())
         print(file=sys.stderr)
@@ -140,6 +160,22 @@ def build_parser() -> argparse.ArgumentParser:
     set_tier_parser.add_argument("did", type=_did, help="the account's did:key identifier")
     set_tier_parser.add_argument("tier", type=_tier, help="0-4, or reader/member/author/reviewer/moderator")
     set_tier_parser.set_defaults(handler=_run_set_tier)
+
+    init_node_parser = commands.add_parser(
+        "init-node",
+        help="create this node's Ed25519 signing key",
+        description="Create the Ed25519 key the node signs its own records with -- renditions, "
+        "AI pre-reviews, ORCID credentials, arXiv imports, the sync head -- at NODE_KEY_PATH, "
+        "readable by its owner only. The key is the node's identity, so an existing key file is "
+        "never replaced unless --force is given. Without a key the node still works, but signs "
+        "nothing of its own.",
+    )
+    init_node_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace the key that is already at NODE_KEY_PATH",
+    )
+    init_node_parser.set_defaults(handler=_run_init_node)
 
     seed_parser = commands.add_parser(
         "seed-demo",

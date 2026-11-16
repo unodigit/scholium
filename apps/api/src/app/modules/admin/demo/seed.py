@@ -113,6 +113,8 @@ class SeedResult:
     keys_created: bool
     accounts: list[SeededAccount] = field(default_factory=list)
     papers: list[SeededPaper] = field(default_factory=list)
+    #: The node signing key this run had to create (``None`` when the node had one).
+    node_key_created: Optional[Path] = None
     #: Warnings and errors the node logged while seeding (background jobs mostly),
     #: as ``headline -> how often``.  Empty with ``verbose``: they were printed as they happened.
     node_log: dict[str, int] = field(default_factory=dict)
@@ -157,16 +159,39 @@ def seed_demo(
     with _pinned_settings(log), _collected_node_log(result, verbose, log):
         from app.main import create_app  # builds an app at import; keep it inside the pinned settings
 
-        if node_signing_key() is None:
-            # The node never creates its own key (that is its identity, the operator's to make),
-            # and without one it cannot sign the records it adds to a paper's history.
-            log(
-                f"note: no node signing key at NODE_KEY_PATH ({settings.NODE_KEY_PATH}): the node cannot "
-                "sign renditions or AI pre-review records, so the papers get neither"
-            )
+        result.node_key_created = _ensure_node_key(log)
         with TestClient(create_app()) as http:
             _Seeder(http, keys, log, result).run()
     return result
+
+
+def _ensure_node_key(log: Callable[[str], None]) -> Optional[Path]:
+    """Give the node a signing key when it has none; return the path created, if any.
+
+    A demo node is disposable, so a *missing* key is made here rather than
+    worked around (without one the node cannot sign the renditions and AI
+    pre-review records it adds to a paper's history).  An existing file is the
+    operator's: never replaced, never "fixed" when it cannot be read -- only
+    noted, for the operator to resolve with ``init-node``.
+    """
+    from ..node_key import NodeKeyExistsError, init_node_key
+
+    if node_signing_key() is not None:
+        return None
+    path = Path(settings.NODE_KEY_PATH).expanduser()
+    if path.exists():
+        log(
+            f"note: no usable node signing key at NODE_KEY_PATH ({path}): the node cannot "
+            "sign renditions or AI pre-review records, so the papers get neither"
+        )
+        return None
+    try:
+        made = init_node_key(path)
+    except NodeKeyExistsError:  # appeared between the look and the write; the node can use it
+        log(f"note: a node signing key appeared at {path} while seeding; using it")
+        return path
+    log(f"created the node signing key at {made.path}; the node signs as {made.did}")
+    return made.path
 
 
 @contextlib.contextmanager
@@ -555,7 +580,17 @@ class _Seeder:
         moderator.submit(decision, f"the decision to list {paper.title!r}")
 
     def _has_ai_review(self, short_id: str) -> bool:
-        return self.http.get(f"/v1/papers/{short_id}/ai-reviews").status_code == 200
+        """A pre-review counts as done only once its signed record is in the log.
+
+        The endpoint answers from the node's own tables, which the job fills in
+        even when no signing key meant no record could be appended; the summary
+        must not claim a pre-review that was never signed.
+        """
+        report = self.http.get(f"/v1/papers/{short_id}/ai-reviews")
+        if report.status_code != 200:
+            return False
+        review_cid = (report.json() or {}).get("reviewCid")
+        return bool(review_cid) and self.http.get(f"/v1/records/{review_cid}").status_code == 200
 
     # --- reviews ---------------------------------------------------------
 

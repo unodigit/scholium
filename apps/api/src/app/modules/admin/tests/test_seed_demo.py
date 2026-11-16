@@ -35,6 +35,7 @@ from app.modules.admin.demo.keys import FORMAT_VERSION, DemoKeys, DemoKeysError
 from app.modules.admin.demo.manuscript import build_pdf
 from app.modules.admin.demo.seed import SeedError, _outcome, _Seeder, seed_demo
 from app.modules.ai_review.background import ensure_subscribed as ensure_ai_review
+from app.modules.ledger.origin import node_signing_key
 from app.modules.checks.extract import extract_paragraphs
 from app.modules.ingest import DUPLICATE_RECORD
 from app.modules.notifications import clear_outbox
@@ -228,15 +229,40 @@ def test_settings_are_pinned_for_the_run_and_restored_after_a_failure(node, monk
     assert set(json.loads(keys_file.read_text())["accounts"]) == {person.slug for person in PEOPLE}
 
 
-def test_a_missing_node_key_is_noted_up_front(node, monkeypatch):
-    monkeypatch.setattr(settings, "NODE_KEY_PATH", str(node.root / "absent.key"))
+def test_a_missing_node_key_is_made_so_the_node_can_sign(node, monkeypatch):
+    """A demo node is disposable, so the run gives one its key rather than skip signing."""
+    absent = node.root / "absent.key"
+    monkeypatch.setattr(settings, "NODE_KEY_PATH", str(absent))
     log: list[str] = []
 
     result = seed_demo(node.root / ".demo-keys.json", log=log.append)
 
-    assert any("no node signing key" in line for line in log)
+    assert any("created the node signing key" in line for line in log)
+    assert stat.S_IMODE(absent.stat().st_mode) == 0o600
+    assert node_signing_key(str(absent)) is not None
+    assert result.node_key_created is not None and result.node_key_created.samefile(absent)
     assert {p.state for p in result.papers} == {"listed", "moderation"}  # the run still completes
+    # ... and this time the node could sign what it is there to sign.
+    assert rows(node, "select count(*) from event_log where record_type = 'rendition'") == [(len(PAPERS),)]
+    assert sum(p.ai_reviewed for p in result.papers) == sum(p.state == "listed" for p in result.papers)
+
+
+def test_an_unusable_node_key_is_kept_and_the_summary_claims_nothing_unsigned(node, monkeypatch, capsys):
+    """An existing key file is the operator's: noted, never replaced -- and the summary says only what happened."""
+    garbage = node.root / "garbage.key"
+    garbage.write_text("definitely not an Ed25519 key")
+    monkeypatch.setattr(settings, "NODE_KEY_PATH", str(garbage))
+
+    assert main(["seed-demo", "--keys-file", str(node.root / ".demo-keys.json")]) == 0
+    out, err = capsys.readouterr()
+
+    assert garbage.read_text() == "definitely not an Ed25519 key"
+    assert "no usable node signing key" in err
+    # The node signed nothing of its own, so the summary does not say it did:
+    # the pre-review endpoint answers from the node's tables, which the job
+    # fills in even when no record could be signed.
     assert rows(node, "select count(*) from event_log where record_type = 'rendition'") == [(0,)]
+    assert "AI pre-review" not in out
 
 
 @pytest.fixture

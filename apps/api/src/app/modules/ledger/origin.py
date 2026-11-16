@@ -11,10 +11,12 @@ resolved, in order, from:
 4. :data:`DEFAULT_ORIGIN_NODE`.
 
 Step 3 reads the same key file feature 14 uses for the signed sync head
-(:func:`node_signing_key` returns the key itself, for signing).  Neither
-function ever creates the file: a node that has no key yet still gets a
-stable, explicit placeholder rather than an error, because appending to the
-log must not depend on key provisioning.
+(:func:`node_signing_key` returns the key itself, for signing).  The key is
+the node's identity, so nothing here creates the file: it is made by the
+operator, with ``python -m app.modules.admin init-node`` (which refuses to
+replace a key that is already there).  A node that has no key yet still gets
+a stable, explicit placeholder rather than an error, because appending to
+the log must not depend on key provisioning.
 """
 
 from __future__ import annotations
@@ -153,7 +155,8 @@ def node_signing_key(key_path: Optional[str] = None) -> Optional[SigningKey]:
     signature must be made by -- and verify against -- the key itself.
 
     Returns ``None`` when the file is missing, unreadable or does not hold a
-    recognisable Ed25519 key; the file is never created.
+    recognisable Ed25519 key.  This function does not create the file;
+    ``python -m app.modules.admin init-node`` does.
     """
     try:
         data = Path(key_path or settings.NODE_KEY_PATH).expanduser().read_bytes()
