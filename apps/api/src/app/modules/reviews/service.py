@@ -33,6 +33,7 @@ from .errors import (
 )
 from .escrow import seal_identity, uniqueness_token
 from .models import Review, ReviewEscrow, ReviewInvitation, ReviewRating, ensure_table, ensure_tables
+from .route_guard import require_dedicated_route
 
 __all__ = [
     "COMMITTED",
@@ -600,6 +601,20 @@ COMMITTED = "committed"
 REVIEW_COMMIT_MIN_TIER = 0
 
 
+def _require_commit_route() -> None:
+    """Refuse a ``review.commit`` that did not arrive on its dedicated endpoint.
+
+    The ingest registry's tier is the *author's*, and a commit is signed by a
+    pseudonymous per-paper key with no account row.  Only ``POST
+    /v1/reviews/commit`` has the access token that names the tier-3 caller,
+    checks they are not an author, enforces one review per person and paper,
+    and escrows their identity.  A commit arriving through ``POST
+    /v1/records`` would skip every one of those, so it is refused before
+    anything is appended.
+    """
+    require_dedicated_route(REVIEW_COMMIT_TYPE, "POST /v1/reviews/commit")
+
+
 @dataclass(frozen=True)
 class ReviewCommitFields:
     """The parts of a ``review.commit`` this plugin acts on, shape-checked."""
@@ -923,6 +938,7 @@ def save_review_escrow(
     review_cid: str,
     reviewer_did: str,
     paper_cid: str,
+    sealed_identity: Optional[bytes] = None,
 ) -> ReviewEscrow:
     """Save the sealed reviewer identity for a committed review; return its row.
 
@@ -931,6 +947,10 @@ def save_review_escrow(
     key before it reaches the database.  Idempotent per review cid, like
     :func:`apply_review_commit`: the endpoint and a retry of the same commit
     share one row.
+
+    ``sealed_identity`` lets the endpoint seal the identity *before* it appends
+    the commit, so a missing or malformed committee key refuses the request
+    with nothing in the log; when it is ``None`` the sealing happens here.
 
     Raises:
         ReviewAlreadyCommitted: ``409`` -- the UNIQUE uniqueness token says this
@@ -944,7 +964,7 @@ def save_review_escrow(
 
     row = ReviewEscrow(
         review_cid=review_cid,
-        sealed_identity=seal_identity(reviewer_did),
+        sealed_identity=sealed_identity if sealed_identity is not None else seal_identity(reviewer_did),
         uniqueness_token=uniqueness_token(reviewer_did, paper_cid),
     )
     with db.SessionLocal() as session:
@@ -997,13 +1017,18 @@ def handle_review_commit(record: Mapping[str, Any]) -> str:
     """Validate a ``review.commit``; return the state it will be saved with.
 
     Runs before the record is appended to the ledger, so a conflict stores
-    nothing.  Nothing is saved here either: the ``review`` row is written by
-    :func:`apply_review_commit` once the record is in the log.
+    nothing.  A commit is only accepted through ``POST /v1/reviews/commit``;
+    the generic ``POST /v1/records`` route has no caller identity, so it cannot
+    enforce the tier-3, author, uniqueness or escrow rules and the record is
+    refused there (``422``).  Nothing is saved here either: the ``review`` row
+    is written by :func:`apply_review_commit` once the record is in the log.
 
     Raises:
+        ProblemException: ``422`` -- submitted through ``POST /v1/records``.
         InvalidRecord, UnknownReviewTarget: ``422``.
         ReviewAlreadyCommitted: ``409`` -- this person reviewed this paper.
     """
+    _require_commit_route()
     fields = review_commit_fields(record)
     existing = find_review_by_nullifier(fields.nullifier)
     if existing is not None:
@@ -1262,6 +1287,7 @@ def handle_review_rating(record: Mapping[str, Any]) -> str:
     """Ingest handler for ``review.rating`` records."""
     from app.errors import ProblemException
 
+    require_dedicated_route(REVIEW_RATING_TYPE, "POST /v1/reviews/{cid}/rating")
     if not isinstance(record, Mapping):
         raise ProblemException(422, "Invalid record.")
     body = record.get("body")

@@ -114,6 +114,7 @@ from app.errors import ProblemException
 from app.modules.ingest.errors import InvalidRecord
 
 from .errors import (
+    RevealGateClosed,
     ReviewAlreadyRevealed,
     ReviewAlreadyUpdated,
     ReviewCommitmentMismatch,
@@ -124,6 +125,7 @@ from .errors import (
 )
 from .escrow import uniqueness_token
 from .models import Review, ensure_tables
+from .route_guard import in_dedicated_route, require_dedicated_route
 from .service import (
     REVIEW_COMMIT_TYPE,
     _created_at,
@@ -149,7 +151,10 @@ __all__ = [
     "handle_review_reveal",
     "normalise_recommendation",
     "persist_review_reveal",
+    "require_dedicated_route",
     "require_public_signature",
+    "require_reveal_gate_open",
+    "reveal_gate_open",
     "review_reveal_fields",
     "reviewer_owns_review",
 ]
@@ -581,6 +586,51 @@ def _sealed_commitment(review: Review) -> Optional[str]:
     return None
 
 
+def reveal_gate_open(version_cid: str) -> bool:
+    """Whether ``version_cid`` carries two independent committed reviews.
+
+    "Independent" means distinct review keys: one person commits one review per
+    paper, so two keys are two reviewers.  The report gate exists so no one can
+    read another reviewer's report before committing their own; a reveal writes
+    the report into the append-only log, so it must be refused until the gate
+    opens rather than redacted afterwards.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        keys = {
+            key
+            for (key,) in session.query(Review.review_key)
+            .filter(Review.version_cid == version_cid)
+            .distinct()
+            .all()
+        }
+    return len(keys) >= 2
+
+
+def require_reveal_gate_open(version_cid: str) -> None:
+    """Refuse (``409``) a first reveal until the version's report gate opens.
+
+    Called before anything is appended, so a refused reveal never puts a report
+    body into the public log (``GET /v1/records/{cid}`` and
+    ``GET /v1/sync/range``).  An *update* of an already-revealed review is not
+    gated: that review's report is already open, so there is no secrecy left to
+    protect.
+
+    Raises:
+        RevealGateClosed: ``409`` -- fewer than two independent commits.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        committed = (
+            session.query(Review.review_key)
+            .filter(Review.version_cid == version_cid)
+            .distinct()
+            .count()
+        )
+    if committed < 2:
+        raise RevealGateClosed(version_cid, committed)
+
+
 def _require_sealed_review(fields: ReviewRevealFields) -> Review:
     """The sealed review this reveal opens, or ``422``."""
     review = find_sealed_review(fields.review_key, fields.version_cid)
@@ -854,10 +904,14 @@ def handle_review_reveal(record: Mapping[str, Any]) -> str:
     of against a commitment.
 
     Raises:
+        ProblemException: ``422`` -- submitted through ``POST /v1/records``
+            instead of ``POST /v1/reviews/reveal``.
         InvalidRecord, UnknownReviewTarget: ``422`` -- an incomplete rubric or
             another malformed field.
         ReviewNotCommitted: ``422`` -- this key sealed no review on the version
             (or, for an update, on the paper).
+        RevealGateClosed: ``409`` -- fewer than two independent commits on the
+            version, so a first reveal would publish a report too early.
         ReviewAlreadyRevealed: ``409`` -- the sealed review was revealed already.
         ReviewCommitmentMismatch: ``422`` -- not the sealed content.
         ReviewUpdateInvalid: ``422`` -- an update that links to something it may not.
@@ -866,11 +920,26 @@ def handle_review_reveal(record: Mapping[str, Any]) -> str:
     fields = review_reveal_fields(record)
     earlier = _earlier_review(fields)
     if earlier is not None:
+        # An update is a review record too, and its rules need the endpoint's
+        # caller; it is refused on the generic route before anything else.
+        require_dedicated_route(REVIEW_FORMAL_TYPE, "POST /v1/reviews/reveal")
         _require_update(fields, earlier)
         return REVEALED
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:
         raise ReviewAlreadyRevealed(review.review_cid)
+    # The report gate is a fact about the version, not about the caller, and
+    # REV-4 applies it on both routes: a reveal reaching the generic route
+    # while the gate is shut is refused with the gate problem.  Once the gate
+    # is open, the generic route is refused as a review record that needs the
+    # dedicated endpoint.
+    if not in_dedicated_route():
+        require_reveal_gate_open(fields.version_cid)
+    require_dedicated_route(REVIEW_FORMAL_TYPE, "POST /v1/reviews/reveal")
+    # A first reveal opens a sealed report into the public log.  Refuse it
+    # until another independent review is committed, or the second reviewer
+    # could read the first report before committing their own.
+    require_reveal_gate_open(fields.version_cid)
     _check_commitment(record, fields, review)
     return REVEALED
 
@@ -913,6 +982,7 @@ def apply_review_reveal(
         # The ledger subscriber normally opened the review already; only the
         # public signature can still be added.
         return _save_public_signature(review, fields, signer_did)
+    require_reveal_gate_open(fields.version_cid)
     _check_commitment(record, fields, review)
 
     signed_by = _public_signature(review, fields, signer_did)

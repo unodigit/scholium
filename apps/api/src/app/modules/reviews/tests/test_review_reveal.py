@@ -54,6 +54,7 @@ from app.modules.reviews.errors import (
     REVIEW_COMMITMENT_MISMATCH,
     REVIEW_NOT_COMMITTED,
 )
+from app.modules.reviews.route_guard import REVIEW_RECORD_ROUTE
 from app.modules.submissions import VersionAuthor, save_paper, save_version
 from app.security import issue_access_token
 
@@ -108,6 +109,70 @@ def _sign(seed: SigningKey, record_type: str, body: dict, prev: Optional[str] = 
         },
         seed,
     )
+
+
+#: Committed reviews a test setup added purely to open the report gate, as
+#: ``(review cid, version cid)``.  Listing-sensitive suites discard them once
+#: the reveal they opened has been accepted, so their fixtures still show the
+#: single review they mean to test.
+_gate_shadows: list[tuple[str, str]] = []
+
+
+def _reviews_on(version_cid: str) -> int:
+    from app.modules.reviews.models import Review
+
+    with db.SessionLocal() as session:
+        return (
+            session.query(Review.review_key)
+            .filter(Review.version_cid == version_cid)
+            .distinct()
+            .count()
+        )
+
+
+def open_reveal_gate(paper: "Paper", version_cid: str) -> None:
+    """Commit a second, independent review so a first reveal is accepted.
+
+    Only a test setup: the gate exists so no report enters the log before two
+    reviewers have committed, and the tests that predate that rule exercised
+    one reveal at a time.
+    """
+    if _reviews_on(version_cid) >= 2:
+        return
+    shadow = Reviewer()
+    body = shadow.rubric(paper)
+    body["target"] = version_cid
+    commit = _sign(
+        shadow.review_key(paper),
+        COMMIT_TYPE,
+        {
+            "target": version_cid,
+            "commitment": commitment_digest(body),
+            "reviewKey": did_key_from_signing_key(shadow.review_key(paper)),
+            "nullifier": shadow.nullifier(paper),
+        },
+    )
+    response = client.post(COMMIT_URL, json=commit, headers=shadow.headers)
+    assert response.status_code == 201, response.text
+    _gate_shadows.append((commit["id"], version_cid))
+
+
+def discard_reveal_gate_shadows(version_cid: str) -> None:
+    """Remove the gate-opening reviews a setup added for ``version_cid``."""
+    from app.modules.reviews.models import Review, ReviewEscrow
+
+    cids = [cid for cid, version in _gate_shadows if version == version_cid]
+    if not cids:
+        return
+    with db.SessionLocal() as session:
+        session.query(ReviewEscrow).filter(ReviewEscrow.review_cid.in_(cids)).delete(
+            synchronize_session=False
+        )
+        session.query(Review).filter(Review.review_cid.in_(cids)).delete(
+            synchronize_session=False
+        )
+        session.commit()
+    _gate_shadows[:] = [(cid, version) for cid, version in _gate_shadows if version != version_cid]
 
 
 class Paper:
@@ -227,7 +292,12 @@ class Reviewer:
         }
 
     def post_commit(self, paper: Paper, body: Mapping[str, Any]):
-        """Seal ``body``; the setup fails if the node refuses the commit."""
+        """Seal ``body``; the setup fails if the node refuses the commit.
+
+        The commit is dated now, so the setup also opens the report gate the
+        way a second reviewer would: a first reveal is only accepted once two
+        independent reviews are committed on the version.
+        """
         commit = _sign(
             self.review_key(paper),
             COMMIT_TYPE,
@@ -240,6 +310,7 @@ class Reviewer:
         )
         response = client.post(COMMIT_URL, json=commit, headers=self.headers)
         assert response.status_code == 201, response.text
+        open_reveal_gate(paper, paper.version_cid)
         return commit
 
     def reveal_record(
@@ -721,7 +792,8 @@ def test_an_unknown_target_is_refused():
 # --------------------------------------------------------------------------- #
 
 
-def test_a_reveal_through_the_generic_records_route_is_held_to_the_commitment():
+def test_a_reveal_through_the_generic_records_route_is_refused():
+    """POST /v1/records has no caller identity, so review rules cannot run."""
     reviewer, paper, sealed, commit = _sealed(score=4)
     changed = reviewer.rubric(paper, score=1, report="Not what was sealed.")
 
@@ -732,21 +804,22 @@ def test_a_reveal_through_the_generic_records_route_is_held_to_the_commitment():
     )
 
     assert response.status_code == 422, response.text
-    assert _error_types(response) == ["content_mismatch"]
+    assert _problem_type(response) == REVIEW_RECORD_ROUTE
     assert _still_sealed(commit)
 
 
-def test_a_reveal_through_the_generic_records_route_fills_in_the_review():
+def test_a_reveal_is_not_applied_through_the_generic_records_route():
     reviewer, paper, body, commit = _sealed()
 
     response = client.post(
         RECORDS_URL, json=reviewer.reveal_record(paper, body), headers=reviewer.headers
     )
 
-    assert response.status_code == 201, response.text
+    assert response.status_code == 422, response.text
+    assert _problem_type(response) == REVIEW_RECORD_ROUTE
     row = get_review(commit["id"])
-    assert row.revealed_at is not None
-    assert row.scores == body["scores"]
+    assert row.revealed_at is None
+    assert row.scores is None
 
 
 def test_a_formal_review_appended_with_nothing_sealed_behind_it_is_left_alone():

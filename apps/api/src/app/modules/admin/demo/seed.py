@@ -597,17 +597,28 @@ class _Seeder:
     def _review(self, paper: DemoPaper, seeded: SeededPaper) -> None:
         if not paper.reviews:
             return
-        for step, review in enumerate(paper.reviews):
-            revealed = self._commit_and_reveal(paper, seeded, review, step)
-            if revealed:
-                seeded.reviews_revealed += 1
-            else:
+        # Seal every review first.  The report gate opens when a version has
+        # two independent commits, and a reveal before that is refused so no
+        # report enters the public log early -- so the demo's revealed review
+        # cannot be revealed until its co-review has been committed.
+        sealed = [
+            self._seal_review(paper, seeded, review, step)
+            for step, review in enumerate(paper.reviews)
+        ]
+        for sealed_review in sealed:
+            if not sealed_review["review"].reveal:
                 seeded.reviews_sealed += 1
+                continue
+            self._reveal_review(sealed_review)
+            seeded.reviews_revealed += 1
         self.log(
             f"{seeded.short_id}  reviews: {seeded.reviews_revealed} revealed, {seeded.reviews_sealed} sealed"
         )
 
-    def _commit_and_reveal(self, paper: DemoPaper, seeded: SeededPaper, review: DemoReview, step: int) -> bool:
+    def _seal_review(
+        self, paper: DemoPaper, seeded: SeededPaper, review: DemoReview, step: int
+    ) -> dict:
+        """Commit ``review`` and return everything a later reveal needs."""
         genesis_cid = seeded.paper_cid
         reviewer = self.actors[review.reviewer]
         # A review is signed by a key made for that one paper, so the record does
@@ -651,18 +662,30 @@ class _Seeder:
             f"committing {what}",
             (DUPLICATE_RECORD, REVIEW_ALREADY_COMMITTED),
         )
-        if not review.reveal:
-            return False
+        return {
+            "review": review,
+            "paper": paper,
+            "reviewer": reviewer,
+            "review_key": review_key,
+            "body": body,
+            "commitment": commitment,
+            "what": what,
+            "step": step,
+        }
+
+    def _reveal_review(self, sealed_review: dict) -> None:
+        """Reveal a review that ``_seal_review`` committed."""
         reveal = _signed(
-            review_key,
+            sealed_review["review_key"],
             "review.formal",
-            {**body, "commitment": commitment},
-            self._at(paper, _REVIEW_REVEAL + 60 * step),
+            {**sealed_review["body"], "commitment": sealed_review["commitment"]},
+            self._at(sealed_review["paper"], _REVIEW_REVEAL + 60 * sealed_review["step"]),
         )
         _outcome(
-            self.http.post("/v1/reviews/reveal", json=reveal, headers=reviewer.headers),
-            f"revealing {what}",
+            self.http.post(
+                "/v1/reviews/reveal", json=reveal, headers=sealed_review["reviewer"].headers
+            ),
+            f"revealing {sealed_review['what']}",
             (DUPLICATE_RECORD, REVIEW_ALREADY_REVEALED),
         )
-        return True
 

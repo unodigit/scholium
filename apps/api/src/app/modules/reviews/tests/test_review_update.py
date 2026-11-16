@@ -33,6 +33,7 @@ from app.modules.reviews.errors import (
     REVIEW_ALREADY_UPDATED,
     REVIEW_UPDATE_INVALID,
 )
+from app.modules.reviews.route_guard import REVIEW_RECORD_ROUTE
 from app.modules.submissions import VersionAuthor, save_version
 
 from .test_review_reveal import (
@@ -47,6 +48,8 @@ from .test_review_reveal import (
     _problem_type,
     _sealed,
     _sign,
+    discard_reveal_gate_shadows,
+    open_reveal_gate,
 )
 
 client = TestClient(app)
@@ -178,6 +181,8 @@ def revealed_review(reviewer: Reviewer, paper: Paper):
     formal = reviewer.reveal_record(paper, body)
     response = client.post(REVEAL_URL, json=formal, headers=reviewer.headers)
     assert response.status_code == 201, response.text
+    # The setup's gate-opening commit is not part of what these tests list.
+    discard_reveal_gate_shadows(paper.version_cid)
     return commit, formal
 
 
@@ -195,6 +200,8 @@ def commit_on(reviewer: Reviewer, paper: Paper, target: str, body: Mapping[str, 
     )
     response = client.post(COMMIT_URL, json=commit, headers=reviewer.headers)
     assert response.status_code == 201, response.text
+    # A test that reveals this commit needs the version's gate open.
+    open_reveal_gate(paper, target)
     return commit
 
 
@@ -262,15 +269,17 @@ def test_an_update_needs_no_commitment_and_checks_none_it_carries():
     assert post_update(reviewer, update).status_code == 201
 
 
-def test_an_update_is_also_accepted_through_the_generic_record_endpoint():
+def test_an_update_is_refused_through_the_generic_record_endpoint():
+    """An update is a ``review.formal``; review types belong on the review routes."""
     reviewer, paper, commit, first, v2 = _reviewer_and_paper_on_two_versions()
     update = update_record(reviewer, paper, v2, first["id"])
 
     response = client.post(RECORDS_URL, json=update, headers=reviewer.headers)
 
-    assert response.status_code == 201, response.text
-    [item] = listed_reviews(paper)
-    assert history_of(item) == [first["id"], update["id"]]
+    assert response.status_code == 422, response.text
+    assert _problem_type(response) == REVIEW_RECORD_ROUTE
+    [item] = listed_reviews(paper, version=1)
+    assert history_of(item) == [first["id"]]
 
 
 def test_an_update_may_update_an_update():
@@ -398,6 +407,7 @@ def test_a_reviewer_who_updated_is_listed_beside_one_who_reviewed_the_new_versio
     newcomer_commit = commit_on(newcomer, paper, v2, body)
     newcomer_formal = newcomer.reveal_record(paper, body)
     assert post_update(newcomer, newcomer_formal).status_code == 201
+    discard_reveal_gate_shadows(v2)
 
     items = {item["review_cid"]: item for item in listed_reviews(paper)}
 

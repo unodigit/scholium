@@ -39,7 +39,9 @@ from app.security import Principal, get_current_principal, require_tier, Tier
 
 from . import coi, response as responses, reveal, service
 from .errors import ReviewResponseNotAuthorized
+from .escrow import seal_identity
 from .models import Review, ensure_table, ensure_tables
+from .route_guard import dedicated_ingest
 
 __all__ = ["router"]
 
@@ -188,9 +190,16 @@ def commit_review(
     # before the append so a refused repeat writes nothing.
     service.require_unique_reviewer(principal.did, fields.paper_cid)
 
+    # Seal the caller's identity *before* the commit reaches the log.  A
+    # missing or malformed committee key must refuse the commit with nothing
+    # appended; doing it afterwards would leave an orphan record that counts
+    # toward the paper's review activity and the report gate.
+    sealed_identity = seal_identity(principal.did)
+
     # The pipeline validates the envelope and body, verifies the signature,
     # runs the handler (which refuses a second commit), and appends the record.
-    result = ingest(record)
+    with dedicated_ingest():
+        result = ingest(record)
     # The ledger subscriber normally saved the review as it was appended; this
     # is a no-op then, and the one that reports a failure when it did not.
     service.apply_review_commit(record)
@@ -201,6 +210,7 @@ def commit_review(
         review_cid=fields.review_cid,
         reviewer_did=principal.did,
         paper_cid=fields.paper_cid,
+        sealed_identity=sealed_identity,
     )
 
     return {
@@ -285,8 +295,10 @@ def reveal_review(
     reveal.require_public_signature(fields, principal.did)
 
     # The pipeline validates the envelope and body, verifies the signature,
-    # runs the handler (which matches the commitment) and appends the record.
-    result = ingest(record)
+    # runs the handler (which matches the commitment and enforces the report
+    # gate) and appends the record.
+    with dedicated_ingest():
+        result = ingest(record)
     # The ledger subscriber normally filled in the review as the record was
     # appended; this is a no-op then, and the one that reports a failure when
     # it did not.  The caller's DID is what a ``"signed": true`` review is
@@ -592,7 +604,8 @@ def rate_review(
         # Run through the ingest pipeline (validates envelope/body/cid/sig).
         from app.modules.ingest.service import ingest
 
-        result = ingest(payload)
+        with dedicated_ingest():
+            result = ingest(payload)
         # The handler normally saved the row; ensure it exists.
         return {
             "id": result.record_id,
@@ -702,7 +715,8 @@ def respond_to_review(
 
     # The pipeline validates the envelope and body, verifies the signature,
     # runs the handler (which re-checks the review and its author) and appends.
-    result = ingest(record)
+    with dedicated_ingest():
+        result = ingest(record)
     # The ledger subscriber normally saved the response as it was appended;
     # this is a no-op then, and the one that reports a failure when it did not.
     saved = responses.apply_review_response(record)

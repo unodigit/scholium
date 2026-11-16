@@ -270,6 +270,11 @@ class Reviewer:
         record = self.commit_record(paper, body)
         response = client.post(COMMIT_URL, json=record, headers=self.headers)
         assert response.status_code == 201, response.text
+        # A first reveal is only accepted once two independent reviews are
+        # committed on the version; the setup supplies the second.
+        from .test_review_reveal import open_reveal_gate
+
+        open_reveal_gate(paper, paper.version_cid)
         return record, body
 
     def post_reveal(self, paper: Paper, body: dict):

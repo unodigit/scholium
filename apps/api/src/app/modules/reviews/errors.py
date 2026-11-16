@@ -32,7 +32,9 @@ __all__ = [
     "REVIEW_RESPONSE_NOT_AUTHORIZED",
     "REVIEW_SIGNATURE_NOT_AUTHORIZED",
     "REVIEW_UPDATE_INVALID",
+    "REVEAL_GATE_CLOSED",
     "UNKNOWN_REVIEW_TARGET",
+    "RevealGateClosed",
     "ReviewAlreadyCommitted",
     "ReviewAlreadyRevealed",
     "ReviewAlreadyUpdated",
@@ -55,6 +57,7 @@ REVIEW_UPDATE_INVALID = "urn:scholium:problem:review-update-invalid"
 REVIEW_ALREADY_UPDATED = "urn:scholium:problem:review-already-updated"
 REVIEW_RESPONSE_NOT_AUTHORIZED = "urn:scholium:problem:review-response-not-authorized"
 REVIEW_SIGNATURE_NOT_AUTHORIZED = "urn:scholium:problem:review-signature-not-authorized"
+REVEAL_GATE_CLOSED = "urn:scholium:problem:reveal-gate-closed"
 
 _MAX_ECHO = 64
 
@@ -340,4 +343,38 @@ class ReviewSignatureNotAuthorized(ProblemException, PermissionError):
             message,
             type=REVIEW_SIGNATURE_NOT_AUTHORIZED,
             review=review_cid,
+        )
+
+
+class RevealGateClosed(ProblemException, ValueError):
+    """The report gate has not opened for this version yet: ``409``.
+
+    A reveal puts the review's report into the append-only event log, where
+    ``GET /v1/records/{cid}`` and ``GET /v1/sync/range`` serve it to anyone.
+    Opening a review before another independent review has been committed on
+    the same version would let the second reviewer read the first report before
+    revealing their own, so the reveal is refused until the version carries two
+    independent commits.  Nothing is appended on a refusal, and the log is
+    never redacted afterwards.
+
+    The version is named in the problem's ``version`` extension member; it is a
+    public record, so naming it discloses nothing.
+    """
+
+    def __init__(self, version_cid: object, committed: int) -> None:
+        self.version_cid = version_cid
+        self.committed = committed
+        shown = _clip(version_cid if isinstance(version_cid, str) else repr(version_cid))
+        message = (
+            "The report gate is still closed for this version: a review may be "
+            "revealed only once two independent reviews have been committed on "
+            f"it (this version has {committed})."
+        )
+        super().__init__(
+            409,
+            message,
+            type=REVEAL_GATE_CLOSED,
+            version=version_cid,
+            committed=committed,
+            required=2,
         )

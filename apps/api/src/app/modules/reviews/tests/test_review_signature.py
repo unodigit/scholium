@@ -19,6 +19,7 @@ from app.main import app
 from app.modules import reviews
 from app.modules.reviews import get_review
 from app.modules.reviews.errors import REVIEW_SIGNATURE_NOT_AUTHORIZED
+from app.modules.reviews.route_guard import REVIEW_RECORD_ROUTE
 from app.modules.reviews.tests.test_review_reveal import (
     RECORDS_URL,
     REVEAL_URL,
@@ -191,11 +192,12 @@ def test_the_signed_flag_must_be_a_boolean():
     assert _still_sealed(commit)
 
 
-def test_a_signed_review_through_the_records_route_has_no_name_to_credit():
-    """POST /v1/records carries no caller identity, so it cannot sign.
+def test_a_signed_review_through_the_records_route_is_refused():
+    """POST /v1/records carries no caller identity, so it cannot reveal at all.
 
-    The subscriber opens the review -- the record is valid -- but the public
-    signature is left to POST /v1/reviews/reveal, which knows the caller.
+    A ``review.formal`` must come through ``POST /v1/reviews/reveal``, which is
+    where the commitment is checked, the report gate is enforced and a signed
+    review's public credit is decided.
     """
     reviewer, paper = Reviewer(), Paper()
     body = _signed_body(reviewer, paper)
@@ -204,8 +206,9 @@ def test_a_signed_review_through_the_records_route_has_no_name_to_credit():
 
     response = client.post(RECORDS_URL, json=record, headers=reviewer.headers)
 
-    assert response.status_code == 201, response.text
+    assert response.status_code == 422, response.text
+    assert _problem_type(response) == REVIEW_RECORD_ROUTE
     row = get_review(commit["id"])
-    assert row.revealed_at is not None
+    assert row.revealed_at is None
     assert row.signed_by is None
     assert _profile_reviews(reviewer.did) == []

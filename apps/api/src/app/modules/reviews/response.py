@@ -53,6 +53,7 @@ from app.modules.ingest.errors import InvalidRecord
 
 from .errors import ReviewResponseNotAuthorized
 from .models import Review, ReviewResponse, ensure_tables
+from .route_guard import require_dedicated_route
 from .service import (
     _paper_authors_from_ledger,
     _paper_cid_for_version,
@@ -318,10 +319,13 @@ def handle_review_response(record: Mapping[str, Any]) -> str:
     written by :func:`apply_review_response` once the record is in the log.
 
     Raises:
+        ProblemException: ``422`` -- submitted through ``POST /v1/records``
+            instead of the review response endpoint.
         InvalidRecord: ``422`` -- a malformed response.
         ProblemException: ``422`` -- the review it answers is not on this node.
         ReviewResponseNotAuthorized: ``403`` -- the signer is not a paper author.
     """
+    require_dedicated_route(REVIEW_RESPONSE_TYPE, "POST /v1/reviews/{cid}/response")
     fields = response_fields(record)
     review = resolve_response_review(fields)
     author = record.get("author")

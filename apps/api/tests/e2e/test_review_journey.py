@@ -3,15 +3,13 @@
 The story, told only through ``/v1``:
 
 1. an author publishes and a moderator lists version 1 of a paper;
-2. a first reviewer commits a sealed review and reveals a supportive one.  The
-   reviews listing hides its report: the report gate stays shut while only one
-   review has been committed;
+2. a first reviewer commits a sealed review.  The reviews listing shows it
+   without its report: the report gate stays shut while only one review has
+   been committed, and a reveal is refused until the gate opens;
 3. a second reviewer commits -- against the same version but with a
-   ``major_concerns`` verdict -- and, with two reviews now committed, the gate
-   opens and the first reviewer's report becomes readable *before* the second
-   review is even revealed;
-4. the second reviewer reveals a concern, so the paper is *under review*: two
-   reviews exist, but they do not agree;
+   ``major_concerns`` verdict -- which opens the report gate;
+4. both reviewers reveal, so the paper is *under review*: two reviews exist,
+   but they do not agree;
 5. the author answers both reviews point by point;
 6. the author posts version 2, and a moderator lists it;
 7. the concerned reviewer revises their review against version 2 to
@@ -430,7 +428,7 @@ def test_review_journey(client, node, reviewer):
     first = Reviewer(client)
     second = Reviewer(client)
 
-    # --- 2. the first reviewer seals and reveals a supportive review --------
+    # --- 2. the first reviewer seals a supportive review --------------------
     first_body = first.review_body(
         paper_cid,
         v1,
@@ -443,20 +441,19 @@ def test_review_journey(client, node, reviewer):
     first_commit_cid = committed.json()["id"]
     assert committed.json()["target"] == v1, committed.text
 
-    revealed = first.reveal(paper_cid, first_body)
-    assert revealed.status_code == 201, revealed.text
-    first_formal_cid = revealed.json()["id"]
-    assert revealed.json()["review"] == first_commit_cid, revealed.text
-
-    # One review is committed on the version: the report gate is still shut.
+    # One review is committed on the version: the report gate is still shut,
+    # and a reveal now would put a report in the public log before anyone else
+    # has committed, so it is refused.
     listing = listed_reviews(client, short_id)
     assert listing["gate_open"] is False, listing
     assert len(listing["reviews"]) == 1, listing
     [only] = listing["reviews"]
     assert only["review_cid"] == first_commit_cid, only
-    assert only["recommendation"] == "minor_revisions", only
     assert "report" not in only, only
     assert first_body["report"] not in json.dumps(listing), listing
+    early = first.reveal(paper_cid, first_body)
+    assert early.status_code == 409, early.text
+    assert early.json()["type"] == "urn:scholium:problem:reveal-gate-closed", early.text
 
     # --- 3. the second commit opens the report gate -------------------------
     second_body = second.review_body(
@@ -470,16 +467,20 @@ def test_review_journey(client, node, reviewer):
     assert committed.status_code == 201, committed.text
     second_commit_cid = committed.json()["id"]
 
-    # The gate opens on the *commit*, before the second reviewer has revealed
-    # anything: the first report is now readable.
+    # The gate opens on the second commit.  Neither report is public yet --
+    # neither reviewer has revealed -- and no early reveal reached the log.
     listing = listed_reviews(client, short_id)
     assert listing["gate_open"] is True, listing
     reviews = by_review_cid(listing)
     assert set(reviews) == {first_commit_cid, second_commit_cid}, reviews
-    assert reviews[first_commit_cid]["report"] == first_body["report"], reviews[first_commit_cid]
+    assert "report" not in reviews[first_commit_cid], reviews[first_commit_cid]
     assert second_body["report"] not in json.dumps(listing), listing
 
-    # --- 4. the second reviewer reveals a concern ---------------------------
+    # --- 4. both reviewers reveal their reviews ----------------------------
+    revealed = first.reveal(paper_cid, first_body)
+    assert revealed.status_code == 201, revealed.text
+    assert revealed.json()["review"] == first_commit_cid, revealed.text
+
     revealed = second.reveal(paper_cid, second_body)
     assert revealed.status_code == 201, revealed.text
     second_formal_cid = revealed.json()["id"]

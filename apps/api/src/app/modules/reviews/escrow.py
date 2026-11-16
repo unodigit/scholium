@@ -10,12 +10,19 @@ XSalsa20-Poly1305) -- and never the plaintext mapping.  Only the committee,
 holding the matching private key, can open an escrow.
 
 Uniqueness is tracked separately, by an HMAC token.  ``uniqueness_token`` is
-``HMAC-SHA256(key, reviewer_did || paper_cid)`` under a key derived from the
-application secret, so the token is stable for one person and one paper while
-revealing neither: two reviews by the same person on the same paper collide on
-the ``review_escrows.uniqueness_token`` UNIQUE constraint, and no lookup table
-of DIDs is needed.  The token is scoped to the paper (not global) because a
+``HMAC-SHA256(key, reviewer_did || paper_cid)`` under
+``settings.REVIEW_UNIQUENESS_KEY`` -- its own secret, never ``JWT_SECRET`` -- so
+the token is stable for one person and one paper while revealing neither: two
+reviews by the same person on the same paper collide on the
+``review_escrows.uniqueness_token`` UNIQUE constraint, and no lookup table of
+DIDs is needed.  The token is scoped to the paper (not global) because a
 reviewer may review many papers, just not the same paper twice.
+
+Keying the token from ``JWT_SECRET`` would let anyone who holds the signing
+secret -- every node operator, and anyone who can read the JWT configuration --
+recompute the token for a guessed DID and unmask a reviewer by enumeration.
+``REVIEW_UNIQUENESS_KEY`` is deliberately a separate secret (settings derives a
+domain-separated development value, and production requires its own).
 
 The committee public key is ``COMMITTEE_PUBLIC_KEY`` (hex or base64, 32 bytes).
 When it is unset outside production -- the development and test default -- a
@@ -50,7 +57,6 @@ _KEY_BYTES = 32
 #: Domain separators, so material derived here can never be reused as, or
 #: confused with, material derived for another purpose from the same secret.
 _DEV_KEY_LABEL = b"scholium:review-escrow:committee-key:v1:"
-_HMAC_KEY_LABEL = b"scholium:review-escrow:hmac-key:v1:"
 _TOKEN_LABEL = b"scholium:review-escrow:uniqueness:v1"
 
 
@@ -175,23 +181,26 @@ def open_identity(
 def uniqueness_token(reviewer_did: str, paper_cid: str) -> str:
     """Return the stable, non-reversible token that enforces one review per person and paper.
 
-    The token is an HMAC under a key derived from ``JWT_SECRET``, so it cannot
-    be reversed to the DID; it is deterministic for the pair, so the
+    The token is an HMAC under ``settings.REVIEW_UNIQUENESS_KEY`` -- a secret of
+    its own, never ``JWT_SECRET`` -- so it cannot be reversed to the DID and
+    someone holding the signing secret cannot recompute it to unmask a reviewer.
+    It is deterministic for the pair, so the
     ``review_escrows.uniqueness_token`` UNIQUE constraint refuses a second
     review by the same person on the same paper even if that person presents a
     fresh nullifier.
 
     Raises:
-        ValueError: either argument is empty.
+        ValueError: either argument is empty, or ``REVIEW_UNIQUENESS_KEY`` is
+            not configured.
     """
     if not isinstance(reviewer_did, str) or not reviewer_did:
         raise ValueError("reviewer_did must be a non-empty string")
     if not isinstance(paper_cid, str) or not paper_cid:
         raise ValueError("paper_cid must be a non-empty string")
-    key = hmac.new(
-        (settings.JWT_SECRET or "").encode("utf-8"), _HMAC_KEY_LABEL, hashlib.sha256
-    ).digest()
+    secret = (settings.REVIEW_UNIQUENESS_KEY or "").strip()
+    if not secret:
+        raise ValueError("REVIEW_UNIQUENESS_KEY must be configured for review uniqueness")
     message = b"\x00".join(
         (_TOKEN_LABEL, reviewer_did.encode("utf-8"), paper_cid.encode("utf-8"))
     )
-    return hmac.new(key, message, hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
