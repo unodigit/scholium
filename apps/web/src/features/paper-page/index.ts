@@ -29,7 +29,13 @@
  *
  * Authors on the byline also get an **Invite reviewer** action under the
  * header's four, which sends a reviewer's DID to
- * `POST /v1/papers/{id}/review-invitations` for the version on screen.
+ * `POST /v1/papers/{id}/review-invitations` for the version on screen. A
+ * consented author additionally gets **New version** (the existing
+ * `/submit/new-version/{id}` form), **Issue notice** — a correction,
+ * retraction or withdrawal signed with the device key and posted to
+ * `POST /v1/records` — and, when the paper's latest moderation decision is a
+ * hold or reject, **File an appeal**, a signed `appeal` posted to
+ * `POST /v1/appeals`.
  *
  * **Cite** opens a dialog with the version on screen as BibTeX and as RIS, each
  * read from `GET /v1/papers/{id}/cite?format=bibtex|ris` and copied with a
@@ -57,7 +63,71 @@ export {
   MarginDrawer,
   type MarginDrawerProps,
 } from "./margin-drawer";
-export { PaperActions, type PaperActionsProps } from "./paper-actions";
+export {
+  AuthorActions,
+  PaperActions,
+  type AuthorActionsProps,
+  type PaperActionsProps,
+} from "./paper-actions";
+export {
+  NOTICE_CONFIRMATIONS,
+  NOTICE_DESCRIPTIONS,
+  NOTICE_DIALOG_TITLE,
+  NOTICE_EMPTY_REASON,
+  NOTICE_KINDS,
+  NOTICE_LABEL,
+  NOTICE_LABELS,
+  NOTICE_REASON_LABEL,
+  NOTICE_REVIEW_LABEL,
+  NOTICE_SUBMIT_LABEL,
+  NOT_NOTICED,
+  NoticeDialog,
+  RECORDS_ENDPOINT,
+  WrongNoticeRecordError,
+  describeNoticeError,
+  issueNotice,
+  noticeBody,
+  parseNoticeAccepted,
+  signNotice,
+  submitNotice,
+  type NoticeAccepted,
+  type NoticeBody,
+  type NoticeDialogProps,
+  type NoticeFailure,
+  type NoticeKind,
+  type NoticeRequest,
+  type SignNotice,
+  type SubmitNotice,
+} from "./notice-dialog";
+export {
+  APPEALABLE_ACTIONS,
+  APPEAL_ACTION_LABELS,
+  APPEAL_DIALOG_TITLE,
+  APPEAL_EMPTY_GROUNDS,
+  APPEAL_GROUNDS_LABEL,
+  APPEAL_LABEL,
+  APPEAL_SUBMIT_LABEL,
+  APPEAL_TYPE,
+  APPEALS_ENDPOINT,
+  AppealDialog,
+  NOT_APPEALED,
+  appealBody,
+  describeAppealError,
+  latestAppealableDecision,
+  loadAppealableDecision,
+  parseAppealAccepted,
+  signAppeal,
+  submitAppeal,
+  type AppealAccepted,
+  type AppealBody,
+  type AppealDialogProps,
+  type AppealFailure,
+  type AppealableAction,
+  type AppealableDecision,
+  type LoadAppealableDecision,
+  type SignAppeal,
+  type SubmitAppeal,
+} from "./appeal-dialog";
 export {
   CITE_DIALOG_TITLE,
   CITE_LABEL,

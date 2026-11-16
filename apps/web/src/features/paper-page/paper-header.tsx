@@ -23,11 +23,13 @@
  *   could not be read it is just `v2`.
  * - **Licence** is the signed version's, in words (`CC BY 4.0`).
  * - **Invite reviewer** is offered to the paper's authors only, beneath the
- *   four actions (`invite-reviewer.tsx`).
+ *   four actions (`invite-reviewer.tsx`). A consented author also gets **New
+ *   version**, **Issue notice** and, when the latest moderation decision is a
+ *   hold or reject, **File an appeal** (`paper-actions.tsx`).
  *
  * Server-safe: no hooks, no state, so the first HTML already has the title and
- * the byline. The one client island, Invite reviewer, renders nothing in that
- * first HTML.
+ * the byline. The client islands, Invite reviewer and the author actions,
+ * render nothing in that first HTML.
  */
 
 import { DecisionBanner, StatusChip, isPaperStatus } from "../ui-kit";
@@ -107,9 +109,12 @@ export function PaperHeader({ data }: PaperHeaderProps) {
       <PaperActions
         pdf={pdf}
         paperId={shortId}
+        paperCid={paper.paperCid}
+        versionCid={paper.versionCid}
         version={version}
         citeUrl={citeHref(shortId, version)}
         archiveUrl={archiveHref(shortId)}
+        authorDids={paper.authors.map((author) => author.did)}
       />
 
       {/* A client island that renders nothing unless the reader is on the

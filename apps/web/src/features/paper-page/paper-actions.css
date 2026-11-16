@@ -367,3 +367,337 @@
     border-color: CanvasText;
   }
 }
+
+/* ============================================================================
+   Author actions: New version, Issue notice and File an appeal (PUB-6, PUB-7,
+   MOD-2). The first is a link into the existing form; the other two open the
+   same dialog frame as Cite, with a small form each.
+   ============================================================================ */
+
+/* ---- The row ---------------------------------------------------------------- */
+
+.ppg-author-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin-block-start: calc(var(--space-unit) * 2);
+}
+
+/* The New version link keeps the submit feature's quiet button; only its type
+   matches the action row it sits in. */
+.ppg-author-actions .nv-link {
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- Shared form pieces ----------------------------------------------------- */
+
+.ppg-notice-form,
+.ppg-appeal-form {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.ppg-notice-legend,
+.ppg-notice-label,
+.ppg-appeal-label {
+  margin: 0;
+  padding: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.ppg-notice-hint,
+.ppg-appeal-hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.ppg-notice-reason,
+.ppg-appeal-grounds {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: calc(var(--space-unit) * 24);
+  padding: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  resize: vertical;
+}
+
+.ppg-notice-reason[aria-invalid="true"],
+.ppg-appeal-grounds[aria-invalid="true"] {
+  border-color: var(--critical);
+}
+
+.ppg-notice-reason:focus-visible,
+.ppg-appeal-grounds:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ppg-notice-buttons,
+.ppg-appeal-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.ppg-notice-submit,
+.ppg-notice-close,
+.ppg-appeal-submit,
+.ppg-appeal-close {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 4);
+  border-radius: var(--corner-control);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+  cursor: pointer;
+}
+
+.ppg-notice-submit,
+.ppg-appeal-submit {
+  border: 1px solid var(--accent);
+  background-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The confirmation of a retraction or withdrawal: a tinted surface and a
+   critical edge, with the words carrying the meaning (§9). */
+.ppg-notice-submit--critical {
+  border-color: var(--critical);
+  background-color: var(--critical-soft);
+  color: var(--ink);
+}
+
+.ppg-notice-submit[aria-disabled="true"],
+.ppg-appeal-submit[aria-disabled="true"] {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.ppg-notice-close,
+.ppg-appeal-close {
+  border: 1px solid var(--rule);
+  background-color: var(--surface);
+  color: var(--ink);
+}
+
+.ppg-notice-submit:hover,
+.ppg-appeal-submit:hover,
+.ppg-notice-close:hover,
+.ppg-appeal-close:hover {
+  border-color: var(--accent);
+}
+
+.ppg-notice-submit:focus-visible,
+.ppg-notice-close:focus-visible,
+.ppg-appeal-submit:focus-visible,
+.ppg-appeal-close:focus-visible,
+.ppg-notice-link:focus-visible,
+.ppg-appeal-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ppg-notice-error,
+.ppg-appeal-error,
+.ppg-notice-done,
+.ppg-appeal-done {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.ppg-notice-error > span,
+.ppg-appeal-error > span,
+.ppg-notice-done > span,
+.ppg-appeal-done > span {
+  flex: 1 1 12rem;
+}
+
+.ppg-notice-icon,
+.ppg-appeal-icon {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.ppg-notice-icon--critical,
+.ppg-appeal-icon--critical {
+  color: var(--critical);
+}
+
+.ppg-notice-icon--verified,
+.ppg-appeal-icon--verified {
+  color: var(--verified);
+}
+
+.ppg-notice-link,
+.ppg-appeal-link {
+  color: var(--accent);
+}
+
+/* A signed id is read character by character. */
+.ppg-notice-id {
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Issue notice ----------------------------------------------------------- */
+
+.ppg-notice-kinds {
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ppg-notice-kind {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  cursor: pointer;
+}
+
+/* Selected is a border and a fill as well as the radio, never colour alone. */
+.ppg-notice-kind[data-selected="true"] {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.ppg-notice-kind:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ppg-notice-radio {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+  margin-block-start: calc(var(--space-unit) * 1);
+  accent-color: var(--accent);
+}
+
+.ppg-notice-kind-text {
+  display: grid;
+  gap: calc(var(--space-unit) * 0.5);
+}
+
+.ppg-notice-kind-name {
+  color: var(--ink);
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+}
+
+.ppg-notice-kind-hint {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.ppg-notice-confirm,
+.ppg-notice-issued,
+.ppg-appeal-filed {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--bg);
+}
+
+.ppg-notice-confirm {
+  border-color: var(--critical);
+  background-color: var(--critical-soft);
+}
+
+.ppg-notice-confirm-title,
+.ppg-notice-issued-title,
+.ppg-appeal-filed-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.ppg-notice-confirm-text,
+.ppg-notice-confirm-reason {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+/* ---- File an appeal --------------------------------------------------------- */
+
+.ppg-appeal-decision {
+  display: grid;
+  gap: calc(var(--space-unit) * 1);
+  margin: 0;
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border-inline-start: 3px solid var(--rule);
+  background-color: var(--bg);
+  color: var(--ink);
+}
+
+.ppg-appeal-decision-label {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  font-weight: 600;
+  line-height: var(--leading-meta);
+}
+
+.ppg-appeal-decision-text {
+  margin: 0;
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+/* Forced colours drop fills: the notices and appeal blocks keep their edges. */
+@media (forced-colors: active) {
+  .ppg-notice-kind,
+  .ppg-notice-reason,
+  .ppg-appeal-grounds,
+  .ppg-notice-confirm,
+  .ppg-notice-issued,
+  .ppg-appeal-filed,
+  .ppg-appeal-decision {
+    border-color: CanvasText;
+  }
+}
