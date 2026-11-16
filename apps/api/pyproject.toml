@@ -17,6 +17,7 @@ dependencies = [
   "anthropic",
   "pytest",
   "pytest-xdist",
+  "uvicorn[standard]",
 ]
 
 [tool.uv]

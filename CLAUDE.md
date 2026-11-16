@@ -15,6 +15,7 @@
   `npm install <pkg> --workspace apps/web`, API deps in `apps/api/pyproject.toml` (or the owning package).
 - Test everything: `npm test` (api pytest, then web vitest)
 - API only: `cd apps/api && uv run --all-packages pytest`
+- Run API: `cd apps/api && uv run python -m app` (serves `create_app` on HOST/PORT, default 127.0.0.1:8000; set FORWARDED_ALLOW_IPS to honour proxy headers)
 - Web only: `npm test --workspace apps/web`
 - Browser journeys: `npm run test:e2e` (Playwright, not part of `npm test`)
 
