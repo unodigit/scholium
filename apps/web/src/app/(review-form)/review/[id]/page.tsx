@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 interface ReviewRouteProps {
   /** `/review/sch:k3f9-q2xz-7mwd` or `/review/k3f9-q2xz-7mwd` (Next 15: a promise). */
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ prev?: string | string[] }>;
 }
 
 export async function generateMetadata({
@@ -50,13 +51,15 @@ export async function generateMetadata({
  * unlisted paper and a failed read are each shown as a notice rather than
  * thrown, so the shell and the global navigation still work.
  */
-export default async function ReviewRoutePage({ params }: ReviewRouteProps) {
+export default async function ReviewRoutePage({ params, searchParams }: ReviewRouteProps) {
   const { id } = await params;
 
   let shortId: string | undefined;
   try {
     shortId = parseReviewTarget(id);
-    return <ReviewPage paper={await loadReviewPaper(shortId)} />;
+    const sp = searchParams ? await searchParams : undefined;
+    const prev = Array.isArray(sp?.prev) ? sp?.prev[0] : sp?.prev;
+    return <ReviewPage paper={await loadReviewPaper(shortId)} prev={prev} />;
   } catch (error) {
     return (
       <ReviewPage

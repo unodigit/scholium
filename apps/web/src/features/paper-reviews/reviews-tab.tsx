@@ -33,7 +33,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ReviewCardActions } from "../review-form";
+import { ReviewCardActions, useViewer } from "../review-form";
 import { SCORE_MAX } from "../review-form/rubric";
 import { EmptyState, Icon, type IconName } from "../ui-kit";
 import {
@@ -212,7 +212,12 @@ function ReviewsView({ data, paperId }: { data: ReviewsData; paperId: string }) 
       <ol className="pr-list">
         {reviews.map((review) => (
           <li className="pr-list__item" key={review.key}>
-            <ReviewCard review={review} gateOpen={data.gateOpen} paperId={paperId} />
+            <ReviewCard
+              review={review}
+              gateOpen={data.gateOpen}
+              paperId={paperId}
+              latestVersion={data.version}
+            />
           </li>
         ))}
       </ol>
@@ -263,14 +268,17 @@ function ReviewCard({
   review,
   gateOpen,
   paperId,
+  latestVersion,
 }: {
   review: Review;
   gateOpen: boolean;
   paperId: string;
+  latestVersion: number | null;
 }) {
   const headingId = `pr-review-${review.key.replace(/[^a-z0-9]+/gi, "-").slice(-48)}`;
   const tone = recommendationTone(review.recommendation);
   const date = formatReviewDate(review.committedAt);
+  const viewer = useViewer();
 
   const meta: string[] = ["Anonymous reviewer"];
   if (date !== null) meta.push(`Reviewed ${date}`);
@@ -322,6 +330,30 @@ function ReviewCard({
           ))}
         </section>
       ) : null}
+
+      {(() => {
+        const isOlder =
+          review.report !== null &&
+          review.version !== null &&
+          latestVersion !== null &&
+          review.version < latestVersion;
+        const canUpdate =
+          isOlder &&
+          viewer.signedIn &&
+          (review.signedBy == null || review.signedBy === viewer.did);
+        if (!canUpdate) return null;
+        const prev = review.formalCid ?? review.reviewCid ?? null;
+        const href = prev !== null
+          ? `${reviewHref(paperId)}?prev=${encodeURIComponent(prev)}`
+          : reviewHref(paperId);
+        return (
+          <p className="pr-update">
+            <a className="pr-link" href={href}>
+              {`Update for v${latestVersion}`}
+            </a>
+          </p>
+        );
+      })()}
 
       {/* The reply and the rating for whoever may act (docs/design.md §5.2).
           The component offers nothing on a sealed review, to a signed-out

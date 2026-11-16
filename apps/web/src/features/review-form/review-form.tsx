@@ -49,6 +49,7 @@ import {
 } from "react";
 
 import { useSignedIn } from "../../components/nav/session";
+import { api } from "../../lib/api";
 import { Icon } from "../ui-kit/icons";
 import type { ActionFailure } from "./action-errors";
 import { appendCitation, describeCitation, type Citation } from "./citation";
@@ -77,10 +78,12 @@ import {
   describeRevealError,
   loadRevealGate,
   revealReview,
+  updateReview,
   type LoadRevealGate,
   type RevealGate,
   type RevealReview,
   type ReviewRevealResult,
+  type UpdateReview,
 } from "./reveal";
 import {
   ReviewSessionProvider,
@@ -124,6 +127,9 @@ export const AI_ASSISTANCE_HINT = "(declared on the report)";
 /** The button that seals the review (docs/design.md §5.5). */
 export const COMMIT_LABEL = "Commit review";
 
+/** The button that updates a revealed review (REV-5). */
+export const UPDATE_LABEL = "Update review";
+
 /**
  * Said under the button so the reviewer knows what committing does. (A reviewer
  * who chose to sign with their name is told so as well: `COMMIT_NOTE_SIGNED`.)
@@ -151,6 +157,12 @@ export interface ReviewFormProps {
   signInHref?: string;
   /** Replace the commit flow (derive key, sign and send), for tests. */
   commit?: CommitReview;
+  /** The earlier `review.formal` this review revises, when updating (REV-5). */
+  prev?: string;
+  /** Replace the update flow (derive key, sign and send), for tests. */
+  update?: UpdateReview;
+  /** Replace the update flow (alias), for tests. */
+  revise?: UpdateReview;
   /** Replace the reveal flow (derive key, sign and send), for tests. */
   reveal?: RevealReview;
   /** Replace the reveal-gate read, for tests. */
@@ -192,6 +204,9 @@ function ReviewFormBody({
   signedIn: signedInOverride,
   signInHref: signInHrefOverride,
   commit: commitOverride,
+  prev,
+  update: updateOverride,
+  revise: reviseOverride,
   reveal: revealOverride,
   loadGate,
   session,
@@ -211,6 +226,7 @@ function ReviewFormBody({
   const [submitted, setSubmitted] = useState(false);
   const [phase, setPhase] = useState<Phase>("editing");
   const [sealed, setSealed] = useState<SealedReview | null>(null);
+  const [updated, setUpdated] = useState(false);
   const [error, setError] = useState<CommitFailure | null>(null);
 
   // Cite in review: the box a quote goes into, and the last quote placed.
@@ -264,6 +280,64 @@ function ReviewFormBody({
     setSealed(stored);
     setPhase("sealed");
   }, [paperId, sealed]);
+
+  // When updating a revealed review, prefill the form with its current rubric.
+  useEffect(() => {
+    if (initialDraft !== undefined) return;
+    if (typeof prev !== "string" || prev.trim() === "") return;
+    let cancelled = false;
+    api
+      .get<unknown>(`/records/${encodeURIComponent(prev.trim())}`, { auth: false, cache: "no-store" })
+      .then((payload) => {
+        if (cancelled) return;
+        const body =
+          typeof payload === "object" && payload !== null
+            ? ((payload as { body?: unknown }).body ?? payload)
+            : null;
+        if (typeof body !== "object" || body === null) return;
+        const record = body as Record<string, unknown>;
+        const scores = record.scores;
+        const next: any = emptyDraft();
+        if (scores && typeof scores === "object") {
+          for (const { id } of RUBRIC_DIMENSIONS) {
+            const entry = (scores as Record<string, unknown>)[id];
+            if (entry && typeof entry === "object") {
+              const e = entry as Record<string, unknown>;
+              const score =
+                typeof e.score === "number" ? e.score : Number(e.score);
+              const justification =
+                typeof e.justification === "string" ? e.justification : "";
+              if (Number.isFinite(score)) {
+                next.scores[id] = { score: score as never, justification };
+              }
+            }
+          }
+        }
+        if (typeof record.confidence === "string") {
+          next.confidence = record.confidence as never;
+        } else if (typeof record.confidence === "number") {
+          // map integer to nearest label
+          const n = record.confidence as number;
+          next.confidence = (n <= 2 ? "low" : n === 3 ? "medium" : "high") as never;
+        }
+        if (typeof record.recommendation === "string") {
+          next.recommendation = record.recommendation as never;
+        }
+        if (typeof record.aiAssisted === "boolean") {
+          next.aiAssisted = record.aiAssisted;
+        }
+        if (typeof record.signed === "boolean") {
+          next.signed = record.signed;
+        }
+        setDraft(next);
+      })
+      .catch(() => {
+        // Prefill is a convenience; the form still works blank.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [prev, initialDraft]);
 
   const problems = validateDraft(draft);
   const progress = progressOf(draft);
@@ -321,6 +395,41 @@ function ReviewFormBody({
     }
   };
 
+  const isUpdate = typeof prev === "string" && prev.trim() !== "";
+
+  const update = async (): Promise<void> => {
+    if (phase === "signing") return;
+
+    setSubmitted(true);
+    if (!complete) {
+      setError(null);
+      return;
+    }
+    if (!signedIn && updateOverride === undefined && commitOverride === undefined) {
+      setError({
+        message: "Sign in to update your review. Nothing was sent.",
+        signIn: true,
+      });
+      return;
+    }
+
+    setError(null);
+    setPhase("signing");
+    try {
+      await ((updateOverride ?? reviseOverride) ?? updateReview)({
+        paperId,
+        versionCid,
+        prev: prev ?? "",
+        draft: { ...draft, signed },
+      });
+      setUpdated(true);
+      setPhase("editing");
+    } catch (thrown) {
+      setError(describeCommitError(thrown));
+      setPhase("editing");
+    }
+  };
+
   return (
     <form
       className="rf-form"
@@ -329,7 +438,8 @@ function ReviewFormBody({
       onSubmit={(event) => {
         // Committing is the only submit; Enter in a field must not reload.
         event.preventDefault();
-        void commit();
+        if (isUpdate) void update();
+        else void commit();
       }}
     >
       <h2 id={`${uid}-title`} className="rf-form-title">
@@ -512,7 +622,11 @@ function ReviewFormBody({
           disabled={phase === "signing"}
           aria-busy={phase === "signing" ? true : undefined}
         >
-          {phase === "signing" ? "Signing…" : COMMIT_LABEL}
+          {phase === "signing"
+            ? "Signing…"
+            : isUpdate
+              ? UPDATE_LABEL
+              : COMMIT_LABEL}
         </button>
       </div>
     </form>

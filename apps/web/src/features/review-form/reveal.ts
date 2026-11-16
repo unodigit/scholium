@@ -36,8 +36,9 @@ import {
   type ActionWords,
 } from "./action-errors";
 import { reviewRecordSigner } from "./commit";
-import { deriveReviewKey, type DeriveReviewKey } from "./review-key";
+import { deriveReviewKey, nullifierForReviewKey, type DeriveReviewKey } from "./review-key";
 import type { SealedReview } from "./sealed-review";
+import { toReviewBody, type ReviewDraft } from "./rubric";
 
 /** The record type a reveal signs. */
 export const REVIEW_FORMAL_TYPE = "review.formal";
@@ -290,3 +291,106 @@ export async function loadRevealGate(
   );
   return parseRevealGate(body);
 }
+
+// --------------------------------------------------------------------------- //
+// Updating a revealed review against a newer version (REV-5)                    //
+// --------------------------------------------------------------------------- //
+
+/** What the form hands to {@link updateReview}. */
+export interface UpdateReviewInput {
+  /** The paper's id, in any spelling the API accepts. */
+  readonly paperId: string;
+  /** The newest listed version's cid, from `GET /v1/papers/{id}`. */
+  readonly versionCid?: string | null;
+  /** The cid of the earlier `review.formal` this one revises. */
+  readonly prev: string;
+  readonly draft: ReviewDraft;
+}
+
+/** What an update produced. */
+export interface UpdateReviewResult {
+  readonly revealCid: string;
+  readonly reviewCid: string;
+  readonly body: Record<string, unknown>;
+  readonly record: SignedRecord;
+}
+
+/** Signs and sends an updated review; replaceable in tests. */
+export type UpdateReview = (
+  input: UpdateReviewInput,
+  seams?: RevealSeams,
+) => Promise<UpdateReviewResult>;
+
+/**
+ * Sign the revised review as a `review.formal` whose `prev` names the earlier
+ * one, and post it to `POST /v1/reviews/reveal`.
+ *
+ * An update carries no commitment: the review it revises is already open.
+ * It is signed by the same per-paper review key, so the chain stays one
+ * reviewer's.
+ */
+export const updateReview: UpdateReview = async (input, seams = {}) => {
+  const versionCid = input.versionCid?.trim() ?? "";
+  if (versionCid === "") {
+    throw new ReviewRevealInputError(
+      "This page did not say which version of the paper to review. Reload the page and try again.",
+    );
+  }
+  const prev = input.prev?.trim() ?? "";
+  if (prev === "") {
+    throw new ReviewRevealInputError(
+      "This review has no earlier review to update. Reload the page and try again.",
+    );
+  }
+
+  const review = toReviewBody(input.draft);
+
+  const deriveKey = seams.deriveKey ?? deriveReviewKey;
+  const sign = seams.sign ?? signRecord;
+  const submit = seams.submit ?? defaultSubmit;
+  const now = seams.now;
+
+  const key = await deriveKey(input.paperId);
+  const body: Record<string, unknown> = {
+    target: versionCid,
+    scores: review.scores,
+    confidence: review.confidence,
+    recommendation: review.recommendation,
+    aiAssisted: review.aiAssisted,
+    reviewKey: key.did,
+    nullifier: nullifierForReviewKey(key, input.paperId),
+    ...(review.signed ? { signed: true } : {}),
+  };
+
+  const record = await sign(REVIEW_FORMAL_TYPE, body, prev, {
+    signer: reviewRecordSigner(key),
+    now,
+  });
+  if (record.type !== REVIEW_FORMAL_TYPE) {
+    throw new WrongRevealRecordError(
+      `The signer produced a ${record.type} record, not a ${REVIEW_FORMAL_TYPE} record.`,
+    );
+  }
+
+  const accepted = (await submit(record)) ?? {};
+  const revealCid =
+    readText(accepted.id) ??
+    readText(accepted.reveal_cid) ??
+    readText(accepted.revealCid) ??
+    record.id;
+  const reviewCid =
+    readText(accepted.review) ??
+    readText(accepted.review_cid) ??
+    readText(accepted.reviewCid) ??
+    input.prev;
+
+  return { revealCid, reviewCid, body, record };
+};
+
+
+/** Alias for {@link updateReview}, for callers that name it otherwise. */
+export const reviseReview = updateReview;
+/** Alias for {@link updateReview}, for callers that name it otherwise. */
+export const updateFormalReview = updateReview;
+/** Alias for {@link updateReview}, for callers that name it otherwise. */
+export const reviewUpdate = updateReview;

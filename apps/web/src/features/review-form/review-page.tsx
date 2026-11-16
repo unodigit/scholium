@@ -31,6 +31,8 @@ interface ReviewPageExtras {
   conflictError?: string;
   /** Replace the commit flow, for tests. */
   commit?: CommitReview;
+  /** The earlier review this one revises, when updating (REV-5). */
+  prev?: string;
   /** Pin the sign-in state instead of reading it from the stored session. */
   signedIn?: boolean;
   /** Where "Sign in" goes; defaults to sign-in, then back to this review. */
@@ -87,6 +89,7 @@ export function ReviewPage(props: ReviewPageProps) {
               signedIn={props.signedIn}
               signInHref={props.signInHref}
               commit={props.commit}
+              prev={props.prev}
             />
           </div>
         </div>

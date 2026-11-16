@@ -129,6 +129,10 @@ export interface Review {
   readonly committedAt: string | null;
   /** The paper version the review is written against, when named. */
   readonly version: number | null;
+  /** The reviewer's DID when they signed the review with their name, when named. */
+  readonly signedBy?: string | null;
+  /** The cid of the `review.formal` the review stands on, when named. */
+  readonly formalCid?: string | null;
 }
 
 /** A paper's formal reviews and the state of the reveal gate. */
@@ -636,6 +640,14 @@ function reviewOf(value: unknown, index: number): Review {
       record.created,
     ),
     version: firstNumber(record.version, record.n),
+    signedBy: firstText(record.signed_by, record.signedBy),
+    formalCid: firstText(
+      record.formal_cid,
+      record.formalCid,
+      record.reveal_cid,
+      record.revealCid,
+      record.id,
+    ),
   };
 }
 
