@@ -1160,3 +1160,162 @@
 .ppg-notice-link {
   color: var(--accent);
 }
+
+/* ---- A paper behind a 404 (docs/design.md §5.2, §8) ------------------------ */
+
+/* The retry that follows a 404 shows a paper to its author or a moderator, or
+   a removed-content state. It has no margin panel, so it is the reading column
+   alone at every width: `.ppg` is only a grid of columns. Written after the
+   `.ppg` rules, with the same specificity, so it wins at 1280 px as well. */
+.ppg-access {
+  grid-template-columns: minmax(0, var(--reading-column));
+  row-gap: calc(var(--space-unit) * 6);
+}
+
+@media (min-width: 80rem) {
+  .ppg-access {
+    grid-template-columns: minmax(0, var(--reading-column));
+    column-gap: 0;
+  }
+}
+
+/* The status banner above the title: where the version stands, in words. The
+   icon and the border carry the tone, never the word's colour (§3, §9). */
+.ppg-access-banner {
+  --banner-icon: var(--ink-2);
+  --banner-fill: var(--surface);
+  --banner-edge: var(--rule);
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  padding: calc(var(--space-unit) * 4) calc(var(--space-unit) * 5);
+  border: 1px solid var(--banner-edge);
+  border-radius: var(--corner-card);
+  background-color: var(--banner-fill);
+  color: var(--ink);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.ppg-access-banner[data-tone="pending"] {
+  --banner-icon: var(--pending);
+  --banner-fill: var(--pending-soft);
+  --banner-edge: var(--pending);
+}
+
+.ppg-access-banner[data-tone="critical"] {
+  --banner-icon: var(--critical);
+  --banner-fill: var(--critical-soft);
+  --banner-edge: var(--critical);
+}
+
+.ppg-access-banner-lead {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+}
+
+.ppg-access-banner-icon {
+  flex: none;
+  inline-size: calc(var(--space-unit) * 5);
+  block-size: calc(var(--space-unit) * 5);
+  color: var(--banner-icon);
+}
+
+.ppg-access-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-unit);
+  min-inline-size: 0;
+}
+
+.ppg-access-banner-word {
+  font-weight: 600;
+}
+
+.ppg-access-banner-detail {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.ppg-access-banner-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 4);
+  margin: 0;
+}
+
+.ppg-access-banner-links a {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+.ppg-access-banner-links a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* One quiet line while the retry asks, and for what the retry could not read. */
+.ppg-access-checking,
+.ppg-access-note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* The PDF behind a disclosure: opened on demand, with the reader's token. */
+.ppg-access-pdf {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  min-inline-size: 0;
+}
+
+.ppg-access-pdf-toggle {
+  align-self: flex-start;
+  min-block-size: calc(var(--space-unit) * 11);
+  padding-inline: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ppg-access-pdf-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+
+.ppg-access-pdf-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ppg-access-pdf-body {
+  min-inline-size: 0;
+}
+
+.ppg-access-pdf-body[hidden] {
+  display: none;
+}
+
+/* Removed for legal reasons: the decision's banner, the title, a way back. */
+.ppg-tombstone {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  max-inline-size: var(--reading-column);
+  margin-inline: auto;
+}
+
+.ppg-tombstone .ppg-notice-message,
+.ppg-tombstone .ppg-title {
+  margin: 0;
+}

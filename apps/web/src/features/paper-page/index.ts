@@ -296,3 +296,45 @@ export {
   type ReadingViewProviderProps,
   type ReadingViewsProps,
 } from "./reading-view";
+
+/*
+ * A paper behind a `404`: the server render holds no token, so the catalog
+ * answers `404` for an unlisted, held or tombstoned version even to its own
+ * author. `PaperAccess` is what the `/p/{id}` `not-found.tsx` renders; it
+ * retries with the signed-in reader's token and shows the paper, or the
+ * removed-content state of a takedown.
+ */
+export {
+  PaperAccess,
+  PaperAccessView,
+  addressFromPath,
+  type PaperAccessProps,
+  type PaperAccessViewProps,
+} from "./paper-access";
+export {
+  PaperTombstoneView,
+  UnlistedStatusBanner,
+  type PaperTombstoneViewProps,
+  type UnlistedStatusBannerProps,
+} from "./paper-access-view";
+export {
+  DEFAULT_ACCESS_LOADERS,
+  PAPER_NOT_LISTED,
+  formatRemovalDate,
+  latestDecision,
+  loadPaperRecords,
+  loadUnlistedPdf,
+  parseManifestPdf,
+  pickUnlistedVersion,
+  tombstoneOf,
+  unlistedBanner,
+  type AccessLoaders,
+  type AccessView,
+  type ModerationFact,
+  type RecordsClient,
+  type TombstoneFacts,
+  type UnlistedAuthor,
+  type UnlistedBanner,
+  type UnlistedPdf,
+  type UnlistedVersion,
+} from "./unlisted-paper";

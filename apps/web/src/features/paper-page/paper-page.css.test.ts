@@ -590,6 +590,56 @@ describe("the margin drawer and bottom sheet (docs/design.md §5.2, §10)", () =
   });
 });
 
+describe("a paper behind a 404 (the author's view and the removed-content state)", () => {
+  it("is the reading column alone, also from 1280 px where .ppg adds a panel column", () => {
+    expect(declarations(page, ".ppg-access")).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*var\(--reading-column\)\)/,
+    );
+    expect(declarationsIn(page, "(min-width: 80rem)", ".ppg-access")).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*var\(--reading-column\)\)/,
+    );
+    // It must come after `.ppg`'s own wide rule to win at equal specificity.
+    expect(page.rules.lastIndexOf(".ppg-access {")).toBeGreaterThan(
+      page.rules.indexOf("grid-template-columns: minmax(0, var(--reading-column)) var(--margin-panel)"),
+    );
+  });
+
+  it("carries the banner's tone in the icon and the border, not in the word", () => {
+    for (const tone of ["pending", "critical"]) {
+      const rule = declarations(page, `.ppg-access-banner[data-tone="${tone}"]`);
+      expect(rule).toMatch(/--banner-icon:\s*var\(--(?:pending|critical)\)/);
+      expect(rule).toMatch(/--banner-edge:\s*var\(--(?:pending|critical)\)/);
+    }
+    expect(declarations(page, ".ppg-access-banner-icon")).toMatch(
+      /color:\s*var\(--banner-icon\)/,
+    );
+    expect(declarations(page, ".ppg-access-banner-word")).not.toMatch(/color:/);
+  });
+
+  it("gives the PDF toggle and the banner's links a visible 2 px focus ring in the focus colour", () => {
+    for (const selector of [
+      ".ppg-access-pdf-toggle:focus-visible",
+      ".ppg-access-banner-links a:focus-visible",
+    ]) {
+      expect(declarations(page, selector), selector).toMatch(
+        /outline:\s*2px solid var\(--focus-ring\)/,
+      );
+    }
+  });
+
+  it("makes the PDF toggle at least 44 px tall", () => {
+    expect(declarations(page, ".ppg-access-pdf-toggle")).toMatch(
+      /min-block-size:\s*calc\(var\(--space-unit\)\s*\*\s*11\)/,
+    );
+  });
+
+  it("keeps a closed PDF disclosure hidden whatever else sets its display", () => {
+    expect(declarations(page, ".ppg-access-pdf-body[hidden]")).toMatch(
+      /display:\s*none/,
+    );
+  });
+});
+
 describe("selectors", () => {
   it("all start from a ppg class, so nothing leaks into other features", () => {
     const selectors = blocks(page.rules)

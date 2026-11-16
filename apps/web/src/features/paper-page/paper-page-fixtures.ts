@@ -18,6 +18,16 @@ export const BARE_ID = "6sel-2dio-orm6";
 export const VERSION_CID = "bafyrei-version-2";
 export const PAPER_CID = "bafyrei-genesis";
 
+/**
+ * A real genesis cid (`vectors/short_ids.json`, `paper-genesis-minimal`) and
+ * the short id it derives. `PAPER_CID` above is a placeholder no short id can
+ * be derived from; the signed `paper.version` records of the unlisted-paper
+ * tests name this one, as a real ledger's would.
+ */
+export const GENESIS_CID =
+  "bafyreihklcd3fihc4tzuxk5ljuxo6ooru46tfsp7gs6p5mjqriw25cutz4";
+export const GENESIS_SHORT_ID = "sch:5jmi-pmva-4lmr";
+
 export const ALICE = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 export const BOB = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
 
@@ -285,6 +295,158 @@ export function citation(format: string): Response {
   });
 }
 
+/* -------------------------------------------------------------------------- */
+/* The paper's public records (`GET /v1/export/paper/{id}/records`)            */
+/* -------------------------------------------------------------------------- */
+
+/** One event-log entry of the paper's records, in the node's wire shape. */
+export function entry(
+  recordType: string,
+  cid: string,
+  seq: number,
+  body: unknown,
+  authorDid: string = ALICE,
+): unknown {
+  return {
+    seq,
+    record_cid: cid,
+    record_type: recordType,
+    author_did: authorDid,
+    body,
+    raw: "",
+    sig: null,
+    prev_hash: "",
+    entry_hash: "",
+    received_at: "2027-03-05T10:00:00Z",
+    origin_node: null,
+  };
+}
+
+/** A `paper.version` record, as the ledger holds it (see `decision.ts`). */
+export function versionEntry(seq = 4, n = 2): unknown {
+  return entry(
+    "paper.version",
+    n === 2 ? VERSION_CID : `bafyrei-version-${n}`,
+    seq,
+    {
+      paper: GENESIS_CID,
+      n,
+      title: "Can a Meta-Agent Choose the Safer Branch?",
+      abstract:
+        "An evaluation framework investigating whether meta-agents can identify the safer of two candidate branches before either is executed.",
+      authors: [
+        { did: ALICE, position: 1, creditRoles: ["Conceptualization"] },
+        { did: BOB, position: 2, creditRoles: null },
+      ],
+      categories: ["cs.AI", "cs.MA"],
+      licence: "CC-BY-4.0",
+      manifest: "bafyrei-manifest",
+    },
+  );
+}
+
+/** One `moderation.decision` record about the version. */
+export function decisionEntry(
+  action: string,
+  seq = 10,
+  body: Record<string, unknown> = {},
+): unknown {
+  return entry(
+    "moderation.decision",
+    `bafyrei-decision-${seq}`,
+    seq,
+    {
+      target: VERSION_CID,
+      action,
+      clause: "MOD-01",
+      reason: "Outside the category's scope.",
+      ...body,
+    },
+    "did:key:z6MkkModeratorDecisionSigner000000000000000000000",
+  );
+}
+
+/** The signed `manifest` record `GET /v1/records/{cid}` serves. */
+export const MANIFEST_RECORD_BODY = {
+  id: "bafyrei-manifest",
+  type: "manifest",
+  body: {
+    files: [
+      {
+        path: "paper.pdf",
+        cid: "bafkrei-pdf",
+        size: 482113,
+        mediaType: "application/pdf",
+        role: "manuscript",
+      },
+      {
+        path: "code/run.py",
+        cid: "bafkrei-code",
+        size: 1204,
+        mediaType: "text/x-python",
+        role: "code",
+      },
+    ],
+  },
+};
+
+/** A consent report with every author signed, unless `statuses` says else. */
+export function consentsBody(
+  state = "moderation",
+  statuses: Record<string, string> = {},
+): unknown {
+  const authors = [ALICE, BOB].map((did, index) => ({
+    did,
+    author: did,
+    position: index + 1,
+    status: statuses[did] ?? "signed",
+    decision: (statuses[did] ?? "signed") === "signed" ? "accept" : null,
+    consentCid: null,
+    role: null,
+    creditRoles: null,
+  }));
+  return {
+    paper: SHORT_ID,
+    version: 2,
+    versionCid: VERSION_CID,
+    state,
+    declinedBy: null,
+    count: authors.length,
+    waiting: authors.filter((a) => a.status === "waiting").length,
+    signed: authors.filter((a) => a.status === "signed").length,
+    declined: authors.filter((a) => a.status === "declined").length,
+    authors,
+  };
+}
+
+/** `GET /v1/papers/{id}/v/{n}/checks`, as the checks plugin writes it. */
+export const CHECKS_BODY = {
+  paper: SHORT_ID,
+  version: 2,
+  versionCid: VERSION_CID,
+  state: "moderation",
+  files: [
+    {
+      path: "paper.pdf",
+      cid: "bafkrei-pdf",
+      role: "manuscript",
+      status: "passed",
+      failedChecks: [],
+      detail: null,
+    },
+  ],
+  similarity: { pct: 8 },
+  similarityPct: 8,
+  references: { total: 20, unresolved: 1 },
+  referencesTotal: 20,
+  referencesUnresolved: 1,
+  metadata: { match: true, signedTitle: "Can a Meta-Agent Choose the Safer Branch?" },
+  metadataMatch: true,
+  signedTitle: "Can a Meta-Agent Choose the Safer Branch?",
+  firstPageTitle: null,
+  checkedAt: null,
+};
+
 /** One answer per read, by name; an omitted read answers `404`. */
 export type Routes = Partial<{
   paper: (path: string) => Response;
@@ -296,6 +458,14 @@ export type Routes = Partial<{
   text: () => Response;
   compare: (from: number, to: number) => Response;
   cite: (format: string, path: string) => Response;
+  /** `GET /v1/export/paper/{id}/records` — the paper's public record log. */
+  records: () => Response;
+  /** `GET /v1/records/{cid}` — one stored envelope (the manifest record). */
+  record: (cid: string) => Response;
+  /** `GET /v1/papers/{id}/v/{n}/consents`. */
+  consents: () => Response;
+  /** `GET /v1/papers/{id}/v/{n}/checks`. */
+  checks: () => Response;
 }>;
 
 /** What the node answers when every read works. */
@@ -341,6 +511,15 @@ export function stubApi(routes: Routes = HAPPY): ReturnType<typeof vi.fn> {
     if (/\/reviews$/.test(path)) return (routes.reviews ?? notFound)();
     if (/\/threads$/.test(path)) return (routes.threads ?? notFound)();
     if (/\/text$/.test(path)) return (routes.text ?? notFound)();
+    if (/\/consents$/.test(path)) return (routes.consents ?? notFound)();
+    if (/\/checks$/.test(path)) return (routes.checks ?? notFound)();
+    if (/\/export\/paper\/[^/]+\/records$/.test(path)) {
+      return (routes.records ?? notFound)();
+    }
+    const record = /^\/v1\/records\/(.+)$/.exec(path);
+    if (record !== null) {
+      return (routes.record ?? notFound)(decodeURIComponent(record[1]));
+    }
     if (/^\/v1\/papers\/[^/]+(\/v\d+)?$/.test(path)) {
       return (routes.paper ?? notFound)(path);
     }

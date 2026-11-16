@@ -20,9 +20,11 @@ import {
   PAPER_BODY,
   SHORT_ID,
   TEXT_BODY,
+  decisionEntry,
   json,
   notFound,
   stubApi,
+  versionEntry,
   type Routes,
 } from "./paper-page-fixtures";
 
@@ -450,6 +452,46 @@ describe("a paper that cannot be shown", () => {
     await expect(page(BARE_ID)).rejects.toThrow();
   });
 
+  it("renders the removed-content state for a tombstoned paper", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => notFound(),
+      records: () =>
+        json([
+          versionEntry(),
+          decisionEntry("tombstone", 12, {
+            clause: "MOD-05",
+            reason: "Unlawful content.",
+          }),
+        ]),
+    });
+    mount(await page(BARE_ID));
+
+    // design.md §8: "Content removed for legal reasons on {date}. The record
+    // of its existence remains." — not a bare 404.
+    expect(screen.getByText("Content removed for legal reasons")).toBeTruthy();
+    expect(screen.getByText(/Removed on 5 March 2027/)).toBeTruthy();
+    expect(screen.getByText(/The record of its existence remains/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "Can a Meta-Agent Choose the Safer Branch?",
+    );
+    expect(
+      screen.getByRole("link", { name: "Policy MOD-05" }).getAttribute("href"),
+    ).toBe("/policies#MOD-05");
+  });
+
+  it("renders the removed-content state for one tombstoned version", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => notFound(),
+      records: () =>
+        json([versionEntry(), decisionEntry("tombstone", 12, { clause: "MOD-05" })]),
+    });
+    mount(await versionPage(BARE_ID, "v2"));
+
+    expect(screen.getByText("Content removed for legal reasons")).toBeTruthy();
+  });
+
   it("says a bad address is not an address, without asking the API", async () => {
     const fetchMock = stubApi();
     mount(await page("not an id!"));
@@ -535,5 +577,19 @@ describe("metadata", () => {
       expect(meta.title).toBe("Paper unavailable · Scholium");
       expect(meta.robots).toEqual({ index: false });
     }
+  });
+
+  it("titles a tombstoned paper as removed, and keeps it out of indexes", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => notFound(),
+      records: () =>
+        json([versionEntry(), decisionEntry("tombstone", 12, { clause: "MOD-05" })]),
+    });
+
+    const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
+
+    expect(meta.title).toBe("Content removed · Scholium");
+    expect(meta.robots).toEqual({ index: false });
   });
 });
