@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
 import { EmptyState, StatusChip, isPaperStatus } from "../ui-kit";
 
+import { Card } from "./card";
 import {
   DASHBOARD_TITLE,
   SECURITY_PATH,
@@ -17,6 +18,7 @@ import {
   type MyReview,
   type NeedsAttention,
 } from "./dashboard";
+import { SavedSearchesCard, type SavedSearchesCardProps } from "./saved-searches-card";
 import "./dashboard-page.css";
 
 /** Loads the dashboard; replaceable in tests. */
@@ -51,6 +53,10 @@ export interface DashboardPageProps {
    * store on mount.
    */
   signedIn?: boolean;
+  /** Replace the saved-searches loader, for tests or an alternate API client. */
+  loadSavedSearches?: SavedSearchesCardProps["loadSavedSearches"];
+  /** Replace the saved-search delete call, for tests or an alternate API client. */
+  deleteSavedSearch?: SavedSearchesCardProps["deleteSavedSearch"];
 }
 
 type DashboardState =
@@ -86,6 +92,8 @@ export function DashboardPage({
   loadData,
   loadStatus,
   signedIn,
+  loadSavedSearches,
+  deleteSavedSearch,
 }: DashboardPageProps = {}) {
   const initial =
     initialDashboard ?? initialData ?? initialMe ?? initialStatus ?? initialResult;
@@ -176,7 +184,13 @@ export function DashboardPage({
       ) : null}
 
       {state.status === "ready" ? (
-        <DashboardView data={state.data} onRefresh={retry} />
+        <DashboardView
+          data={state.data}
+          onRefresh={retry}
+          signedIn={signedIn}
+          loadSavedSearches={loadSavedSearches}
+          deleteSavedSearch={deleteSavedSearch}
+        />
       ) : null}
     </div>
   );
@@ -196,19 +210,27 @@ function DashboardHeader() {
   );
 }
 
-/** The five cards (docs/design.md §5.6). */
+/** The five cards (docs/design.md §5.6), plus the reader's saved searches. */
 function DashboardView({
   data,
   onRefresh,
+  signedIn,
+  loadSavedSearches,
+  deleteSavedSearch,
 }: {
   data: DashboardData;
   onRefresh: () => void;
-}) {
+} & SavedSearchesCardProps) {
   return (
     <div className="db-grid">
       <NeedsAttentionCard attention={data.needs_attention} onRefresh={onRefresh} />
       <MyPapersCard papers={data.my_papers} />
       <MyReviewsCard reviews={data.my_reviews} />
+      <SavedSearchesCard
+        signedIn={signedIn}
+        loadSavedSearches={loadSavedSearches}
+        deleteSavedSearch={deleteSavedSearch}
+      />
       <CredentialsCard did={data.did} />
       <SecurityCard />
       <NotificationsCard onRefresh={onRefresh} />
@@ -216,26 +238,8 @@ function DashboardView({
   );
 }
 
-/** One card. `anchor` is set where another screen deep-links to it. */
-export function Card({
-  title,
-  anchor,
-  children,
-}: {
-  title: string;
-  anchor?: string;
-  children: ReactNode;
-}) {
-  const headingId = `db-${anchor ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-title`;
-  return (
-    <section className="db-card" id={anchor} aria-labelledby={headingId}>
-      <h2 className="db-card-title" id={headingId}>
-        {title}
-      </h2>
-      <div className="db-card-body">{children}</div>
-    </section>
-  );
-}
+/** Re-exported for `security-page`, which imported the card from here. */
+export { Card };
 
 /** How each kind of attention item is named on screen. */
 const ATTENTION_KIND_LABELS: Readonly<Record<string, string>> = {

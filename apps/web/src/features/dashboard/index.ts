@@ -137,3 +137,37 @@ export {
 } from "./profile";
 
 export { ProfilePage, UserProfilePage, PublicProfilePage, type LoadProfile, type ProfilePageProps } from "./profile-page";
+
+export {
+  FOLLOWS_ENDPOINT,
+  FollowError,
+  describeFollowError,
+  followCategory,
+  followEndpoint,
+  followSigninHref,
+  loadFollowedCategories,
+  parseFollowedCategories,
+  unfollowCategory,
+  type FollowsClient,
+} from "./follows";
+
+export { FollowToggle, type FollowToggleProps } from "./follow-toggle";
+
+export {
+  SAVED_SEARCHES_ENDPOINT,
+  SavedSearchError,
+  deleteSavedSearch,
+  describeSavedSearchError,
+  loadSavedSearches,
+  parseSavedSearches,
+  savedSearchEndpoint,
+  savedSearchFilters,
+  savedSearchHref,
+  savedSearchState,
+  savedSearchTitle,
+  type SavedSearch,
+  type SavedSearchQuery,
+  type SavedSearchesClient,
+} from "./saved-searches";
+
+export { SavedSearchesCard, type SavedSearchesCardProps } from "./saved-searches-card";

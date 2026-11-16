@@ -1,0 +1,74 @@
+/* ==========================================================================
+   Follow toggle (/c/{category}) — docs/design.md §3, §5.1 and §9.
+
+   Its own stylesheet, not dashboard-page.css: the toggle renders on a category
+   page, which should not pull in the dashboard's card grid. Colour comes from
+   tokens only. The pressed state is a filled button and a ✓ mark as well as
+   aria-pressed, so it never rests on colour alone.
+   ========================================================================== */
+
+.db-follow {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.db-follow-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-unit) * 1);
+  min-block-size: calc(var(--space-unit) * 8);
+  padding-block: calc(var(--space-unit) * 1);
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  text-decoration-line: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.db-follow-button:hover {
+  background: var(--accent-soft);
+}
+
+/* Following: filled and bordered in the accent, the label stays --ink. */
+.db-follow-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.db-follow-button[aria-disabled="true"] {
+  cursor: progress;
+  color: var(--ink-2);
+}
+
+.db-follow-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.db-follow-error {
+  margin: 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+}
+
+@media (pointer: coarse) {
+  .db-follow-button {
+    min-block-size: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-follow-button {
+    transition: none;
+  }
+}

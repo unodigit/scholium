@@ -70,3 +70,29 @@ describe("dashboard-page.css", () => {
     expect(rules).toMatch(/transition:\s*none/);
   });
 });
+
+describe("dashboard-page.css: saved searches", () => {
+  it("gives a saved search the same row rhythm as items, papers and reviews", () => {
+    expect(rules).toMatch(/\.db-review,\s*\.db-saved\s*\{[^}]*display:\s*flex/s);
+    expect(rules).toMatch(/\.db-saved:first-child/);
+    expect(rules).toMatch(/\.db-saved:last-child/);
+  });
+
+  it("keeps the 44 px touch target on the Delete action", () => {
+    expect(rules).toMatch(/@media \(pointer: coarse\)\s*\{[^}]*\.db-saved-delete[^}]*min-block-size:\s*44px/s);
+  });
+
+  it("shows the focus ring where focus lands after a delete", () => {
+    expect(rules).toMatch(/\.db-saved-body:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--focus-ring\)/s);
+  });
+
+  it("keeps Delete a quiet bordered control: no danger colour, state is in the label", () => {
+    expect(rules).not.toMatch(/--critical/);
+    expect(rules).toMatch(/\.db-saved-delete\[aria-disabled="true"\]/);
+  });
+
+  it("lets a long title or filter list wrap instead of outgrowing the card", () => {
+    expect(rules).toMatch(/\.db-saved-title\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+    expect(rules).toMatch(/\.db-saved-meta[^{]*\{[^}]*overflow-wrap:\s*anywhere/s);
+  });
+});

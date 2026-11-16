@@ -104,7 +104,8 @@
 
 .db-item,
 .db-paper,
-.db-review {
+.db-review,
+.db-saved {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -115,14 +116,16 @@
 
 .db-item:first-child,
 .db-paper:first-child,
-.db-review:first-child {
+.db-review:first-child,
+.db-saved:first-child {
   padding-top: 0;
   border-top: 0;
 }
 
 .db-item:last-child,
 .db-paper:last-child,
-.db-review:last-child {
+.db-review:last-child,
+.db-saved:last-child {
   padding-bottom: 0;
 }
 
@@ -278,6 +281,79 @@ a.db-review-title:focus-visible {
   outline-offset: 2px;
 }
 
+/* ---- Saved searches ------------------------------------------------------
+   A title that re-runs the search, a Delete action, the filters beneath. The
+   delete reads as a quiet control: it is the same bordered button as every
+   other action, not a red alarm (docs/design.md §3 keeps colour for state). */
+
+.db-saved-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.db-saved-body:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.db-saved-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 2);
+  width: 100%;
+  min-width: 0;
+}
+
+.db-saved-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.db-saved-delete {
+  min-block-size: calc(var(--space-unit) * 8);
+  padding-block: calc(var(--space-unit) * 1);
+  padding-inline: calc(var(--space-unit) * 3);
+}
+
+.db-saved-delete[aria-disabled="true"] {
+  cursor: progress;
+  color: var(--ink-2);
+}
+
+.db-saved-meta,
+.db-saved-row-error {
+  margin: 0;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.db-saved-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+}
+
+/* Announced to screen readers, never drawn. */
+.db-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---- Small screens ------------------------------------------------------
    One card per row; touch readers get a 44 px action (docs/design.md §9). */
 
@@ -293,7 +369,8 @@ a.db-review-title:focus-visible {
 
 @media (pointer: coarse) {
   .db-button,
-  .db-link {
+  .db-link,
+  .db-saved-delete {
     min-block-size: 44px;
   }
 }
