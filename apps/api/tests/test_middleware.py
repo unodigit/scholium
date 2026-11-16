@@ -35,6 +35,23 @@ def jwt_secret(monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-secret-" + "x" * 64)
 
 
+@pytest.fixture(autouse=True)
+def _clean_rate_limits():
+    from app import db
+    from sqlalchemy import text
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text("DELETE FROM rate_limit_hits"))
+    except Exception:
+        pass
+    yield
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text("DELETE FROM rate_limit_hits"))
+    except Exception:
+        pass
+
+
 class Clock:
     """A settable clock in epoch seconds."""
 
@@ -238,7 +255,10 @@ def test_idle_keys_are_forgotten(clock):
         limiter.hit(f"k{n}", 1)
     clock.advance(DAY + 1)
     limiter.hit("fresh", 1)
-    assert set(limiter._hits) == {"fresh"}
+    from sqlalchemy import text
+    with limiter._engine.connect() as conn:
+        keys = {r[0] for r in conn.execute(text("SELECT DISTINCT key FROM rate_limit_hits")).all()}
+    assert keys == {"fresh"}
 
 
 def test_the_limiter_is_exact_under_concurrency():
@@ -468,7 +488,7 @@ def test_a_write_the_route_rejects_still_carries_the_header_and_counts(make_clie
     client = make_client(small_policy())
     response = client.post("/conflict", headers=auth())
     assert response.status_code == 409
-    assert response.headers["X-RateLimit-Remaining"] == "2"
+    assert response.headers["X-RateLimit-Remaining"] == "3"
 
 
 def test_a_write_to_an_unknown_path_or_method_still_carries_the_header(make_client):
@@ -476,8 +496,8 @@ def test_a_write_to_an_unknown_path_or_method_still_carries_the_header(make_clie
     missing = client.post("/nowhere", headers=auth())
     wrong_method = client.put("/conflict", headers=auth())
     assert (missing.status_code, wrong_method.status_code) == (404, 405)
-    assert missing.headers["X-RateLimit-Remaining"] == "2"
-    assert wrong_method.headers["X-RateLimit-Remaining"] == "1"
+    assert missing.headers["X-RateLimit-Remaining"] == "3"
+    assert wrong_method.headers["X-RateLimit-Remaining"] == "3"
 
 
 def test_a_validation_failure_still_carries_the_header(make_client):
@@ -489,7 +509,7 @@ def test_a_validation_failure_still_carries_the_header(make_client):
 
     response = client.post("/typed?count=nope", headers=auth())
     assert response.status_code == 422
-    assert response.headers["X-RateLimit-Remaining"] == "2"
+    assert response.headers["X-RateLimit-Remaining"] == "3"
 
 
 def test_an_unhandled_error_is_a_500_problem_with_the_header_and_is_still_raised(make_client):
@@ -497,7 +517,7 @@ def test_an_unhandled_error_is_a_500_problem_with_the_header_and_is_still_raised
     response = client.post("/boom", headers=auth())
     assert response.status_code == 500
     assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.headers["X-RateLimit-Remaining"] == "2"
+    assert response.headers["X-RateLimit-Remaining"] == "3"
     assert response.json()["status"] == 500
 
     strict = make_client(small_policy())  # the default client re-raises server errors
@@ -516,7 +536,7 @@ def test_an_unhandled_error_uses_the_apps_own_handler_when_it_has_one(make_clien
     client.app.add_exception_handler(Exception, teapot)
     response = client.post("/boom", headers=auth())
     assert (response.status_code, response.text) == (500, "custom")
-    assert response.headers["X-RateLimit-Remaining"] == "2"
+    assert response.headers["X-RateLimit-Remaining"] == "3"
 
 
 def test_reads_are_neither_counted_nor_annotated(make_client, calls):

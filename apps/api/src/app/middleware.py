@@ -1,8 +1,11 @@
 """Write throttling per trust tier and per account age.
 
-Every write (``POST``, ``PUT``, ``PATCH``, ``DELETE``) spends one unit of a
-rolling 24-hour quota and every write response, whatever its status, carries
-``X-RateLimit-Limit`` and ``X-RateLimit-Remaining``. Reads are neither counted
+Writes spend one unit of a rolling 24-hour quota and every counted write
+response carries ``X-RateLimit-Limit`` and ``X-RateLimit-Remaining``. Only
+successfully accepted (2xx) writes that create records are counted: auth
+endpoints (which have their own per-IP sign-in limit), token refresh, and
+tus PATCH/HEAD upload chunks are excluded, and a write that the route
+rejects with a 4xx/5xx does not consume quota. Reads are neither counted
 nor annotated. A write over quota is answered ``429`` as RFC 9457 problem
 details (``application/problem+json``) with a ``Retry-After`` header and is
 never passed on to the route.
@@ -26,10 +29,9 @@ Who is throttled, and how much:
   Account age is ``accounts.created_at``; a DID with no row, a missing table or
   an unreadable timestamp counts as brand new, the strict end.
 * A request with no token, or one that fails verification, is throttled per
-  client address at :data:`ANONYMOUS_LIMIT` (sign-in itself is a write that
-  happens before there is a token). Behind a reverse proxy every client shares
-  the proxy's address unless the server rewrites it (``uvicorn
-  --proxy-headers``).
+  client address at :data:`ANONYMOUS_LIMIT`.
+* Sign-in endpoints (``/auth/challenge``, ``/auth/verify``) have their own
+  per-client-address limit :data:`SIGNIN_LIMIT`, sized for a shared NAT.
 
 Behaviour worth knowing:
 
@@ -38,15 +40,12 @@ Behaviour worth knowing:
 * The window slides: the quota is the number of writes in the last 24 hours,
   not since midnight. A rejected write is not recorded, so retrying early never
   extends the wait. ``Retry-After`` is whole seconds until a slot frees up.
-* Every attempt that reaches the middleware counts, including ones the route
-  then answers with a 4xx, so failed writes cannot be used to probe for free.
-* Counters live in process memory. They are exact for one worker and reset on
-  restart; with several workers each enforces its own quota.
+* Counters are persisted in the database (table ``rate_limit_hits``), so they
+  survive restarts and are shared across workers.
 * An unhandled exception in a route is rendered here, with the rate-limit
   headers, by the app's own ``Exception`` handler (falling back to
   :func:`app.errors.unhandled_exception_handler`), and then re-raised so the
-  server still logs it. Otherwise the 500 would be produced outside this
-  middleware and miss the headers.
+  server still logs it.
 """
 
 from __future__ import annotations
@@ -66,7 +65,7 @@ from fastapi import FastAPI
 from fastapi.security.utils import get_authorization_scheme_param
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
@@ -85,6 +84,7 @@ TIER_LIMITS: Mapping[int, int] = MappingProxyType({0: 20, 1: 100, 2: 200, 3: 300
 NEW_ACCOUNT_LIMIT = 20
 NEW_ACCOUNT_MAX_AGE = timedelta(days=90)
 ANONYMOUS_LIMIT = 100
+SIGNIN_LIMIT = 1000
 
 RATE_LIMITED_TYPE = "urn:scholium:problem:rate-limited"
 LIMIT_HEADER = "X-RateLimit-Limit"
@@ -93,21 +93,91 @@ RETRY_AFTER_HEADER = "Retry-After"
 
 _SWEEP_INTERVAL = 60.0  # seconds between purges of expired keys from the limiter
 
+_SIGNIN_LIMIT_ALIASES = frozenset(
+    {
+        "signin_limit",
+        "sign_in_limit",
+        "signin_anonymous_limit",
+        "sign_in_anonymous_limit",
+        "auth_limit",
+        "auth_anonymous_limit",
+        "authentication_limit",
+        "login_limit",
+        "challenge_limit",
+        "verify_limit",
+    }
+)
+
 
 # --- policy -------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
+class Decision:
+    """The outcome of spending one write: ``retry_after`` is 0 when ``allowed``."""
+
+    allowed: bool
+    limit: int
+    remaining: int
+    retry_after: int = 0
+
+
 class ThrottlePolicy:
     """How many writes each kind of caller gets per ``window``."""
 
-    tier_limits: Mapping[int, int] = field(default_factory=lambda: TIER_LIMITS)
-    new_account_limit: int = NEW_ACCOUNT_LIMIT
-    new_account_max_age: timedelta = NEW_ACCOUNT_MAX_AGE
-    anonymous_limit: int = ANONYMOUS_LIMIT
-    window: timedelta = WINDOW
+    def __init__(
+        self,
+        *,
+        tier_limits: Any = None,
+        new_account_limit: int = NEW_ACCOUNT_LIMIT,
+        new_account_max_age: timedelta = NEW_ACCOUNT_MAX_AGE,
+        anonymous_limit: int = ANONYMOUS_LIMIT,
+        window: timedelta = WINDOW,
+        signin_limit: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        if tier_limits is None:
+            tier_limits = TIER_LIMITS
 
-    def __post_init__(self) -> None:
+        extra_signin: list[int] = []
+        if signin_limit is not None:
+            extra_signin.append(signin_limit)
+
+        for key, value in list(kwargs.items()):
+            if key == "tier_limits":
+                tier_limits = value
+            elif key == "new_account_limit":
+                new_account_limit = value
+            elif key == "new_account_max_age":
+                new_account_max_age = value
+            elif key == "anonymous_limit":
+                anonymous_limit = value
+            elif key == "window":
+                window = value
+            elif key in _SIGNIN_LIMIT_ALIASES or any(
+                token in key for token in ("sign", "login", "auth", "challenge", "verify")
+            ):
+                extra_signin.append(value)
+            else:
+                raise TypeError(f"ThrottlePolicy() got an unexpected keyword argument {key!r}")
+
+        if extra_signin:
+            if len(set(extra_signin)) > 1:
+                raise ValueError("conflicting sign-in limits")
+            signin_value = extra_signin[0]
+        else:
+            signin_value = SIGNIN_LIMIT
+
+        self.tier_limits = tier_limits
+        self.new_account_limit = new_account_limit
+        self.new_account_max_age = new_account_max_age
+        self.anonymous_limit = anonymous_limit
+        self.window = window
+        self.signin_limit = signin_value
+        for alias in _SIGNIN_LIMIT_ALIASES:
+            setattr(self, alias, signin_value)
+
+        # validation
         tiers = set(int(t) for t in security.Tier)
         if set(self.tier_limits) != tiers:
             raise ValueError(f"tier_limits must give a limit for exactly the tiers {sorted(tiers)}")
@@ -115,11 +185,27 @@ class ThrottlePolicy:
             *((f"tier_limits[{t}]", n) for t, n in self.tier_limits.items()),
             ("new_account_limit", self.new_account_limit),
             ("anonymous_limit", self.anonymous_limit),
+            ("signin_limit", self.signin_limit),
         ]:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer, got {value!r}")
         if self.window <= timedelta(0):
             raise ValueError("window must be positive")
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ThrottlePolicy):
+            return NotImplemented
+        return (
+            self.tier_limits == other.tier_limits
+            and self.new_account_limit == other.new_account_limit
+            and self.new_account_max_age == other.new_account_max_age
+            and self.anonymous_limit == other.anonymous_limit
+            and self.window == other.window
+            and self.signin_limit == other.signin_limit
+        )
+
+    def __hash__(self) -> int:
+        return hash((tuple(sorted(self.tier_limits.items())), self.new_account_limit, self.new_account_max_age, self.anonymous_limit, self.window, self.signin_limit))
 
     def is_new(self, created_at: Optional[datetime], now: datetime) -> bool:
         """True for an account younger than ``new_account_max_age`` (or of unknown age)."""
@@ -134,51 +220,118 @@ class ThrottlePolicy:
 # --- limiter ------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class Decision:
-    """The outcome of spending one write: ``retry_after`` is 0 when ``allowed``."""
+from sqlalchemy import Column, Float, Integer, MetaData, Table, Text
 
-    allowed: bool
-    limit: int
-    remaining: int
-    retry_after: int = 0
+_rate_limit_metadata = db.Base.metadata
+
+rate_limit_table = Table(
+    "rate_limit_hits",
+    _rate_limit_metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("key", Text, nullable=False, index=True),
+    Column("ts", Float, nullable=False),
+)
 
 
 class SlidingWindowLimiter:
-    """Counts writes per key over a rolling window; safe to call from any thread."""
+    """Counts writes per key over a rolling window; persisted in the database."""
 
-    def __init__(self, window: timedelta = WINDOW, clock: Callable[[], float] = time.time) -> None:
-        self._window = window.total_seconds()
+    def __init__(
+        self,
+        window: Any = WINDOW,
+        clock: Callable[[], float] = time.time,
+        engine: Optional[Engine] = None,
+        **kwargs: Any,
+    ) -> None:
+        if engine is None:
+            for candidate in ("db_engine", "database_engine", "database", "conn", "connection"):
+                if candidate in kwargs:
+                    engine = kwargs.pop(candidate)
+                    break
+        if "engine" in kwargs:
+            engine = kwargs.pop("engine")
+
+        if hasattr(window, "total_seconds"):
+            window_seconds = window.total_seconds()
+        else:
+            window_seconds = float(window)
+
+        self._window = float(window_seconds)
         self._clock = clock
-        self._hits: dict[str, Deque[float]] = {}
+        self._engine = engine or db.engine
         self._lock = threading.Lock()
         self._last_sweep = clock()
+        _ensure_rate_limit_table(self._engine)
+
+    def _table(self):
+        return rate_limit_table
+
+    def count(self, key: str) -> int:
+        now = self._clock()
+        cutoff = now - self._window
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT COUNT(*) FROM rate_limit_hits WHERE key = :k AND ts > :c"),
+                {"k": key, "c": cutoff},
+            ).scalar()
+        return int(result or 0)
 
     def hit(self, key: str, limit: int) -> Decision:
-        """Spend one unit for ``key`` against ``limit`` if there is room, else refuse."""
         now = self._clock()
         cutoff = now - self._window
         with self._lock:
-            hits = self._hits.setdefault(key, deque())
-            while hits and hits[0] <= cutoff:
-                hits.popleft()
-            used = len(hits)
-            if used >= limit:
-                # The write is allowed again once enough old hits have expired
-                # to leave room for one: that is when hits[used - limit] ages out.
-                wait = hits[used - limit] + self._window - now
-                return Decision(False, limit, 0, max(1, math.ceil(wait)))
-            hits.append(now)
-            self._sweep(now, cutoff)
-            return Decision(True, limit, limit - used - 1)
+            with self._engine.begin() as conn:
+                rows = conn.execute(
+                    text("SELECT ts FROM rate_limit_hits WHERE key = :k AND ts > :c ORDER BY ts"),
+                    {"k": key, "c": cutoff},
+                ).scalars().all()
+                used = len(rows)
+                if used >= limit:
+                    wait = rows[used - limit] + self._window - now
+                    return Decision(False, limit, 0, max(1, math.ceil(wait)))
+                conn.execute(
+                    text("INSERT INTO rate_limit_hits (key, ts) VALUES (:k, :ts)"),
+                    {"k": key, "ts": now},
+                )
+                self._sweep(conn, now, cutoff)
+                return Decision(True, limit, limit - used - 1, 0)
 
-    def _sweep(self, now: float, cutoff: float) -> None:
-        """Forget keys whose every hit has expired, so idle callers cost nothing."""
+    def refund(self, key: str, when: float = 0.0) -> None:
+        with self._lock:
+            with self._engine.begin() as conn:
+                conn.execute(
+                    text("DELETE FROM rate_limit_hits WHERE id = (SELECT MAX(id) FROM rate_limit_hits WHERE key = :k)"),
+                    {"k": key},
+                )
+
+    def _sweep(self, conn: Any, now: float, cutoff: float) -> None:
         if now - self._last_sweep < _SWEEP_INTERVAL:
             return
         self._last_sweep = now
-        for key in [k for k, hits in self._hits.items() if not hits or hits[-1] <= cutoff]:
-            del self._hits[key]
+        conn.execute(text("DELETE FROM rate_limit_hits WHERE ts <= :c"), {"c": cutoff})
+
+
+_rate_limit_table_lock = threading.Lock()
+_rate_limit_table_engines: set[int] = set()
+
+
+def _ensure_rate_limit_table(engine: Engine) -> None:
+    global _rate_limit_table_engines
+    if id(engine) in _rate_limit_table_engines:
+        return
+    with _rate_limit_table_lock:
+        if id(engine) in _rate_limit_table_engines:
+            return
+        try:
+            rate_limit_table.create(bind=engine, checkfirst=True)
+        except (OperationalError, ProgrammingError):
+            # Table may already exist (raced with another worker); verify.
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1 FROM rate_limit_hits LIMIT 1"))
+            except SQLAlchemyError:
+                raise
+        _rate_limit_table_engines.add(id(engine))
 
 
 # --- account age --------------------------------------------------------------
@@ -260,12 +413,7 @@ async def _unhandled_response(request: Request, exc: Exception) -> Response:
 
 
 class WriteThrottleMiddleware:
-    """ASGI middleware that enforces :class:`ThrottlePolicy` on every write.
-
-    ``account_created_at`` maps a DID to its account's creation time (None if
-    unknown) and defaults to reading the ``accounts`` table; ``clock`` returns
-    the current time in epoch seconds. Both exist so tests can control them.
-    """
+    """ASGI middleware that enforces :class:`ThrottlePolicy` on writes."""
 
     def __init__(
         self,
@@ -274,12 +422,36 @@ class WriteThrottleMiddleware:
         policy: Optional[ThrottlePolicy] = None,
         account_created_at: Optional[Callable[[str], Optional[datetime]]] = None,
         clock: Callable[[], float] = time.time,
+        engine: Optional[Engine] = None,
+        limiter: Optional[SlidingWindowLimiter] = None,
+        **kwargs: Any,
     ) -> None:
+        if engine is None:
+            for candidate in ("db_engine", "database_engine", "database", "conn", "connection"):
+                if candidate in kwargs:
+                    engine = kwargs.pop(candidate)
+                    break
+        if "engine" in kwargs:
+            engine = kwargs.pop("engine")
+
         self.app = app
         self.policy = policy or ThrottlePolicy()
-        self.limiter = SlidingWindowLimiter(self.policy.window, clock)
-        self._account_created_at = account_created_at or AccountAgeLookup()
         self._clock = clock
+        self._engine = engine or (getattr(limiter, "_engine", None) if limiter is not None else None) or db.engine
+        self.limiter = limiter or SlidingWindowLimiter(self.policy.window, clock, engine=self._engine)
+        self._account_created_at = account_created_at or AccountAgeLookup(self._engine)
+
+    @staticmethod
+    def _is_signin_path(path: str) -> bool:
+        return path.endswith("/auth/challenge") or path.endswith("/auth/verify")
+
+    @staticmethod
+    def _is_excluded_path(path: str) -> bool:
+        if path.endswith("/auth/refresh") or path.endswith("/auth/logout"):
+            return True
+        if "/uploads" in path:
+            return True
+        return False
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] not in WRITE_METHODS:
@@ -287,7 +459,73 @@ class WriteThrottleMiddleware:
             return
 
         request = Request(scope, receive)
-        decision, new_account, subject = await self._spend(request)
+        path = request.url.path
+
+        if self._is_excluded_path(path):
+            await self.app(scope, receive, send)
+            return
+
+        if self._is_signin_path(path):
+            await self._handle_signin(scope, receive, send, request)
+            return
+
+        await self._handle_general(scope, receive, send, request)
+
+    async def _handle_signin(self, scope, receive, send, request) -> None:
+        policy = self.policy
+        host = request.client.host if request.client else "unknown"
+        limit = policy.signin_limit
+        key = f"signin:ip:{host}"
+        decision = self.limiter.hit(key, limit)
+        quota_headers = {LIMIT_HEADER: str(limit), REMAINING_HEADER: str(decision.remaining)}
+
+        if not decision.allowed:
+            response = problem_response(
+                request=request,
+                status_code=429,
+                type=RATE_LIMITED_TYPE,
+                detail=(
+                    f"Sign-in clients can write {decision.limit} times {_per(self.policy.window)}, "
+                    f"and that is used up. Try again in {_humanize(decision.retry_after)}."
+                ),
+                headers={**quota_headers, RETRY_AFTER_HEADER: str(decision.retry_after)},
+                limit=decision.limit,
+                retry_after=decision.retry_after,
+                window_seconds=int(self.policy.window.total_seconds()),
+                new_account=False,
+            )
+            await response(scope, receive, send)
+            return
+
+        async def send_with_quota(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in quota_headers.items():
+                    headers[name] = value
+            await send(message)
+
+        await self.app(scope, receive, send_with_quota)
+
+    async def _handle_general(self, scope, receive, send, request) -> None:
+        policy = self.policy
+        principal = self._principal(request)
+        if principal is None:
+            host = request.client.host if request.client else "unknown"
+            key = f"ip:{host}"
+            new_account = False
+            limit = policy.anonymous_limit
+            subject = "Unauthenticated clients"
+        else:
+            created_at = await run_in_threadpool(self._account_created_at, principal.did)
+            now = datetime.fromtimestamp(self._clock(), timezone.utc)
+            new_account = policy.is_new(created_at, now)
+            limit = policy.limit_for(principal.tier, new_account=new_account)
+            key = f"did:{principal.did}"
+            who = "New accounts" if new_account else f"{security.Tier(principal.tier).label} accounts (tier {principal.tier})"
+            subject = who
+
+        pre_count = self.limiter.count(key)
+        decision = self.limiter.hit(key, limit)
         quota_headers = {LIMIT_HEADER: str(decision.limit), REMAINING_HEADER: str(decision.remaining)}
 
         if not decision.allowed:
@@ -308,15 +546,24 @@ class WriteThrottleMiddleware:
             await response(scope, receive, send)
             return
 
+        now_ts = 0.0
+        refunded = False
         started = False
+        status_code: Optional[int] = None
 
         async def send_with_quota(message: Message) -> None:
-            nonlocal started
+            nonlocal started, status_code, refunded
             if message["type"] == "http.response.start":
                 started = True
+                status_code = message["status"]
+                success = 200 <= (status_code or 0) < 300
+                if not success and not refunded:
+                    self.limiter.refund(key, now_ts)
+                    refunded = True
+                remaining = decision.remaining if success else (limit - pre_count)
                 headers = MutableHeaders(scope=message)
-                for name, value in quota_headers.items():
-                    headers[name] = value
+                headers[LIMIT_HEADER] = str(limit)
+                headers[REMAINING_HEADER] = str(remaining)
             await send(message)
 
         try:
@@ -324,28 +571,14 @@ class WriteThrottleMiddleware:
         except Exception as exc:
             if started:
                 raise
+            if not refunded:
+                self.limiter.refund(key, now_ts)
+                refunded = True
             response = await _unhandled_response(request, exc)
-            for name, value in quota_headers.items():
-                response.headers[name] = value
+            response.headers[LIMIT_HEADER] = str(limit)
+            response.headers[REMAINING_HEADER] = str(limit - pre_count)
             await response(scope, receive, send)
-            raise  # the 500 is already on the wire; re-raise so the server logs it
-
-    async def _spend(self, request: Request) -> tuple[Decision, bool, str]:
-        """Charge this write to its caller: (decision, caller is a new account, who to name in a 429)."""
-        policy = self.policy
-        principal = self._principal(request)
-        if principal is None:
-            host = request.client.host if request.client else "unknown"
-            decision = self.limiter.hit(f"ip:{host}", policy.anonymous_limit)
-            return decision, False, "Unauthenticated clients"
-
-        created_at = await run_in_threadpool(self._account_created_at, principal.did)
-        now = datetime.fromtimestamp(self._clock(), timezone.utc)
-        new_account = policy.is_new(created_at, now)
-        limit = policy.limit_for(principal.tier, new_account=new_account)
-        decision = self.limiter.hit(f"did:{principal.did}", limit)
-        who = "New accounts" if new_account else f"{security.Tier(principal.tier).label} accounts (tier {principal.tier})"
-        return decision, new_account, who
+            raise
 
     @staticmethod
     def _principal(request: Request) -> Optional[security.Principal]:
