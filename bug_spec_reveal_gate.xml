@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Follow-up from the commit security review of the review-integrity fix (2026-11-17). -->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/reviews/**">
+    <title>Reveal gate can be opened by one reviewer, and review updates to a new version skip the gate</title>
+    <symptoms>
+      reviews/reveal.py require_reveal_gate_open counts DISTINCT Review.review_key rows for the version; the one-per-person guarantee lives in review_escrows.uniqueness_token, which is written after the commit is ingested. Two concurrent commits by the same reviewer can both reach the log and the Review table, so one person can open the gate alone and read nobody's report but publish their own early
+      In handle_review_reveal and apply_review_reveal the update branch (an earlier review exists) calls require_dedicated_route and _require_update and returns REVEALED without checking the gate for the update's target version, so an update re-targeted to v2 publishes its report before v2 has two independent commits (REV-4 independence on the new version)
+    </symptoms>
+    <reproduction_steps>
+      Fire two POST /v1/reviews/commit requests for the same reviewer and version concurrently (threads against the TestClient); then POST a reveal: it is accepted although only one person committed
+      With a revealed v1 review, post an update targeting v2 while v2 has fewer than two commits: it is accepted and its report is readable via GET /v1/records/{cid}
+    </reproduction_steps>
+    <expected>The gate counts distinct escrowed reviewers (distinct uniqueness_token values in review_escrows joined to the version's commits), and the escrow/uniqueness row is reserved (INSERT under the UNIQUE constraint) before the commit is appended to the log, with the reservation removed if the append fails, so a duplicate commit by the same person never reaches the log. Updates targeting a version call require_reveal_gate_open for that version in both handle_review_reveal and apply_review_reveal, returning 409 reveal-gate-closed until it opens</expected>
+    <actual>Gate counts review rows, not people; updates bypass the gate</actual>
+    <constraints>
+      <constraint>Keep the existing 409 problem type and the REV-5 update semantics otherwise unchanged</constraint>
+      <constraint>Regression tests: concurrent duplicate commit leaves exactly one log entry and the gate closed; update to an un-gated version is 409; update after the gate opens is accepted</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
