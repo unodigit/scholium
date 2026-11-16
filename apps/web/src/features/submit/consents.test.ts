@@ -12,7 +12,7 @@ import {
   trackerFromReport,
   type ConsentReport,
 } from "./consents";
-import { ApiError } from "../../lib/api";
+import { ApiError, tokenStore } from "../../lib/api";
 
 const ME = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const ADA = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
@@ -140,18 +140,22 @@ describe("the summary", () => {
 });
 
 describe("fetchConsents", () => {
-  it("reads the public consents endpoint without sending a token", async () => {
+  it("sends the signed-in user's token, since unlisted versions' consents are not public", async () => {
     const body = report([[ME, "signed"]]);
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }),
     );
     vi.stubGlobal("fetch", fetchMock);
-
-    await expect(fetchConsents({ paper: "sch:abcd-efgh-ijkl", version: 2 })).resolves.toEqual(body);
+    tokenStore.set({ accessToken: "author-token" });
+    try {
+      await expect(fetchConsents({ paper: "sch:abcd-efgh-ijkl", version: 2 })).resolves.toEqual(body);
+    } finally {
+      tokenStore.clear();
+    }
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(new URL(String(url)).pathname).toBe("/v1/papers/sch%3Aabcd-efgh-ijkl/v/2/consents");
-    expect(new Headers(init?.headers).get("authorization")).toBeNull();
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer author-token");
   });
 
   it("turns a 404 into a sentence about the version, and anything else into 'trying again'", async () => {

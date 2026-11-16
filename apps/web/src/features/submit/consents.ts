@@ -61,11 +61,15 @@ export interface ConsentReport {
 /** Fetches a consent report; tests and the Sign step can replace it. */
 export type FetchConsents = (ref: VersionRef, signal?: AbortSignal) => Promise<ConsentReport>;
 
-/** Reading a consent report is public, like reading a record, so no token is sent. */
+/**
+ * The consent report of a listed version is public; for a version that is not
+ * listed yet (awaiting consent, in moderation) the API serves it only to the
+ * version's authors and moderators, so the signed-in user's token is sent.
+ */
 export const fetchConsents: FetchConsents = (ref, signal) =>
   api.get<ConsentReport>(
     `/papers/${encodeURIComponent(ref.paper)}/v/${encodeURIComponent(String(ref.version))}/consents`,
-    { auth: false, signal },
+    { signal },
   );
 
 /** A sentence for the person watching, from whatever went wrong fetching a report. */
