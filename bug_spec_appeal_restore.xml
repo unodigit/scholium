@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Follow-up from the commit security review of the appeals fix (2026-11-17). -->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/appeals/**">
+    <title>Appeal overturn can list an unmoderated paper, restore stale state, and be pre-empted by a forged marker; panel seed is grindable</title>
+    <symptoms>
+      appeals/votes.py restores the target's prior state by emitting a moderation decision with action _RESTORE_ACTIONS.get(prior, "list"): when the prior state was "moderation" (or anything unmapped) the restoration LISTS the version, skipping moderation entirely
+      The restoration runs even when the appealed decision is no longer the newest state-setting decision on the target (a moderator acted since), overwriting newer state; the retry path in cast_vote has no bound
+      The idempotency check treats any ledger record whose body has appeal_restoration == appeal_cid as the restoration, a field any signer can set, so anyone can pre-empt the restoration
+      appeals/panel.py seeds panel selection from decision.decision_cid alone, which the deciding moderator controls and can grind to pick the panel
+    </symptoms>
+    <reproduction_steps>
+      Version in state moderation -> moderator rejects -> author appeals -> panel overturns: the version ends up listed without ever being approved
+      Hold -> appeal -> a moderator relists then re-holds -> panel overturns: restoration overwrites the newer hold
+      Before the panel finishes, append a signed record with body {"appeal_restoration": appeal_cid}: the overturn never restores anything
+    </reproduction_steps>
+    <expected>Restoration maps each prior state to its exact action and fails closed (no restoration, moderator notified) for unmapped states; a prior state of moderation returns the version to the moderation queue without listing it. Restoration happens only if the appealed decision is still the newest state-setting decision on the target and the version's current state is the one that decision set; otherwise it is skipped and left to a moderator. The restoration record's cid is stored on the Appeal row (idempotency by that column, not a body field); only node-authored records count. Panel seed = sha256(decision cid, appeal cid, ledger head hash at the appeal's append seq), fixed once the appeal is appended and stored on the Appeal row</expected>
+    <actual>Overturn can bypass moderation, clobber newer state, be blocked by anyone; panel is moderator-grindable</actual>
+    <constraints>
+      <constraint>Keep panel size, majority rule and notifications unchanged</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
