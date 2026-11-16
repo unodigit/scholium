@@ -27,7 +27,7 @@ from scholium_record_core import (
 
 from app import db
 from app.main import app
-from app.modules import ingest, ledger, moderation, submissions
+from app.modules import content, ingest, ledger, moderation, submissions
 from app.modules.identity.models import Account, ensure_account_table
 from app.modules.moderation import (
     ACTION_STATES,
@@ -435,7 +435,9 @@ def test_blank_reason_without_a_reason_cid_is_422(client, moderator, reason):
 
 def test_a_reason_cid_stands_in_for_the_reason(client, moderator):
     submission = Submission()
-    decision = moderator.decide(submission, "list", reason=None, reasonCid="bafkreiexamplereasoncid")
+    blob = content.store_bytes(f"a decision reason {uuid.uuid4().hex}".encode())
+    content.set_scan_status(blob.cid, content.SCAN_PASSED)
+    decision = moderator.decide(submission, "list", reason=None, reasonCid=blob.cid)
 
     response = client.post(DECISIONS_URL, json=decision, headers=moderator.headers)
 

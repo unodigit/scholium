@@ -21,10 +21,16 @@ generic pipeline cannot make, *before* anything is stored:
 * **a version.**  ``body.target`` must be a version this node holds (``422``,
   :class:`~.errors.UnknownDecisionTarget`); a ``tombstone`` may instead name a
   paper or a file id;
+* **a settled version.**  A decision may act only on a version that has
+  finished the consent-and-scan pipeline -- ``moderation``, ``listed``,
+  ``held`` or ``rejected`` (:data:`DECIDABLE_STATES`).  One still
+  ``awaiting_consent``, ``scanning`` or ``draft`` is a ``409``
+  (:class:`~.errors.DecisionNotAllowed`): holding or rejecting it would settle
+  a version its co-authors never agreed to publish;
 * **a reachable state.**  The state the action asks for must follow from the
-  version's present one (``409``, :class:`~.errors.DecisionNotAllowed`), so a
-  moderator cannot list a version that is still scanning or awaiting consent.
-  A ``tombstone`` is exempt: a takedown must work whatever state the version is in.
+  version's present one (``409``, :class:`~.errors.DecisionNotAllowed`).  A
+  ``tombstone`` is exempt from both checks: a takedown must work whatever state
+  the version is in.
 
 What an action does
 -------------------
@@ -99,6 +105,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ACTIONS",
     "ACTION_STATES",
+    "DECIDABLE_STATES",
     "DECISION_MIN_TIER",
     "DECISION_TYPE",
     "RELEASE",
@@ -167,6 +174,23 @@ ACTION_STATES: Mapping[str, str] = {
 }
 
 _RECLASSIFY = "reclassify"
+
+#: The version states a moderation decision may act on.  A version is decidable
+#: once it has finished the consent-and-scan pipeline: it sits in ``moderation``
+#: or a decision has already settled it (``listed``, ``held``, ``rejected`` --
+#: a rejected version may still be relisted or released).  ``awaiting_consent``,
+#: ``scanning`` and ``draft`` are not a moderator's to override: a decision
+#: there would settle a version its co-authors never agreed to publish, so it
+#: is a ``409``.  ``tombstone`` is exempt -- a takedown must work in any state
+#: -- and is handled before this check.
+DECIDABLE_STATES: frozenset[str] = frozenset(
+    {
+        submissions.MODERATION,
+        submissions.LISTED,
+        submissions.HELD,
+        submissions.REJECTED,
+    }
+)
 
 
 def _invalid(loc: list[Any], message: str, error_type: str, value: Any = None) -> InvalidRecord:
@@ -397,10 +421,20 @@ def require_known_clause(clause: str) -> None:
 def _requested_state(fields: DecisionFields, current: str) -> str:
     """The state the version ends in; refuse (``409``) one it cannot reach.
 
+    A version must have settled before a moderator can act on it: one still in
+    ``awaiting_consent``, ``scanning`` or ``draft`` is refused whatever the
+    action, so a hold or reject cannot settle it behind its co-authors' backs.
     Asking for the state the version already has is allowed -- the decision is
     still recorded, and :func:`~app.modules.submissions.transition_version`
     treats it as a no-op.  Anything else must be an edge of the natural graph.
     """
+    if current not in DECIDABLE_STATES:
+        raise DecisionNotAllowed(
+            fields.target,
+            fields.action,
+            current,
+            fields.state if fields.action == RELEASE and fields.state else ACTION_STATES.get(fields.action, current),
+        )
     if fields.action == RELEASE:
         # A release undoes a decision: it returns a held or rejected version to
         # the state it was in before.  It is not another way to list, or to move
@@ -432,8 +466,10 @@ def handle_moderation_decision(record: Mapping[str, Any]) -> str:
     require_known_clause(fields.clause)
 
     if fields.reason_cid is not None:
-        # The signer may publish a reasonCid only when they may read the file
-        # under the content visibility rule.
+        # The signer may publish a reasonCid only when GET /v1/content would
+        # serve that file to them (stored, not tombstoned, visible, and scanned
+        # clean).  The decision's reason is shown to the author, so a file the
+        # moderator could not download must not be copied out of the store.
         from app.modules.ingest import author_tier
         from app.modules.submissions.notices import _may_read
         from app.security import Principal
@@ -442,7 +478,7 @@ def handle_moderation_decision(record: Mapping[str, Any]) -> str:
         if not _may_read(fields.reason_cid, principal):
             raise _invalid(
                 ["body", "reasonCid"],
-                f"names a reasonCid that the signer may not read",
+                "names a reasonCid that the signer may not read",
                 "reason_not_readable",
                 fields.reason_cid,
             )

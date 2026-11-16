@@ -35,9 +35,13 @@ to the ``notices`` table:
 * **why.**  ``reason`` is the text readers are shown.  A record may instead
   carry ``reasonCid``, naming a file in the content store; the handler reads
   that file (UTF-8 text, at most :data:`MAX_REASON_BYTES`) so ``notices.reason``
-  -- NOT NULL -- always holds something a reader can read.  A file the node
-  does not hold, one moderation tombstoned, or one that is not usable text is a
-  ``422``.  When both are present a non-blank ``reason`` wins.
+  -- NOT NULL -- always holds something a reader can read.  The signer may name
+  only a file ``GET /v1/content/{cid}`` would serve *them* -- stored, not
+  tombstoned, visible to them and passed the sanitizer, the same gates the
+  router applies -- because the text becomes public paper JSON.  A file the
+  node does not hold, one moderation tombstoned, one the signer could not
+  download, or one that is not usable text is a ``422``.  When both are
+  present a non-blank ``reason`` wins.
 
 Every version shows the notice
 ------------------------------
@@ -96,7 +100,7 @@ from app.security import Principal, Tier
 
 from .errors import NoticeNotAuthorized, UnknownNoticeTarget
 from .genesis import get_paper
-from .models import Authorship, Notice, PaperVersion, ensure_tables
+from .models import Authorship, Notice, ensure_tables
 from .versions import get_version, versions_for_paper
 
 __all__ = [
@@ -473,34 +477,31 @@ def require_authorized(kind: str, author: object, paper_cid: str) -> None:
 
 
 def _may_read(cid: object, principal: object) -> bool:
-    """Content visibility, treating a file no version references as public.
+    """Whether ``GET /v1/content/{cid}`` would serve these bytes to ``principal``.
 
-    ``content.may_read`` already does this for files with no content ref at
-    all, but a manifest that no version points at leaves a content ref with no
-    ``PaperVersion`` row; such a file is not pre-listing content and stays
-    public.  Guarding here keeps a manifest-only file (common in tests and
-    import snapshots) from being misclassified as private.
+    ``reasonCid`` is published in the paper's public JSON, so it may name only a
+    file the signer could download themselves.  The router's gates are applied
+    here in its order -- stored, not tombstoned, visible to the caller, and
+    passed the sanitizer -- because a looser rule here is a publication bypass:
+
+    * a file a *standalone* manifest names (no version points at that manifest)
+      is pre-listing bytes the router answers ``404`` for, so it is not public;
+    * a blob still ``scanning`` (``423``) or ``failed`` (``451``) has not been
+      cleared, so its text must not be copied into a notice either.
+
+    ``content.may_read`` is used as it is rather than second-guessed: the
+    router's answer is the rule.
     """
-    if content.may_read(cid, principal):
-        return True
-    content.refs.sync()
-    with db.SessionLocal() as session:
-        manifest_cids = {
-            mc
-            for (mc,) in session.query(content.refs.ContentRef.manifest_cid).filter(
-                content.refs.ContentRef.content_cid == cid
-            )
-        }
-        if not manifest_cids:
-            return True
-        versions = (
-            session.query(PaperVersion.version_cid)
-            .filter(PaperVersion.manifest_cid.in_(manifest_cids))
-            .all()
-        )
-        if not versions:
-            return True
-    return False
+    if not isinstance(cid, str) or not cid:
+        return False
+    blob = content.get_blob(cid)
+    if blob is None:
+        return False
+    if content.is_tombstoned(cid):
+        return False
+    if not content.may_read(cid, principal):
+        return False
+    return getattr(blob, "scan_status", None) == content.SCAN_PASSED
 
 
 def read_reason_file(kind: str, cid: str, signer=None, *, principal=None) -> str:
@@ -508,8 +509,10 @@ def read_reason_file(kind: str, cid: str, signer=None, *, principal=None) -> str
 
     Raises:
         InvalidRecord: ``422`` located at ``body.reasonCid`` when the node does
-            not hold the file, moderation tombstoned it, it is larger than
-            :data:`MAX_REASON_BYTES`, or it is not non-blank UTF-8 text.
+            not hold the file, moderation tombstoned it, ``GET /v1/content``
+            would not serve it to the signer (pre-listing, or not scanned
+            clean), it is larger than :data:`MAX_REASON_BYTES`, or it is not
+            non-blank UTF-8 text.
     """
 
     def refuse(message: str, error_type: str) -> InvalidRecord:

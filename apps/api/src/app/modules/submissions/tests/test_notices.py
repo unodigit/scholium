@@ -636,7 +636,10 @@ def test_a_named_paper_that_is_not_the_targets_paper_is_refused(client, author, 
 
 
 def store_reason(data: bytes) -> str:
-    return content.store_bytes(data).cid
+    """Store a reason file the signer could download: scanned clean."""
+    blob = content.store_bytes(data)
+    content.set_scan_status(blob.cid, content.SCAN_PASSED)
+    return blob.cid
 
 
 def test_a_reason_cid_is_read_from_the_content_store(client, author, paper):
@@ -716,6 +719,10 @@ def test_a_reason_cid_at_the_cap_is_accepted(client, author, paper):
 
 @pytest.mark.parametrize("data", [b"\xff\xfe\x00 not utf-8", b"", b"   \n\t "])
 def test_a_reason_cid_that_is_not_readable_text_is_refused(client, author, paper, data):
+    # Tier 4 so the visibility gate cannot answer first: this test is about the
+    # file's text.  (Another suite's manifest names the empty file -- a fixed
+    # cid -- which makes it pre-listing for a non-moderator in the shared DB.)
+    set_tier(author.did, 4)
     record = notice(author, RETRACTION_TYPE, paper, reason=None, reasonCid=store_reason(data))
 
     error = assert_problem(post(client, record), 422)
