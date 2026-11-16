@@ -10,7 +10,10 @@ The module loader imports every package under ``app.modules`` and mounts the
 * ``POST /v1/me/saved-searches`` -- save a search to re-run later (``201``),
   one row per save, in the ``saved_searches`` table;
 * ``GET /v1/papers?tab=following`` -- the listed papers filed under any
-  category the caller follows, in the catalog's usual shape, sorts and cursor.
+  category the caller follows, in the catalog's usual shape, sorts and cursor;
+* the ``follows.digest`` background job -- once a day, an email to each reader
+  listing the papers first listed since their last digest that match their
+  follows and saved searches (see :mod:`app.modules.follows.digest`).
 
 The catalog plugin (feature 82) mounted before this one serves
 ``GET /v1/papers`` for ``latest`` and ``reviewed`` but not ``following``, and
@@ -23,11 +26,22 @@ wiring seam the loader provides and it keeps the change inside this plugin.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from fastapi import FastAPI
 
-from .models import Follow, SavedSearch, ensure_table, ensure_tables
+from app import jobs
+
+from .digest import (
+    DIGEST_KIND,
+    JOB_KIND as DIGEST_JOB_KIND,
+    compose_digest,
+    run_daily_digest,
+    run_daily_digest_job,
+    schedule_digest,
+)
+from .models import DigestState, Follow, SavedSearch, ensure_table, ensure_tables
 from .router import PAPERS_PATH, router
 from .service import (
     MAX_CATEGORY_LENGTH,
@@ -40,10 +54,14 @@ from .service import (
     normalise_category,
     normalise_query,
     save_search,
+    saved_searches,
     unfollow_category,
 )
 
 __all__ = [
+    "DIGEST_JOB_KIND",
+    "DIGEST_KIND",
+    "DigestState",
     "Follow",
     "InvalidCategory",
     "InvalidSearchQuery",
@@ -51,6 +69,7 @@ __all__ = [
     "MAX_QUERY_CHARS",
     "PAPERS_PATH",
     "SavedSearch",
+    "compose_digest",
     "ensure_table",
     "ensure_tables",
     "follow_category",
@@ -61,9 +80,15 @@ __all__ = [
     "on_startup",
     "prioritise_papers_route",
     "router",
+    "run_daily_digest",
+    "run_daily_digest_job",
     "save_search",
+    "saved_searches",
+    "schedule_digest",
     "unfollow_category",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 def _catalog_router() -> Any:
@@ -123,6 +148,18 @@ def prioritise_papers_route(app: FastAPI) -> None:
 
 
 def on_startup(app: Optional[FastAPI] = None) -> None:
-    """Move this plugin's ``/papers`` route ahead of the catalog's (see above)."""
+    """Wire the plugin into a freshly assembled app.
+
+    Moves this plugin's ``/papers`` route ahead of the catalog's (see above) and,
+    when jobs run on the background worker, queues the daily digest.  In eager
+    mode (``JOBS_EAGER=1``) no worker ever picks up a deferred job, so nothing
+    is queued; the digest runs when asked for (``jobs.enqueue(DIGEST_JOB_KIND)``).
+    Failing to queue it is logged and never keeps the app from starting.
+    """
     if app is not None:
         prioritise_papers_route(app)
+    if not jobs.is_eager():
+        try:
+            schedule_digest()
+        except Exception:
+            logger.exception("could not queue the daily digest")

@@ -24,7 +24,18 @@ object (the canonical form :func:`app.modules.follows.service.normalise_query`
 produces).  Saving is additive: the same query saved twice is two rows, and
 the reader deletes the copy they do not want.
 
-Both models are declared on the application's shared declarative base so
+``digest_state`` is the daily digest's per-account bookkeeping (feature 181)::
+
+    digest_state(did TEXT PRIMARY KEY,
+                 sent_through DATETIME NOT NULL)
+
+``sent_through`` is the end of the last window the digest job settled for the
+account (naive UTC, like every timestamp this node stores).  The next digest
+covers papers first listed after it, so a job that is retried, or run twice,
+never mails the same paper twice, and a run whose email could not be delivered
+leaves the window open for the next run.
+
+All three models are declared on the application's shared declarative base so
 ``main.create_app`` -- which creates tables after the module loader has
 imported every module package -- registers them in one pass.
 :func:`ensure_tables` covers callers that never build the app.
@@ -35,13 +46,13 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from sqlalchemy import JSON, Column, Text, inspect
+from sqlalchemy import JSON, Column, DateTime, Text, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app import db
 
-__all__ = ["Follow", "SavedSearch", "ensure_table", "ensure_tables"]
+__all__ = ["DigestState", "Follow", "SavedSearch", "ensure_table", "ensure_tables"]
 
 
 class Follow(db.Base):
@@ -76,6 +87,21 @@ class SavedSearch(db.Base):
         return f"<SavedSearch id={self.id!r} did={self.did!r} query={self.query!r}>"
 
 
+class DigestState(db.Base):
+    """How far the daily digest has settled for one account."""
+
+    __tablename__ = "digest_state"
+
+    #: The account the digest is for.
+    did = Column(Text, primary_key=True, nullable=False)
+    #: End of the last settled window (naive UTC): papers first listed after
+    #: this instant are what the account's next digest may carry.
+    sent_through = Column(DateTime, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<DigestState did={self.did!r} sent_through={self.sent_through!r}>"
+
+
 # Self-healing table creation, mirroring the other modules: callers that never
 # build the app (scripts, tests) still get their tables on first use.
 _table_lock = threading.Lock()
@@ -90,7 +116,7 @@ def ensure_tables() -> None:
     with _table_lock:
         if _table_engine is db.engine:
             return
-        for table in (Follow.__table__, SavedSearch.__table__):
+        for table in (Follow.__table__, SavedSearch.__table__, DigestState.__table__):
             try:
                 table.create(bind=db.engine, checkfirst=True)
             except (OperationalError, ProgrammingError):

@@ -45,6 +45,7 @@ __all__ = [
     "normalise_category",
     "normalise_query",
     "save_search",
+    "saved_searches",
     "unfollow_category",
 ]
 
@@ -228,3 +229,22 @@ def save_search(did: str, query: object) -> SavedSearch:
         session.refresh(search)
         session.expunge(search)
     return search
+
+
+def saved_searches(did: str) -> list[SavedSearch]:
+    """Every search ``did`` saved, in a stable (by id) order.
+
+    The rows are detached from their session, so a caller -- the daily digest
+    of feature 181 -- can read ``query`` after the call returns.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        rows = list(
+            session.execute(
+                select(SavedSearch)
+                .where(SavedSearch.did == did)
+                .order_by(SavedSearch.id)
+            ).scalars()
+        )
+        session.expunge_all()
+    return rows
