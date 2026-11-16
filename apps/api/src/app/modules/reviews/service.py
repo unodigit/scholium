@@ -8,6 +8,7 @@ stored in the ``review_invitations`` table with status ``pending``.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -34,6 +35,8 @@ from .errors import (
 from .escrow import seal_identity, uniqueness_token
 from .models import Review, ReviewEscrow, ReviewInvitation, ReviewRating, ensure_table, ensure_tables
 from .route_guard import require_dedicated_route
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "COMMITTED",
@@ -62,8 +65,10 @@ __all__ = [
     "list_review_invitations",
     "nullifier_bytes",
     "persist_review_commit",
+    "release_review_escrow",
     "require_not_author",
     "require_unique_reviewer",
+    "reserve_review_escrow",
     "resolve_paper",
     "resolve_review_target",
     "resolve_version",
@@ -994,6 +999,98 @@ def save_review_escrow(
 
 #: Alias matching the invitation helpers' naming.
 escrow_review = save_review_escrow
+
+
+def reserve_review_escrow(
+    *,
+    review_cid: str,
+    reviewer_did: str,
+    paper_cid: str,
+    sealed_identity: bytes,
+) -> ReviewEscrow:
+    """Reserve this person's one review of this paper, *before* the commit is appended.
+
+    The one-review-per-person rule lives in the UNIQUE
+    ``review_escrows.uniqueness_token``, and the reveal gate counts people by
+    it.  Checking it and writing it around an append that takes time is a race:
+    two simultaneous commits by one person both pass the check, both reach the
+    log, and the gate sees two reviewers.  Here the INSERT *is* the check, so
+    exactly one of any number of simultaneous commits by one person gets the
+    slot, and the rest are refused before they can be appended.
+
+    The row is the escrow :func:`save_review_escrow` would write later, so
+    nothing is saved twice.  It is not a commit yet -- nothing in the ``review``
+    table points at it, and the gate counts only escrows joined to a committed
+    review -- until the commit reaches the log.  The caller that gets it owns
+    it: if the append fails it must call :func:`release_review_escrow`.
+
+    Unlike :func:`save_review_escrow`, a row that is already there is never
+    taken for the caller's own, whatever clashed -- the person's token or this
+    very review cid -- because a caller that did not insert the row must not be
+    able to release it.
+
+    Raises:
+        ReviewAlreadyCommitted: ``409`` -- this person holds the slot already, or
+            this review cid is escrowed already.
+    """
+    row = ReviewEscrow(
+        review_cid=review_cid,
+        sealed_identity=sealed_identity,
+        uniqueness_token=uniqueness_token(reviewer_did, paper_cid),
+    )
+    ensure_tables()
+    with db.SessionLocal() as session:
+        session.add(row)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            holder = (
+                session.query(ReviewEscrow)
+                .filter(
+                    (ReviewEscrow.uniqueness_token == row.uniqueness_token)
+                    | (ReviewEscrow.review_cid == review_cid)
+                )
+                .first()
+            )
+            if holder is None:
+                # The holder was released between the clash and this lookup, or
+                # something else is wrong: either way nothing here is the slot.
+                raise
+            raise ReviewAlreadyCommitted(paper_cid, holder.review_cid) from None
+        session.refresh(row)
+        session.expunge(row)
+    return row
+
+
+def release_review_escrow(review_cid: str) -> bool:
+    """Give back a reservation whose commit did not reach the log.
+
+    Call it only for a reservation :func:`reserve_review_escrow` returned.  A
+    commit that *is* in the log keeps its escrow -- the person has committed,
+    whatever else went wrong around the append -- so nothing is removed for one.
+    Never raises: it runs while another failure is propagating and must not
+    replace it.  A reservation that cannot be removed is logged, because it
+    keeps its owner from reviewing the paper.
+
+    Returns whether a reservation was removed.
+    """
+    from app.modules import ledger
+
+    try:
+        if ledger.entry_by_cid(review_cid) is not None:
+            return False
+        with db.SessionLocal() as session:
+            removed = (
+                session.query(ReviewEscrow)
+                .filter(ReviewEscrow.review_cid == review_cid)
+                .delete(synchronize_session=False)
+            )
+            session.commit()
+        return bool(removed)
+    except Exception:
+        logger.exception("could not release the escrow reserved for review %s", review_cid)
+        return False
 
 
 def require_not_author(caller_did: object, paper_cid: str) -> None:

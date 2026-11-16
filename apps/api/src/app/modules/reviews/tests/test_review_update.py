@@ -68,8 +68,17 @@ def listing_url(paper: Paper, version: Optional[int] = None) -> str:
     return f"/v1/papers/{paper.version_cids[version - 1]}/reviews"
 
 
-def publish_version(paper: Paper, n: int) -> str:
-    """List version ``n`` of ``paper``, chained to the one before; return its cid."""
+def publish_version(paper: Paper, n: int, *, open_gate: bool = True) -> str:
+    """List version ``n`` of ``paper``, chained to the one before; return its cid.
+
+    An update is gated like a first reveal (REV-4): no report enters the log for
+    a version until two independent reviewers have committed on it.  The tests
+    here are about what an update must satisfy once it may be posted, so the
+    setup opens the new version's gate the way a first reveal's setup does
+    (:meth:`Reviewer.post_commit`), and :func:`post_update` discards those
+    commits once the update is accepted.  ``open_gate=False`` leaves the
+    version un-gated, for a test of the gate itself.
+    """
     if not hasattr(paper, "version_cids"):
         paper.version_cids = [paper.version_cid]
     previous = paper.version_cids[-1]
@@ -122,6 +131,10 @@ def publish_version(paper: Paper, n: int) -> str:
         state="listed",
     )
     paper.version_cids.append(version["id"])
+    if open_gate:
+        # Two other people: ``open_reveal_gate`` adds one while fewer than two exist.
+        open_reveal_gate(paper, version["id"])
+        open_reveal_gate(paper, version["id"])
     return version["id"]
 
 
@@ -171,7 +184,12 @@ def update_record(
 
 
 def post_update(reviewer: Reviewer, record: Mapping[str, Any]):
-    return client.post(REVEAL_URL, json=record, headers=reviewer.headers)
+    response = client.post(REVEAL_URL, json=record, headers=reviewer.headers)
+    if response.status_code == 201:
+        # The setup's gate-opening commits are not part of what these tests
+        # list (see ``revealed_review``).
+        discard_reveal_gate_shadows(record["body"]["target"])
+    return response
 
 
 def revealed_review(reviewer: Reviewer, paper: Paper):

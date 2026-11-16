@@ -40,7 +40,10 @@ satisfy:
   reviewer cannot replace someone else's review (``422``), and a ``prev`` that
   names nothing this node holds is refused rather than ignored (``422``);
 * ``target`` is a newer version of the paper the earlier review is of (``422``);
-* the earlier review is replaced once, so the history stays a line (``409``).
+* the earlier review is replaced once, so the history stays a line (``409``);
+* the report gate of the version it targets is open (``409``): an update puts a
+  report into the log for *that* version, and its independent reviewers are the
+  ones committed on it, not the ones who reviewed the version being replaced.
 
 An update carries no commitment: the commitment's job is to stop a reviewer
 changing their review after seeing the others', and the review being updated is
@@ -104,10 +107,10 @@ import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import update
+from sqlalchemy import distinct, func, update
 
 from app import db
 from app.errors import ProblemException
@@ -124,7 +127,7 @@ from .errors import (
     UnknownReviewTarget,
 )
 from .escrow import uniqueness_token
-from .models import Review, ensure_tables
+from .models import Review, ReviewEscrow, ensure_tables
 from .route_guard import in_dedicated_route, require_dedicated_route
 from .service import (
     REVIEW_COMMIT_TYPE,
@@ -586,49 +589,83 @@ def _sealed_commitment(review: Review) -> Optional[str]:
     return None
 
 
+def _independent_reviewers(version_cid: str) -> int:
+    """How many different *people* have a committed review on ``version_cid``.
+
+    A review key is the client's choice, and so is the nullifier: one person
+    can seal as many differently-keyed commits as they can get past the
+    pipeline, so neither says how many reviewers there are.  What does is the
+    escrow's uniqueness token -- ``HMAC(did || paper_cid)``, UNIQUE, written
+    from the *authenticated* caller -- so the count is the distinct tokens
+    among the escrows of the version's commits.  A commit with no escrow (a raw
+    record append) is not attributable to anyone and counts for nobody.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        count = (
+            session.query(func.count(distinct(ReviewEscrow.uniqueness_token)))
+            .select_from(ReviewEscrow)
+            .join(Review, Review.review_cid == ReviewEscrow.review_cid)
+            .filter(Review.version_cid == version_cid)
+            .scalar()
+        )
+    return int(count or 0)
+
+
 def reveal_gate_open(version_cid: str) -> bool:
     """Whether ``version_cid`` carries two independent committed reviews.
 
-    "Independent" means distinct review keys: one person commits one review per
-    paper, so two keys are two reviewers.  The report gate exists so no one can
-    read another reviewer's report before committing their own; a reveal writes
-    the report into the append-only log, so it must be refused until the gate
-    opens rather than redacted afterwards.
+    "Independent" means different people (see :func:`_independent_reviewers`),
+    not different review keys.  The report gate exists so no one can read
+    another reviewer's report before committing their own; a reveal writes the
+    report into the append-only log, so it must be refused until the gate opens
+    rather than redacted afterwards.
     """
+    if _independent_reviewers(version_cid) >= 2:
+        return True
+    first = _first_commit_at(version_cid)
+    return first is not None and _utcnow() >= first + REVEAL_GATE_TIMEOUT
+
+
+#: PRD REV-4: reports are hidden until two are committed *or 21 days pass*.
+REVEAL_GATE_TIMEOUT = timedelta(days=21)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _first_commit_at(version_cid: str) -> Optional[datetime]:
+    """When the first review on ``version_cid`` was committed (naive UTC), if any."""
     ensure_tables()
     with db.SessionLocal() as session:
-        keys = {
-            key
-            for (key,) in session.query(Review.review_key)
+        first = (
+            session.query(func.min(Review.committed_at))
             .filter(Review.version_cid == version_cid)
-            .distinct()
-            .all()
-        }
-    return len(keys) >= 2
+            .scalar()
+        )
+    if first is not None and first.tzinfo is not None:
+        first = first.astimezone(timezone.utc).replace(tzinfo=None)
+    return first
 
 
 def require_reveal_gate_open(version_cid: str) -> None:
-    """Refuse (``409``) a first reveal until the version's report gate opens.
+    """Refuse (``409``) a reveal until the version's report gate opens.
 
     Called before anything is appended, so a refused reveal never puts a report
     body into the public log (``GET /v1/records/{cid}`` and
-    ``GET /v1/sync/range``).  An *update* of an already-revealed review is not
-    gated: that review's report is already open, so there is no secrecy left to
-    protect.
+    ``GET /v1/sync/range``).  It applies to a first reveal and to an *update*
+    alike, and in both cases to the version the record targets: an update
+    against a newer version publishes a report for *that* version, which has
+    its own independent reviewers (or does not yet), whatever the earlier
+    review's version had.  The gate opens once two independent reviewers have
+    committed on the version, or 21 days after its first commit (PRD REV-4).
 
     Raises:
-        RevealGateClosed: ``409`` -- fewer than two independent commits.
+        RevealGateClosed: ``409`` -- the gate is still shut.
     """
-    ensure_tables()
-    with db.SessionLocal() as session:
-        committed = (
-            session.query(Review.review_key)
-            .filter(Review.version_cid == version_cid)
-            .distinct()
-            .count()
-        )
-    if committed < 2:
-        raise RevealGateClosed(version_cid, committed)
+    if not reveal_gate_open(version_cid):
+        raise RevealGateClosed(version_cid, _independent_reviewers(version_cid))
 
 
 def _require_sealed_review(fields: ReviewRevealFields) -> Review:
@@ -910,8 +947,9 @@ def handle_review_reveal(record: Mapping[str, Any]) -> str:
             another malformed field.
         ReviewNotCommitted: ``422`` -- this key sealed no review on the version
             (or, for an update, on the paper).
-        RevealGateClosed: ``409`` -- fewer than two independent commits on the
-            version, so a first reveal would publish a report too early.
+        RevealGateClosed: ``409`` -- fewer than two independent reviewers have
+            committed on the version (for an update, the version it targets),
+            so the reveal would publish a report too early.
         ReviewAlreadyRevealed: ``409`` -- the sealed review was revealed already.
         ReviewCommitmentMismatch: ``422`` -- not the sealed content.
         ReviewUpdateInvalid: ``422`` -- an update that links to something it may not.
@@ -924,6 +962,11 @@ def handle_review_reveal(record: Mapping[str, Any]) -> str:
         # caller; it is refused on the generic route before anything else.
         require_dedicated_route(REVIEW_FORMAL_TYPE, "POST /v1/reviews/reveal")
         _require_update(fields, earlier)
+        # An update publishes a report for the version it targets, and that
+        # version's reviewers are independent of the earlier version's: the
+        # gate is about the target, and the earlier review being open changes
+        # nothing about it.
+        require_reveal_gate_open(fields.version_cid)
         return REVEALED
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:
@@ -976,7 +1019,9 @@ def apply_review_reveal(
     fields = review_reveal_fields(record)
     earlier = _earlier_review(fields)
     if earlier is not None:
-        return _save_public_signature(_require_update(fields, earlier), fields, signer_did)
+        sealed = _require_update(fields, earlier)
+        require_reveal_gate_open(fields.version_cid)
+        return _save_public_signature(sealed, fields, signer_did)
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:
         # The ledger subscriber normally opened the review already; only the

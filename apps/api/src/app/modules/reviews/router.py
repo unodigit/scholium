@@ -196,22 +196,35 @@ def commit_review(
     # toward the paper's review activity and the report gate.
     sealed_identity = seal_identity(principal.did)
 
-    # The pipeline validates the envelope and body, verifies the signature,
-    # runs the handler (which refuses a second commit), and appends the record.
-    with dedicated_ingest():
-        result = ingest(record)
-    # The ledger subscriber normally saved the review as it was appended; this
-    # is a no-op then, and the one that reports a failure when it did not.
-    service.apply_review_commit(record)
     # The record is pseudonymous; the access token is the only thing that says
     # who reviewed.  Store that identity sealed for the committee -- never in
-    # plaintext -- under the review it belongs to.
-    service.save_review_escrow(
+    # plaintext -- under the review it belongs to, and do it *before* the
+    # append: the escrow's UNIQUE token is what makes a person one reviewer (the
+    # report gate counts people by it), so it must be taken before the commit
+    # can reach the log.  Checking it first and writing it afterwards lets two
+    # simultaneous commits by one person both through, each under its own
+    # review key, and one person opens the gate alone.  Exactly one of them
+    # gets the slot; the rest are refused here (409) with nothing appended.
+    service.reserve_review_escrow(
         review_cid=fields.review_cid,
         reviewer_did=principal.did,
         paper_cid=fields.paper_cid,
         sealed_identity=sealed_identity,
     )
+    try:
+        # The pipeline validates the envelope and body, verifies the signature,
+        # runs the handler (which refuses a second commit), and appends the
+        # record.
+        with dedicated_ingest():
+            result = ingest(record)
+    except BaseException:
+        # Refused or failed before the log took it: the slot goes back, so this
+        # person may still commit an acceptable review.
+        service.release_review_escrow(fields.review_cid)
+        raise
+    # The ledger subscriber normally saved the review as it was appended; this
+    # is a no-op then, and the one that reports a failure when it did not.
+    service.apply_review_commit(record)
 
     return {
         "id": result.record_id,
@@ -250,7 +263,9 @@ def reveal_review(
     and whose ``target`` is the newer version.  It is the same review, so it
     needs no new commit and carries no commitment; it must be signed by the
     same review key, have a complete rubric of its own, and replace a review
-    nobody has replaced yet.  The answer names the same ``review``, and
+    nobody has replaced yet.  Like a first reveal it is refused (``409``) until
+    two independent reviewers have committed on the version it targets.  The
+    answer names the same ``review``, and
     ``GET /v1/papers/{id}/reviews`` serves both reviews in its history.
 
     A body with ``"signed": true`` asks for public credit: the caller's DID is
