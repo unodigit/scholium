@@ -24,6 +24,8 @@ os.environ["DATABASE_URL"] = (
     f"sqlite:///{tempfile.mkdtemp(prefix=f'scholium-acceptance-db-{worker}-')}/scholium.db"
 )
 os.environ.setdefault("JOBS_EAGER", "1")
+# Uploaded bytes go to a per-session directory, never the repo's ./data.
+os.environ["CONTENT_DIR"] = tempfile.mkdtemp(prefix="scholium-acceptance-content-")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
