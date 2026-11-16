@@ -1,0 +1,5 @@
+{
+  "stack": "Next.js 15 App Router (each feature owns a route group apps/web/src/app/(feature)/ plus apps/web/src/features/feature/)",
+  "test_baseline": "greenfield build: 26 features completed \u2014 run your test suite to record a real baseline",
+  "conventions": "see project config"
+}
