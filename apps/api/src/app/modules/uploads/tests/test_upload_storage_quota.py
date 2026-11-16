@@ -10,12 +10,13 @@ Covered here:
 * a young account's daily allowance (2 GiB by default) rejects a 5 GiB
   ``Upload-Length`` -- the 5 GiB bundle cap still applies only to accounts
   that are allowed it (established accounts, 20 GiB/day by default);
-* completed uploads that no manifest names count against the daily allowance,
-  and counting them makes further uploads ``413`` problem details;
-* naming an upload's CID in a signed manifest stops it counting;
-* the periodic job deletes completed uploads that no manifest references once
-  they are older than ``UPLOAD_ORPHAN_TTL`` (7 days by default), bytes and
-  ``blobs`` row included, while a referenced upload is kept.
+* completed uploads count against the daily allowance, and counting them makes
+  further uploads ``413`` problem details;
+* naming an upload's CID in a manifest does not stop it counting: anyone can
+  post a manifest naming any CID (``test_upload_references`` covers who may);
+* the periodic job deletes completed uploads that their owner's records do not
+  reference once they are older than ``UPLOAD_ORPHAN_TTL`` (7 days by
+  default), bytes and ``blobs`` row included, while a referenced upload is kept.
 """
 
 from __future__ import annotations
@@ -144,6 +145,39 @@ def reference_manifest(cid: str, size: int) -> str:
     return entry.record_cid
 
 
+def publish_version(key: SigningKey, cid: str, size: int) -> None:
+    """Sign a manifest naming ``cid`` and a ``paper.version`` naming that manifest, both as ``key``."""
+    author = did_key_from_signing_key(key)
+
+    def append(record_type: str, body: dict) -> str:
+        unsigned = {
+            "v": 1,
+            "type": record_type,
+            "author": author,
+            "created": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "prev": None,
+            "body": body,
+            "proofs": [],
+        }
+        return ledger.append(sign_record(unsigned, key)).record_cid
+
+    files = [{"path": "paper.pdf", "cid": cid, "size": size, "mediaType": "application/pdf", "role": "manuscript"}]
+    manifest = append("manifest", {"files": files})
+    append(
+        "paper.version",
+        {
+            "paper": f"bafyreipaper{uuid.uuid4().hex}",
+            "n": 1,
+            "title": "A title",
+            "abstract": "An abstract",
+            "authors": [author],
+            "manifest": manifest,
+            "licence": "CC-BY-4.0",
+            "changeNote": "first version",
+        },
+    )
+
+
 # --- daily size quota, by account age ------------------------------------------------
 
 
@@ -206,7 +240,7 @@ def test_an_established_account_may_still_declare_a_five_gib_bundle(anon_client)
     assert "location" in response.headers
 
 
-def test_completed_uploads_no_manifest_names_use_up_the_daily_quota(anon_client, monkeypatch):
+def test_completed_uploads_use_up_the_daily_quota(anon_client, monkeypatch):
     monkeypatch.setenv("UPLOAD_DAILY_QUOTA_BYTES", "1000")
     owner = did("Daily")
     who = bearer_for(owner)
@@ -219,7 +253,13 @@ def test_completed_uploads_no_manifest_names_use_up_the_daily_quota(anon_client,
     assert over.json()["type"] == QUOTA_TYPE
 
 
-def test_a_manifest_reference_stops_an_upload_counting(anon_client, monkeypatch):
+def test_a_manifest_reference_does_not_stop_an_upload_counting(anon_client, monkeypatch):
+    """The allowance counts what was uploaded, not what later gets named.
+
+    This used to assert the opposite -- a manifest freed the quota -- but any
+    account can post a manifest naming any CID, so that let a second account
+    free the first's allowance.
+    """
     monkeypatch.setenv("UPLOAD_DAILY_QUOTA_BYTES", "1000")
     owner = did("Referenced")
     who = bearer_for(owner)
@@ -229,7 +269,7 @@ def test_a_manifest_reference_stops_an_upload_counting(anon_client, monkeypatch)
 
     reference_manifest(cid, 600)
 
-    assert post(anon_client, 600, who).status_code == 201
+    assert post(anon_client, 600, who).status_code == 413
 
 
 def test_the_active_window_is_a_rolling_day(anon_client, monkeypatch):
@@ -291,10 +331,11 @@ def test_an_unreferenced_completed_upload_is_deleted_after_the_orphan_ttl(anon_c
     assert not content.blob_path(cid).exists()
 
 
-def test_a_completed_upload_a_manifest_references_is_kept(anon_client):
-    owner = did("Kept")
+def test_a_completed_upload_its_owners_version_references_is_kept(anon_client):
+    key = SigningKey.generate()
+    owner = did_key_from_signing_key(key)
     upload_id, cid = finish(anon_client, bearer_for(owner), b"kept bytes")
-    reference_manifest(cid, len(b"kept bytes"))
+    publish_version(key, cid, len(b"kept bytes"))
     age(upload_id, 30)
 
     reaper.reap_abandoned_uploads()

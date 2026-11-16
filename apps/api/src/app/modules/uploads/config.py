@@ -2,15 +2,15 @@
 
 * ``UPLOAD_TTL_SECONDS`` — how long an upload may stay *incomplete* before the
   periodic job deletes it (default 24 hours);
-* ``UPLOAD_ORPHAN_TTL_SECONDS`` — how long a *completed* upload may go with no
-  manifest naming its bytes before the periodic job deletes it and its bytes
-  (default 7 days);
+* ``UPLOAD_ORPHAN_TTL_SECONDS`` — how long a *completed* upload may go without
+  a record its owner signed naming its bytes before the periodic job deletes
+  it, and its bytes too unless some record still names them (default 7 days);
 * ``UPLOAD_QUOTA_BYTES`` — how many bytes one account (DID) may have in flight
   at once (default twice the largest single upload, so a bundle of the maximum
   size and then some);
 * ``UPLOAD_DAILY_QUOTA_BYTES`` — how many bytes one account younger than
-  :data:`NEW_ACCOUNT_MAX_AGE` may hold in flight *plus* finish without any
-  manifest referencing them, in a rolling day (default 2 GiB: Phase 1's
+  :data:`NEW_ACCOUNT_MAX_AGE` may hold in flight *plus* finish, whether or
+  not any record names them, in a rolling day (default 2 GiB: Phase 1's
   pilot accounts are all young);
 * ``UPLOAD_DAILY_QUOTA_BYTES_ESTABLISHED`` — the same allowance for an account
   at least :data:`NEW_ACCOUNT_MAX_AGE` old (default 20 GiB, which leaves room
@@ -120,7 +120,7 @@ def daily_quota_bytes(
     *,
     now: Optional[datetime] = None,
 ) -> int:
-    """The bytes one DID may hold in flight plus finish unreferenced in a day.
+    """The bytes one DID may hold in flight plus finish in a day.
 
     ``account_created_at`` is ``accounts.created_at`` for the uploader; a
     ``None`` (no account row, an unreadable timestamp) counts as brand new and

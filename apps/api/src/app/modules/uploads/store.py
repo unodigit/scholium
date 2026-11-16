@@ -21,7 +21,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AbstractSet, BinaryIO, Optional
+from typing import BinaryIO, Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -94,8 +94,8 @@ class QuotaExceeded(Exception):
         self.quota_bytes = quota_bytes
         self.in_flight_bytes = in_flight_bytes
         self.requested_bytes = requested_bytes
-        #: Completed uploads with no manifest reference inside the day, which
-        #: only the daily allowance counts (zero for an in-flight breach).
+        #: Bytes completed inside the day, which only the daily allowance
+        #: counts (zero for an in-flight breach).
         self.completed_bytes = completed_bytes
 
 
@@ -238,19 +238,13 @@ def account_created_at(owner_did: str) -> Optional[datetime]:
     return _as_naive_utc(row[0]) if row is not None else None
 
 
-def completed_unreferenced_bytes(
-    session: Session,
-    owner_did: Optional[str],
-    *,
-    since: datetime,
-    referenced: AbstractSet[str],
-) -> int:
-    """Bytes ``owner_did`` completed since ``since`` whose CID no manifest names.
+def completed_bytes(session: Session, owner_did: Optional[str], *, since: datetime) -> int:
+    """Bytes ``owner_did`` completed since ``since``, whatever any record names.
 
-    ``referenced`` is the set from :func:`app.modules.uploads.references.referenced_cids`.
-    A CID that is referenced anywhere in the log is not counted, however
-    recently it was uploaded: it is paper, not anonymous bytes. Rows completed
-    before ``completed_at`` existed fall back to ``created_at``.
+    The daily allowance measures what an account uploads, not what becomes
+    paper: anyone can post a record naming any CID, so letting a reference
+    free the allowance would let a second account free the first's. Rows
+    completed before ``completed_at`` existed fall back to ``created_at``.
 
     The owner filter matches :func:`bytes_in_flight`, so an unowned legacy
     upload (``owner_did`` NULL) is counted with the NULL owner's usage rather
@@ -258,33 +252,14 @@ def completed_unreferenced_bytes(
     """
     owner = Upload.owner_did.is_(None) if owner_did is None else Upload.owner_did == owner_did
     completed_at = func.coalesce(Upload.completed_at, Upload.created_at)
-    rows = session.execute(
-        select(Upload.cid, func.coalesce(Upload.upload_length, 0)).where(
+    total = session.scalar(
+        select(func.coalesce(func.sum(func.coalesce(Upload.upload_length, 0)), 0)).where(
             owner,
             Upload.cid.is_not(None),
             completed_at >= since,
         )
     )
-    return sum(int(size or 0) for cid, size in rows if cid not in referenced)
-
-
-def has_completed_upload_since(owner_did: Optional[str], *, since: datetime) -> bool:
-    """Whether ``owner_did`` completed any upload since ``since``.
-
-    The caller uses this to skip the (record-log-wide) manifest scan when no
-    completed upload could possibly count against the daily allowance.
-    """
-    owner = Upload.owner_did.is_(None) if owner_did is None else Upload.owner_did == owner_did
-    session = db.SessionLocal()
-    try:
-        found = session.scalar(
-            select(Upload.id)
-            .where(owner, Upload.cid.is_not(None), func.coalesce(Upload.completed_at, Upload.created_at) >= since)
-            .limit(1)
-        )
-        return found is not None
-    finally:
-        session.close()
+    return int(total or 0)
 
 
 def _daily_in_flight(session: Session, owner_did: Optional[str], *, exclude_upload_id: Optional[str] = None) -> int:
@@ -308,11 +283,10 @@ def daily_usage(
     *,
     exclude_upload_id: Optional[str] = None,
     since: datetime,
-    referenced: AbstractSet[str],
 ) -> tuple[int, int]:
-    """``(completed unreferenced bytes, in-flight bytes)`` for one owner's day."""
+    """``(completed bytes, in-flight bytes)`` for one owner's day."""
     return (
-        completed_unreferenced_bytes(session, owner_did, since=since, referenced=referenced),
+        completed_bytes(session, owner_did, since=since),
         _daily_in_flight(session, owner_did, exclude_upload_id=exclude_upload_id),
     )
 
@@ -322,28 +296,20 @@ def daily_usage_for(
     *,
     exclude_upload_id: Optional[str] = None,
     since: datetime,
-    referenced: AbstractSet[str],
 ) -> tuple[int, int]:
     """``daily_usage`` in a session of its own (for callers outside the database layer)."""
     session = db.SessionLocal()
     try:
-        return daily_usage(
-            session, owner_did, exclude_upload_id=exclude_upload_id, since=since, referenced=referenced
-        )
+        return daily_usage(session, owner_did, exclude_upload_id=exclude_upload_id, since=since)
     finally:
         session.close()
 
 
-def completed_unreferenced_bytes_for(
-    owner_did: Optional[str],
-    *,
-    since: datetime,
-    referenced: AbstractSet[str],
-) -> int:
-    """``completed_unreferenced_bytes`` in a session of its own (for callers outside the database layer)."""
+def completed_bytes_for(owner_did: Optional[str], *, since: datetime) -> int:
+    """``completed_bytes`` in a session of its own (for callers outside the database layer)."""
     session = db.SessionLocal()
     try:
-        return completed_unreferenced_bytes(session, owner_did, since=since, referenced=referenced)
+        return completed_bytes(session, owner_did, since=since)
     finally:
         session.close()
 
@@ -364,10 +330,10 @@ def create_upload(
 
     With ``quota_bytes`` the upload is only created if ``owner_did``'s bytes in
     flight, plus what this upload reserves, stay within it. With
-    ``daily_quota_bytes`` it is only created if those bytes plus
-    ``completed_bytes`` (the caller's unreferenced completed uploads from the
-    day, see :func:`completed_unreferenced_bytes`) and what this upload
-    reserves stay within that allowance too. Either failure raises
+    ``daily_quota_bytes`` it is only created if the caller's bytes in flight
+    plus ``completed_bytes`` (everything the caller completed in the day, see
+    :func:`completed_bytes`) and what this upload declares stay within that
+    allowance too. Either failure raises
     :class:`QuotaExceeded` and stores nothing. Every check and the insert are
     one statement, so concurrent creations cannot both pass them.
     """

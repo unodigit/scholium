@@ -55,12 +55,12 @@ and for an unowned upload left by an older release it is a ``404``, exactly as i
 the id did not exist, so ids cannot be probed and nobody else's CID is revealed.
 Each DID may have only so many bytes in flight (:mod:`.config`): a creation that
 would take it past that is a ``413`` ``upload-quota-exceeded`` problem. Each DID
-also has a daily allowance covering bytes in flight and completed bytes that no
-manifest references yet (2 GiB for accounts under 90 days, 20 GiB otherwise), so
-a brand-new account cannot declare a 5 GiB upload; the 5 GiB bundle cap remains
-for accounts old enough to be allowed it. Uploads nobody finishes are deleted
-after a TTL by :mod:`.reaper`, as are completed uploads no manifest references
-after the longer orphan TTL.
+also has a daily allowance covering every byte it has in flight or completed in
+the last day, whether or not any record names them (2 GiB for accounts under
+90 days, 20 GiB otherwise), so a brand-new account cannot declare a 5 GiB
+upload; the 5 GiB bundle cap remains for accounts old enough to be allowed it.
+Uploads nobody finishes are deleted after a TTL by :mod:`.reaper`, as are
+completed uploads their owner's records do not name after the longer orphan TTL.
 
 Every error leaves this module as an ``HTTPException``, which the
 app-wide RFC 9457 handlers render as ``application/problem+json``.
@@ -82,7 +82,7 @@ from starlette.requests import ClientDisconnect
 from app.db import SessionLocal
 from app.security import Principal, Tier, require_tier
 
-from . import config, finalize, limits, references, store
+from . import config, finalize, limits, store
 
 router = APIRouter(tags=["uploads"])
 
@@ -138,10 +138,9 @@ def _reject_over_quota(exc: store.QuotaExceeded) -> HTTPException:
 
     if exc.quota_kind == store.QUOTA_DAILY:
         detail = (
-            f"You have finished {exc.completed_bytes} bytes of uploads that no manifest references and hold "
+            f"You have finished {exc.completed_bytes} bytes of uploads today and hold "
             f"{exc.in_flight_bytes} more in flight against a daily allowance of {exc.quota_bytes} bytes, and this "
-            f"upload needs {exc.requested_bytes} more. Reference the finished uploads in a manifest, or wait for "
-            "the daily allowance to free up, then try again."
+            f"upload needs {exc.requested_bytes} more. Wait for the daily allowance to free up, then try again."
         )
     else:
         detail = (
@@ -247,22 +246,14 @@ def _require_offset_content_type(request: Request) -> None:
 
 
 def _daily_allowance_for(upload: store.Upload) -> tuple[int, int, int]:
-    """``(quota, completed unreferenced bytes, other in-flight bytes)`` for the upload's owner.
+    """``(quota, completed bytes, other in-flight bytes)`` for the upload's owner.
 
-    Blocking database and record-log reads: call it from a worker thread.
+    Blocking database reads: call it from a worker thread.
     """
     now = datetime.now(timezone.utc)
     since = now.replace(tzinfo=None) - config.DAILY_WINDOW
     quota = config.daily_quota_bytes(store.account_created_at(upload.owner_did), now=now)
-    referenced: set[str] = set()
-    if store.has_completed_upload_since(upload.owner_did, since=since):
-        referenced = references.referenced_cids() or set()
-    completed, others = store.daily_usage_for(
-        upload.owner_did,
-        exclude_upload_id=upload.id,
-        since=since,
-        referenced=referenced,
-    )
+    completed, others = store.daily_usage_for(upload.owner_did, exclude_upload_id=upload.id, since=since)
     return quota, completed, others
 
 
@@ -408,18 +399,10 @@ def create_upload(request: Request, principal: Principal = Depends(_require_memb
         now = datetime.now(timezone.utc)
         since = now.replace(tzinfo=None) - config.DAILY_WINDOW
         daily_quota = config.daily_quota_bytes(store.account_created_at(principal.did), now=now)
-        # Finished bytes only count until a manifest names them; the scan reads
-        # the (append-only) record log, and an unreadable log counts everything,
-        # which can only refuse an upload, never store one unaccounted for.  A
-        # caller with no completed upload today needs no scan at all.
-        referenced: set[str] = set()
-        if store.has_completed_upload_since(principal.did, since=since):
-            referenced = references.referenced_cids() or set()
-        completed = store.completed_unreferenced_bytes_for(
-            principal.did,
-            since=since,
-            referenced=referenced,
-        )
+        # Every finished byte of the day counts, whatever any record names:
+        # anyone can post a record naming any CID, so a reference cannot free
+        # the allowance of whoever uploaded the bytes.
+        completed = store.completed_bytes_for(principal.did, since=since)
         session = SessionLocal()
         try:
             upload = store.create_upload(

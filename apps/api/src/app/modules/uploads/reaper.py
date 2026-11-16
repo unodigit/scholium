@@ -9,20 +9,24 @@ the staged bytes. It then sweeps staged files that no upload row accounts for
 (what a crash between the two steps, or a request that lost a race with the
 deletion, leaves behind) once they are older than the TTL too.
 
-It also deletes *completed* uploads that no signed manifest references once
-they are older than :func:`.config.orphan_ttl` (7 days by default), together
-with their ``blobs`` row and bytes. Without that, a client could fill the
-content store with files that never become paper, for free. The set of
-referenced CIDs is read from the append-only record log
-(:mod:`.references`); when the log cannot be read, the pass deletes nothing --
-bytes are never removed on a guess.
+It also deletes *completed* uploads that their owner's records do not
+reference once they are older than :func:`.config.orphan_ttl` (7 days by
+default). Without that, a client could fill the content store with files that
+never become paper, for free. Whose records count is decided by
+:mod:`.references`: an upload is referenced only when a record its *owner*
+signed names it (a manifest of the owner's version, or the owner's own
+discussion post, notice or decision). A record anyone else signed -- a
+standalone manifest posted by a stranger, say -- does not keep it. The upload's
+*bytes* are held to a stricter standard: a file that any record names is never
+deleted, so the row goes and the file stays. When the log cannot be read, the
+pass deletes nothing -- bytes are never removed on a guess.
 
 * An upload being appended to right now is skipped, not waited for: the reaper
   asks for the upload's lock the way a ``PATCH`` does and moves on when it is
   held. It is reaped on a later run if it is still abandoned.
-* A completed upload whose bytes a manifest names is finished work and is never
+* A completed upload its owner's records name is finished work and is never
   touched. Identical bytes share one blob, so the blob goes only when the last
-  upload naming it is removed.
+  upload naming it is removed and no record names it.
 * "Older" is measured from creation for an incomplete upload, and from
   completion (falling back to creation for rows written before
   ``completed_at`` existed) for an orphaned one.
@@ -68,7 +72,7 @@ class Reaped:
     uploads: int = 0
     #: Staged files removed that no upload row accounted for.
     orphans: int = 0
-    #: Completed uploads removed because no manifest referenced their bytes.
+    #: Completed uploads removed because their owner's records did not name them.
     completed: int = 0
     #: Content-store rows (and their files) removed with those uploads.
     blobs: int = 0
@@ -91,8 +95,8 @@ def reap_abandoned_uploads(
     """Delete expired uploads as of ``now``.
 
     ``ttl`` bounds incomplete uploads (default: the configured 24 hours) and
-    ``orphan_ttl`` bounds completed ones no manifest references (default: the
-    configured 7 days).
+    ``orphan_ttl`` bounds completed ones their owner's records do not reference
+    (default: the configured 7 days).
     """
     current = _naive_utc(now) if now is not None else _utcnow()
     cutoff = current - (ttl if ttl is not None else config.upload_ttl())
@@ -141,22 +145,18 @@ def _reap_one(upload_id: str) -> int:
 
 
 def _reap_orphaned_uploads(now: datetime, ttl: timedelta) -> tuple[int, int]:
-    """Delete completed uploads older than ``ttl`` that no manifest references.
+    """Delete completed uploads older than ``ttl`` that their owner's records do not reference.
 
-    Returns ``(uploads removed, blobs removed)``. The manifest scan comes
-    first, and an unreadable log aborts this pass: bytes must never be
-    deleted on a guess that nothing references them.
+    Returns ``(uploads removed, blobs removed)``. The record scan covers exactly
+    the CIDs listed here, and an unreadable log aborts this pass: bytes must
+    never be deleted on a guess that nothing references them.
     """
-    referenced = references.referenced_cids()
-    if referenced is None:
-        return 0, 0
-
     cutoff = now - ttl
     session = db.SessionLocal()
     try:
         candidates = list(
             session.execute(
-                select(store.Upload.id, store.Upload.cid).where(
+                select(store.Upload.id, store.Upload.cid, store.Upload.owner_did).where(
                     store.Upload.cid.is_not(None),
                     func.coalesce(store.Upload.completed_at, store.Upload.created_at) < cutoff,
                 )
@@ -164,13 +164,19 @@ def _reap_orphaned_uploads(now: datetime, ttl: timedelta) -> tuple[int, int]:
         )
     finally:
         session.close()
+    if not candidates:
+        return 0, 0
+
+    found = references.scan({cid for _, cid, _ in candidates})
+    if found is None:
+        return 0, 0
 
     uploads = blobs = 0
-    for upload_id, cid in candidates:
-        if cid in referenced:
+    for upload_id, cid, owner_did in candidates:
+        if found.keeps_upload(owner_did, cid):
             continue
         try:
-            removed, blob_removed = _reap_completed(upload_id, cid)
+            removed, blob_removed = _reap_completed(upload_id, cid, file_named=found.names_file(cid))
         except Exception:
             logger.exception("could not delete the orphaned upload %s", upload_id)
             continue
@@ -179,8 +185,13 @@ def _reap_orphaned_uploads(now: datetime, ttl: timedelta) -> tuple[int, int]:
     return uploads, blobs
 
 
-def _reap_completed(upload_id: str, cid: str) -> tuple[int, int]:
-    """Delete one unreferenced completed upload; also its blob when nothing else names it."""
+def _reap_completed(upload_id: str, cid: str, *, file_named: bool = False) -> tuple[int, int]:
+    """Delete one unreferenced completed upload; also its blob when nothing else names it.
+
+    ``file_named`` says some record (anyone's) names the bytes: the upload row
+    still goes, but the file stays, since deleting it would leave that record
+    pointing at nothing.
+    """
     session = db.SessionLocal()
     try:
         # ``cid`` is re-checked: the row must still be the completed one we listed.
@@ -192,6 +203,8 @@ def _reap_completed(upload_id: str, cid: str) -> tuple[int, int]:
         session.close()
     if deleted != 1:
         return 0, 0
+    if file_named:
+        return 1, 0
 
     # Identical bytes share one blob. Only the last upload naming it may remove
     # it, and only after the row is gone: a row-less file can be adopted by a
