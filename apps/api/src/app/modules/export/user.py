@@ -9,6 +9,12 @@ this node's event log whose ``author_did`` is that DID, together with the
 ``event_log`` row of each (the hash-chain links) and the bytes of every file
 those records name.  Exporting is public, like reading a record.
 
+As on every export path, a file block is written only when the caller may read
+the file under the rule ``GET /v1/content/{cid}`` applies
+(:func:`app.modules.content.may_read`): the bytes of a paper still awaiting
+consent, in moderation or held are exported only to its versions' authors and
+to moderators.  The records and log entries are exported either way.
+
 The blocks are written by :mod:`app.modules.export.car`; the canonical record
 bytes and log-entry layout are the same as :mod:`app.modules.export.paper`.
 """
@@ -21,6 +27,7 @@ from typing import Optional
 from multiformats import CID
 
 from app.modules import ledger
+from app.security import Principal
 
 from .car import Block, encode_car
 import dag_cbor
@@ -75,10 +82,13 @@ class UserArchive:
         return encode_car(self.roots, self.blocks)
 
 
-def collect_user(did: object) -> Optional[UserArchive]:
+def collect_user(did: object, principal: Optional[Principal] = None) -> Optional[UserArchive]:
     """Build the archive of every record authored by ``did``, or ``None``.
 
-    ``None`` means the DID authored no record this node holds.
+    ``None`` means the DID authored no record this node holds.  ``principal``
+    is the caller (``None`` when anonymous); a file block is written only when
+    that caller may read the file under the content route's rule, so an
+    unlisted paper's bytes are exported only to its authors and to moderators.
     """
     if not isinstance(did, str) or not did:
         return None
@@ -117,7 +127,7 @@ def collect_user(did: object) -> Optional[UserArchive]:
     files = [
         block
         for block in (
-            _file_block(file_cid)
+            _file_block(file_cid, principal)
             for file_cid in sorted(file_ids)
             if _stored_file(file_cid)
         )

@@ -28,6 +28,13 @@ Three kinds of block, one per content id:
   bytes the content store actually holds are written; a manifest that names
   a file this node no longer has simply leaves it out, and tombstoned bytes
   are never exported (moderation removed them).
+
+  A file is written only when the caller may read it under the rule
+  ``GET /v1/content/{cid}`` applies (:func:`app.modules.content.may_read`):
+  the paper is listed, or the caller is one of the version's authors, or a
+  moderator (tier 4).  Exporting is public, so an anonymous download of a
+  paper still in moderation gets the records and log entries but no file
+  bytes -- the same bytes the content route refuses it.
 * **log entries** -- one DAG-CBOR block per included record holding the
   ``event_log`` row (``seq``, ``record_cid``, ``record_type``, ``author_did``,
   ``body``, ``raw``, ``prev_hash``, ``entry_hash``, ``received_at``,
@@ -79,6 +86,7 @@ from scholium_record_core import (
 from app.modules import content, ledger
 from app.modules.catalog.service import resolve
 from app.modules.ledger.sync_range import serialise_entry
+from app.security import Principal
 
 from .car import Block, block_cid, encode_car
 from .records import local_identifier
@@ -402,10 +410,20 @@ def _log_entry_block(entry: ledger.EventLog) -> Block:
     return Block(cid=block_cid(data), data=data)
 
 
-def _file_block(file_cid: str) -> Optional[Block]:
-    """The raw block of one stored file, or ``None`` when not exportable."""
+def _file_block(
+    file_cid: str, principal: Optional[Principal] = None
+) -> Optional[Block]:
+    """The raw block of one stored file, or ``None`` when not exportable.
+
+    ``principal`` is the caller (``None`` for an anonymous export).  The
+    visibility rule is the content route's own
+    (:func:`app.modules.content.may_read`), so an export never serves bytes
+    ``GET /v1/content/{cid}`` would refuse the same caller.
+    """
     if content.is_tombstoned(file_cid):
         return None  # moderation removed the bytes from the public archive
+    if not content.may_read(file_cid, principal):
+        return None  # pre-listing content the caller may not read
     try:
         cid = parse_file_cid(file_cid)
         with content.open_blob(file_cid) as stream:
@@ -420,11 +438,15 @@ def _file_block(file_cid: str) -> Optional[Block]:
 # --------------------------------------------------------------------------- #
 
 
-def collect_paper(identifier: object) -> Optional[PaperArchive]:
+def collect_paper(
+    identifier: object, principal: Optional[Principal] = None
+) -> Optional[PaperArchive]:
     """Build the archive of the paper ``identifier`` names, or ``None``.
 
     ``None`` means the id does not name a paper this node can export: it is
     malformed, unknown, or its genesis record is not in the event log.
+    ``principal`` is the caller (``None`` when anonymous); it only widens
+    which file blocks are exportable (see :func:`_file_block`).
     """
     resolved = paper_cid_for(identifier)
     if resolved is None:
@@ -448,7 +470,7 @@ def collect_paper(identifier: object) -> Optional[PaperArchive]:
     files = [
         block
         for block in (
-            _file_block(file_cid)
+            _file_block(file_cid, principal)
             for file_cid in sorted(file_ids)
             if _stored_file(file_cid)
         )

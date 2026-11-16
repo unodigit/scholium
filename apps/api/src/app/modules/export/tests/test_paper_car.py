@@ -29,6 +29,7 @@ from scholium_record_core import (
 
 from app.modules import content, ledger
 from app.modules.submissions import (
+    LISTED,
     VersionAuthor,
     save_paper,
     save_version,
@@ -176,8 +177,18 @@ class BuiltPaper:
         ledger.append(record)
 
 
-def build_paper(*, store_file: bool = True, file_bytes: Optional[bytes] = None) -> BuiltPaper:
-    """Create a paper's signed genesis, manifest and version in the log."""
+def build_paper(
+    *,
+    store_file: bool = True,
+    file_bytes: Optional[bytes] = None,
+    state: str = LISTED,
+) -> BuiltPaper:
+    """Create a paper's signed genesis, manifest and version in the log.
+
+    The default is a listed paper, so these tests export the bytes a public
+    reader may have.  ``test_visibility_gate`` asks for an unlisted state to
+    check that those bytes are withheld from callers who may not read them.
+    """
     tag = uuid.uuid4().hex
     key = SigningKey.generate()
     did = did_key_from_signing_key(key)
@@ -206,7 +217,8 @@ def build_paper(*, store_file: bool = True, file_bytes: Optional[bytes] = None) 
 
     file_cid = compute_file_id(data)
     if store_file:
-        content.store_bytes(data, media_type="application/pdf")
+        blob = content.store_bytes(data, media_type="application/pdf")
+        content.set_scan_status(blob.cid, content.SCAN_PASSED)
 
     manifest = sign_record(
         {
@@ -262,6 +274,7 @@ def build_paper(*, store_file: bool = True, file_bytes: Optional[bytes] = None) 
         licence="CC-BY-4.0",
         prev_cid=genesis["id"],
         authors=(VersionAuthor(did, 1, ("Conceptualization",)),),
+        state=state,
     )
 
     for record in (genesis, manifest, version):

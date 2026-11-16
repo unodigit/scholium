@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response
+from typing import Optional
 
+from fastapi import APIRouter, Depends, Response
+
+from app.security import Principal
+
+from .auth import optional_principal
 from .paper_car import CAR_MEDIA_TYPE
 from .user import USER_NOT_FOUND_TYPE, collect_user
 
@@ -40,9 +45,12 @@ def _filename(archive, identifier: str) -> str:
     response_class=Response,
     summary="Export every record authored by a DID as a CARv1 archive",
 )
-def export_user(did: str) -> Response:
+def export_user(
+    did: str,
+    principal: Optional[Principal] = Depends(optional_principal),
+) -> Response:
     """Return the CARv1 archive of every record authored by ``did``."""
-    archive = collect_user(did)
+    archive = collect_user(did, principal)
     if archive is None:
         raise _not_found(did)
 

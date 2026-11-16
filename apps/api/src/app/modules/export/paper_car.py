@@ -29,8 +29,13 @@ handlers), never an empty or partial archive presented as complete.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response
+from typing import Optional
 
+from fastapi import APIRouter, Depends, Response
+
+from app.security import Principal
+
+from .auth import optional_principal
 from .paper import collect_paper, collect_paper_records
 
 __all__ = [
@@ -83,9 +88,18 @@ def _filename(archive, identifier: str) -> str:
     response_class=Response,
     summary="Export one paper as a CARv1 archive (records, files and log entries)",
 )
-def export_paper(paper_id: str) -> Response:
-    """Return the CARv1 archive of the paper ``paper_id`` names."""
-    archive = collect_paper(paper_id)
+def export_paper(
+    paper_id: str,
+    principal: Optional[Principal] = Depends(optional_principal),
+) -> Response:
+    """Return the CARv1 archive of the paper ``paper_id`` names.
+
+    Exporting is public.  A caller that sends an access token may additionally
+    receive the file bytes of a paper not listed yet (its authors and
+    moderators); everyone else gets the records and log entries only, which is
+    exactly what ``GET /v1/content/{cid}`` would let them read.
+    """
+    archive = collect_paper(paper_id, principal)
     if archive is None:
         raise _not_found(paper_id)
 

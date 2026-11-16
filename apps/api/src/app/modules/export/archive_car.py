@@ -13,9 +13,12 @@ can download the node's complete public archive with::
 
 The archive is rooted at the node-signed log head (the document
 ``GET /v1/sync/head`` serves) and holds every log entry up to it, every
-record, and the bytes of every file a record names -- except tombstoned bytes.
-What it holds and why is described in :mod:`app.modules.export.archive`; the
-blocks are written by :mod:`app.modules.export.car`.
+record, and the bytes of every file a record names -- except tombstoned bytes
+and the bytes of a paper the caller may not read under the content route's
+rule (an anonymous caller therefore never receives pre-listing bytes; the
+authors and moderators who send a token may).  What it holds and why is
+described in :mod:`app.modules.export.archive`; the blocks are written by
+:mod:`app.modules.export.car`.
 
 A node whose key cannot be loaded cannot sign a head, so it answers ``503``
 RFC 9457 problem details (the same ``node-key-unavailable`` type
@@ -31,14 +34,16 @@ looks complete.
 from __future__ import annotations
 
 import tempfile
-from typing import BinaryIO, Iterator
+from typing import BinaryIO, Iterator, Optional
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 
 from app.modules import ledger
+from app.security import Principal
 
 from .archive import collect_archive
+from .auth import optional_principal
 from .paper_car import CAR_MEDIA_TYPE
 
 __all__ = [
@@ -88,13 +93,15 @@ def _stream(spool: BinaryIO) -> Iterator[bytes]:
     summary="Export the complete public archive as a CARv1 archive "
     "(signed log head, log entries, records and files; no tombstoned bytes)",
 )
-def export_archive() -> Response:
+def export_archive(
+    principal: Optional[Principal] = Depends(optional_principal),
+) -> Response:
     """Return the CARv1 archive of this node's whole public archive."""
     key = ledger.node_signing_key()
     if key is None:
         raise _node_key_unavailable()
 
-    archive = collect_archive(key)
+    archive = collect_archive(key, principal)
     spool = tempfile.SpooledTemporaryFile(max_size=SPOOL_MAX_BYTES)
     try:
         size = archive.write_to(spool)

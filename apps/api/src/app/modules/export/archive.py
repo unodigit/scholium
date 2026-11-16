@@ -26,6 +26,11 @@ What the archive holds
 * **files** -- the bytes of every file any record names, filed under its
   raw-codec file id.  A file is left out, and nothing else changes, when
 
+  - the caller may not read it under the rule ``GET /v1/content/{cid}``
+    applies (:func:`app.modules.content.may_read`): the paper is unlisted and
+    the caller is neither one of its versions' authors nor a moderator.  An
+    anonymous download therefore carries no pre-listing bytes, and an author
+    or moderator download may;
   - moderation **tombstoned** it (:mod:`app.modules.moderation.tombstones`):
     the records that name it, and the decision that took it down, stay -- the
     log and every signature never covered the bytes;
@@ -60,6 +65,7 @@ import dag_cbor
 from multiformats import CID
 
 from app.modules import content, ledger
+from app.security import Principal
 
 from .car import Block, block_cid, write_car
 from .paper import (
@@ -90,6 +96,8 @@ class FullArchive:
     """The node-signed head of the log; the archive ends at ``head.seq``."""
     head_block: Block
     """``head`` as a DAG-CBOR block (the same fields ``/v1/sync/head`` serves)."""
+    principal: Optional[Principal] = None
+    """The caller, or ``None`` when anonymous; widens which files are exportable."""
 
     @property
     def roots(self) -> tuple[CID, ...]:
@@ -114,7 +122,7 @@ class FullArchive:
             file_ids |= _named_files(entry)
 
         for file_cid in sorted(file_ids):
-            block = _public_file_block(file_cid)
+            block = _public_file_block(file_cid, self.principal)
             if block is not None:
                 yield block
 
@@ -123,16 +131,22 @@ class FullArchive:
         return write_car(out, self.roots, self.blocks())
 
 
-def collect_archive(key) -> FullArchive:
+def collect_archive(key, principal: Optional[Principal] = None) -> FullArchive:
     """Sign the log's current head with ``key`` and pin an archive to it.
 
     ``key`` is the node's :class:`nacl.signing.SigningKey`
     (:func:`app.modules.ledger.node_signing_key`).  Nothing but the head is
     read here; the entries and files are read as the archive is written.
+    ``principal`` is the caller (``None`` when anonymous) and only widens
+    which file blocks are exportable, under the content route's rule.
     """
     head = ledger.signed_head(key, ledger.latest())
     data = dag_cbor.encode(head.model_dump())
-    return FullArchive(head=head, head_block=Block(cid=block_cid(data), data=data))
+    return FullArchive(
+        head=head,
+        head_block=Block(cid=block_cid(data), data=data),
+        principal=principal,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -171,11 +185,13 @@ def _scan_failed(file_cid: str) -> bool:
     return blob is not None and blob.scan_status == content.SCAN_FAILED
 
 
-def _public_file_block(file_cid: str) -> Optional[Block]:
+def _public_file_block(
+    file_cid: str, principal: Optional[Principal] = None
+) -> Optional[Block]:
     """The block of ``file_cid`` when its bytes may be exported, else ``None``."""
     if not _stored_file(file_cid) or _scan_failed(file_cid):
         return None
-    block = _file_block(file_cid)  # also skips a tombstoned cid
+    block = _file_block(file_cid, principal)  # also skips tombstoned/unreadable cids
     # Tombstoning saves the denylist row *before* it deletes the bytes.  So a
     # takedown that began after the check above but before the read finished
     # has its row by now, and asking again drops the bytes; one that begins
