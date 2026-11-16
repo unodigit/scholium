@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 3: findings of the independent re-evaluation at dd2e736 (2026-11-17).
+  Evidence: scratchpad eval2/FINDINGS2.md (headless Chromium, web :13000 -> API :18000, production build).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="critical"
+       touches_files="apps/api/src/app/modules/identity/**">
+    <title>Refresh token leaks in JSON, concurrent refresh signs the user out, and the cookie only works same-site</title>
+    <symptoms>
+      POST /v1/auth/verify and /v1/auth/refresh still return the refresh token in the JSON body, alongside the HttpOnly cookie, so script can read it and the cookie's XSS protection is moot
+      Two parallel POST /v1/auth/refresh with the same token -> one 200 and one 401, and the winner's new refresh token is then rejected: the race loser is treated as token theft and the whole family is revoked (identity/service.py ~331/352). Two open tabs refreshing together sign the user out
+      The cookie is SameSite=Strict (identity/cookies.py:72), which only works when web and API share a registrable domain; nothing documents or checks that
+    </symptoms>
+    <reproduction_steps>
+      Sign in via POST /v1/auth/challenge + /verify; read refresh_token from the JSON body
+      Fire two POST /v1/auth/refresh concurrently with the same cookie; then refresh with the winner's new cookie -> 401
+    </reproduction_steps>
+    <expected>The refresh token is delivered only as the HttpOnly cookie (Secure except on http://localhost / 127.0.0.1, Path=/v1/auth); JSON bodies carry the access token and its expiry only. A refresh token presented again within a short grace window (default 30 s, REFRESH_REUSE_GRACE_SECONDS) after it was rotated returns the same successor pair instead of revoking the family; reuse after the window still revokes the family. SameSite is configurable (REFRESH_COOKIE_SAMESITE, default Lax) and the module documents that web and API must be same-site (e.g. app.example.org and api.example.org), with a startup warning when every WEB_ORIGINS entry is cross-site from the API's own public URL</expected>
+    <actual>Token in JSON; concurrent refresh revokes the session; Strict-only cookie</actual>
+    <constraints>
+      <constraint>Keep refresh-token rotation and family revocation on genuine reuse</constraint>
+      <constraint>Python API clients and tests that sign in over HTTP must keep working (they can read the cookie from the response)</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="critical" depends_on="1"
+       touches_files="apps/web/src/lib/api/**,apps/web/src/features/web-auth/**,apps/web/src/components/nav/**,apps/web/src/app/layout.tsx,apps/web/tests/e2e/journeys.spec.ts,apps/web/playwright.config.ts"
+       creates="apps/web/tests/e2e/session.spec.ts">
+    <title>Web session does not survive a page load: users are signed out on every reload, full-page link and after 15 minutes</title>
+    <symptoms>
+      After passkey sign-in, POST /v1/auth/verify returns Set-Cookie: scholium_refresh, but the browser stores no cookie: the call is made without credentials:"include" (web-auth/signin.ts:312, lib/api/client.ts:347/576)
+      Nothing restores the session on app load: opening /me by URL, reloading, or following any plain &lt;a href&gt; (moderation queue rows, dashboard "Open" links) shows "Sign in to continue"
+      ORCID linking always fails: the return from ORCID is a full navigation to /onboarding/orcid, the in-memory token is gone, POST /v1/auth/orcid/complete -> 401 "Your session has ended"
+      The consent page arrives signed out yet shows "Accept authorship"; clicking it posts unsigned and gets 401 with no sign-in prompt
+      There is no way to sign out in the web app
+      The Playwright suite treats "signed out after a page load" as expected and has no reload test
+    </symptoms>
+    <reproduction_steps>
+      Production build, web on :13000, API on :18000; sign in with a virtual passkey; reload /me -> "Sign in to continue"
+      Onboarding: Link your ORCID iD (ORCID_MOCK) -> return page shows "Your session has ended"
+    </reproduction_steps>
+    <expected>Every auth call that sets or uses the refresh cookie (verify, refresh, logout, orcid/complete as needed) is sent with credentials:"include"; on app load a single shared bootstrap calls POST /v1/auth/refresh to restore the in-memory access token before protected pages decide the user is signed out, with concurrent callers sharing one in-flight refresh; a 401 on an authenticated call triggers one refresh-and-retry; pages that need a signed-in user redirect to /signin?next=... (consent page included) instead of offering actions that will 401; the global nav has a Sign out action (POST /v1/auth/logout, clear memory, go home); ORCID linking completes after the full-page return. New Playwright journeys in tests/e2e/session.spec.ts: sign in, reload /me and stay signed in; complete ORCID linking (mock) from onboarding; follow a moderation queue row as a moderator and stay signed in; sign out</expected>
+    <actual>Session lost on every page load; ORCID link impossible; no sign-out</actual>
+    <constraints>
+      <constraint>The access token stays in memory only; never write tokens to localStorage/sessionStorage</constraint>
+      <constraint>All 7 existing Playwright journeys keep passing</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="3" shape="core" severity="high"
+       touches_files="apps/api/packages/record-core/schemas/moderation.decision.json,apps/api/src/app/modules/moderation/**,apps/web/src/features/verify-core/verify-paper.ts">
+    <title>Legal takedowns (tombstones) cannot be issued: the record schema rejects action "tombstone"</title>
+    <symptoms>
+      POST /v1/moderation/decisions with action=tombstone -> 422 "tombstone is not one of [list, hold, ...]": record-core schemas/moderation.decision.json:23 lacks it, though moderation/decisions.py:147 ACTIONS has it
+      moderation/tests/test_tombstones.py patches the schema in tests to hide this
+      NET-5 (takedown) therefore cannot be exercised in production, though /text, /compare and /content honour the denylist
+    </symptoms>
+    <reproduction_steps>
+      As a tier-4 moderator POST a moderation.decision with action "tombstone" for a listed version's PDF cid -> 422
+    </reproduction_steps>
+    <expected>The shared schema allows "tombstone" (with whatever required fields decisions.py expects, e.g. a legal basis/reason), the API accepts it from tier 4 only, the test fixture that patches the schema is removed, and the web verify-core accepts tombstone decisions when verifying a paper's records</expected>
+    <actual>422; takedowns impossible</actual>
+    <constraints>
+      <constraint>Python and TS cores must keep agreeing on the shared vectors</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="4" shape="core" severity="medium" depends_on="2,3"
+       touches_files="apps/web/src/features/mod-console/**,apps/web/src/features/submit/checks.ts,apps/web/src/features/submit/checks.test.ts,apps/web/src/features/submit/use-checks.ts,apps/web/src/features/submit/use-checks.test.tsx,apps/web/src/features/paper-page/reading.ts,apps/web/src/features/paper-page/reading-text.tsx,apps/web/src/features/paper-page/reading-view.tsx,apps/web/src/features/paper-page/paper-page-data.ts">
+    <title>Authors and moderators see 404 for unlisted papers' checks, text and PDF; moderation detail shows no paper</title>
+    <symptoms>
+      The web fetches checks, text and content without a token (submit/checks.ts:110-113 auth:false "public, no token"), while the API now serves unlisted checks/text/content only to authors and moderators: the author's status tracker and step 4 show nothing; the author's own unlisted paper page has no text
+      /mod/{cid} shows only metadata and the decision form, no PDF and no text; design.md section 5.7 requires "Detail view shows the paper beside a decision form"
+      The decision form does not offer the tombstone (legal takedown) action
+    </symptoms>
+    <reproduction_steps>
+      As an author, submit a version and open the status tracker: GET .../checks -> 404 (200 with the author's token)
+      As a moderator open /mod/{cid} for a queued version: 0 canvases, no text
+    </reproduction_steps>
+    <expected>Checks, text and content requests send the bearer token when signed in (still working anonymously for listed papers); the moderation detail view renders the version's PDF (existing PDF viewer) and extracted text beside the decision form per design.md, and the decision form offers tombstone with a required legal reason, visible only to tier 4</expected>
+    <actual>404s for owners; moderators decide blind</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/uploads/**">
+    <title>Upload size and storage are effectively unlimited for new accounts</title>
+    <symptoms>
+      A new tier-2 account can declare a 5 GiB upload (201)
+      Completed uploads have no per-DID storage quota and are never cleaned up if no manifest ever references them; /uploads is exempt from the write limit
+    </symptoms>
+    <reproduction_steps>
+      As a new tier-2 account POST /v1/uploads with Upload-Length 5 GiB -> 201; complete many 50 MB uploads that are never referenced
+    </reproduction_steps>
+    <expected>Per-DID quotas: bytes in flight and bytes completed-but-unreferenced per day (configurable, defaults sized for Phase 1: e.g. 2 GiB/day for accounts under 90 days, 20 GiB/day otherwise), 413/429 problem when exceeded; a periodic job deletes completed uploads not referenced by any manifest after UPLOAD_ORPHAN_TTL (default 7 days); the 5 GiB bundle cap stays for accounts that are allowed it</expected>
+    <actual>No quota; orphaned files kept forever</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/submissions/**">
+    <title>Co-authors who never consented, or declined, can retract or withdraw a paper</title>
+    <symptoms>
+      submissions/notices.py ~360-391 paper_authors counts every author listed on a version, not only those whose coauthor.consent accepted it
+    </symptoms>
+    <reproduction_steps>
+      List an author on v1 who never consents (or declines); have them sign a retraction notice -> accepted
+    </reproduction_steps>
+    <expected>Only authors with an accepted consent on a listed version of the paper (or tier-4 moderators) may issue withdrawal, retraction, correction or response notices; others get 403 problem</expected>
+    <actual>Any listed author can</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/content/**">
+    <title>Every content download scans all manifests in the log</title>
+    <symptoms>
+      content/visibility.py ~74-79 resolves which versions reference a cid by scanning every manifest record on each GET /v1/content/{cid}; cost grows with the node
+    </symptoms>
+    <reproduction_steps>
+      Seed many papers; time GET /v1/content/{cid}: proportional to the number of manifests
+    </reproduction_steps>
+    <expected>A content-reference index (content cid -> version cid) maintained by a ledger subscriber and backfilled on startup makes the visibility check an indexed lookup; behaviour (who may read what) is unchanged</expected>
+    <actual>Full scan per request</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="low"
+       touches_files="apps/api/src/app/settings.py,apps/api/tests/test_app_factory.py">
+    <title>Production refusal is bypassed by SCHOLIUM_ENV spelling and accepts several unsafe values</title>
+    <symptoms>
+      validate_for_environment checks SCHOLIUM_ENV == "production" exactly; "Production" or "prod" with every dev default starts the app
+      With production set it still accepts an empty node key file, COMMITTEE_PUBLIC_KEY="x" (not a key), RATE_LIMIT_ENABLED=0 and http:// WEB_ORIGINS
+    </symptoms>
+    <reproduction_steps>
+      SCHOLIUM_ENV=prod with dev defaults -> app starts
+    </reproduction_steps>
+    <expected>SCHOLIUM_ENV is normalised (case-insensitive; prod/production mean production; unknown values refuse to start); production additionally refuses an empty or unparsable node key file, a COMMITTEE_PUBLIC_KEY that does not parse as the expected key type, RATE_LIMIT_ENABLED=0, and non-https WEB_ORIGINS</expected>
+    <actual>Bypassable and incomplete</actual>
+  </bug>
+
+  <bug index="9" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-proof/**,apps/api/src/app/modules/export/paper.py,apps/api/src/app/modules/export/paper_car.py,apps/api/src/app/modules/export/records.py">
+    <title>Every paper view downloads the whole public log to verify one paper</title>
+    <symptoms>
+      paper-proof/source.ts ~60-66,114 pages through GET /v1/sync/range from 0 (up to MAX_SYNC_PAGES=100 x 500) on each Proof tab view; past 50k log entries the browser proof refuses ("log is too long")
+    </symptoms>
+    <reproduction_steps>
+      Open any paper's Proof tab and watch the network: sync/range pages from 0
+    </reproduction_steps>
+    <expected>The Proof tab fetches only the paper's records with their signatures and log proofs (a per-paper endpoint such as GET /v1/papers/{id}/records, or the existing per-paper CAR export) and verifies them client-side with verify-core; the verdict is the same as before and as `scholium verify --node`</expected>
+    <actual>Whole-log download per view</actual>
+  </bug>
+
+  <bug index="10" shape="core" severity="medium" depends_on="4"
+       touches_files="apps/web/src/features/paper-page/paper-actions.tsx,apps/web/src/features/paper-page/paper-actions.css,apps/web/src/features/paper-page/paper-header.tsx,apps/web/src/features/paper-page/index.ts,apps/web/src/app/(paper-page)/**"
+       creates="apps/web/src/features/paper-page/notice-dialog.tsx,apps/web/src/features/paper-page/appeal-dialog.tsx">
+    <title>Authors have no UI for a new version, notices or appeals (PUB-6, PUB-7, MOD-2)</title>
+    <symptoms>
+      The paper page never links to the existing new-version form (submit/new-version-link.tsx is not mounted)
+      There is no UI to issue a correction, retraction or withdrawal notice; the API supports them
+      There is no UI to file an appeal against a moderation decision on one's paper; POST /v1/appeals works
+    </symptoms>
+    <reproduction_steps>
+      Sign in as the consented author of a listed paper and open /p/{id}: no New version, notice or appeal actions
+    </reproduction_steps>
+    <expected>For consented authors of the paper the header actions offer: New version (to the existing form), Issue notice (correction/retraction/withdrawal; signed with the web signer; confirmation for retraction/withdrawal) and, when the latest moderation decision on the paper is a hold/reject, File an appeal (reason, signed, POST /v1/appeals). Per design.md; hidden for everyone else</expected>
+    <actual>API-only</actual>
+  </bug>
+
+  <bug index="11" shape="core" severity="medium" depends_on="2"
+       touches_files="apps/web/src/features/dashboard/public-profile-page.tsx,apps/web/src/features/dashboard/public-profile.ts,apps/web/src/features/dashboard/user-profile-page.tsx,apps/web/src/features/dashboard/index.ts"
+       creates="apps/web/src/features/dashboard/endorse.ts,apps/web/src/features/dashboard/endorse-button.tsx">
+    <title>No UI to endorse a researcher (ID-5)</title>
+    <symptoms>
+      The endorsement API works (tier 2 in a category may endorse), but no page lets a user endorse another
+    </symptoms>
+    <reproduction_steps>
+      As a tier-2 user endorsed in cs.AI, open /u/{did} of a tier-1 user: no Endorse action
+    </reproduction_steps>
+    <expected>The public profile shows Endorse in {category} for each category the signed-in viewer may endorse in (from the API's rules), signs and posts the endorsement record, and reflects the new tier; hidden otherwise</expected>
+    <actual>API-only</actual>
+  </bug>
+
+  <bug index="12" shape="core" severity="medium" depends_on="2"
+       touches_files="apps/web/src/features/review-form/**,apps/web/src/features/paper-reviews/**">
+    <title>Reviewers cannot update a review against a new version in the UI (REV-5)</title>
+    <symptoms>
+      The API accepts review updates (a review.formal whose prev is the reviewer's earlier one) but no UI offers it; the reviews tab shows no Update action when a newer version exists
+    </symptoms>
+    <reproduction_steps>
+      Reveal a review on v1; the author posts v2; as the reviewer open the reviews tab: no way to revise against v2
+    </reproduction_steps>
+    <expected>When the signed-in reviewer's revealed review targets an older version than the paper's latest, the reviews tab shows Update for v{latest}, opening the review form prefilled with the current rubric; submitting signs and posts the update with prev set; the history shows both</expected>
+    <actual>API-only</actual>
+  </bug>
+
+  <bug index="13" shape="core" severity="medium" depends_on="2,4,10,11,12"
+       creates="apps/web/tests/e2e/roles.spec.ts,apps/web/tests/e2e/roles-fixtures.ts">
+    <title>Browser journeys do not cover moderation, review, endorsement and author actions</title>
+    <symptoms>
+      The Playwright suite covers reading, discussion, submit and /me only
+    </symptoms>
+    <reproduction_steps>
+      npm run test:e2e lists 7 journeys (plus the session journeys added by the session fix)
+    </reproduction_steps>
+    <expected>Additional real-browser journeys in tests/e2e/roles.spec.ts pass: a moderator opens the queue, sees the paper's PDF and text beside the decision form and lists it; two reviewers commit, one reveals, then after the second reveals the reports show; the author posts a new version and the reviewer updates; a tier-2 user endorses a newcomer and their tier changes; an author issues a correction notice and the banner appears; an author files an appeal on a held paper</expected>
+    <actual>Not covered</actual>
+    <constraints>
+      <constraint>Seed via the existing seed-demo/admin CLI; no test-only API routes</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
