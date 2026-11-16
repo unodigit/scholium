@@ -171,3 +171,34 @@ export {
 } from "./saved-searches";
 
 export { SavedSearchesCard, type SavedSearchesCardProps } from "./saved-searches-card";
+
+export {
+  ENDORSEMENT_RECORD_TYPE,
+  ENDORSE_MIN_TIER,
+  MY_ENDORSEMENTS_ENDPOINT,
+  RECORDS_ENDPOINT,
+  SIGNED_OUT_VIEWER,
+  EndorseInputError,
+  WrongEndorsementRecordError,
+  describeEndorseError,
+  endorseActionLabel,
+  endorseOffer,
+  endorseResearcher,
+  endorsedActionLabel,
+  loadViewerEndorsements,
+  parseViewerEndorsements,
+  viewerFromAccessToken,
+  type EndorseClient,
+  type EndorseInput,
+  type EndorseOffer,
+  type EndorseResult,
+  type EndorseSeams,
+  type ViewerEndorsement,
+  type ViewerIdentity,
+} from "./endorse";
+
+export {
+  EndorseSection,
+  type EndorseCategoryOption,
+  type EndorseSectionProps,
+} from "./endorse-button";

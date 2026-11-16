@@ -1,15 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
 
+import { EndorseSection } from "./endorse-button";
 import {
   PROFILE_TITLE,
   describeProfileError,
   loadProfile as fetchProfile,
   type ProfileData,
 } from "./profile";
+import type { EndorseResult } from "./endorse";
 import "./dashboard-page.css";
 
 /** Loads a profile for one DID; replaceable in tests. */
@@ -30,6 +32,8 @@ export interface ProfilePageProps {
   /** Replace the loader, for tests or an alternate API client. */
   loadProfile?: LoadProfile;
   loader?: LoadProfile;
+  /** Replace the sign-and-post call behind the Endorse action, for tests. */
+  endorse?: (endorseeDid: string, category: string) => Promise<EndorseResult>;
   /** Pin the sign-in state. */
   signedIn?: boolean;
 }
@@ -64,6 +68,31 @@ export function ProfilePage(props: ProfilePageProps = {}) {
   const retry = useCallback(() => setAttempt((count) => count + 1), []);
 
   const did = didOf(props, initial);
+
+  // The latest loaded profile, for reads that must not race a stale closure.
+  const profileRef = useRef<ProfileData | null>(initial ?? null);
+  if (state.status === "ready") {
+    profileRef.current = state.profile;
+  }
+
+  /**
+   * Read the profile back without the loading state: an accepted endorsement
+   * grants a tier, and the facts above should show it. A failed read keeps
+   * what is on screen — the endorsement stands on its signed record.
+   */
+  const refresh = useCallback(() => {
+    const targetDid = didOf(props, profileRef.current ?? undefined) || "";
+    if (targetDid === "") {
+      return;
+    }
+    const load = props.loadProfile ?? props.loader ?? ((d: string) => fetchProfile(d));
+    load(targetDid).then(
+      (data) => setState({ status: "ready", profile: data }),
+      () => {
+        // Keep the current profile; the reader can still reload the page.
+      },
+    );
+  }, [props]);
 
   useEffect(() => {
     const profile = initialProfileOf(props);
@@ -113,7 +142,7 @@ export function ProfilePage(props: ProfilePageProps = {}) {
       ) : null}
 
       {state.status === "ready" ? (
-        <ProfileView profile={state.profile} />
+        <ProfileView profile={state.profile} endorse={props.endorse} onEndorsed={refresh} />
       ) : null}
     </div>
   );
@@ -136,7 +165,17 @@ function ProfileHeader({ did }: { did: string }) {
   );
 }
 
-function ProfileView({ profile }: { profile: ProfileData }) {
+function ProfileView({
+  profile,
+  endorse,
+  onEndorsed,
+}: {
+  profile: ProfileData;
+  /** Passed through to the Endorse actions, for tests. */
+  endorse?: (endorseeDid: string, category: string) => Promise<EndorseResult>;
+  /** Called after an accepted endorsement, so the tier shown is refreshed. */
+  onEndorsed?: () => void;
+}) {
   return (
     <div className="pp-grid">
       <section className="pp-card" aria-labelledby="pp-identity-heading">
@@ -171,6 +210,10 @@ function ProfileView({ profile }: { profile: ProfileData }) {
             </div>
           ) : null}
         </dl>
+
+        {/* ID-5: endorse this researcher, offered from the viewer's own
+            standing (see ./endorse-button). Hidden for everyone else. */}
+        <EndorseSection did={profile.did} endorse={endorse} onEndorsed={onEndorsed} />
       </section>
 
       <section className="pp-card" aria-labelledby="pp-reviews-heading">

@@ -1,0 +1,148 @@
+/* ==========================================================================
+   The Endorse actions on a public profile (/u/{did}) — docs/design.md §3, §9.
+
+   Its own stylesheet, like follow-toggle.css: the section renders on the
+   profile page, which should not pull in the dashboard's card grid. Colour
+   comes from tokens only. The done state is a ✓ mark in the label as well as
+   the disabled state, so it never rests on colour alone.
+   ========================================================================== */
+
+.endorse-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+  margin-block-start: calc(var(--space-unit) * 4);
+  padding-block-start: calc(var(--space-unit) * 4);
+  border-block-start: 1px solid var(--rule);
+}
+
+.endorse-heading {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-ui);
+}
+
+.endorse-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.endorse-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-unit) * 1);
+  min-block-size: calc(var(--space-unit) * 8);
+  padding-block: calc(var(--space-unit) * 1);
+  padding-inline: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.endorse-button:hover {
+  background: var(--accent-soft);
+}
+
+/* Done: filled and bordered in the accent, the ✓ mark in the label. Busy is
+   excluded — an in-flight action is not a finished one. */
+.endorse-button[aria-disabled="true"]:not([aria-busy="true"]) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.endorse-button[aria-busy="true"] {
+  cursor: progress;
+  color: var(--ink-2);
+}
+
+.endorse-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- The category choice a tier-3 endorser gets --------------------------- */
+
+.endorse-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+}
+
+.endorse-picker-label {
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.endorse-select {
+  min-block-size: calc(var(--space-unit) * 8);
+  padding-block: calc(var(--space-unit) * 1);
+  padding-inline: calc(var(--space-unit) * 2);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.endorse-select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Messages ------------------------------------------------------------ */
+
+.endorse-error {
+  margin: 0;
+  max-width: var(--measure-reading);
+  color: var(--ink-2);
+}
+
+/* The polite success announcement: present for assistive tech, invisible
+   to sighted readers (the ✓ buttons already show the state). */
+.endorse-sr:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+/* ---- Touch and motion ----------------------------------------------------- */
+
+@media (pointer: coarse) {
+  .endorse-button,
+  .endorse-select {
+    min-block-size: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .endorse-button {
+    transition: none;
+  }
+}
