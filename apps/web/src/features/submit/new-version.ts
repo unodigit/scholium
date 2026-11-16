@@ -109,6 +109,11 @@ export interface NewVersionPaper {
   n: number;
   title: string;
   abstract: string;
+  /**
+   * The categories the form pre-selects: what the latest version signed, or —
+   * for a version that predates `body.categories` — the categories the catalog
+   * files the paper under (the ones its `paper.genesis` signed).
+   */
   categories: string[];
   licence: string;
   /** The byline, in order, carried into the new version unchanged. */
@@ -192,6 +197,15 @@ interface LocatedVersion {
   paperCid: string;
   versionCid: string;
   n: number;
+  /** The paper's categories, from the catalog (the genesis-signed ones). */
+  categories: string[];
+}
+
+/** The non-empty strings of a JSON array; anything else is ignored. */
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "")
+    : [];
 }
 
 function locateVersion(payload: unknown): LocatedVersion {
@@ -217,6 +231,7 @@ function locateVersion(payload: unknown): LocatedVersion {
     paperCid: text(payload.paperCid) ?? text(payload.paper_cid) ?? "",
     versionCid,
     n,
+    categories: stringList(payload.categories),
   };
 }
 
@@ -249,6 +264,10 @@ function paperFromEnvelope(envelope: unknown, located: LocatedVersion): NewVersi
       "The latest version does not name its files, so a new version cannot carry them over.",
     );
   }
+  // A version signed before categories travelled in the body names none. The
+  // catalog still files the paper under the categories its genesis signed, so
+  // use those rather than starting the author with nothing selected.
+  const signedCategories = stringList(body.categories);
   return {
     shortId: located.shortId,
     paperCid: located.paperCid !== "" ? located.paperCid : (signedPaper ?? ""),
@@ -256,9 +275,7 @@ function paperFromEnvelope(envelope: unknown, located: LocatedVersion): NewVersi
     n: located.n,
     title: typeof body.title === "string" ? body.title.trim() : "",
     abstract: typeof body.abstract === "string" ? body.abstract.trim() : "",
-    categories: Array.isArray(body.categories)
-      ? body.categories.filter((category): category is string => typeof category === "string")
-      : [],
+    categories: signedCategories.length > 0 ? signedCategories : located.categories,
     licence: text(body.licence) ?? "",
     authors: parseByline(body.authors),
     manifest,

@@ -49,7 +49,7 @@ const echoId = async (envelope: unknown): Promise<string> => {
 };
 
 /** Loads the fixture for real: the same pipeline the page uses, with stub reads. */
-function loader(over: Partial<NewVersionPaper> = {}) {
+function loader(over: Partial<NewVersionPaper> = {}, bodyOver: Record<string, unknown> = {}) {
   const paper = paperFixture(over);
   const fetchPaper = vi.fn().mockResolvedValue({
     paper: paper.shortId,
@@ -59,6 +59,7 @@ function loader(over: Partial<NewVersionPaper> = {}) {
     n: paper.n,
     version: paper.n,
     title: paper.title,
+    categories: paper.categories,
     authors: [],
   });
   const fetchRecord = vi.fn().mockResolvedValue({
@@ -78,6 +79,7 @@ function loader(over: Partial<NewVersionPaper> = {}) {
       licence: paper.licence,
       changeNote: "Fixed the proof of Lemma 2.",
       categories: paper.categories,
+      ...bodyOver,
     },
     proofs: [],
   });
@@ -131,8 +133,9 @@ interface Harness {
 function renderForm(
   props: Partial<NewVersionPageProps> = {},
   paper: Partial<NewVersionPaper> = {},
+  recordBody: Record<string, unknown> = {},
 ): Harness {
-  const built = loader(paper);
+  const built = loader(paper, recordBody);
   const sign = vi.fn(
     async (_type: string, body: Record<string, unknown>, prev: string | null) =>
       signedRecord(props.submitterDid ?? A, body, prev),
@@ -209,11 +212,35 @@ describe("NewVersionPage — the pre-filled details", () => {
     expect(
       screen.getByRole("button", { name: /cs\.AI/ }).getAttribute("aria-pressed"),
     ).toBe("true");
+    expect(
+      screen.getByRole("button", { name: /cs\.LG/ }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    // Both categories are already chosen, so Details is complete.
+    expect(
+      screen.getByRole("button", { name: "Continue to the change note" }).getAttribute("disabled"),
+    ).toBeNull();
     const checked = screen
       .getAllByRole("radio")
       .filter((radio) => (radio as HTMLInputElement).checked);
     expect(checked).toHaveLength(1);
     expect((checked[0] as HTMLInputElement).value).toBe("CC-BY-4.0");
+  });
+
+  it("pre-selects every category when an older version record does not name them", async () => {
+    // The seeded/demo and pre-categories versions signed no `categories`; the
+    // catalog still files the paper under the categories its genesis signed.
+    renderForm({}, {}, { categories: undefined });
+    await titleField();
+
+    expect(
+      screen.getByRole("button", { name: /cs\.AI/ }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("button", { name: /cs\.LG/ }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("button", { name: "Continue to the change note" }).getAttribute("disabled"),
+    ).toBeNull();
   });
 
   it("edits what will be signed", async () => {

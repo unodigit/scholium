@@ -2,13 +2,32 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../../lib/api";
+import { ApiError, tokenStore } from "../../lib/api";
 import { PasskeyCancelledError, type SignedRecord } from "../web-auth";
-import { ConsentPage, type ConsentPageProps } from "./consent-page";
 import { normalizeConsentVersion, type ConsentVersion } from "./consent-version";
 import type { ConsentReport } from "./consents";
 
-afterEach(cleanup);
+/** The PDF.js stand-in the viewer's default (token-carrying) loader wraps. */
+const pdfjs = vi.hoisted(() => ({
+  current: null as null | import("../paper-page/pdf-fixtures").FakePdf,
+}));
+
+vi.mock("../paper-page/pdf-render", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../paper-page/pdf-render")>();
+  const { fakePdf } = await import("../paper-page/pdf-fixtures");
+  pdfjs.current = fakePdf({ pages: 1 });
+  return { ...actual, loadPdfjs: async () => pdfjs.current!.loadPdf() };
+});
+
+// Imported after the mock so `loadPdfjsWithSession` wraps the stand-in.
+const { ConsentPage } = await import("./consent-page");
+type ConsentPageProps = import("./consent-page").ConsentPageProps;
+
+afterEach(() => {
+  cleanup();
+  tokenStore.clear();
+  pdfjs.current?.getDocument.mockClear();
+});
 
 const A = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const B = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
@@ -158,20 +177,39 @@ describe("ConsentPage — reviewing the version", () => {
     expect(within(tracker).getByRole("status").textContent).toBe("1 of 3 signed · 2 waiting");
   });
 
-  it("lists the files, opening each through the server and noting the safety scan", async () => {
+  it("shows the PDF in the viewer, not as a plain link that would fetch it without a token", async () => {
+    tokenStore.set({ accessToken: "coauthor-access-token" });
     renderPage(B);
     await acceptButton();
 
     const files = screen.getByRole("region", { name: "Files" });
+    // The file row links to the viewer on this page; no row points straight at
+    // `/v1/content`, which a co-author's browser would fetch without a token.
     const pdf = within(files).getByRole("link", { name: "paper.pdf" });
-    expect(pdf.getAttribute("href")).toMatch(new RegExp(`/v1/content/${PDF}$`));
-    expect(pdf.getAttribute("target")).toBe("_blank");
-    expect(pdf.getAttribute("rel")).toContain("noreferrer");
+    expect(pdf.getAttribute("href")).toBe("#cp-pdf");
+    expect(
+      within(within(files).getByRole("list", { name: "Files of version 2" }))
+        .queryAllByRole("link")
+        .some((link) => (link.getAttribute("href") ?? "").includes("/v1/content/")),
+    ).toBe(false);
     expect(files.textContent).toContain("manuscript · 2.0 MB");
     // A file with no id is named but cannot be opened.
     expect(within(files).queryByRole("link", { name: "notes.txt" })).toBeNull();
     expect(within(files).getByText("notes.txt")).toBeTruthy();
     expect(files.textContent).toContain("Files open once the server’s safety scan has passed.");
+
+    // The existing viewer draws the PDF, and its default loader hands PDF.js
+    // the co-author's bearer token: the bytes of a version awaiting consent
+    // are not public.
+    expect(within(files).getByRole("region", { name: "PDF of this version" })).toBeTruthy();
+    await waitFor(() => expect(pdfjs.current?.getDocument).toHaveBeenCalledTimes(1));
+    expect(pdfjs.current?.getDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: expect.stringMatching(new RegExp(`/v1/content/${PDF}$`)),
+        httpHeaders: { Authorization: "Bearer coauthor-access-token" },
+      }),
+    );
+    expect(await within(files).findByRole("img", { name: "Page 1 of 1" })).toBeTruthy();
   });
 
   it("says so when the file list could not be loaded, and still lets the version be read", async () => {

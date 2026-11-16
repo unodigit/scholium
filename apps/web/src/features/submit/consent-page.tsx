@@ -19,6 +19,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 
+import { ApiError, NetworkError, api } from "../../lib/api";
+import { PdfView } from "../paper-page/pdf-view";
+import { loadPdfjsWithSession } from "../paper-page/reading";
 import { ConsentTracker } from "./consent-tracker";
 import {
   CONSENT_COMMENT_MAX,
@@ -38,6 +41,7 @@ import {
   type LoadConsentVersion,
   type SignConsent,
   type SubmitConsent,
+  type VersionFile,
 } from "./consent-version";
 import { fetchConsents as defaultFetchConsents, type FetchConsents } from "./consents";
 import { licenceById } from "./details";
@@ -50,6 +54,8 @@ import { useConsentVersion } from "./use-consent-version";
 import { useDeviceDid } from "./use-device-did";
 import "./submit.css";
 import "./consent-page.css";
+// The PDF viewer's own rules (`ppg-pdf*`), drawn unchanged as on the paper page.
+import "../paper-page/paper-page.css";
 
 export interface ConsentPageProps {
   /** The `[version]` path segment: the `paper.version` record's id. */
@@ -154,8 +160,112 @@ function VersionCard({ version }: { version: ConsentVersion }): ReactElement {
   );
 }
 
+/** True when a manifest entry is a PDF, by its declared type or its name. */
+function isPdfFile(file: VersionFile): boolean {
+  return (
+    file.mediaType?.toLowerCase() === "application/pdf" ||
+    file.path.toLowerCase().endsWith(".pdf")
+  );
+}
+
+/** The PDF to show: the manuscript if it is one, else the first PDF with bytes. */
+function manuscriptPdf(files: readonly VersionFile[]): { file: VersionFile; cid: string } | null {
+  const pdfs = files.filter(
+    (file): file is VersionFile & { cid: string } => file.cid !== null && isPdfFile(file),
+  );
+  const pdf = pdfs.find((file) => file.role === "manuscript") ?? pdfs[0];
+  return pdf === undefined ? null : { file: pdf, cid: pdf.cid };
+}
+
+/** The bytes of a listed file, read with the reader's bearer token. */
+async function fetchFile(cid: string): Promise<Blob> {
+  // An absolute `/v1/content` URL; the API client still attaches the session's
+  // token, which the route requires while the version is not listed.
+  return api.get<Blob>(fileUrl(cid), { parse: "blob", cache: "no-store" });
+}
+
+/** The last path segment: what the browser saves the file as. */
+function fileName(path: string): string {
+  return path.split("/").filter((part) => part !== "").at(-1) ?? path;
+}
+
+/** A plain sentence for why a file could not be read. */
+function describeFileError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 423) {
+      return "This file is still being scanned, so it cannot be opened yet.";
+    }
+    if (error.status === 451) {
+      return "This file was removed for legal reasons and cannot be opened.";
+    }
+    if (error.status === 404) {
+      return "This server does not have this file.";
+    }
+  }
+  if (error instanceof NetworkError) {
+    return "Could not reach the server to open this file. Check your connection and try again.";
+  }
+  return "Could not open this file. Try again in a moment.";
+}
+
+/** Saves a fetched file, so a co-author can read it without a tokenised link. */
+function saveFile(blob: Blob, path: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName(path);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // The download has started; release the bytes on the next task.
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
+ * One non-PDF file: a button, not a plain `<a href>`, because the bytes of a
+ * version awaiting consent go only to its authors and need the bearer token.
+ */
+function FileDownload({ file }: { file: VersionFile }): ReactElement {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (file.cid === null) {
+    return <span>{file.path}</span>;
+  }
+  const cid = file.cid;
+
+  const download = async (): Promise<void> => {
+    if (busy) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      saveFile(await fetchFile(cid), file.path);
+    } catch (failure) {
+      setError(describeFileError(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button type="button" className="sw-link-button" aria-busy={busy} onClick={() => void download()}>
+        {file.path}
+        <span className="sw-sr-only"> — download</span>
+      </button>
+      {error !== null ? (
+        <span className="cp-note" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function FilesSection({ version }: { version: ConsentVersion }): ReactElement {
   const files = version.files;
+  const pdf = files === null ? null : manuscriptPdf(files);
   return (
     <section className="cp-section" aria-labelledby="cp-files-title">
       <h2 id="cp-files-title" className="cp-section__title">
@@ -167,15 +277,16 @@ function FilesSection({ version }: { version: ConsentVersion }): ReactElement {
         <p className="cp-note">This version lists no files.</p>
       ) : (
         <>
-          <ul className="cp-files">
+          <ul className="cp-files" aria-label={`Files of version ${version.n}`}>
             {files.map((file, index) => (
               <li key={`${file.path}-${index}`} className="cp-files__item">
-                {file.cid !== null ? (
-                  <a href={fileUrl(file.cid)} target="_blank" rel="noreferrer noopener">
-                    {file.path}
-                  </a>
+                {pdf !== null && file === pdf.file ? (
+                  // The PDF is drawn on this page; this only moves the reader
+                  // to it. A bare content URL would be fetched without the
+                  // co-author's token and answered 404.
+                  <a href="#cp-pdf">{file.path}</a>
                 ) : (
-                  <span>{file.path}</span>
+                  <FileDownload file={file} />
                 )}
                 <span className="cp-files__facts">
                   {[file.role, file.size === null ? null : formatBytes(file.size)].filter(Boolean).join(" · ")}
@@ -184,6 +295,13 @@ function FilesSection({ version }: { version: ConsentVersion }): ReactElement {
             ))}
           </ul>
           <p className="cp-note">Files open once the server&rsquo;s safety scan has passed.</p>
+          {pdf !== null ? (
+            <div id="cp-pdf" className="cp-pdf">
+              {/* PDF.js fetches the file itself, so the loader adds the
+                  reader's token: the bytes are not public yet. */}
+              <PdfView url={fileUrl(pdf.cid)} loadPdf={loadPdfjsWithSession} />
+            </div>
+          ) : null}
         </>
       )}
     </section>

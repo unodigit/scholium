@@ -233,6 +233,28 @@ describe("draftFromPaper", () => {
     const draft = draftFromPaper(await load(unlicensed));
     expect(draft.details.licence).toBe("CC-BY-4.0");
   });
+
+  it("pre-selects every category the paper has when the version record names none", async () => {
+    // Version records signed before categories travelled in the body still
+    // describe a paper the catalog files under its signed genesis categories.
+    const older = versionEnvelope();
+    delete (older.body as Record<string, unknown>).categories;
+    const paper = await load(older, catalogPayload({ categories: ["cs.AI", "cs.LG"] }));
+
+    expect(paper.categories).toEqual(["cs.AI", "cs.LG"]);
+    expect(draftFromPaper(paper).details.categories).toEqual(["cs.AI", "cs.LG"]);
+    expect(
+      canSignNewVersion({ ...draftFromPaper(paper), changeNote: "Adds the appendix." }),
+    ).toBe(true);
+  });
+
+  it("prefers the categories the version itself signed over the catalog's", async () => {
+    const paper = await load(
+      versionEnvelope(),
+      catalogPayload({ categories: ["cs.CR"] }),
+    );
+    expect(paper.categories).toEqual(["cs.AI", "cs.LG"]);
+  });
 });
 
 describe("newVersionBlockers", () => {
