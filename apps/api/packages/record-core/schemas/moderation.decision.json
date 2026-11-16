@@ -20,7 +20,12 @@
     },
     "action": {
       "type": "string",
-      "enum": ["list", "hold", "reclassify", "reject", "delist"]
+      "enum": ["list", "hold", "reclassify", "reject", "delist", "release"]
+    },
+    "state": {
+      "type": "string",
+      "enum": ["listed", "moderation", "held", "rejected"],
+      "description": "release only: the state the version is returned to. A release undoes a decision (an overturned appeal); it never lists a version nobody listed."
     },
     "clause": {
       "type": "string",

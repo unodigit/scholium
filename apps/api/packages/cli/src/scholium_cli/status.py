@@ -38,8 +38,10 @@ authenticated every record in the archive before any view is written.
 
 * A **hold in force**: per ``body.target``, the newest
   ``moderation.decision`` whose ``body.action`` is one of *list, hold,
-  reject, delist, tombstone* is the one in force; the paper is contested
-  while any target's decision in force is a hold.
+  reject, delist, tombstone, release* is the one in force; the paper is
+  contested while any target's decision in force is a hold.  A *release*
+  (an overturned appeal's restoration) puts the target in the state
+  ``body.state`` names, so it is a hold only when it names ``held``.
 * A reviewer's **current review** is the head of their ``prev`` chain: a
   ``review.formal`` that another review by the same reviewer names as
   ``prev`` has been replaced.  A ``prev`` naming somebody else's review
@@ -129,9 +131,11 @@ MIN_REVIEWS_FOR_REVIEWED = 2
 
 #: ``moderation.decision`` actions that set a target's state.
 _STATE_SETTING_ACTIONS: frozenset[str] = frozenset(
-    {"list", "hold", "reject", "delist", "tombstone"}
+    {"list", "hold", "reject", "delist", "tombstone", "release"}
 )
 _HOLD = "hold"
+_RELEASE = "release"
+_HELD = "held"
 
 _RETRACTION = "retraction"
 _CORRECTION = "correction"
@@ -230,6 +234,8 @@ def _holds_in_force(decisions: list[Mapping[str, Any]]) -> list[Mapping[str, Any
     for decision in decisions:
         action = _token(_body(decision).get("action"))
         if action in _STATE_SETTING_ACTIONS:
+            if action == _RELEASE and _token(_body(decision).get("state")) == _HELD:
+                action = _HOLD  # released back into a hold: the hold is in force again
             current[_text(_body(decision).get("target"))] = (action, decision)
     return [d for action, d in current.values() if action == _HOLD]
 

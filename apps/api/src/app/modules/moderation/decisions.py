@@ -3,7 +3,7 @@
 A moderator's public, signed decision on a version::
 
     {"target": "bafyrei...",      # cid of the version being decided on
-     "action": "list",            # list | hold | reclassify | reject | delist | tombstone
+     "action": "list",            # list | hold | reclassify | reject | delist | tombstone | release
      "clause": "MOD-01",          # a clause served by GET /v1/moderation/policies
      "reason": "...",             # shown to the author; or ``reasonCid`` instead
      "category": "cs.CR"}         # reclassify only (or ``categories``)
@@ -42,6 +42,15 @@ What an action does
                 are deleted; a version (or every version of a paper) also becomes
                 ``rejected``.  The envelopes and log entries stay, so history
                 still verifies.  See :mod:`app.modules.moderation.tombstones`
+``release``     the version becomes the state ``body.state`` names.  It is what
+                an overturned appeal appends to put a version back where the
+                appealed decision found it (``moderation`` stays ``moderation``,
+                ``listed`` stays ``listed``), so it is not an approval: it never
+                says ``list`` for a version nobody listed.  It is not in
+                :data:`ACTION_STATES` -- the state is in the record, not implied
+                by the action -- and :func:`decision_state` is the one place that
+                reads a record's resulting state.  Only a version a decision has
+                moved (``held`` or ``rejected``) can be released.
 ==============  ================================================================
 
 This is the split :func:`app.modules.status.compute_status` assumes: ``list``,
@@ -92,6 +101,8 @@ __all__ = [
     "ACTION_STATES",
     "DECISION_MIN_TIER",
     "DECISION_TYPE",
+    "RELEASE",
+    "RELEASE_STATES",
     "AUTHOR_NOTIFICATION_KIND",
     "DECISION_MADE_KIND",
     "DECISION_NOTIFICATION_KIND",
@@ -101,6 +112,7 @@ __all__ = [
     "DecisionFields",
     "apply_decision",
     "decision_fields",
+    "decision_state",
     "get_decision",
     "handle_moderation_decision",
     "persist_entry",
@@ -124,10 +136,24 @@ AUTHOR_NOTIFICATION_KIND = DECISION_TYPE
 #: Lowest trust tier whose signature the registry lets through (Moderator).
 DECISION_MIN_TIER = int(Tier.MODERATOR)
 
+#: The action an overturned appeal's restoration carries.  It names the state
+#: it returns the version to in ``body.state`` instead of implying one, so a
+#: restoration to ``moderation`` is never written as an approval.
+RELEASE = "release"
+
 #: The actions a ``moderation.decision`` may carry.  The record core's schema
 #: must list every one of them, or ingest refuses the record before this plugin
 #: sees it.
-ACTIONS = ("list", "hold", "reclassify", "reject", "delist", TOMBSTONE)
+ACTIONS = ("list", "hold", "reclassify", "reject", "delist", TOMBSTONE, RELEASE)
+
+#: The states a ``release`` may name.  ``moderation`` is the one no other action
+#: can ask for; the others are what a decision itself can leave a version in.
+RELEASE_STATES = (
+    submissions.LISTED,
+    submissions.MODERATION,
+    submissions.HELD,
+    submissions.REJECTED,
+)
 
 #: The version state each plain state-setting action asks for.  ``reclassify``
 #: is not here: it leaves a version's state alone.  ``tombstone`` is not either:
@@ -175,6 +201,8 @@ class DecisionFields:
     #: The new categories of a ``reclassify``; empty for every other action.
     categories: tuple[str, ...]
     decided_at: datetime
+    #: The state a ``release`` returns the version to; ``None`` for every other action.
+    state: Optional[str] = None
 
 
 def _text(body: Mapping[str, Any], field: str, *, required: bool) -> Optional[str]:
@@ -305,6 +333,17 @@ def decision_fields(record: Mapping[str, Any]) -> DecisionFields:
                 "missing_category",
             )
 
+    state: Optional[str] = None
+    if action == RELEASE:
+        state = body.get("state")
+        if not isinstance(state, str) or state not in RELEASE_STATES:
+            raise _invalid(
+                ["body", "state"],
+                f"needs the state a release returns the version to: one of {', '.join(RELEASE_STATES)}",
+                "missing_state" if state is None else "invalid_state",
+                state,
+            )
+
     return DecisionFields(
         decision_cid=decision_cid,
         moderator_did=author,
@@ -315,7 +354,29 @@ def decision_fields(record: Mapping[str, Any]) -> DecisionFields:
         reason_cid=reason_cid,
         categories=categories,
         decided_at=_decided_at(record),
+        state=state,
     )
+
+
+def decision_state(body: object) -> Optional[str]:
+    """The version state a ``moderation.decision`` body leaves its target in.
+
+    ``None`` for a body that sets no state (``reclassify``, a ``tombstone`` --
+    which acts on more than a version's state -- or anything unreadable).  This
+    is how a log is replayed into states: a state-setting action puts the version
+    in its :data:`ACTION_STATES` state, and a ``release`` in the state it names,
+    so a restoration to ``moderation`` replays to ``moderation`` and a restoration
+    to ``listed`` to ``listed``.
+    """
+    if not isinstance(body, Mapping):
+        return None
+    action = body.get("action")
+    if not isinstance(action, str):
+        return None
+    if action == RELEASE:
+        state = body.get("state")
+        return state if isinstance(state, str) and state in RELEASE_STATES else None
+    return ACTION_STATES.get(action)
 
 
 def require_known_clause(clause: str) -> None:
@@ -340,6 +401,14 @@ def _requested_state(fields: DecisionFields, current: str) -> str:
     still recorded, and :func:`~app.modules.submissions.transition_version`
     treats it as a no-op.  Anything else must be an edge of the natural graph.
     """
+    if fields.action == RELEASE:
+        # A release undoes a decision: it returns a held or rejected version to
+        # the state it was in before.  It is not another way to list, or to move
+        # a version that no decision has touched.
+        requested = fields.state or current
+        if requested != current and current not in (submissions.HELD, submissions.REJECTED):
+            raise DecisionNotAllowed(fields.target, fields.action, current, requested)
+        return requested
     requested = ACTION_STATES.get(fields.action)
     if requested is None:
         return current
@@ -505,7 +574,7 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
     if existing is not None:
         return existing
 
-    state = ACTION_STATES.get(fields.action)
+    state = fields.state if fields.action == RELEASE else ACTION_STATES.get(fields.action)
     if fields.action == TOMBSTONE:
         # Denylist the cid(s), delete the bytes, take the version(s) out of the
         # catalog.  The envelopes and log entries are not touched.

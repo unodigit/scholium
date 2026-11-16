@@ -38,6 +38,7 @@ from app.modules.moderation import DECISION_TYPE, ModerationDecision
 from app.modules.submissions import VersionAuthor, save_paper, save_version
 from app.modules.submissions.models import PaperVersion
 from app.security import issue_access_token
+from app.settings import settings
 
 APPEALS_URL = "/v1/appeals"
 DECISIONS_URL = "/v1/moderation/decisions"
@@ -63,6 +64,21 @@ def subscribed():
     """
     moderation._install_ledger_subscriber()
     appeals._install_ledger_subscriber()
+
+
+@pytest.fixture(autouse=True)
+def node_key(tmp_path, monkeypatch):
+    """Provision the node's Ed25519 key.
+
+    A panel is drawn from a seed keyed by a secret derived from the node's
+    signing key, so a node without one seats nobody.  The root conftest points
+    ``NODE_KEY_PATH`` at a per-worker file but never writes one; the suites that
+    file appeals import this fixture so the panel they expect is drawn.
+    """
+    path = tmp_path / "node.key"
+    path.write_bytes(bytes(SigningKey.generate()).hex().encode("ascii"))
+    monkeypatch.setattr(settings, "NODE_KEY_PATH", str(path))
+    return path
 
 
 def _timestamp(offset: timedelta = timedelta(0)) -> str:

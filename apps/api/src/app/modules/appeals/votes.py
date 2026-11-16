@@ -39,20 +39,33 @@ An ``appeal.decision`` alone is a verdict: it does not by itself lift the
 appealed ``moderation.decision``, so an overturned hold would leave the paper
 ``contested`` until a moderator relisted it by hand.  When the panel's outcome
 is one of :data:`RESTORING_OUTCOMES` (``overturned``, and the grant/allow
-spellings), the node therefore appends a **node-signed ``moderation.decision``**
-that puts the appealed target back in the state the appealed decision found it
-in (:func:`restore_target`):
+spellings), the node therefore appends a **node-signed ``moderation.decision``
+with the dedicated action** ``release`` that puts the appealed target back in
+the state the appealed decision found it in (:func:`restore_target`):
 
 * the state before the appealed decision is read from the log -- the newest
-  state-setting ``moderation.decision`` on the same target dated before the
-  appealed one -- falling back to ``listed`` for a version that had been in the
-  catalog (:attr:`PaperVersion.listed_at`) and ``moderation`` for one that was
-  still being moderated;
-* the restoring record takes the appealed decision's clause and points at the
-  appeal (``appeal``/``appeal_restoration``) so the restoration is auditable and
-  is made once, however many votes follow;
+  ``moderation.decision`` on the same target dated before the appealed one that
+  sets a state (:func:`app.modules.moderation.decision_state`) -- falling back
+  to ``listed`` for a version that had been in the catalog
+  (:attr:`PaperVersion.listed_at`) and ``moderation`` for one that was still
+  being moderated;
+* the restoring record is a ``release`` whose ``state`` *names* that prior
+  state.  It is never a ``list`` (or any other approving action) for a version
+  that was not listed: the public log must not say a moderator approved
+  something they never saw, and whoever replays it -- rebuild, a sync peer, the
+  status rules -- must land in the state the live node is in.  A ``release``
+  puts the version in exactly the state it names: ``moderation`` stays
+  ``moderation`` and ``listed`` stays ``listed``;
+* the record takes the appealed decision's clause and points at the appeal
+  (``appeal``/``appeal_restoration``) so the restoration is auditable and is
+  made once, however many votes follow;
 * the version is moved to that state and the paper's status is recomputed from
   the log, so the hold is no longer in force.
+
+A restoration is made only while the appealed decision is still the newest
+state-setting decision on the target and the version is still in the state it
+set, and only to a state a ``release`` can name; otherwise nothing is appended
+and the moderator is told (fail closed).
 
 The restoration is best effort after the ``appeal.decision`` is public: it is
 logged if it fails and retried by a later vote, but it never turns a made
@@ -85,6 +98,9 @@ from app.modules.ledger.models import EventLog
 from app.modules.moderation import (
     ACTION_STATES as MODERATION_ACTION_STATES,
     DECISION_TYPE as MODERATION_DECISION_TYPE,
+    RELEASE as RELEASE_ACTION,
+    RELEASE_STATES,
+    decision_state,
     get_decision as get_moderation_decision,
 )
 
@@ -136,13 +152,6 @@ VOTE_OUTCOMES = (
 #: ``overturned``.  ``modified`` and ``remanded`` leave the appeal's outcome to
 #: a new moderation decision and change no state here.
 RESTORING_OUTCOMES = frozenset({"overturned", "granted", "grant", "allowed"})
-
-#: The ``moderation.decision`` action that puts a version back into each state.
-_RESTORE_ACTIONS: Mapping[str, str] = {
-    submissions.LISTED: "list",
-    submissions.HELD: "hold",
-    submissions.REJECTED: "reject",
-}
 
 #: Serialises casting within this process.  The panel read, the vote write and
 #: the majority check are one step, so two concurrent votes cannot both miss a
@@ -496,9 +505,9 @@ def _appealed_decision_body(decision_cid: str) -> Mapping[str, Any]:
 def _prior_version_state(version_cid: str, decision_cid: str) -> str:
     """The state ``version_cid`` had before ``decision_cid`` was made.
 
-    The newest state-setting ``moderation.decision`` on the same target that is
-    older in the log is the authority.  With none, a version that had been in
-    the catalog (:attr:`~app.modules.submissions.models.PaperVersion.listed_at`
+    The newest ``moderation.decision`` on the same target that is older in the
+    log and sets a state (a ``release`` sets the state it names) is the
+    authority.  With none, a version that had been in the catalog (:attr:`~app.modules.submissions.models.PaperVersion.listed_at`
     is kept when it is held or rejected) was ``listed``; otherwise it was still
     being moderated.
     """
@@ -518,8 +527,7 @@ def _prior_version_state(version_cid: str, decision_cid: str) -> str:
             body = entry.body
             if not isinstance(body, Mapping) or body.get("target") != version_cid:
                 continue
-            action = body.get("action")
-            state = MODERATION_ACTION_STATES.get(action) if isinstance(action, str) else None
+            state = decision_state(body)
             if state is not None:
                 prior = state
     if prior is not None:
@@ -534,9 +542,10 @@ def _prior_version_state(version_cid: str, decision_cid: str) -> str:
 def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[str]:
     """Append the decision that restores an overturned appeal's target.
 
-    Returns the cid of the restoring ``moderation.decision``, or ``None`` when
-    the outcome restores nothing, the restoration was already made, or it is
-    skipped (stale target, unmapped prior state).  The record carries the
+    Returns the cid of the restoring ``moderation.decision`` -- a ``release``
+    naming the state the version is returned to -- or ``None`` when the outcome
+    restores nothing, the restoration was already made, or it is skipped (stale
+    target, a prior state a release cannot name).  The record carries the
     appeal's cid in ``appeal``/``appeal_restoration``, which is what makes the
     restoration auditable; idempotency keys off the appeal row's column.
 
@@ -576,8 +585,7 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
             body = entry.body if isinstance(entry.body, Mapping) else {}
             if body.get("target") != decision.version_cid:
                 continue
-            action = body.get("action")
-            if not isinstance(action, str) or action not in MODERATION_ACTION_STATES:
+            if decision_state(body) is None:
                 continue
             if entry.seq > appealed_entry.seq:
                 logger.info(
@@ -600,14 +608,9 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
     if not isinstance(clause, str) or not clause:
         clause = "MOD-01"
 
-    if prior == submissions.MODERATION:
-        # Lift the hold in the log (a non-hold state-setting decision) but put
-        # the version back in the moderation queue, not the catalog.
-        action = "list"
-    else:
-        action = _RESTORE_ACTIONS.get(prior)
-    if action is None:
-        # Unmapped prior state: fail closed -- no restoration, moderator notified.
+    if prior not in RELEASE_STATES:
+        # A prior state a release cannot name: fail closed -- no restoration,
+        # moderator notified.
         try:
             from app.modules.notifications.service import notify
 
@@ -629,7 +632,8 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
 
     body = {
         "target": decision.version_cid,
-        "action": action,
+        "action": RELEASE_ACTION,
+        "state": prior,
         "clause": clause,
         "reason": (
             f"Appeal {appeal_cid} was {outcome} by the panel; "
@@ -669,25 +673,6 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
         actor=did_key_from_signing_key(key),
         reason=f"Appeal {appeal_cid} was {outcome}.",
     )
-
-    if prior == submissions.MODERATION:
-        # The restoration decision above is a "list" in the log (to lift the
-        # hold) but the version itself must not be listed: clear any listed_at
-        # bookkeeping the moderation subscriber set while applying it.
-        try:
-            from app.modules.submissions.models import Paper, PaperVersion
-
-            with db.SessionLocal() as session:
-                vrow = session.get(PaperVersion, decision.version_cid)
-                if vrow is not None:
-                    vrow.listed_at = None
-                paper = session.get(Paper, decision.paper_cid)
-                if paper is not None and paper.latest_version_cid == decision.version_cid:
-                    paper.latest_version_cid = None
-                    paper.listed_at = None
-                session.commit()
-        except Exception:
-            logger.exception("could not clear listed bookkeeping for %s", decision.version_cid)
 
     try:
         from app.modules import status

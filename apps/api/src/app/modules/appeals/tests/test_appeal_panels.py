@@ -50,6 +50,7 @@ from .test_appeals import (
     Person,
     Scene,
     _appeal,
+    node_key,  # noqa: F401
     subscribed,  # noqa: F401
 )
 

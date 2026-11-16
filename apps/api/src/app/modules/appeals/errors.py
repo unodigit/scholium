@@ -17,6 +17,7 @@ __all__ = [
     "APPEAL_NOT_AUTHORIZED",
     "APPEAL_NOT_FOUND",
     "PANEL_NOT_DRAWN",
+    "PANEL_SEED_UNAVAILABLE",
     "PANEL_UNAVAILABLE",
     "UNKNOWN_APPEAL_TARGET",
     "VOTE_NODE_KEY_UNAVAILABLE",
@@ -25,6 +26,7 @@ __all__ = [
     "AppealNotAuthorized",
     "AppealNotFound",
     "PanelNotDrawn",
+    "PanelSeedUnavailable",
     "PanelUnavailable",
     "UnknownAppealTarget",
     "VoteNodeKeyUnavailable",
@@ -37,6 +39,7 @@ APPEAL_ALREADY_FILED = "urn:scholium:problem:appeal-already-filed"
 PANEL_UNAVAILABLE = "urn:scholium:problem:appeal-panel-unavailable"
 APPEAL_NOT_FOUND = "urn:scholium:problem:appeal-not-found"
 PANEL_NOT_DRAWN = "urn:scholium:problem:appeal-panel-not-drawn"
+PANEL_SEED_UNAVAILABLE = "urn:scholium:problem:appeal-panel-seed-unavailable"
 VOTE_NOT_AUTHORIZED = "urn:scholium:problem:vote-not-authorized"
 VOTE_NODE_KEY_UNAVAILABLE = "urn:scholium:problem:node-key-unavailable"
 
@@ -151,6 +154,31 @@ class PanelUnavailable(ProblemException, LookupError):
             appeal=appeal_cid,
             eligible=eligible,
             needed=needed,
+        )
+
+
+class PanelSeedUnavailable(ProblemException):
+    """The node cannot key the panel draw: ``503``.
+
+    The draw is seeded by an HMAC under a secret derived from the node's own
+    signing key (:func:`~.panel.derive_panel_seed`), because any seed the
+    appellant or the deciding moderator could compute -- or influence -- is one
+    they could grind.  Without a usable key there is no such seed, so no panel
+    is drawn: the appeal stays filed and the panel is seated once a key is
+    provisioned (:func:`~.service.seat_panel`).
+    """
+
+    def __init__(self, appeal_cid: object) -> None:
+        self.appeal_cid = appeal_cid
+        message = (
+            "This node has no usable Ed25519 signing key (NODE_KEY_PATH), so it "
+            "cannot key the draw of the appeal's panel."
+        )
+        super().__init__(
+            503,
+            message,
+            type=PANEL_SEED_UNAVAILABLE,
+            appeal=appeal_cid,
         )
 
 

@@ -9,26 +9,34 @@ in ``appeal_panels``.  Who may sit:
 * **not an author of the paper** the decision was about -- which also keeps the
   appellant, always an author, off their own panel.
 
-The draw is **seeded from the appealed decision cid** and from nothing else that
-varies: every eligible member is scored by
-``sha256(decision_cid, member_did)`` and the three lowest scores sit
+The draw is **seeded by an HMAC of the appealed decision cid** and by nothing
+else that anyone but the node controls: the seed is
+``HMAC-SHA256(secret, decision_cid)`` where ``secret`` is derived from the node's
+own signing key (:func:`derive_panel_seed`), and every eligible member is scored
+by ``sha256(seed, member_did)`` and the three lowest scores sit
 (:func:`select_panel`).  Consequently
 
 * the same appeal drawn over the same members always seats the same panel, in
-  the same order, whatever order the members were listed in -- an independent
-  node, or an auditor, can recompute it from the decision cid and the
-  membership alone;
-* different decisions draw unrelated panels, and neither the appellant nor an
-  operator picks who sits.  The seed is the *decision*, not the appeal cid,
-  because the appellant signs the appeal record and so chooses its cid (its
-  grounds and ``created`` change the hash): seeding from the appeal let an
-  appellant grind appeal records until a draw favoured them, then file that
-  one;
+  the same order, whatever order the members were listed in -- and the seed is
+  stored on the appeal's row once, so the draw and the seat order stay fixed;
+* the seed does **not** depend on the appeal.  The appellant signs the appeal
+  record and so chooses its cid (its grounds and ``created`` change the hash),
+  and can predict the ledger head it will be appended at: any seed built from
+  either let them vary a no-op field of the appeal offline until a draw favoured
+  them, then file that one.  The deciding moderator chooses the decision cid, so
+  a bare hash of it could be ground by them -- which is why the seed is keyed:
+  without the node's secret nobody can compute the draw, or search for a
+  decision that produces the one they want, before the decision is made;
+* different decisions draw unrelated panels, and neither the appellant, the
+  deciding moderator nor an operator picks who sits;
 * a member who joins or leaves the pool without being one of the three does not
   change the panel.
 
-:func:`get_panel` returns the seats in the same seeded order by resolving the
-appeal's saved ``decision_cid``; a panel drawn for a cid with no saved appeal
+A node without a usable signing key has no secret and so no seed: it seats no
+panel (``PanelSeedUnavailable``) until a key is provisioned.
+
+:func:`get_panel` returns the seats in the same seeded order by reading the
+seed stored on the appeal's row; a panel drawn for a cid with no saved appeal
 row (a direct :func:`draw_panel` call) falls back to that cid as its seed.
 
 A panel is drawn once.  :func:`draw_panel` saves exactly :data:`PANEL_SIZE`
@@ -41,6 +49,7 @@ redrawn, so a member's tier changing later does not unseat them.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import threading
 from collections.abc import Collection, Iterable
 from typing import Optional
@@ -55,12 +64,15 @@ from .errors import PanelUnavailable
 from .models import Appeal, AppealPanelMember, ensure_tables
 
 __all__ = [
+    "PANEL_SEED_DOMAIN",
     "PANEL_SIZE",
     "PANEL_TIERS",
+    "derive_panel_seed",
     "draw_panel",
     "eligible_members",
     "get_panel",
     "panel_seed",
+    "panel_seed_secret",
     "seat_rank",
     "select_panel",
 ]
@@ -80,6 +92,38 @@ _draw_lock = threading.Lock()
 
 
 # --------------------------------------------------------------------------- #
+# The seed
+# --------------------------------------------------------------------------- #
+
+#: Domain separation for the secret derived from the node's signing key, so the
+#: key that signs records is never itself used as an HMAC key for the draw.
+PANEL_SEED_DOMAIN = b"scholium/appeals/panel-seed/v1"
+
+
+def panel_seed_secret(key: object) -> bytes:
+    """The node-held secret the panel seed is keyed by, derived from ``key``.
+
+    ``key`` is the node's Ed25519 signing key
+    (:func:`app.modules.ledger.node_signing_key`).  The secret is
+    ``HMAC-SHA256(key, PANEL_SEED_DOMAIN)``: a one-way, domain-separated
+    derivation, so the secret reveals nothing about the signing key and the
+    signing key is not reused as a MAC key.
+    """
+    return hmac.new(bytes(key), PANEL_SEED_DOMAIN, hashlib.sha256).digest()  # type: ignore[call-overload]
+
+
+def derive_panel_seed(decision_cid: str, key: object) -> str:
+    """The seed for the panel of an appeal of ``decision_cid``: a hex HMAC-SHA256.
+
+    ``HMAC-SHA256(panel_seed_secret(key), decision_cid)`` -- over the decision
+    cid only.  Nothing the appellant writes (the appeal's cid, grounds or
+    ``created``) and nothing about the ledger enters it, and without the node's
+    secret neither the appellant nor the deciding moderator can compute it.
+    """
+    return hmac.new(panel_seed_secret(key), decision_cid.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+# --------------------------------------------------------------------------- #
 # The draw
 # --------------------------------------------------------------------------- #
 
@@ -87,8 +131,8 @@ _draw_lock = threading.Lock()
 def seat_rank(seed: str, member_did: str) -> tuple[bytes, str]:
     """The sort key that decides who sits: lowest ``sha256(seed, did)`` first.
 
-    ``seed`` is the appealed decision's cid.  The DID is the tie-breaker, so the
-    order is total even for a hash collision.
+    ``seed`` is the appeal's stored panel seed (:func:`derive_panel_seed`).  The
+    DID is the tie-breaker, so the order is total even for a hash collision.
     """
     digest = hashlib.sha256(f"{seed}\n{member_did}".encode("utf-8")).digest()
     return digest, member_did
@@ -99,7 +143,7 @@ def select_panel(
     candidates: Iterable[str],
     size: int = PANEL_SIZE,
 ) -> tuple[str, ...]:
-    """Choose up to ``size`` members of ``candidates`` for the decision ``seed``.
+    """Choose up to ``size`` members of ``candidates`` for ``seed``.
 
     Pure and deterministic: the result depends only on the seed and on *which*
     DIDs are candidates, not on their order or on duplicates.  Fewer than
@@ -138,11 +182,13 @@ def panel_seed(appeal_cid: object) -> str:
     """The seed the panel of ``appeal_cid`` is drawn from.
 
     The value stored on the appeal's row when it has one (see
-    :mod:`app.modules.appeals.service`): a hash fixed once the appeal is
-    appended, so neither the appellant nor the deciding moderator can grind
-    the draw.  An appeal this node has no row for -- or one whose seed has not
-    been stored yet -- falls back to its own cid, so a direct
-    :func:`draw_panel` call still gets a stable seed.
+    :mod:`app.modules.appeals.service`): :func:`derive_panel_seed` of the
+    appealed decision, fixed before the panel is drawn, so neither the appellant
+    nor the deciding moderator can grind the draw.  An appeal whose seed has not
+    been stored -- one drawn before seeds were kept -- is ordered by its
+    decision's cid, and a cid this node has no row for by itself, so a direct
+    :func:`draw_panel` call still gets a stable seed.  :func:`~.service.seat_panel`
+    never draws from the fallback.
     """
     if not isinstance(appeal_cid, str) or not appeal_cid:
         return ""
@@ -187,7 +233,7 @@ def draw_panel(
     Idempotent: an appeal that has a panel gets that panel back, untouched,
     however the membership has changed since.  ``excluded`` is every DID that
     must not sit -- the deciding moderator and the paper's authors.  ``seed`` is
-    the appealed decision's cid; it defaults to :func:`panel_seed`, so a direct
+    the appeal's panel seed; it defaults to :func:`panel_seed`, so a direct
     call for an unsaved cid seeds from that cid and still agrees with
     :func:`get_panel`.
 

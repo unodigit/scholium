@@ -105,10 +105,12 @@ Moderation
 ----------
 
 Of the ``moderation.decision`` actions, those that set a version's state --
-``list``, ``hold``, ``reject``, ``delist`` and ``tombstone`` -- are tracked
-per ``body.target``; the newest decision on a target is the one in force.  A
-**hold in force** on any target makes the paper contested.  A later ``list``,
-``reject``, ``delist`` or ``tombstone`` on the *same target* ends it.
+``list``, ``hold``, ``reject``, ``delist``, ``tombstone`` and ``release`` --
+are tracked per ``body.target``; the newest decision on a target is the one in
+force.  A **hold in force** on any target makes the paper contested.  A later
+``list``, ``reject``, ``delist`` or ``tombstone`` on the *same target* ends it.
+A ``release`` -- what an overturned appeal appends -- puts the target in the
+state ``body.state`` names, so it ends a hold unless it names ``held``.
 ``reclassify`` leaves a version's state alone, so it neither starts nor ends
 a hold.  Decisions are compared by ``created`` (ISO 8601; offsets honoured),
 ties broken by record id.  ``created`` is the signer's own clock, so lifting a
@@ -249,9 +251,11 @@ MIN_REVIEWS_FOR_REVIEWED = 2
 
 #: ``moderation.decision`` actions that set a version's state.
 STATE_SETTING_ACTIONS: frozenset[str] = frozenset(
-    {"list", "hold", "reject", "delist", "tombstone"}
+    {"list", "hold", "reject", "delist", "tombstone", "release"}
 )
 _HOLD = "hold"
+_RELEASE = "release"
+_HELD = "held"
 
 #: Normalised ``review.formal`` recommendations (see "Reviews").
 SUPPORTIVE_RECOMMENDATIONS: frozenset[str] = frozenset(
@@ -404,6 +408,8 @@ def _holds_in_force(decisions: list[_Record]) -> list[_Record]:
     for decision in decisions:
         action = _token(decision.body.get("action"))
         if action in STATE_SETTING_ACTIONS:
+            if action == _RELEASE and _token(decision.body.get("state")) == _HELD:
+                action = _HOLD  # released back into a hold: the hold is in force again
             current[_text(decision.body.get("target"))] = (action, decision)
     return [d for action, d in current.values() if action == _HOLD]
 

@@ -43,12 +43,20 @@ Seating the panel
 
 Once the appeal is saved, :func:`seat_panel` draws its 3-member panel into
 ``appeal_panels`` (see :mod:`app.modules.appeals.panel` for who is eligible and
-how the draw is seeded from the appealed decision cid).  It is idempotent too,
-so the subscriber and the endpoint cannot seat two panels.  Too few eligible
-members is not a reason to refuse or unfile an appeal -- the appeal is already
-in the public log -- so :func:`apply_appeal` leaves the panel undrawn and logs
-it; calling :func:`seat_panel` again once the membership has grown draws it
-then.
+how the draw is seeded).  It is idempotent too, so the subscriber and the
+endpoint cannot seat two panels.  Too few eligible members is not a reason to
+refuse or unfile an appeal -- the appeal is already in the public log -- so
+:func:`apply_appeal` leaves the panel undrawn and logs it; calling
+:func:`seat_panel` again once the membership has grown draws it then.  The same
+holds for a node with no usable signing key: the seed the draw needs is keyed by
+a secret derived from that key, so without one the panel waits.
+
+The seed is ``HMAC-SHA256(node secret, decision cid)`` and is stored on the
+appeal's row before the panel is drawn.  It depends on the appealed decision
+alone: the appellant chooses everything in the appeal (its cid, its grounds, its
+``created``) and can predict the ledger head, so a seed that took any of those
+in would let them vary a no-op field offline until the draw seated the panel they
+wanted.
 
 When a panel is drawn, every seated member is told (:func:`notify_panel_seated`):
 a notification of kind :data:`PANEL_SEATED_KIND` whose payload names the appeal
@@ -62,7 +70,6 @@ appeal.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -76,9 +83,15 @@ from app.modules import ledger, submissions
 from app.modules.ingest import InvalidRecord
 from app.modules.moderation import DECISION_TYPE, get_decision
 
-from .errors import AppealAlreadyFiled, AppealNotAuthorized, PanelUnavailable, UnknownAppealTarget
+from .errors import (
+    AppealAlreadyFiled,
+    AppealNotAuthorized,
+    PanelSeedUnavailable,
+    PanelUnavailable,
+    UnknownAppealTarget,
+)
 from .models import Appeal, AppealPanelMember, ensure_tables
-from .panel import draw_panel, get_panel, panel_seed
+from .panel import derive_panel_seed, draw_panel, get_panel, panel_seed
 
 logger = logging.getLogger(__name__)
 
@@ -457,16 +470,22 @@ def seat_panel(
     here notifies its members (see :func:`notify_panel_seated`); a panel that
     was already drawn is returned without a second notice.
 
+    The seed is stored on the appeal before the panel is drawn from it, and the
+    panel is drawn from that stored seed only.
+
     Raises:
         UnknownAppealTarget: ``422`` -- the decision can no longer be resolved.
+        PanelSeedUnavailable: ``503`` -- the node has no usable signing key to
+            key the seed with; nothing is saved.
         PanelUnavailable: ``503`` -- fewer than three eligible members; nothing
-            is saved.
+            but the seed is saved.
     """
     seated = get_panel(appeal.appeal_cid)
     if seated:
         return seated
     if decision is None:
         decision = resolve_decision(str(appeal.decision_cid))
+    _store_panel_seed(str(appeal.appeal_cid), str(appeal.decision_cid))
     seats = draw_panel(
         str(appeal.appeal_cid),
         excluded=panel_exclusions(appeal, decision),
@@ -477,9 +496,14 @@ def seat_panel(
 
 
 def _seat_or_defer(appeal: Appeal, decision: AppealedDecision) -> None:
-    """Seat the panel, tolerating a membership too small to draw one yet."""
+    """Seat the panel, tolerating a membership too small -- or a node too unkeyed -- to draw one yet."""
     try:
         seat_panel(appeal, decision)
+    except PanelSeedUnavailable:
+        logger.warning(
+            "appeal %s has no panel yet: the node has no signing key to key the draw with",
+            appeal.appeal_cid,
+        )
     except PanelUnavailable as exc:
         logger.warning(
             "appeal %s has no panel yet: %d eligible member(s), %d needed",
@@ -490,34 +514,35 @@ def _seat_or_defer(appeal: Appeal, decision: AppealedDecision) -> None:
 
 
 
-def _store_panel_seed(appeal_cid: str, decision_cid: str) -> None:
-    """Compute and persist the panel seed for ``appeal_cid`` if it is not set.
+def _store_panel_seed(appeal_cid: str, decision_cid: str) -> str:
+    """Compute and persist the panel seed for ``appeal_cid``; return it.
 
-    The seed is ``sha256(decision cid, appeal cid, ledger head hash at the
-    appeal's append seq)``.  It is written once; a later call (a re-applied
-    appeal, say) never overwrites it, so the draw stays fixed.
+    The seed is :func:`~.panel.derive_panel_seed` of ``decision_cid`` under the
+    node's signing key: an HMAC over the decision cid alone, so nothing the
+    appellant writes and nothing about the ledger enters it.  It is stored on the
+    appeal's row (every column that carries it) before the panel is drawn, and
+    only a panel that has not been drawn is ever seated from it, so a seed
+    stored by an earlier scheme is replaced before it can decide anything.
+
+    Raises:
+        PanelSeedUnavailable: ``503`` -- the node has no usable signing key.
     """
-    current = get_appeal(appeal_cid)
-    if current is not None and any(
-        getattr(current, attr, None) for attr in ("panel_seed", "seed", "draw_seed")
-    ):
-        return
-    entry = ledger.entry_by_cid(appeal_cid)
-    if entry is not None:
-        head_hash = bytes(entry.entry_hash).hex()
-    else:
-        head_hash = ""
-    seed = hashlib.sha256(
-        f"{decision_cid}\n{appeal_cid}\n{head_hash}".encode("utf-8")
-    ).hexdigest()
+    key = ledger.node_signing_key()
+    if key is None:
+        raise PanelSeedUnavailable(appeal_cid)
+    seed = derive_panel_seed(decision_cid, key)
     with db.SessionLocal() as session:
         row = session.get(Appeal, appeal_cid)
         if row is None:
-            return
+            return seed
+        changed = False
         for attr in ("panel_seed", "seed", "draw_seed"):
-            if getattr(row, attr, None) is None:
+            if getattr(row, attr, None) != seed:
                 setattr(row, attr, seed)
-        session.commit()
+                changed = True
+        if changed:
+            session.commit()
+    return seed
 
 
 def apply_appeal(record: Mapping[str, Any]) -> Appeal:
@@ -541,10 +566,8 @@ def apply_appeal(record: Mapping[str, Any]) -> Appeal:
     """
     fields, decision = _validated(record)
     row = get_appeal(fields.appeal_cid) or _save_appeal(fields, decision)
-    _store_panel_seed(fields.appeal_cid, decision.decision_cid)
-    row = get_appeal(fields.appeal_cid) or row
     _seat_or_defer(row, decision)
-    return row
+    return get_appeal(fields.appeal_cid) or row
 
 
 def _save_appeal(fields: AppealFields, decision: AppealedDecision) -> Appeal:
