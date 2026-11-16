@@ -21,7 +21,9 @@ the decisions the generic pipeline cannot make, *before* anything is stored:
   whoever relays the record -- must be an author of the paper the decision was
   about (``403``, :class:`~.errors.AppealNotAuthorized`).  "An author of the
   paper" is the definition :func:`app.modules.submissions.paper_authors` gives
-  for notices: whoever signed the genesis, signed a version, or is listed on one;
+  for notices: whoever signed the genesis, signed a version, or is listed on one
+  *and accepted their co-author consent* -- a declined or never-consented
+  co-author cannot speak for the paper;
 * **once.**  A decision that already has an appeal refuses a second one
   (``409``, :class:`~.errors.AppealAlreadyFiled`), whoever signs it: the appeal
   belongs to the decision, not to the author, so co-authors share one appeal.
@@ -319,7 +321,12 @@ def resolve_decision(target: str) -> AppealedDecision:
 
 
 def require_appellant(author: object, decision: AppealedDecision) -> None:
-    """Refuse unless ``author`` is an author of the decided paper (``403``).
+    """Refuse unless ``author`` may speak for the decided paper (``403``).
+
+    The paper's genesis signer and every version's signer always may.  A DID
+    merely listed as a co-author may only once it has accepted its
+    ``coauthor.consent``: a co-author who never consented, or who declined,
+    cannot appeal on the paper's behalf -- the same rule notices use.
 
     Moderators get no override: the appeal answers *their* decision, and the
     panel that hears it excludes the deciding moderator.
@@ -327,7 +334,7 @@ def require_appellant(author: object, decision: AppealedDecision) -> None:
     Raises:
         AppealNotAuthorized: ``403``.
     """
-    if isinstance(author, str) and author in submissions.all_paper_authors(decision.paper_cid):
+    if isinstance(author, str) and author in submissions.paper_authors(decision.paper_cid):
         return
     raise AppealNotAuthorized(author, decision.decision_cid, decision.paper_cid)
 

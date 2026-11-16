@@ -229,6 +229,15 @@ class Scene:
         """A decision that leaves the version's state alone, so several can be stacked."""
         return self.decide("reclassify", category=category)
 
+    def record_consent(self, person: Person, decision: str) -> None:
+        """Post ``person``'s signed ``coauthor.consent`` for this version."""
+        record = person.sign(
+            "coauthor.consent",
+            {"version": self.version_cid, "role": "Author", "decision": decision},
+        )
+        response = self.client.post(RECORDS_URL, json=record, headers=person.headers)
+        assert response.status_code == 201, response.text
+
 
 def _appeal(signer: Person, target: str, **body: Any) -> dict:
     return signer.sign(APPEAL_TYPE, {"target": target, "grounds": f"Grounds {uuid.uuid4().hex}", **body})
@@ -346,6 +355,7 @@ def test_co_authors_share_the_one_appeal(client):
     scene = Scene(client, coauthors=1)
     decision = scene.decide("hold")
     coauthor = scene.coauthors[0]
+    scene.record_consent(coauthor, "accept")
 
     assert client.post(APPEALS_URL, json=_appeal(scene.author, decision), headers=scene.author.headers).status_code == 201
     problem = _problem(client.post(APPEALS_URL, json=_appeal(coauthor, decision), headers=coauthor.headers), 409)
@@ -356,11 +366,41 @@ def test_a_listed_co_author_may_appeal(client):
     scene = Scene(client, coauthors=1)
     decision = scene.decide("hold")
     coauthor = scene.coauthors[0]
+    scene.record_consent(coauthor, "accept")
 
     response = client.post(APPEALS_URL, json=_appeal(coauthor, decision), headers=coauthor.headers)
 
     assert response.status_code == 201, response.text
     assert get_appeal_for_decision(decision).appellant_did == coauthor.did
+
+
+def test_a_co_author_who_declined_consent_cannot_appeal(client):
+    scene = Scene(client, coauthors=1)
+    decision = scene.decide("hold")
+    coauthor = scene.coauthors[0]
+    scene.record_consent(coauthor, "decline")
+
+    record = _appeal(coauthor, decision)
+    problem = _problem(client.post(APPEALS_URL, json=record, headers=coauthor.headers), 403)
+
+    assert problem["type"] == appeals.APPEAL_NOT_AUTHORIZED
+    assert not _stored(client, record)
+    assert _rows(decision) == []
+    # The decision's single appeal is still the author's to spend.
+    assert client.post(APPEALS_URL, json=_appeal(scene.author, decision), headers=scene.author.headers).status_code == 201
+
+
+def test_a_co_author_who_never_consented_cannot_appeal(client):
+    scene = Scene(client, coauthors=1)
+    decision = scene.decide("hold")
+    coauthor = scene.coauthors[0]
+
+    record = _appeal(coauthor, decision)
+    problem = _problem(client.post(APPEALS_URL, json=record, headers=coauthor.headers), 403)
+
+    assert problem["type"] == appeals.APPEAL_NOT_AUTHORIZED
+    assert not _stored(client, record)
+    assert _rows(decision) == []
 
 
 def test_each_decision_has_its_own_single_appeal(client, scene):
