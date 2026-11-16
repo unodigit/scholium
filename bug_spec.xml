@@ -1,0 +1,485 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Scholium production-readiness fixes, from the independent evaluation of HEAD a8bd704
+  (2026-11-16). M = apps/api/src/app/modules, W = apps/web/src/features.
+  Evidence: the evaluator's FINDINGS.md (journeys run over real HTTP with record-core signing,
+  headless Chromium against a production next build).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="critical"
+       touches_files="apps/web/src/features/web-auth/**,apps/web/src/features/verify-core/**">
+    <title>Every record signed in the browser is rejected with 401 record-signature-invalid</title>
+    <symptoms>
+      POST /v1/records (and every route that accepts a signed record: threads, consents, reviews, decisions) returns 401 urn:scholium:problem:record-signature-invalid for any record signed by the web app
+      apps/web/src/features/web-auth/sign-record.ts signs Ed25519 over the binary CID bytes (signer.signWithPasskey(cid.bytes)) while the API (record-core signing.py verify_envelope) verifies the signature over the canonical record bytes (record_bytes)
+      No user can submit a paper, consent, post in a discussion, review or moderate from the web UI
+    </symptoms>
+    <reproduction_steps>
+      Sign in in the browser (virtual passkey), open a listed paper's Discussion tab and click "Sign and submit" on a new post
+      Observe POST /v1/papers/{id}/threads -> 401 record-signature-invalid
+      Equivalently: build an envelope with the web signRecord, POST it to /v1/records, observe 401; sign the same body over record_bytes with record-core and observe 201
+    </reproduction_steps>
+    <expected>A record signed by the web signer verifies in the API and is accepted (201); the web and Python cores sign and verify the same byte string</expected>
+    <actual>Web signs over CID bytes; API verifies over record bytes; every web-signed record gets 401</actual>
+    <constraints>
+      <constraint>Do not change the API's signature verification rule (signature over canonical DAG-CBOR record bytes, as in record-core); fix the web signer</constraint>
+      <constraint>Add a cross-language test: a fixed key and body signed by the TS signer must verify with the shared verify-core vectors that record-core also checks</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="critical"
+       touches_files="apps/web/src/features/submit/**,apps/web/src/app/(submit)/**">
+    <title>Submit wizard deadlocks at step 4: "Continue to Sign" never enables</title>
+    <symptoms>
+      At step 4 (Checks) the wizard shows "Checks have not run yet. They start when the version is signed." and the Continue to Sign button stays disabled forever
+      checks-step.tsx requires a non-null checks report, fetched from GET /v1/papers/{id}/v/{n}/checks (W/submit/checks.ts), but no such API route is mounted, and the version does not exist until it is signed
+      No paper can be submitted from the web app
+    </symptoms>
+    <reproduction_steps>
+      Sign in as an endorsed tier-2 user, open /submit, upload a PDF, fill Details and Authors
+      Reach step 4 and observe the disabled Continue to Sign button and a 404 for GET /v1/papers/{id}/v/{n}/checks
+    </reproduction_steps>
+    <expected>The author can proceed to sign without a checks report; once the version is signed and scanned, the status tracker polls GET /v1/papers/{id}/v/{n}/checks (mounted by the text-extraction bug in this spec; 404 until available, shown as "checks pending") and shows the advisory report</expected>
+    <actual>The wizard waits for a report that can only exist after signing, from a route that does not exist</actual>
+    <constraints>
+      <constraint>Checks remain advisory (PRD PUB-4/MOD-1): they never block signing</constraint>
+      <constraint>Web-only fix; tolerate 404 from the checks route</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="3" shape="core" severity="critical"
+       touches_files="apps/api/src/app/modules/recovery/**">
+    <title>Social recovery approvals are forgeable: anonymous account takeover</title>
+    <symptoms>
+      Anonymous POST /v1/recovery/requests {"orcid": victim ORCID, "new_key": attacker key} returns 201
+      Three anonymous POST /v1/recovery/requests/{id}/approvals {"guardian_did": guardian DID, "signature": "not-a-signature"} each return 200 and the request enters the 72 h contest window
+      The guardian DID is read from the request body (requests_router.py _extract_guardian_and_signature) and the signature is stored but never verified (approvals.py approve_recovery_request)
+      PUT /v1/me/guardians changes the guardian set with only an access token: no signed record, no delay, no notification to the account owner
+    </symptoms>
+    <reproduction_steps>
+      Create a user with three guardians and an ORCID
+      Without any Authorization header, open a recovery request for that ORCID with a new key, then post three approvals naming the guardians with a junk signature
+      Observe 201, 200, 200, 200 and status "contest"
+    </reproduction_steps>
+    <expected>An approval is accepted only from the authenticated guardian (the caller's token DID equals a current guardian of the account) AND carries a valid Ed25519 signature by that guardian's active key over (request_id, account DID, new_key); otherwise 401/403 problem. Changing guardians requires a signed record and notifies the account owner</expected>
+    <actual>Anyone can complete the approval quorum for any account</actual>
+    <constraints>
+      <constraint>Keep the 72 h contest window and quorum rules unchanged</constraint>
+      <constraint>Regression tests must cover: missing auth, guardian_did spoofed in body, bad signature, signature over a different new_key, duplicate approval</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="4" shape="core" severity="critical"
+       touches_files="apps/api/src/app/modules/submissions/**">
+    <title>Any endorsed user can append versions to, withdraw or retract someone else's paper</title>
+    <symptoms>
+      A tier-2 user who is not an author of sch:iyzu-o4ol-wpge posted paper.version n=3 (prev = current head, authors = [attacker]) -> 201, consented -> 201, then a retraction notice -> 201; GET /v1/papers/{id} status became "retracted"
+      handle_paper_version (submissions/versions.py ~638-664) never checks that the signer is an author of the existing paper; notices.py paper_authors counts every author listed on any version, including the attacker's own version
+    </symptoms>
+    <reproduction_steps>
+      As author A publish and list a paper
+      As a different endorsed user B, sign paper.version n=2 with prev = A's head and authors=[B]; POST it; consent; then sign a retraction notice for the paper
+      Observe 201 for each and the paper status "retracted"
+    </reproduction_steps>
+    <expected>A new version of an existing paper is accepted only when its signer is a consented author of the paper's current head version (or a tier-4 moderator acting under policy); notices (withdrawal, retraction, correction, response) are accepted only from consented authors of a listed version or tier-4 moderators; anything else returns 403 problem</expected>
+    <actual>The signer's authorship is never checked</actual>
+    <constraints>
+      <constraint>Legitimate author lists may change between versions (co-authors added in v2); added authors still need their own consent before the version lists</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="5" shape="core" severity="critical" depends_on="15"
+       touches_files="apps/api/src/app/modules/reviews/**,apps/api/src/app/modules/ledger/records.py,apps/api/src/app/modules/ledger/sync_range.py,apps/api/src/app/modules/ledger/service.py">
+    <title>Review integrity: review.commit via POST /v1/records bypasses all checks, sealed reports leak before the gate, reviewer token keyed from JWT_SECRET</title>
+    <symptoms>
+      review.commit sent through the generic POST /v1/records is accepted (201, state committed) from a tier-0 caller and from the paper's own author
+      reviews/service.py registers the review record types at min tier 0; the tier-3, COI, uniqueness and escrow checks only run on POST /v1/reviews/commit
+      These commits count toward the 2-commit reveal gate and the paper's computed status
+      Separately, POST /v1/reviews/commit appends the commit to the log before the escrow step, so an empty COMMITTEE_PUBLIC_KEY yields a 500 and an orphan commit
+    </symptoms>
+    <reproduction_steps>
+      As a tier-0 user, sign a review.commit for a listed paper and POST it to /v1/records -> 201
+      As the paper's author, do the same -> 201
+    </reproduction_steps>
+    <expected>Every review.* record is subject to the same tier, COI, uniqueness and escrow rules whichever route it arrives by (or /v1/records rejects review record types with a problem pointing at the dedicated routes); escrow and validation happen before anything is appended to the log.
+      REV-4: a reveal is rejected (409 problem reveal-gate-closed) until the gate opens (two independent commits for the target version), via /v1/reviews/reveal AND /v1/records, so no report body reaches the public log, GET /v1/records/{cid} or /v1/sync/range before then.
+      Anonymity: the one-review-per-person uniqueness token is an HMAC keyed by the dedicated settings.REVIEW_UNIQUENESS_KEY (added by the production-config bug in this spec), never JWT_SECRET</expected>
+    <actual>The generic route accepts review commits with no checks; the dedicated route can leave an orphan commit on escrow failure; early reveals are accepted and public (with one commit, reviewer A's report text is served by GET /v1/records/{cid} and GET /v1/sync/range); reviews/escrow.py keys the uniqueness HMAC from JWT_SECRET so anyone holding it can unmask reviewers by enumerating DIDs</actual>
+    <constraints>
+      <constraint>Do not weaken log append-only guarantees: refuse early reveals, never redact log entries after the fact</constraint>
+    </constraints>
+  </bug>
+
+
+  <bug index="6" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/content/**">
+    <title>Files of a paper still in moderation are downloadable anonymously</title>
+    <symptoms>
+      GET /v1/content/{cid} returns 200 with no auth for the manifest/PDF of a version in state=moderation
+      content/router.py only applies the scan gate (423 while scanning); pre-listing moderation (tech_architect threat 15) is bypassed
+    </symptoms>
+    <reproduction_steps>
+      Submit and consent a version so it sits in the moderation queue
+      Anonymously GET /v1/content/{its pdf or manifest cid} -> 200
+    </reproduction_steps>
+    <expected>Content is served publicly only when at least one referencing version is listed (or the object is part of a public record such as an avatar); otherwise only the version's authors and moderators (tier 4) may fetch it, others get 404</expected>
+    <actual>Unlisted content is public</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/profiles/**">
+    <title>GET /v1/profiles/{did} returns the user's private email to anonymous callers</title>
+    <symptoms>
+      Anonymous GET /v1/profiles/{did} includes "email":"mei@example.org"
+      PRD ID-7 and tech_architect section 12 treat email as personal data
+    </symptoms>
+    <reproduction_steps>
+      Create a profile with an email; GET /v1/profiles/{did} with no Authorization header
+    </reproduction_steps>
+    <expected>The email (and any other private field) is returned only when the caller is the profile owner</expected>
+    <actual>Email is public</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/uploads/**">
+    <title>Uploads need no authentication, have no owner check and are never garbage-collected</title>
+    <symptoms>
+      Anonymous POST /v1/uploads then PATCH returns 201/204 and a CID: anyone can write files into CONTENT_DIR
+      PATCH/HEAD never compare the upload's owner (uploads/router.py ~349-405); the client picks the size class, up to 5 GiB
+      Abandoned uploads are never reaped
+    </symptoms>
+    <reproduction_steps>
+      POST /v1/uploads with Upload-Length and no Authorization -> 201; PATCH the bytes -> 204
+    </reproduction_steps>
+    <expected>Creating, resuming, inspecting and completing an upload require an authenticated tier-1+ caller who owns the upload (403/404 otherwise); a per-DID quota on bytes in flight applies; incomplete uploads older than a configurable TTL (default 24 h) are deleted by a periodic job (the web tus client already sends the bearer token)</expected>
+    <actual>Uploads are anonymous and unowned</actual>
+    <constraints>
+      <constraint>Keep the 50 MB PDF / 5 GiB bundle limits and the tus protocol semantics</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="9" shape="core" severity="high"
+       touches_files="apps/api/src/app/middleware.py,apps/api/tests/test_middleware.py">
+    <title>Write throttle blocks normal Phase 1 work: counts refreshes, upload chunks and failures; in-memory only</title>
+    <symptoms>
+      Accounts under 90 days old (every Phase 1 pilot account) get 20 writes/day; token refresh, every 16 MiB tus PATCH chunk and failed (4xx) writes all count
+      PRD journey 2 broke with 429 "New accounts can write 20 times a day" when the author posted v2
+      POST /v1/auth/challenge and /auth/verify count against the anonymous 100/day per-IP pool, so behind a proxy ~50 sign-ins/day lock the node out
+      Counters live in process memory: reset on restart, not shared across workers
+    </symptoms>
+    <reproduction_steps>
+      As a new tier-2 account: one 3-chunk upload plus five records leaves X-RateLimit-Remaining 12 of 20
+      Sign in repeatedly from one IP until POST /v1/auth/verify returns 429
+    </reproduction_steps>
+    <expected>The quota counts successfully accepted signed records (2xx on record-creating writes), not auth endpoints, token refresh, or tus PATCH/HEAD chunks; sign-in has its own per-IP limit sized for a shared NAT; failed writes do not consume quota; counters are persisted in the database so they survive restarts and are shared across workers</expected>
+    <actual>Normal authoring exhausts the quota in one session</actual>
+    <constraints>
+      <constraint>Keep the per-tier daily limits and the X-RateLimit-* and Retry-After headers</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="10" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/checks/**"
+       creates="apps/api/src/app/modules/checks/router.py">
+    <title>No paper text is ever extracted: reading, annotations, full-text search, similarity and AI evidence are empty</title>
+    <symptoms>
+      GET /v1/papers/{id}/v/{n}/text returns 0 paragraphs for every paper, including demo papers whose PDFs contain text
+      The paper page reading column says "The text of this version is not available to read here"
+      checks.save_version_text and the similarity/reference checks are never called; the moderation queue's similarity and references are always null; AI agents receive no paragraphs
+    </symptoms>
+    <reproduction_steps>
+      Run seed-demo, then GET /v1/papers/{any listed id}/v/1/text -> count 0
+    </reproduction_steps>
+    <expected>When a version's PDF passes the scan (or at the latest when it enters moderation), a background job extracts its text into paragraphs (save_version_text), indexes the body for full-text search, and runs the similarity and reference checks so their results reach the moderation queue; a mounted GET /v1/papers/{id}/v/{n}/checks returns the version's advisory checks report (404 problem until checks ran) in the shape apps/web/src/features/submit/checks.ts parses; the AI review job runs after text exists</expected>
+    <actual>The pipeline exists but nothing triggers it</actual>
+    <constraints>
+      <constraint>Run through app.jobs (eager in tests, worker in production); idempotent per version</constraint>
+      <constraint>Trigger from inside the checks module (subscribe to the existing submissions/ledger events); do not edit the submissions module</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="11" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/admin/**,apps/api/src/app/modules/ledger/origin.py">
+    <title>Nothing creates the node signing key; seed-demo reports AI pre-reviews it never produced</title>
+    <symptoms>
+      ledger/origin.py documents that the node key file "is never created"; there is no command to create it
+      On a fresh node, renditions, AI review records, ORCID credentials and arXiv imports all fail to sign
+      seed-demo prints "AI pre-review" for each paper even after logging that none could be signed
+    </symptoms>
+    <reproduction_steps>
+      Fresh checkout, empty NODE_KEY_PATH; run the admin seed-demo command; observe signing errors in the log and the misleading summary
+    </reproduction_steps>
+    <expected>An admin `init-node` command creates the Ed25519 node key at NODE_KEY_PATH with 0600 permissions (refusing to overwrite an existing key unless forced); seed-demo creates it if missing in dev; the seed summary reports only what was actually produced</expected>
+    <actual>No key, silent degradation, misleading summary</actual>
+  </bug>
+
+  <bug index="12" shape="core" severity="high"
+       touches_files="apps/api/packages/cli/**">
+    <title>`scholium verify --node` reports NOT VERIFIED for correctly signed papers (READ-2)</title>
+    <symptoms>
+      scholium verify --node http://127.0.0.1:18000 sch:54jv-wgzw-fnap prints "coauthor.consent ...: has no signature" x3 and "Result: NOT VERIFIED (1 check failed)"
+      The browser Proof tab shows "Signed" for the same paper, and verifying the exported CAR succeeds
+      The node-fetch path (packages/cli/src/scholium_cli/verify.py ~233-245) drops record signatures
+    </symptoms>
+    <reproduction_steps>
+      Seed or publish a paper with co-author consents; run scholium verify --node URL PAPER_ID
+    </reproduction_steps>
+    <expected>Node mode fetches each record with its signature and reaches the same verdict as the CAR path and the browser verifier</expected>
+    <actual>Signatures are dropped and verification fails</actual>
+  </bug>
+
+  <bug index="13" shape="core" severity="high" depends_on="1,5"
+       touches_files="apps/web/src/features/review-form/**,apps/web/src/features/paper-reviews/**,apps/web/src/app/(review-form)/**,apps/web/src/app/(paper-reviews)/**">
+    <title>A formal review written in the web app can never be revealed; reply and rating actions are not mounted</title>
+    <symptoms>
+      The web app never calls POST /v1/reviews/reveal (review-form/README.md admits "No reveal flow")
+      Reply and rating actions exist as components but are not shown on the reviews tab
+    </symptoms>
+    <reproduction_steps>
+      Commit a review from /review; after a second commit opens the gate, look for a way to reveal: there is none
+    </reproduction_steps>
+    <expected>After committing, the reviewer's dashboard/review page shows the sealed state and, once the gate opens, a Reveal action that signs and posts the reveal with the locally kept secret; the reviews tab shows reply (author response) and rating actions to eligible users, per design.md</expected>
+    <actual>Committed web reviews stay sealed forever</actual>
+    <constraints>
+      <constraint>Follow docs/design.md for layout and copy</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="14" shape="core" severity="high" depends_on="3"
+       touches_files="apps/api/src/app/modules/identity/**,apps/web/src/lib/api/**,apps/api/src/app/main.py">
+    <title>Sign-in verifies against the DID's original key, so rotation and recovery have no effect; tokens survive rotation and live in localStorage</title>
+    <symptoms>
+      identity/service.py ~195-197 verifies the challenge signature against the key embedded in the did:key, not the account's active key
+      After key rotation or recovery the old (possibly stolen) key can still sign in, and the new key may be refused
+      Refresh tokens are not revoked on rotation; refresh-token reuse is not treated as theft; logout leaves the access token valid for its 15 min TTL
+      Sign-in nonce is read-then-set (race); /auth/challenge rows are never purged
+      lib/api/tokens.ts stores the long-lived refresh token in localStorage, readable by any injected script
+    </symptoms>
+    <reproduction_steps>
+      Rotate a user's key (or complete a recovery), then sign in with the old key -> succeeds
+    </reproduction_steps>
+    <expected>Sign-in verifies against the active key (resolve_active_key); rotation/recovery revoke all refresh tokens for the DID (identity subscribes to the key-rotation/recovery ledger events; do not edit the recovery module); presenting a revoked refresh token revokes the whole token family; nonces are consumed atomically and expired challenges purged.
+      Token storage: the refresh token is issued by the API as an HttpOnly, Secure (except on http://localhost), SameSite=Strict cookie scoped to the refresh path, and the web client (apps/web/src/lib/api/tokens.ts) keeps the access token in memory only, never localStorage; CORS in main.py allows credentials for the configured WEB_ORIGINS only</expected>
+    <actual>Rotation is cosmetic for authentication</actual>
+  </bug>
+
+  <bug index="15" shape="core" severity="high"
+       touches_files="apps/api/src/app/settings.py,apps/api/tests/test_app_factory.py,apps/api/src/app/modules/notifications/emailer.py">
+    <title>Production config check misses unsafe settings; empty SMTP_URL logs verification tokens</title>
+    <symptoms>
+      validate_for_environment (settings.py) refuses default JWT secret, mocks and fake AI, but accepts in production: an empty COMMITTEE_PUBLIC_KEY (review commit then fails with 500), an empty SMTP_URL, a missing NODE_KEY_PATH file, missing ORCID client credentials, a hosted AI provider without its key, and WEB_ORIGINS pointing at localhost
+      With SMTP_URL empty, notifications/emailer.py writes every email, including verification tokens, to the logger and an unbounded in-memory list
+    </symptoms>
+    <reproduction_steps>
+      SCHOLIUM_ENV=production with a strong JWT secret and mocks off but COMMITTEE_PUBLIC_KEY="" and SMTP_URL="" -> the app starts
+    </reproduction_steps>
+    <expected>create_app refuses to start in production listing every missing/unsafe setting above, plus: NEXT_PUBLIC_API_URL left at its localhost default (it builds the links in verification emails and notifications), and a missing/short REVIEW_UNIQUENESS_KEY. Add REVIEW_UNIQUENESS_KEY to settings (dev default derived deterministically, distinct from JWT_SECRET) for the review-integrity bug to use. The dev emailer never logs token-bearing links at INFO and keeps a bounded outbox</expected>
+    <actual>Production starts with broken review escrow and leaks tokens to logs</actual>
+    <constraints>
+      <constraint>SQLite is the Phase 1 database (spec decision); do not refuse it</constraint>
+      <constraint>Dev and test defaults must keep working with no extra env</constraint>
+    </constraints>
+  </bug>
+
+
+  <bug index="16" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/orcid/**">
+    <title>ORCID OAuth state is reusable and not bound to the browser session (login CSRF)</title>
+    <symptoms>
+      orcid/router.py issues a JWT state that can be replayed and is not tied to the initiating session; the callback is unauthenticated
+      An attacker can make a victim's session link the attacker's ORCID
+    </symptoms>
+    <reproduction_steps>
+      Start an ORCID link, capture the state, complete the callback twice -> both accepted
+    </reproduction_steps>
+    <expected>State is single-use (consumed on callback), expires within 10 minutes, and is bound to the DID that started the flow; replayed or foreign state returns a 400 problem</expected>
+    <actual>Replayable state</actual>
+  </bug>
+
+  <bug index="17" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/annotations/**,apps/api/src/app/modules/discussion/__init__.py">
+    <title>Annotations module re-registers discussion.post at tier 0, shadowing the tier-1 rule</title>
+    <symptoms>
+      annotations/__init__.py registers the discussion.post record type with min_tier=0, overriding discussion/__init__.py's tier-1 registration (REV-1 requires tier 1 to post)
+      The web paper-discussion feature calls GET /v1/papers/{id}/annotations, which does not match the mounted annotations route
+    </symptoms>
+    <reproduction_steps>
+      As a tier-0 user POST a discussion.post record to /v1/records -> accepted
+    </reproduction_steps>
+    <expected>discussion.post requires tier 1 no matter which module loads first (one registration, or registration that refuses a weaker duplicate); the annotations read route the web uses exists</expected>
+    <actual>Tier-0 users can post; annotation reads 404</actual>
+  </bug>
+
+  <bug index="18" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/flags/**,apps/web/src/features/mod-console/**"
+       creates="apps/api/src/app/modules/moderation/flag_sync.py">
+    <title>Flags never reach the moderators and are never closed</title>
+    <symptoms>
+      The mod console calls GET /v1/flags (W/mod-console/flags.ts), which is not mounted
+      Filed flags do not appear in GET /v1/moderation/queue and stay open after a decision on their target
+    </symptoms>
+    <reproduction_steps>
+      File a flag on a listed paper; open /mod as a tier-4 user; the flag is not listed (404 on GET /v1/flags)
+    </reproduction_steps>
+    <expected>A tier-4-only GET /v1/flags lists open flags (filterable by state/target); when a moderation decision is made on a flagged target, its open flags are marked decided with the decision CID</expected>
+    <actual>Flags go nowhere</actual>
+  </bug>
+
+  <bug index="19" shape="core" severity="medium" depends_on="18"
+       touches_files="apps/api/src/app/modules/appeals/**">
+    <title>Appeal panel members are never told they were seated; an overturn does not lift the hold</title>
+    <symptoms>
+      None of the three seated reviewers gets a notification; no endpoint names the panel, so nobody knows to vote
+      After a 2-1 overturn the paper stays "contested" until a moderator relists it manually
+      The appellant can re-file the appeal (new CID) to re-draw the panel
+    </symptoms>
+    <reproduction_steps>
+      Hold a paper, file an appeal, check GET /v1/me/notifications for each seated panelist -> nothing
+      Vote 2-1 to overturn -> paper status still contested
+    </reproduction_steps>
+    <expected>Seated panelists receive a notification linking to the appeal and can see GET /v1/appeals/{id} (panel visible to the panel and tier 4); an overturn decision restores the target's prior state; one open appeal per decision per appellant, and panel selection is seeded from the decision, not the appeal CID</expected>
+    <actual>Panel invisible; overturn has no effect</actual>
+  </bug>
+
+  <bug index="20" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/follows/**,apps/api/src/app/modules/me/**">
+    <title>Dashboard calls GET /v1/me/saved-searches (405) and GET /v1/me/follows (missing)</title>
+    <symptoms>
+      /me shows "Method Not Allowed" under Saved searches: the API has only POST /v1/me/saved-searches
+      GET /v1/me/follows is not mounted; only PUT/DELETE exist
+    </symptoms>
+    <reproduction_steps>
+      Sign in and open /me; observe 405 for GET /v1/me/saved-searches and 404 for GET /v1/me/follows
+    </reproduction_steps>
+    <expected>Authenticated GET routes return the caller's saved searches and follows in the shape the web dashboard expects (W/dashboard)</expected>
+    <actual>Dashboard sections error</actual>
+  </bug>
+
+  <bug index="21" shape="core" severity="medium"
+       touches_files="apps/web/src/app/(dashboard)/**,apps/web/src/features/dashboard/**">
+    <title>Profile page /u/{did} shows "—" and tier 0 for every user</title>
+    <symptoms>
+      /u/did:key:z6Mk... renders the DID as did%3Akey%3A..., Name "—", Tier 0, while GET /v1/profiles/{did} returns the name and tier 2
+      app/(dashboard)/u/[did]/page.tsx never decodes the route param and re-encodes it for the API call
+    </symptoms>
+    <reproduction_steps>
+      Open /u/{a seeded author's did}
+    </reproduction_steps>
+    <expected>The page decodes the param once, fetches the profile, and shows name, affiliation and tier</expected>
+    <actual>Every profile looks empty</actual>
+  </bug>
+
+  <bug index="22" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/export/**">
+    <title>BibTeX/RIS citations list authors as raw DIDs; OAI-PMH request URL is hardcoded to localhost</title>
+    <symptoms>
+      GET /v1/papers/{id}/cite?format=bibtex -> author = {{did:key:z6Mk...} and {did:key:z6Mk...}} although both authors have profile names; RIS the same
+      export/oai.py hardcodes http://localhost:8000/v1/oai in responses
+    </symptoms>
+    <reproduction_steps>
+      Seed demo papers; GET the bibtex and ris citations of a paper whose authors have profiles
+    </reproduction_steps>
+    <expected>Authors are rendered "Family, Given" from their profile display names (falling back to the DID only when no profile exists); OAI responses use the node's configured public base URL</expected>
+    <actual>DIDs in citations; localhost in OAI</actual>
+  </bug>
+
+  <bug index="23" shape="core" severity="medium" depends_on="10,11"
+       touches_files="apps/api/src/app/modules/ai_review/**">
+    <title>AI pre-review fails for every paper in dev and never runs reproduction</title>
+    <symptoms>
+      The default fake provider returns plain text; every specialist agent fails with AgentOutputError "agent reply contains no JSON object with a 'findings' list" (findings.py)
+      The meta-report fails schema validation ("body.findings[0].confidence ... got string")
+      ai_review/background.py ~337-353 never passes the code bundle, so the reproducibility sandbox never runs (AI-4)
+      Unsigned fallback review ids "ai-review-cid-uuid" are stored and served when signing fails; the rebuttal endpoint authz fails open when the paper cannot be resolved; the trigger is installed both by monkey-patching transition_version and a subscriber, risking duplicate jobs
+    </symptoms>
+    <reproduction_steps>
+      Run seed-demo with AI_PROVIDER=fake; read the log; GET /v1/papers/{id}/ai-reviews
+    </reproduction_steps>
+    <expected>The fake provider emits valid findings JSON quoting real paragraphs, so dev/demo produce a signed advisory report; the job passes the version's code bundle to the reproducibility agent when one exists; unsigned reports are never served; rebuttal authz fails closed; exactly one job per listed version</expected>
+    <actual>All agents fail; reproduction never runs</actual>
+    <constraints>
+      <constraint>AI output stays advisory (AI-3): no path from AI output to paper status</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="24" shape="core" severity="medium" depends_on="10"
+       touches_files="apps/api/src/app/modules/reading/**">
+    <title>/text and /compare ignore takedowns (NET-5)</title>
+    <symptoms>
+      Content tombstoned under NET-5 returns 451 from /v1/content, but GET /v1/papers/{id}/v/{n}/text and the compare route still serve its text
+    </symptoms>
+    <reproduction_steps>
+      Tombstone a listed version's PDF; GET its /text and /compare -> 200 with text
+    </reproduction_steps>
+    <expected>Both routes return 451 with the takedown problem for tombstoned versions</expected>
+    <actual>Text served after takedown</actual>
+  </bug>
+
+  <bug index="25" shape="core" severity="medium"
+       touches_files="apps/web/next.config.js">
+    <title>Web app sends no security headers</title>
+    <symptoms>
+      next.config.js sets no Content-Security-Policy, frame-ancestors, Referrer-Policy, X-Content-Type-Options or Permissions-Policy
+    </symptoms>
+    <reproduction_steps>
+      curl -I the production web home page: no CSP
+    </reproduction_steps>
+    <expected>The web app sends a strict CSP (self + the configured API origin; no unsafe-eval in production), frame-ancestors 'none', nosniff, a strict Referrer-Policy and Permissions-Policy; WebAuthn, KaTeX and the PDF viewer keep working</expected>
+    <actual>No headers</actual>
+  </bug>
+
+  <bug index="26" shape="core" severity="low"
+       touches_files="apps/api/pyproject.toml,apps/api/uv.lock,CLAUDE.md"
+       creates="apps/api/src/app/__main__.py">
+    <title>The API has no documented way to run: uvicorn is not a dependency</title>
+    <symptoms>
+      apps/api/pyproject.toml does not depend on uvicorn; nothing documents how to serve the API
+    </symptoms>
+    <reproduction_steps>
+      Fresh clone, uv sync --all-packages, try to serve the API
+    </reproduction_steps>
+    <expected>uvicorn[standard] is an API dependency; `uv run python -m app` serves create_app on HOST/PORT env (default 127.0.0.1:8000, proxy headers honoured from FORWARDED_ALLOW_IPS); CLAUDE.md documents it</expected>
+    <actual>No entry point</actual>
+    <constraints>
+      <constraint>Do not modify the repo-root run.sh: it is the operator's claw-forge launcher</constraint>
+    </constraints>
+  </bug>
+
+
+  <bug index="27" shape="core" severity="low"
+       touches_files="apps/web/src/app/layout.tsx,apps/web/src/app/(ui-kit)/**,apps/web/src/app/(paper-page)/**,apps/web/src/features/feed/**"
+       creates="apps/web/src/app/icon.svg">
+    <title>Web polish: favicon 404, /ui-kit ships to production, unknown paper returns 200, feed shows DIDs</title>
+    <symptoms>
+      GET /favicon.ico -> 404 (console error on every page)
+      The /ui-kit demo pages are in the production build
+      /p/zzzz-zzzz-zzzz (unknown paper) returns HTTP 200 with a not-found body
+      Home feed and category rows show truncated DIDs (z6MkgA...9LCd) instead of author names even when profiles exist
+    </symptoms>
+    <reproduction_steps>
+      next build and start; load /, /ui-kit, /p/zzzz-zzzz-zzzz
+    </reproduction_steps>
+    <expected>An app icon is served; /ui-kit returns 404 when NODE_ENV=production; unknown papers call notFound() and return 404; feed rows show author display names (fallback to short DID)</expected>
+    <actual>As in symptoms</actual>
+  </bug>
+
+  <bug index="28" shape="core" severity="medium" depends_on="1,2,8,13,14,20,21,26,27"
+       touches_files="apps/web/package.json,apps/web/vitest.config.ts,package.json,package-lock.json"
+       creates="apps/web/playwright.config.ts,apps/web/tests/e2e/journeys.spec.ts">
+    <title>Playwright browser journeys were never delivered: npm run test:e2e has nothing to run</title>
+    <symptoms>
+      apps/web/tests/e2e and apps/web/playwright.config.* do not exist, although commit a8bd704 ("System passes Playwright browser journeys") claims them
+    </symptoms>
+    <reproduction_steps>
+      npm run test:e2e -> no tests found
+    </reproduction_steps>
+    <expected>`npm run test:e2e` boots the API (python -m app, mocks on, temp DB, seed-demo) and the web app (production build) via Playwright webServer and runs real-browser journeys with a virtual WebAuthn authenticator: (1) home feed lists seeded papers with author names; (2) a paper's Proof tab shows Verified/Signed; (3) the AI tab shows the advisory banner; (4) sign in, post in Discussion, and see the post (signed record accepted); (5) submit wizard: upload PDF, fill details, sign, reach the consent/status tracker; (6) /me loads saved searches and follows without errors; (7) /u/{did} shows the author's name. All pass</expected>
+    <actual>No browser journeys exist</actual>
+    <constraints>
+      <constraint>Playwright stays out of `npm test`; vitest must not pick up tests/e2e</constraint>
+      <constraint>Use npm workspaces only (npm install -D @playwright/test --workspace apps/web); never add deps to the root package.json</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
