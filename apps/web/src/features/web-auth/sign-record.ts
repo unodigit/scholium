@@ -15,16 +15,19 @@
  * --------------
  * The envelope's seven content fields (`v`, `type`, `author`, `created`,
  * `prev`, `body`, `proofs`) are hashed by verify-core into the record id, a
- * CIDv1 (dag-cbor, sha2-256). The signature is Ed25519 over the **binary CID
- * bytes** (`CID.bytes`, not the base32 string). The CID commits to every
- * content field, so the signature does too. `id` and `sig` are excluded from
- * the hash, so signing never changes the id. `sig` is unpadded base64url.
+ * CIDv1 (dag-cbor, sha2-256). The signature is Ed25519 over the **canonical
+ * record bytes** (`recordBytes`): the DAG-CBOR encoding of those same seven
+ * fields, exactly the bytes the id hashes over -- *not* the binary CID.
+ * `id` and `sig` are excluded from the encoding, so signing never changes the
+ * id, and the API's `verify_envelope` accepts what this module produces.
+ * `sig` is unpadded base64url.
  *
  * Order of operations
  * -------------------
  * 1. Read the author's `did:key` (no prompt; fails fast with `not-found`).
- * 2. Build the envelope and compute its id. A malformed record fails here with
- *    a {@link RecordSigningError}, **before** the user is asked for anything.
+ * 2. Build the envelope, compute its id and derive the canonical record bytes.
+ *    A malformed record fails here with a {@link RecordSigningError},
+ *    **before** the user is asked for anything.
  * 3. Show the "Sign and submit" passkey prompt and sign. Every call prompts,
  *    even when the key is still unlocked from an earlier prompt: one
  *    submission, one human approval.
@@ -45,7 +48,7 @@ export const SIGN_AND_SUBMIT_REASON = "Sign and submit";
 
 /** The part of a CID that signing needs; satisfied by `multiformats`' `CID`. */
 export interface RecordCid {
-  /** Binary CID: version, codec and multihash. This is what gets signed. */
+  /** Binary CID: version, codec and multihash. */
   readonly bytes: Uint8Array;
   /** The record id string (base32 CIDv1). */
   toString(): string;
@@ -53,6 +56,9 @@ export interface RecordCid {
 
 /** Computes a record's CID from its envelope; verify-core's `computeRecordCid`. */
 export type ComputeRecordCid = (envelope: unknown) => RecordCid | Promise<RecordCid>;
+
+/** Returns the canonical record bytes a signature covers; verify-core's `recordBytes`. */
+export type RecordBytes = (envelope: unknown) => Uint8Array;
 
 /** The slice of {@link DeviceKeyManager} that `signRecord` relies on. */
 export interface RecordSigner {
@@ -81,7 +87,7 @@ export interface SignedRecord<
   prev: string | null;
   body: TBody;
   proofs: unknown[];
-  /** Unpadded base64url Ed25519 signature over the binary CID. */
+  /** Unpadded base64url Ed25519 signature over the canonical record bytes. */
   sig: string;
 }
 
@@ -95,21 +101,32 @@ export interface SignRecordOptions {
   now?: () => number;
   /** Record id function; defaults to verify-core's `computeRecordCid`. */
   computeRecordCid?: ComputeRecordCid;
+  /** Signed-bytes function; defaults to verify-core's `recordBytes`. */
+  recordBytes?: RecordBytes;
   /** Passkey prompt reason; defaults to {@link SIGN_AND_SUBMIT_REASON}. */
   reason?: string;
   /** Passkey prompt timeout. */
   timeoutMs?: number;
 }
 
+/** The verify-core helpers record signing needs. */
+interface RecordCore {
+  computeRecordCid: ComputeRecordCid;
+  recordBytes: RecordBytes;
+}
+
 /** Load verify-core on first use so `dag-cbor` stays out of the sign-in bundle. */
-async function loadComputeRecordCid(): Promise<ComputeRecordCid> {
+async function loadRecordCore(): Promise<RecordCore> {
   try {
     const core = await import("../verify-core");
-    return core.computeRecordCid;
+    return {
+      computeRecordCid: core.computeRecordCid,
+      recordBytes: core.recordBytes,
+    };
   } catch (cause) {
     throw new RecordSigningError(
       "record-id-failed",
-      "verify-core could not be loaded, so the record id cannot be computed",
+      "verify-core could not be loaded, so the record id and signed bytes cannot be computed",
       { cause },
     );
   }
@@ -183,11 +200,22 @@ export async function signRecord<
     proofs: snapshot(options.proofs ?? [], "proofs"),
   };
 
-  const computeRecordCid =
-    options.computeRecordCid ?? (await loadComputeRecordCid());
+  let computeRecordCid: ComputeRecordCid;
+  let recordBytes: RecordBytes;
+  if (options.computeRecordCid && options.recordBytes) {
+    computeRecordCid = options.computeRecordCid;
+    recordBytes = options.recordBytes;
+  } else {
+    const core = await loadRecordCore();
+    computeRecordCid = options.computeRecordCid ?? core.computeRecordCid;
+    recordBytes = options.recordBytes ?? core.recordBytes;
+  }
+
   let cid: RecordCid;
+  let signedBytes: Uint8Array;
   try {
     cid = await computeRecordCid(envelope);
+    signedBytes = recordBytes(envelope);
   } catch (cause) {
     throw new RecordSigningError(
       "invalid-record",
@@ -198,7 +226,7 @@ export async function signRecord<
 
   let signature: Uint8Array;
   try {
-    signature = await signer.signWithPasskey(cid.bytes, {
+    signature = await signer.signWithPasskey(signedBytes, {
       reason: options.reason ?? SIGN_AND_SUBMIT_REASON,
       timeoutMs: options.timeoutMs,
     });

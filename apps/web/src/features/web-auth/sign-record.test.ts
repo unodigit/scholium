@@ -69,19 +69,24 @@ const CONTENT_FIELDS = [
   "proofs",
 ] as const;
 
-/** Deterministic stand-in for verify-core: hashes the seven content fields. */
+/** Deterministic stand-in for verify-core: canonicalises the seven content fields. */
 function createCidSpy() {
   const calls: Array<Record<string, unknown>> = [];
-  const computeRecordCid = (envelope: unknown): RecordCid => {
+  const canonical = (envelope: unknown): Uint8Array => {
     const env = envelope as Record<string, unknown>;
-    calls.push(env);
-    const canonical = JSON.stringify(CONTENT_FIELDS.map((field) => env[field]));
+    return utf8Encode(
+      JSON.stringify(CONTENT_FIELDS.map((field) => env[field])),
+    );
+  };
+  const computeRecordCid = (envelope: unknown): RecordCid => {
+    calls.push(envelope as Record<string, unknown>);
     const bytes = new Uint8Array(
-      createHash("sha256").update(canonical).digest(),
+      createHash("sha256").update(canonical(envelope)).digest(),
     );
     return { bytes, toString: () => `bafystub${toHex(bytes).slice(0, 16)}` };
   };
-  return { calls, computeRecordCid };
+  const recordBytes = (envelope: unknown): Uint8Array => canonical(envelope);
+  return { calls, computeRecordCid, recordBytes };
 }
 
 const NOW = Date.UTC(2026, 10, 14, 5, 33, 0, 789);
@@ -105,7 +110,12 @@ describe("signRecord envelope", () => {
       "paper.version",
       { title: "A Minimal Scholium Paper" },
       "bafyprevious",
-      { signer: manager, now: () => NOW, computeRecordCid: cid.computeRecordCid },
+      {
+        signer: manager,
+        now: () => NOW,
+        computeRecordCid: cid.computeRecordCid,
+        recordBytes: cid.recordBytes,
+      },
     );
 
     expect(record).toEqual({
@@ -129,6 +139,7 @@ describe("signRecord envelope", () => {
       signer: manager,
       proofs: [{ credential: "orcid" }],
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
 
     expect(record.prev).toBeNull();
@@ -143,6 +154,7 @@ describe("signRecord envelope", () => {
       signer: manager,
       now: () => NOW,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
 
     expect(cid.calls).toHaveLength(1);
@@ -155,10 +167,12 @@ describe("signRecord envelope", () => {
     const sync = await signRecord("t", {}, null, {
       signer: manager,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
     const async_ = await signRecord("t", {}, null, {
       signer: manager,
       computeRecordCid: async (envelope) => cid.computeRecordCid(envelope),
+      recordBytes: cid.recordBytes,
     });
 
     expect(async_.id).toMatch(/^bafystub/);
@@ -174,6 +188,7 @@ describe("signRecord envelope", () => {
       signer: manager,
       proofs,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
     body.nested.n = 2;
     proofs[0].p = 2;
@@ -185,18 +200,24 @@ describe("signRecord envelope", () => {
 });
 
 describe("signRecord signature", () => {
-  it("signs the binary CID, verifiable with the author's did:key", async () => {
+  it("signs the canonical record bytes, verifiable with the author's did:key", async () => {
     const { manager, cid } = await createHarness();
 
     const record = await signRecord("t", { a: 1 }, null, {
       signer: manager,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
 
-    const expectedCid = cid.computeRecordCid(cid.calls[0]);
+    const expectedBytes = cid.recordBytes(cid.calls[0]);
     const signature = fromBase64Url(record.sig);
     expect(signature).toHaveLength(64);
-    expect(await manager.verify(expectedCid.bytes, signature)).toBe(true);
+    expect(await manager.verify(expectedBytes, signature)).toBe(true);
+
+    // Regression: the binary CID is not the signed preimage.
+    expect(
+      await manager.verify(cid.computeRecordCid(cid.calls[0]).bytes, signature),
+    ).toBe(false);
 
     // The same key is what the author did:key names.
     expect(
@@ -207,12 +228,13 @@ describe("signRecord signature", () => {
     ).toBe(true);
   });
 
-  it("does not sign the id string, only the binary CID", async () => {
+  it("does not sign the id string, only the record bytes", async () => {
     const { manager, cid } = await createHarness();
 
     const record = await signRecord("t", {}, null, {
       signer: manager,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
 
     expect(
@@ -222,7 +244,11 @@ describe("signRecord signature", () => {
 
   it("produces a different signature when any content field changes", async () => {
     const { manager, cid } = await createHarness();
-    const options = { signer: manager, computeRecordCid: cid.computeRecordCid };
+    const options = {
+      signer: manager,
+      computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
+    };
 
     const a = await signRecord("t", { n: 1 }, null, options);
     const b = await signRecord("t", { n: 2 }, null, options);
@@ -245,7 +271,11 @@ describe("signRecord passkey prompt", () => {
         return manager.signWithPasskey(data, options);
       },
     };
-    const options = { signer, computeRecordCid: cid.computeRecordCid };
+    const options = {
+      signer,
+      computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
+    };
 
     await signRecord("t", {}, null, options);
     expect(passkeys.assertions).toHaveLength(1);
@@ -273,6 +303,7 @@ describe("signRecord passkey prompt", () => {
       reason: "Publish paper",
       timeoutMs: 15_000,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
 
     expect(seen).toEqual({ reason: "Publish paper", timeoutMs: 15_000 });
@@ -293,6 +324,7 @@ describe("signRecord passkey prompt", () => {
 
     await signRecord("t", {}, null, {
       signer,
+      recordBytes: cid.recordBytes,
       computeRecordCid: (envelope) => {
         order.push("cid");
         return cid.computeRecordCid(envelope);
@@ -300,7 +332,10 @@ describe("signRecord passkey prompt", () => {
     });
 
     expect(order).toEqual(["cid", "prompt"]);
-    expect(bytesEqual(signed!, cid.computeRecordCid(cid.calls[0]).bytes)).toBe(true);
+    expect(bytesEqual(signed!, cid.recordBytes(cid.calls[0]))).toBe(true);
+    expect(bytesEqual(signed!, cid.computeRecordCid(cid.calls[0]).bytes)).toBe(
+      false,
+    );
   });
 });
 
@@ -314,6 +349,7 @@ describe("signRecord failures", () => {
     const result = signRecord("t", {}, null, {
       signer: manager,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     });
 
     await expect(result).rejects.toBeInstanceOf(PasskeyCancelledError);
@@ -328,6 +364,7 @@ describe("signRecord failures", () => {
       signRecord("t", {}, null, {
         signer: manager,
         computeRecordCid: cid.computeRecordCid,
+        recordBytes: cid.recordBytes,
       }),
     ).rejects.toMatchObject({ name: "DeviceKeyError", code: "passkey-failed" });
   });
@@ -345,6 +382,7 @@ describe("signRecord failures", () => {
     const error = await signRecord("t", {}, null, {
       signer,
       computeRecordCid: cid.computeRecordCid,
+      recordBytes: cid.recordBytes,
     }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(DeviceKeyError);
@@ -364,6 +402,7 @@ describe("signRecord failures", () => {
       signRecord("t", {}, null, {
         signer: manager,
         computeRecordCid: cid.computeRecordCid,
+        recordBytes: cid.recordBytes,
       }),
     ).rejects.toMatchObject({ code: "not-found" });
 
@@ -398,6 +437,7 @@ describe("signRecord failures", () => {
       signRecord("t", {}, "", {
         signer: manager,
         computeRecordCid: cid.computeRecordCid,
+        recordBytes: cid.recordBytes,
       }),
     ).rejects.toMatchObject({ code: "invalid-record" });
 
@@ -412,6 +452,7 @@ describe("signRecord failures", () => {
       signRecord("t", { notData: () => 1 }, null, {
         signer: manager,
         computeRecordCid: cid.computeRecordCid,
+        recordBytes: cid.recordBytes,
       }),
     ).rejects.toMatchObject({ code: "invalid-record" });
 

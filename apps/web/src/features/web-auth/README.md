@@ -171,10 +171,13 @@ const record = await signRecord("paper.version", { title: "…" }, previousId);
   rejected so a missing id cannot silently fork a chain.
 - **`id`** is computed by `verify-core` (`computeRecordCid`): a CIDv1 over the
   seven content fields, excluding `id` and `sig`.
-- **`sig`** is Ed25519 over the **binary CID bytes** (`CID.bytes`, not the
-  base32 string), encoded as unpadded base64url. A verifier recomputes the id
-  from the envelope, checks it equals `id`, then verifies `sig` over those
-  bytes with the key named by `author`.
+- **`sig`** is Ed25519 over the **canonical record bytes** (`recordBytes`): the
+  DAG-CBOR encoding of the same seven content fields, excluding `id` and `sig`
+  — the same bytes the record id hashes over, **not** the binary CID. It is
+  encoded as unpadded base64url. A verifier recomputes the id from the
+  envelope, checks it equals `id`, then verifies `sig` over those bytes with
+  the key named by `author`, which is exactly what the API's `verify_envelope`
+  and the shared `record-core` vectors do.
 - **One prompt per call.** Every call shows the "Sign and submit" passkey
   prompt, even when the key is still unlocked from an earlier prompt.
 - **Validation happens first.** The envelope is built and its id computed
@@ -187,7 +190,8 @@ const record = await signRecord("paper.version", { title: "…" }, previousId);
 
 `verify-core` is loaded on first use; if it cannot load, `signRecord` raises
 `RecordSigningError` with code `record-id-failed`. Tests inject
-`{ signer, computeRecordCid, now }` instead of touching the real device key.
+`{ signer, computeRecordCid, recordBytes, now }` instead of touching the real
+device key.
 
 ## Security model
 

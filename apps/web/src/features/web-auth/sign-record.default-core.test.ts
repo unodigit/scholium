@@ -31,14 +31,16 @@ function createSigner() {
   return { signer, signed };
 }
 
-describe("signRecord default record id function", () => {
-  it("computes the id with verify-core's computeRecordCid and signs its bytes", async () => {
+describe("signRecord default record core functions", () => {
+  it("computes the id and signed bytes with verify-core and signs the record bytes", async () => {
     const cidBytes = new Uint8Array([1, 0x71, 0x12, 0x20, 9, 9, 9]);
+    const recordBytesValue = new Uint8Array([0xa7, 0x61, 0x76, 1]);
     const computeRecordCid = vi.fn(() => ({
       bytes: cidBytes,
       toString: () => "bafyreiverifycore",
     }));
-    vi.doMock("../verify-core", () => ({ computeRecordCid }));
+    const recordBytes = vi.fn(() => recordBytesValue);
+    vi.doMock("../verify-core", () => ({ computeRecordCid, recordBytes }));
     const { signRecord } = await loadSignRecord();
     const { signer, signed } = createSigner();
 
@@ -57,8 +59,9 @@ describe("signRecord default record id function", () => {
       body: { title: "T" },
       proofs: [],
     });
+    expect(recordBytes).toHaveBeenCalledTimes(1);
     expect(record.id).toBe("bafyreiverifycore");
-    expect(signed).toEqual([cidBytes]);
+    expect(signed).toEqual([recordBytesValue]);
   });
 
   it("raises record-id-failed, without a prompt, when verify-core cannot load", async () => {
