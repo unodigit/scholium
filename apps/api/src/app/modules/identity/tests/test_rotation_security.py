@@ -13,9 +13,10 @@ security event it is:
 * A sign-in nonce is consumed atomically (one UPDATE, rowcount checked), so two
   concurrent verifies cannot both succeed, and expired challenge rows are
   purged when new challenges are issued.
-* The refresh token is issued in an ``HttpOnly``, ``SameSite=strict`` cookie
-  scoped to ``/v1/auth/refresh`` (``Secure`` except over plain http on
-  localhost), and CORS allows credentials for the configured web origins.
+* The refresh token is never in a JSON body; it is issued in an ``HttpOnly``,
+  ``SameSite=Lax`` (configurable) cookie scoped to ``/v1/auth`` (``Secure``
+  except over plain http on localhost), and CORS allows credentials for the
+  configured web origins.
 """
 
 from __future__ import annotations
@@ -63,8 +64,20 @@ def _did_for(seed: SigningKey) -> str:
     return did_key_from_signing_key(seed)
 
 
+def _cookie_token(response) -> str:
+    """The raw refresh token from the response's ``Set-Cookie`` header."""
+    for header in response.headers.get_list("set-cookie"):
+        if header.lower().startswith("scholium_refresh="):
+            return header.split(";", 1)[0].split("=", 1)[1]
+    raise AssertionError(f"no refresh cookie: {response.headers.get_list('set-cookie')}")
+
+
 def _sign_in(client, seed: SigningKey | None = None):
-    """Complete a challenge-response sign-in; return ``(seed, did, body)``."""
+    """Complete a challenge-response sign-in.
+
+    Returns ``(seed, did, body, refresh_token)``; the refresh token comes from
+    the ``HttpOnly`` cookie, not the body.
+    """
     seed = seed or SigningKey.generate()
     did = _did_for(seed)
     nonce = client.post(CHALLENGE_URL, json={"did": did}).json()["nonce"]
@@ -73,7 +86,7 @@ def _sign_in(client, seed: SigningKey | None = None):
         VERIFY_URL, json={"did": did, "nonce": nonce, "signature": signature}
     )
     assert verify.status_code == 200, verify.text
-    return seed, did, verify.json()
+    return seed, did, verify.json(), _cookie_token(verify)
 
 
 def _sign_in_attempt(client, did: str, seed: SigningKey):
@@ -117,7 +130,7 @@ def _rotate(did: str, new_seed: SigningKey) -> str:
 
 def test_retired_key_cannot_sign_in_after_rotation(client):
     seed = SigningKey.generate()
-    _, did, _ = _sign_in(client, seed)
+    _, did, _, _ = _sign_in(client, seed)
 
     _rotate(did, SigningKey.generate())
 
@@ -129,7 +142,7 @@ def test_retired_key_cannot_sign_in_after_rotation(client):
 
 def test_new_key_signs_in_after_rotation(client):
     seed = SigningKey.generate()
-    _, did, _ = _sign_in(client, seed)
+    _, did, _, _ = _sign_in(client, seed)
 
     new_seed = SigningKey.generate()
     _rotate(did, new_seed)
@@ -143,7 +156,7 @@ def test_new_key_signs_in_after_rotation(client):
 
 def test_service_verify_signin_refuses_the_retired_key(client):
     seed = SigningKey.generate()
-    _, did, _ = _sign_in(client, seed)
+    _, did, _, _ = _sign_in(client, seed)
 
     _rotate(did, SigningKey.generate())
 
@@ -157,7 +170,7 @@ def test_service_verify_signin_refuses_the_retired_key(client):
 def test_active_key_material_can_be_raw_bytes(client):
     """A rotation may record raw key material (hex), not just a did:key."""
     seed = SigningKey.generate()
-    _, did, _ = _sign_in(client, seed)
+    _, did, _, _ = _sign_in(client, seed)
 
     new_seed = SigningKey.generate()
     # The *public* key material (bytes(new_seed) would be the private seed).
@@ -179,8 +192,7 @@ def test_active_key_material_can_be_raw_bytes(client):
 
 
 def test_key_rotation_revokes_outstanding_refresh_tokens(client):
-    _, did, body = _sign_in(client)
-    refresh_token = body["refresh_token"]
+    _, did, _, refresh_token = _sign_in(client)
 
     _rotate(did, SigningKey.generate())
 
@@ -195,8 +207,7 @@ def test_recovery_finalization_revokes_refresh_tokens(client):
     from app.modules.recovery.models import RecoveryRequest, ensure_requests_table
     from app import db
 
-    _, did, body = _sign_in(client)
-    refresh_token = body["refresh_token"]
+    _, did, _, refresh_token = _sign_in(client)
 
     new_seed = SigningKey.generate()
     new_did = _did_for(new_seed)
@@ -226,13 +237,14 @@ def test_recovery_finalization_revokes_refresh_tokens(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_reused_refresh_token_revokes_the_whole_family(client):
-    _, _, body = _sign_in(client)
-    first = body["refresh_token"]
+def test_reused_refresh_token_revokes_the_whole_family(client, monkeypatch):
+    # Outside the reuse grace window a replay is theft, not a concurrent tab.
+    monkeypatch.setattr(identity_service, "REFRESH_REUSE_GRACE_SECONDS", 0)
+    _, _, _, first = _sign_in(client)
 
     rotated = client.post(REFRESH_URL, json={"refresh_token": first})
     assert rotated.status_code == 200, rotated.text
-    second = rotated.json()["refresh_token"]
+    second = _cookie_token(rotated)
 
     # Replaying the retired token is treated as theft...
     replay = client.post(REFRESH_URL, json={"refresh_token": first})
@@ -322,7 +334,7 @@ def _refresh_cookie(response) -> dict[str, str] | None:
 
 
 def test_verify_issues_the_refresh_token_as_an_httponly_cookie(secure_client):
-    _, _, body = _sign_in(secure_client)
+    _sign_in(secure_client)
 
     # Re-issue to inspect the headers of the verify response itself.
     seed = SigningKey.generate()
@@ -334,11 +346,14 @@ def test_verify_issues_the_refresh_token_as_an_httponly_cookie(secure_client):
     )
     assert verify.status_code == 200, verify.text
 
+    # The body carries the access token and its expiry only.
+    assert "refresh_token" not in verify.json(), verify.json()
+
     cookie = _refresh_cookie(verify)
     assert cookie is not None, verify.headers.get_list("set-cookie")
     assert cookie.get("httponly") == ""
-    assert cookie.get("samesite", "").lower() == "strict"
-    assert cookie.get("path") == "/v1/auth/refresh"
+    assert cookie.get("samesite", "").lower() == "lax"
+    assert cookie.get("path") == "/v1/auth"
     assert cookie.get("secure") == "", "https origins must get a Secure cookie"
     assert cookie.get("max-age"), "the cookie lives as long as the token"
 
@@ -363,8 +378,8 @@ def test_refresh_cookie_is_not_secure_on_plain_http_localhost(base_url):
     assert "secure" not in cookie, cookie
     # Everything else about the cookie is unchanged.
     assert cookie.get("httponly") == ""
-    assert cookie.get("samesite", "").lower() == "strict"
-    assert cookie.get("path") == "/v1/auth/refresh"
+    assert cookie.get("samesite", "").lower() == "lax"
+    assert cookie.get("path") == "/v1/auth"
 
 
 def test_refresh_cookie_is_secure_on_plain_http_to_a_non_local_host():
@@ -385,25 +400,27 @@ def test_refresh_cookie_is_secure_on_plain_http_to_a_non_local_host():
 
 
 def test_refresh_rotates_using_only_the_cookie(secure_client):
-    _, _, body = _sign_in(secure_client)
+    _, _, _, first = _sign_in(secure_client)
 
     # The browser flow: no body, the HttpOnly cookie carries the token.
     rotated = secure_client.post(REFRESH_URL)
 
     assert rotated.status_code == 200, rotated.text
-    new_body = rotated.json()
-    assert new_body["refresh_token"] != body["refresh_token"]
+    assert "refresh_token" not in rotated.json(), rotated.json()
     cookie = _refresh_cookie(rotated)
-    assert cookie is not None and cookie["value"] != f'scholium_refresh={body["refresh_token"]}'
+    assert cookie is not None and cookie["value"] != f"scholium_refresh={first}"
 
 
-def test_reuse_via_cookie_revokes_the_family_and_clears_the_cookie(secure_client):
-    _, _, body = _sign_in(secure_client)
-    first = body["refresh_token"]
+def test_reuse_via_cookie_revokes_the_family_and_clears_the_cookie(
+    secure_client, monkeypatch
+):
+    # Past the grace window, a replay through the cookie is theft again.
+    monkeypatch.setattr(identity_service, "REFRESH_REUSE_GRACE_SECONDS", 0)
+    _, _, _, first = _sign_in(secure_client)
 
     rotated = secure_client.post(REFRESH_URL)
     assert rotated.status_code == 200, rotated.text
-    second = rotated.json()["refresh_token"]
+    second = _cookie_token(rotated)
 
     # A thief replays the stale token.  They do not hold the victim's cookie
     # jar (which now carries ``second`` and would win over anything else), so
@@ -422,7 +439,7 @@ def test_reuse_via_cookie_revokes_the_family_and_clears_the_cookie(secure_client
 
 
 def test_logout_clears_the_refresh_cookie(secure_client):
-    _, _, body = _sign_in(secure_client)
+    _, _, body, _ = _sign_in(secure_client)
     access_token = body["access_token"]
 
     logout = secure_client.post(LOGOUT_URL, headers={"Authorization": f"Bearer {access_token}"})

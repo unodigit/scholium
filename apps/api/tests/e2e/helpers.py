@@ -108,6 +108,16 @@ def elapse_recovery_contest_window(request_id: str) -> int:
     return jobs.run_pending()
 
 
+def _refresh_cookie(response) -> str:
+    """The raw refresh token from a response's ``Set-Cookie`` header."""
+    for header in response.headers.get_list("set-cookie"):
+        if header.lower().startswith("scholium_refresh="):
+            return header.split(";", 1)[0].split("=", 1)[1]
+    raise AssertionError(
+        f"no scholium_refresh cookie: {response.headers.get_list('set-cookie')}"
+    )
+
+
 class Actor:
     """A person with a ``did:key`` who uses the API only over HTTP."""
 
@@ -131,18 +141,20 @@ class Actor:
             "/v1/auth/verify", json={"did": self.did, "nonce": nonce, "signature": signature}
         )
         assert verified.status_code == 200, verified.text
-        self._keep(verified.json())
+        self._keep(verified)
 
     def refresh(self) -> None:
         """Trade the refresh token for a new pair, which carries the account's current tier."""
         assert self.refresh_token, "sign in first"
         refreshed = self.client.post("/v1/auth/refresh", json={"refresh_token": self.refresh_token})
         assert refreshed.status_code == 200, refreshed.text
-        self._keep(refreshed.json())
+        self._keep(refreshed)
 
-    def _keep(self, tokens: dict) -> None:
-        self.access_token = tokens["access_token"]
-        self.refresh_token = tokens["refresh_token"]
+    def _keep(self, response) -> None:
+        # The access token is in the body; the refresh token arrives only as
+        # the HttpOnly cookie, so HTTP clients read it from Set-Cookie.
+        self.access_token = response.json()["access_token"]
+        self.refresh_token = _refresh_cookie(response)
 
     @property
     def headers(self) -> dict[str, str]:

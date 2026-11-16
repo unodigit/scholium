@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from . import same_site
 from .challenge import (
     INVALID_DID_TYPE,
     ChallengeRequest,
@@ -11,10 +12,13 @@ from .challenge import (
     router as challenge_router,
 )
 from .cookies import (
+    DEFAULT_REFRESH_COOKIE_SAMESITE,
     REFRESH_COOKIE_MAX_AGE,
     REFRESH_COOKIE_NAME,
     REFRESH_COOKIE_PATH,
+    REFRESH_COOKIE_SAMESITE,
     clear_refresh_cookie,
+    refresh_cookie_samesite,
     refresh_token_from_request,
     set_refresh_cookie,
 )
@@ -48,14 +52,17 @@ from .refresh import (
 )
 from .service import (
     CHALLENGE_TTL,
+    DEFAULT_REFRESH_REUSE_GRACE_SECONDS,
     InvalidDid,
     InvalidNonce,
     InvalidRefreshToken,
     InvalidSignature,
     NONCE_BYTES,
+    REFRESH_REUSE_GRACE_SECONDS,
     REFRESH_TOKEN_TTL,
     install_key_rotation_subscriber,
     refresh_access,
+    refresh_reuse_grace_seconds,
     revoke_refresh_token,
     revoke_refresh_tokens_for_did,
     active_key_for,
@@ -109,6 +116,11 @@ router.include_router(verify_router)
 # ledger is imported inside the installer so package import order is free.
 install_key_rotation_subscriber()
 
+# The module loader calls this while assembling the app (``on_startup`` /
+# ``startup`` hooks): warn when the configured web origins cannot send the
+# refresh cookie because they are cross-site from the API.
+on_startup = same_site.on_startup
+
 __all__ = [
     "Account",
     "AccountKey",
@@ -116,6 +128,8 @@ __all__ = [
     "CHALLENGE_TTL",
     "ChallengeRequest",
     "ChallengeResponse",
+    "DEFAULT_REFRESH_COOKIE_SAMESITE",
+    "DEFAULT_REFRESH_REUSE_GRACE_SECONDS",
     "DidDocument",
     "INVALID_DID_TYPE",
     "INVALID_REFRESH_TOKEN_TYPE",
@@ -131,6 +145,8 @@ __all__ = [
     "REFRESH_COOKIE_MAX_AGE",
     "REFRESH_COOKIE_NAME",
     "REFRESH_COOKIE_PATH",
+    "REFRESH_COOKIE_SAMESITE",
+    "REFRESH_REUSE_GRACE_SECONDS",
     "REFRESH_TOKEN_TTL",
     "RefreshRequest",
     "RefreshResponse",
@@ -144,10 +160,14 @@ __all__ = [
     "ensure_refresh_tokens_table",
     "ensure_table",
     "install_key_rotation_subscriber",
+    "on_startup",
     "refresh_access",
+    "refresh_cookie_samesite",
+    "refresh_reuse_grace_seconds",
     "refresh_token_from_request",
     "revoke_refresh_token",
     "revoke_refresh_tokens_for_did",
+    "same_site",
     "active_key_for",
     "active_signing_key",
     "add_account_key",

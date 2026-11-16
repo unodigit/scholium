@@ -1,14 +1,38 @@
-"""POST /v1/auth/verify: check an Ed25519 signature over a nonce and issue tokens."""
+"""POST /v1/auth/verify: check an Ed25519 signature over a nonce and issue tokens.
+
+A successful sign-in answers with the access token and its lifetime; the
+long-lived refresh token is delivered *only* as the ``HttpOnly``
+``scholium_refresh`` cookie (see :mod:`app.modules.identity.cookies`), so page
+JavaScript can never read it::
+
+    POST /v1/auth/verify {"did": ..., "nonce": ..., "signature": ...}
+
+    200 OK
+    Cache-Control: no-store
+    Set-Cookie: scholium_refresh=<raw>; HttpOnly; Max-Age=2592000;
+                Path=/v1/auth; SameSite=Lax; Secure
+    {
+      "access_token": "eyJ...",
+      "expires_in": 900                  # seconds until the access token expires
+    }
+
+Python and other non-browser clients read the refresh token from the
+``Set-Cookie`` response header and may present it in a JSON body to
+``/v1/auth/refresh`` exactly as before.
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
+from app.security import ACCESS_TOKEN_TTL
+
 from .cookies import set_refresh_cookie
 from .service import InvalidDid, InvalidNonce, InvalidSignature, verify_signin
 
 __all__ = [
+    "ACCESS_TOKEN_EXPIRES_IN",
     "VERIFY_FAILED_TYPE",
     "VerifyRequest",
     "VerifyResponse",
@@ -23,6 +47,9 @@ VERIFY_FAILED_TYPE = "urn:scholium:problem:authentication-failed"
 
 INVALID_DID_TYPE = "urn:scholium:problem:invalid-did"
 
+#: Lifetime of the access token in the response body, in seconds.
+ACCESS_TOKEN_EXPIRES_IN = int(ACCESS_TOKEN_TTL.total_seconds())
+
 
 class VerifyRequest(BaseModel):
     """Body of ``POST /v1/auth/verify``."""
@@ -33,10 +60,14 @@ class VerifyRequest(BaseModel):
 
 
 class VerifyResponse(BaseModel):
-    """Tokens issued on a successful sign-in."""
+    """Tokens issued on a successful sign-in.
+
+    Only the access token and its expiry: the refresh token travels in the
+    ``HttpOnly`` cookie and never in a body a script can read.
+    """
 
     access_token: str
-    refresh_token: str
+    expires_in: int
 
 
 def _invalid_did():
@@ -71,7 +102,9 @@ def post_verify(body: VerifyRequest, response: Response, request: Request) -> Ve
     except (InvalidNonce, InvalidSignature) as exc:
         raise _unauthorized() from exc
     response.headers["Cache-Control"] = "no-store"
-    # The refresh token also travels as an HttpOnly cookie scoped to the
-    # refresh path, so a browser never has to hold it in readable storage.
+    # The refresh token travels only as an HttpOnly cookie scoped to the auth
+    # path, so a browser never has to hold it in readable storage.
     set_refresh_cookie(response, request, refresh_token)
-    return VerifyResponse(access_token=access_token, refresh_token=refresh_token)
+    return VerifyResponse(
+        access_token=access_token, expires_in=ACCESS_TOKEN_EXPIRES_IN
+    )

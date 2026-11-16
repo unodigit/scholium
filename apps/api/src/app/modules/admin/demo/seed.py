@@ -334,16 +334,20 @@ class _Actor:
         verified = self.http.post(
             "/v1/auth/verify", json={"did": self.did, "nonce": nonce, "signature": signature}
         )
-        self._keep(_require(verified, 200, f"sign-in for {self.account.name}").json())
+        self._keep(_require(verified, 200, f"sign-in for {self.account.name}"))
 
     def refresh(self) -> None:
         """Trade the refresh token for tokens that carry the account's current tier."""
         assert self._refresh, "sign in first"
         refreshed = self.http.post("/v1/auth/refresh", json={"refresh_token": self._refresh})
-        self._keep(_require(refreshed, 200, f"token refresh for {self.account.name}").json())
+        self._keep(_require(refreshed, 200, f"token refresh for {self.account.name}"))
 
-    def _keep(self, tokens: dict) -> None:
-        self._access, self._refresh = tokens["access_token"], tokens["refresh_token"]
+    def _keep(self, response) -> None:
+        # The access token is in the body; the refresh token is delivered only
+        # as the HttpOnly cookie, so read it out of the Set-Cookie header (the
+        # supported channel for non-browser clients).
+        self._access = response.json()["access_token"]
+        self._refresh = _refresh_cookie(response)
 
     def record(self, record_type: str, body: dict, created: str, prev: Optional[str] = None) -> dict:
         return _signed(self.key, record_type, body, created, prev)
@@ -352,6 +356,17 @@ class _Actor:
         """``POST /v1/records``; return ``(answer, False)``, or ``(None, True)`` if the node had it already."""
         response = self.http.post("/v1/records", json=record, headers=self.headers)
         return _outcome(response, what, (DUPLICATE_RECORD,))
+
+
+def _refresh_cookie(response: Any) -> str:
+    """The raw refresh token from a response's ``Set-Cookie`` header."""
+    for header in response.headers.get_list("set-cookie"):
+        if header.lower().startswith("scholium_refresh="):
+            return header.split(";", 1)[0].split("=", 1)[1]
+    raise SeedError(
+        "the API did not set the scholium_refresh cookie: "
+        + _describe(response)
+    )
 
 
 def _outcome(response: Any, what: str, duplicates: tuple[str, ...]) -> tuple[Optional[dict], bool]:

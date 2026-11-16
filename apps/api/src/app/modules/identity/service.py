@@ -5,7 +5,10 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
+import os
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -22,6 +25,7 @@ from sqlalchemy import delete, update
 
 from app import db
 from app.security import issue_access_token
+from app.settings import settings
 
 from .models import (
     Account,
@@ -36,13 +40,16 @@ from .models import (
 
 __all__ = [
     "CHALLENGE_TTL",
+    "DEFAULT_REFRESH_REUSE_GRACE_SECONDS",
     "InvalidDid",
     "InvalidNonce",
     "InvalidRefreshToken",
     "InvalidSignature",
     "NONCE_BYTES",
+    "REFRESH_REUSE_GRACE_SECONDS",
     "REFRESH_TOKEN_TTL",
     "refresh_access",
+    "refresh_reuse_grace_seconds",
     "revoke_refresh_token",
     "revoke_refresh_tokens_for_did",
     "get_active_signing_key",
@@ -86,6 +93,17 @@ NONCE_BYTES = 32
 #: How long a refresh token stays valid.
 REFRESH_TOKEN_TTL = timedelta(days=30)
 
+#: How long after a token was rotated the same value may be presented again and
+#: still receive its successor pair (concurrent tabs refreshing together).
+DEFAULT_REFRESH_REUSE_GRACE_SECONDS = 30
+REFRESH_REUSE_GRACE_SECONDS = DEFAULT_REFRESH_REUSE_GRACE_SECONDS
+
+#: Domain separator for deriving a rotation's successor refresh token.  The
+#: same presented token always derives the same successor, which is what lets
+#: a concurrent second request replay the exact successor pair without any raw
+#: refresh token ever being stored at rest.
+_SUCCESSOR_LABEL = b"scholium:refresh-successor:v1:"
+
 
 class InvalidDid(ValueError):
     """The value is not a canonical Ed25519 did:key identifier."""
@@ -123,6 +141,91 @@ def _as_naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _seconds(value: object) -> Optional[int]:
+    """Coerce an env/settings value to a non-negative whole number of seconds."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        seconds = int(value)
+    elif isinstance(value, str) and value.strip():
+        try:
+            seconds = int(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def refresh_reuse_grace_seconds() -> int:
+    """Seconds during which a rotated token replays to its successor pair.
+
+    Configurable as ``REFRESH_REUSE_GRACE_SECONDS`` (default 30).  A test or a
+    deployment that sets ``settings.REFRESH_REUSE_GRACE_SECONDS`` wins over the
+    environment, so both spellings of the knob behave as expected.
+    """
+    configured = getattr(settings, "REFRESH_REUSE_GRACE_SECONDS", None)
+    if configured is not None:
+        parsed = _seconds(configured)
+        if parsed is not None:
+            return parsed
+    from_env = _seconds(os.environ.get("REFRESH_REUSE_GRACE_SECONDS"))
+    if from_env is not None:
+        return from_env
+    parsed = _seconds(REFRESH_REUSE_GRACE_SECONDS)
+    return parsed if parsed is not None else DEFAULT_REFRESH_REUSE_GRACE_SECONDS
+
+
+def _successor_refresh_token(refresh_token: str) -> str:
+    """Derive the deterministic successor of ``refresh_token``.
+
+    Rotation must hand the *same* successor to a concurrent second request, so
+    the successor cannot be random: it is an HMAC of the presented token under
+    the server secret.  Only the hash of the successor is persisted, exactly
+    like every other refresh token.
+    """
+    secret = (settings.JWT_SECRET or "").encode("utf-8")
+    digest = hmac.new(
+        secret, _SUCCESSOR_LABEL + refresh_token.encode("utf-8"), hashlib.sha256
+    ).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def _hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _successor_within_grace(
+    session, row: RefreshToken, presented: str, checked_at: datetime
+):
+    """The successor pair ``row`` handed out, if ``presented`` is in its grace.
+
+    Returns ``None`` when the row was not rotated at all, when the grace
+    window has elapsed (genuine reuse/theft), or when the successor has since
+    been revoked -- a family revocation must not be undoable by replaying the
+    ancestor inside the window.
+    """
+    if not row.rotated or row.rotated_at is None:
+        return None
+    rotated_at = _as_naive_utc(row.rotated_at)
+    grace = timedelta(seconds=refresh_reuse_grace_seconds())
+    # A concurrent loser may have sampled ``checked_at`` microseconds before
+    # the winner recorded ``rotated_at``; that clock skew is still in-window.
+    if checked_at - rotated_at > grace:
+        return None
+
+    successor_raw = _successor_refresh_token(presented)
+    successor = session.get(RefreshToken, _hash_token(successor_raw))
+    if successor is None or successor.rotated:
+        return None
+
+    access_token = row.successor_access_token
+    if not access_token:
+        tier = int(row.successor_tier) if row.successor_tier is not None else 0
+        access_token = issue_access_token(row.did, tier, now=rotated_at)
+    return access_token, successor_raw
 
 
 def purge_expired_challenges(*, now: Optional[datetime] = None) -> int:
@@ -295,6 +398,34 @@ def verify_signin(
     return access_token, raw_refresh
 
 
+def _successor_after_lost_race(
+    token_hash: str, presented: str, did: str, checked_at: datetime
+) -> tuple[str, str]:
+    """Recover the winner's successor pair after losing the rotation UPDATE.
+
+    The atomic UPDATE only matches an unrotated row, so a loser's ``rowcount``
+    of zero means a concurrent request won.  That winner commits before the
+    loser's write proceeds (SQLite serialises writers), so re-reading in a
+    fresh session sees ``rotated_at`` and the stored successor pair.  If the
+    row is genuinely already retired beyond its grace, this is theft: revoke
+    the family.
+    """
+    for attempt in range(5):
+        with db.SessionLocal() as session:
+            row = session.get(RefreshToken, token_hash)
+            if row is not None:
+                pair = _successor_within_grace(session, row, presented, checked_at)
+                if pair is not None:
+                    return pair
+                if row.rotated:
+                    break
+        if attempt < 4:  # pragma: no branch - one wait in practice
+            time.sleep(0.01)
+
+    revoke_refresh_tokens_for_did(did)
+    raise InvalidRefreshToken("refresh token was already used")
+
+
 def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tuple[str, str]:
     """Rotate a refresh token and return ``(access_token, refresh_token)``.
 
@@ -305,20 +436,25 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
     with no account row, which cannot happen for an issued token but keeps
     the lookup total).
 
-    Presenting a token that was already retired -- rotated out *or* revoked
-    -- is treated as theft: only the legitimate holder ever sees the rotated
-    value, so a replay means the token leaked.  The whole token family for
-    that DID is revoked before the request is refused.
+    A token presented again *within* :func:`refresh_reuse_grace_seconds` of
+    its rotation is not theft: two tabs refreshing together both present the
+    same token, and the loser must receive the winner's successor pair rather
+    than be signed out.  Presenting a retired token after that window -- or
+    one revoked by logout or a key rotation -- is still treated as theft:
+    only the legitimate holder ever sees the rotated value, so a replay means
+    the token leaked.  The whole token family for that DID is revoked before
+    the request is refused.
 
     Raises:
         InvalidRefreshToken: the token is unknown, expired, or was already
-            rotated out -- in particular, presenting it a second time.
+            rotated out beyond its reuse grace -- in particular, presenting it
+            a second time much later.
     """
     if not isinstance(refresh_token, str) or not refresh_token:
         raise InvalidRefreshToken("refresh token must be a non-empty string")
 
     checked_at = _utcnow() if now is None else _as_naive_utc(now)
-    token_hash = hashlib.sha256(refresh_token.encode("utf-8")).hexdigest()
+    token_hash = _hash_token(refresh_token)
 
     ensure_refresh_tokens_table()
     ensure_account_table()
@@ -329,38 +465,60 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
             raise InvalidRefreshToken("refresh token is invalid")
         did = row.did
         if row.rotated:
-            # Reuse of a retired token: assume compromise and revoke every
-            # live refresh token for this DID (the token family).
+            pair = _successor_within_grace(session, row, refresh_token, checked_at)
+            if pair is not None:
+                # A concurrent request (or a second tab) already rotated this
+                # token; hand back the same successor pair.
+                return pair
+            # Reuse of a retired token later than the grace window: assume
+            # compromise and revoke every live refresh token for this DID
+            # (the token family).
             session.rollback()
             revoke_refresh_tokens_for_did(did)
             raise InvalidRefreshToken("refresh token was already used")
         if row.expires_at <= checked_at:
             raise InvalidRefreshToken("refresh token has expired")
 
+        account = session.get(Account, did)
+        tier = int(account.tier) if account is not None else 0
+        successor_raw = _successor_refresh_token(refresh_token)
+        successor_hash = _hash_token(successor_raw)
+        access_token = issue_access_token(did, tier, now=checked_at)
+
         # Retire the token atomically: the UPDATE only matches while the row
         # is still unrotated, so two concurrent presentations cannot both win
-        # -- the loser sees rowcount 0, treats it as reuse and revokes the
-        # family.
+        # -- the loser sees rowcount 0 and replays the winner's successor pair.
         result = session.execute(
             update(RefreshToken)
             .where(
                 RefreshToken.token_hash == token_hash,
                 RefreshToken.rotated == False,  # noqa: E712 - SQL boolean
             )
-            .values(rotated=True)
+            .values(
+                rotated=True,
+                rotated_at=checked_at,
+                successor_access_token=access_token,
+                successor_tier=tier,
+            )
         )
         if result.rowcount != 1:
             session.rollback()
-            revoke_refresh_tokens_for_did(did)
-            raise InvalidRefreshToken("refresh token was already used")
+            return _successor_after_lost_race(
+                token_hash, refresh_token, did, checked_at
+            )
 
-        account = session.get(Account, did)
-        tier = int(account.tier) if account is not None else 0
+        if session.get(RefreshToken, successor_hash) is None:
+            session.add(
+                RefreshToken(
+                    token_hash=successor_hash,
+                    did=did,
+                    expires_at=checked_at + REFRESH_TOKEN_TTL,
+                    rotated=False,
+                )
+            )
         session.commit()
 
-    access_token = issue_access_token(did, tier, now=checked_at)
-    raw_refresh = issue_refresh_token(did, now=checked_at)
-    return access_token, raw_refresh
+    return access_token, successor_raw
 
 
 def revoke_refresh_token(refresh_token: str) -> bool:

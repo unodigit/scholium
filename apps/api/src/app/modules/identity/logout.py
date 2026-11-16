@@ -4,7 +4,7 @@ Logging out retires a refresh token so it can never be exchanged for another
 token pair::
 
     POST /v1/auth/logout
-    {"refresh_token": "R1..."}          # exactly as /v1/auth/verify returned it
+    {"refresh_token": "R1..."}          # read from verify's Set-Cookie header
 
     204 No Content
     Cache-Control: no-store

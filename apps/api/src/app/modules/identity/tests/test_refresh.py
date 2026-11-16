@@ -1,9 +1,10 @@
 """POST /v1/auth/refresh: rotate a refresh token (feature 25).
 
 A refresh token from ``/v1/auth/verify`` is good for exactly one refresh:
-presenting it retires it (``rotated`` flag) and returns a fresh token.  A
-token that was already rotated out is refused with 401.  Only the SHA-256
-hash of each token is stored, never the raw value.
+presenting it retires it (``rotated`` flag) and returns a fresh token in the
+``HttpOnly`` cookie.  The JSON body never carries the refresh token.  A token
+presented again *after* the reuse grace window is refused with 401.  Only the
+SHA-256 hash of each token is stored, never the raw value.
 """
 
 from __future__ import annotations
@@ -16,13 +17,27 @@ from scholium_record_core import did_key_from_signing_key, encode_signature
 
 from app import db
 from app.modules.identity import RefreshToken
+from app.modules.identity import service as identity_service
 
 URL = "/v1/auth/refresh"
+COOKIE_NAME = "scholium_refresh"
 PROBLEM_JSON = "application/problem+json"
 
 
+def _cookie_token(response) -> str:
+    """The raw refresh token from the response's ``Set-Cookie`` header."""
+    for header in response.headers.get_list("set-cookie"):
+        if header.lower().startswith(f"{COOKIE_NAME.lower()}="):
+            return header.split(";", 1)[0].split("=", 1)[1]
+    raise AssertionError(f"no {COOKIE_NAME} cookie: {response.headers.get_list('set-cookie')}")
+
+
 def sign_in(client) -> tuple[str, str]:
-    """Sign in as a brand-new identity; return ``(did, refresh_token)``."""
+    """Sign in as a brand-new identity; return ``(did, refresh_token)``.
+
+    The refresh token is read from the response cookie, the only place the API
+    delivers it now.
+    """
     seed = SigningKey.generate()
     did = did_key_from_signing_key(seed)
 
@@ -36,7 +51,7 @@ def sign_in(client) -> tuple[str, str]:
         json={"did": did, "nonce": nonce, "signature": signature},
     )
     assert verify.status_code == 200, verify.text
-    return did, verify.json()["refresh_token"]
+    return did, _cookie_token(verify)
 
 
 def _hash_of(raw_token: str) -> str:
@@ -57,12 +72,12 @@ def test_valid_token_returns_200_with_a_new_refresh_token(client):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    new_token = body["refresh_token"]
+    assert "refresh_token" not in body, "the refresh token must not leak into the body"
+    new_token = _cookie_token(response)
     assert isinstance(new_token, str) and new_token
     assert new_token != old_token, "the refresh token must be rotated"
-    # The response may carry more (an access token); when present it is a string.
-    if "access_token" in body:
-        assert isinstance(body["access_token"], str) and body["access_token"]
+    assert isinstance(body["access_token"], str) and body["access_token"]
+    assert body["expires_in"] > 0
     assert response.headers["cache-control"] == "no-store"
 
 
@@ -73,7 +88,7 @@ def test_presented_token_is_retired_in_the_database(client):
 
     response = client.post(URL, json={"refresh_token": old_token})
     assert response.status_code == 200, response.text
-    new_token = response.json()["refresh_token"]
+    new_token = _cookie_token(response)
 
     # The old row is marked rotated out, the new one is stored by its hash.
     assert _row(old_token).rotated is True
@@ -86,7 +101,8 @@ def test_presented_token_is_retired_in_the_database(client):
     assert raw_row is None
 
 
-def test_rotated_out_token_reuse_returns_401(client):
+def test_rotated_out_token_reuse_returns_401(client, monkeypatch):
+    monkeypatch.setattr(identity_service, "REFRESH_REUSE_GRACE_SECONDS", 0)
     _, old_token = sign_in(client)
 
     first = client.post(URL, json={"refresh_token": old_token})
@@ -104,13 +120,14 @@ def test_unknown_token_returns_401(client):
     assert response.status_code == 401, response.text
 
 
-def test_the_new_token_itself_refreshes_once(client):
+def test_the_new_token_itself_refreshes_once(client, monkeypatch):
     # The rotation must produce a genuine token, not a one-shot placeholder.
+    monkeypatch.setattr(identity_service, "REFRESH_REUSE_GRACE_SECONDS", 0)
     _, token = sign_in(client)
 
     first = client.post(URL, json={"refresh_token": token})
     assert first.status_code == 200, first.text
-    token = first.json()["refresh_token"]
+    token = _cookie_token(first)
 
     second = client.post(URL, json={"refresh_token": token})
     assert second.status_code == 200, second.text
@@ -129,9 +146,10 @@ def test_body_without_refresh_token_is_rejected(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_service_refresh_access_rotates_and_returns_tokens(client):
+def test_service_refresh_access_rotates_and_returns_tokens(client, monkeypatch):
     from app.modules.identity.service import InvalidRefreshToken, refresh_access
 
+    monkeypatch.setattr(identity_service, "REFRESH_REUSE_GRACE_SECONDS", 0)
     did, old_token = sign_in(client)
 
     access_token, new_token = refresh_access(old_token)
@@ -146,6 +164,6 @@ def test_service_refresh_access_rotates_and_returns_tokens(client):
     principal = decode_access_token(access_token)
     assert principal.did == did
 
-    # A second service-level use is the reuse the criteria forbid.
+    # A second service-level use after the grace window is reuse the criteria forbid.
     with pytest.raises(InvalidRefreshToken):
         refresh_access(old_token)

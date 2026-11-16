@@ -22,8 +22,19 @@ REFRESH_URL = "/v1/auth/refresh"
 PROBLEM_JSON = "application/problem+json"
 
 
+def _cookie_token(response) -> str:
+    for header in response.headers.get_list("set-cookie"):
+        if header.lower().startswith("scholium_refresh="):
+            return header.split(";", 1)[0].split("=", 1)[1]
+    raise AssertionError(f"no refresh cookie: {response.headers.get_list('set-cookie')}")
+
+
 def sign_in(client) -> tuple[str, str, str]:
-    """Sign in as a brand-new identity; return ``(did, access_token, refresh_token)``."""
+    """Sign in as a brand-new identity; return ``(did, access_token, refresh_token)``.
+
+    The refresh token comes from the ``Set-Cookie`` header: the JSON body no
+    longer carries it.
+    """
     seed = SigningKey.generate()
     did = did_key_from_signing_key(seed)
 
@@ -38,7 +49,7 @@ def sign_in(client) -> tuple[str, str, str]:
     )
     assert verify.status_code == 200, verify.text
     body = verify.json()
-    return did, body["access_token"], body["refresh_token"]
+    return did, body["access_token"], _cookie_token(verify)
 
 
 def _hash_of(raw_token: str) -> str:

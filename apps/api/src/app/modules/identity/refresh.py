@@ -2,36 +2,40 @@
 
 A refresh token issued by ``/v1/auth/verify`` is good for exactly one
 refresh.  The browser flow sends no body: the token travels in the HttpOnly
-``scholium_refresh`` cookie scoped to this path, and the rotated successor is
-handed back the same way::
+``scholium_refresh`` cookie scoped to the auth path, and the rotated successor
+is handed back the same way::
 
     POST /v1/auth/refresh                      # cookie: scholium_refresh=R1...
 
     200 OK
     Cache-Control: no-store
     Set-Cookie: scholium_refresh=R2...; HttpOnly; Max-Age=2592000;
-                Path=/v1/auth/refresh; SameSite=strict; Secure
+                Path=/v1/auth; SameSite=Lax; Secure
     {
       "access_token": "eyJ...",         # a fresh 15-minute access token
-      "refresh_token": "R2..."          # R2 != R1: the token was rotated
+      "expires_in": 900                 # seconds until it expires
     }
 
-Non-browser clients may keep presenting the token in the JSON body exactly
-as before (``{"refresh_token": "R1..."}``); when both are present the cookie
-wins, because in the browser flow it is the only copy the client cannot
-lose track of.
+The JSON body never carries the refresh token: only the ``HttpOnly`` cookie
+does.  Non-browser clients keep presenting the token in the JSON body exactly
+as before (``{"refresh_token": "R1..."}``, read from the ``Set-Cookie`` header
+of the sign-in response); when both are present the cookie wins, because in
+the browser flow it is the only copy the client cannot lose track of.
 
-Presenting a token that was already retired -- rotated out, revoked by
-logout, or revoked by a key rotation -- is treated as theft and revokes
-every refresh token for the account before the request is refused, so a
-stolen descendant dies with its ancestor.
+A token presented again within the reuse grace window
+(``REFRESH_REUSE_GRACE_SECONDS``, default 30 seconds) of its rotation returns
+the same successor pair -- two tabs refreshing together must not sign the user
+out.  Presenting a retired token after that window -- rotated out, revoked by
+logout, or revoked by a key rotation -- is treated as theft and revokes every
+refresh token for the account before the request is refused, so a stolen
+descendant dies with its ancestor.
 
 Errors are RFC 9457 problem details via the app-wide handlers:
 
 * ``401`` -- the refresh token is unknown, expired, or was already rotated
-  out (type :data:`INVALID_REFRESH_TOKEN_TYPE`).  The reason is not
-  distinguished, so the endpoint cannot be probed for which tokens exist.
-  The cookie is cleared.
+  out beyond its grace window (type :data:`INVALID_REFRESH_TOKEN_TYPE`).  The
+  reason is not distinguished, so the endpoint cannot be probed for which
+  tokens exist.  The cookie is cleared.
 * ``422`` -- neither a refresh cookie nor a string ``refresh_token`` in the
   body was supplied.
 """
@@ -43,6 +47,8 @@ from typing import Optional
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
+from app.security import ACCESS_TOKEN_TTL
+
 from .cookies import (
     clear_refresh_cookie_headers,
     refresh_token_from_request,
@@ -51,6 +57,7 @@ from .cookies import (
 from .service import InvalidRefreshToken, refresh_access
 
 __all__ = [
+    "ACCESS_TOKEN_EXPIRES_IN",
     "INVALID_REFRESH_TOKEN_TYPE",
     "RefreshRequest",
     "RefreshResponse",
@@ -63,6 +70,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 #: Problem-details type URN for a refresh token that cannot be used.
 INVALID_REFRESH_TOKEN_TYPE = "urn:scholium:problem:invalid-refresh-token"
 
+#: Lifetime of the access token in the response body, in seconds.
+ACCESS_TOKEN_EXPIRES_IN = int(ACCESS_TOKEN_TTL.total_seconds())
+
 
 class RefreshRequest(BaseModel):
     """Body of ``POST /v1/auth/refresh`` (optional in the cookie flow)."""
@@ -71,10 +81,14 @@ class RefreshRequest(BaseModel):
 
 
 class RefreshResponse(BaseModel):
-    """Tokens issued by one refresh."""
+    """Tokens issued by one refresh.
+
+    Only the access token and its expiry: the rotated refresh token travels in
+    the ``HttpOnly`` cookie and never in a body a script can read.
+    """
 
     access_token: str
-    refresh_token: str
+    expires_in: int
 
 
 def _unauthorized(request: Request):
@@ -137,4 +151,6 @@ def post_refresh(
     # Both tokens are bearer secrets: never let a cache keep them.
     response.headers["Cache-Control"] = "no-store"
     set_refresh_cookie(response, request, refresh_token)
-    return RefreshResponse(access_token=access_token, refresh_token=refresh_token)
+    return RefreshResponse(
+        access_token=access_token, expires_in=ACCESS_TOKEN_EXPIRES_IN
+    )
