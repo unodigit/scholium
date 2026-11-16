@@ -431,6 +431,22 @@ def handle_moderation_decision(record: Mapping[str, Any]) -> str:
     fields = decision_fields(record)
     require_known_clause(fields.clause)
 
+    if fields.reason_cid is not None:
+        # The signer may publish a reasonCid only when they may read the file
+        # under the content visibility rule.
+        from app.modules.ingest import author_tier
+        from app.modules.submissions.notices import _may_read
+        from app.security import Principal
+
+        principal = Principal(did=fields.moderator_did, tier=author_tier(fields.moderator_did))
+        if not _may_read(fields.reason_cid, principal):
+            raise _invalid(
+                ["body", "reasonCid"],
+                f"names a reasonCid that the signer may not read",
+                "reason_not_readable",
+                fields.reason_cid,
+            )
+
     if fields.action == TOMBSTONE:
         resolve_scope(fields.target)  # refuses (422) a target it cannot take down
         return TOMBSTONED
@@ -602,7 +618,7 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
         try:
             from app.modules.submissions.notices import read_reason_file
 
-            reason_text = read_reason_file(DECISION_TYPE, fields.reason_cid)
+            reason_text = read_reason_file(DECISION_TYPE, fields.reason_cid, fields.moderator_did)
         except Exception:
             reason_text = fields.reason_cid
     if reason_text is None:

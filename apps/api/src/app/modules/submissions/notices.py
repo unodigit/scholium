@@ -92,11 +92,11 @@ from app import db
 from app.modules import content
 from app.modules.content import store as content_store
 from app.modules.ingest import InvalidRecord, author_tier
-from app.security import Tier
+from app.security import Principal, Tier
 
 from .errors import NoticeNotAuthorized, UnknownNoticeTarget
 from .genesis import get_paper
-from .models import Authorship, Notice, ensure_tables
+from .models import Authorship, Notice, PaperVersion, ensure_tables
 from .versions import get_version, versions_for_paper
 
 __all__ = [
@@ -472,7 +472,38 @@ def require_authorized(kind: str, author: object, paper_cid: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def read_reason_file(kind: str, cid: str) -> str:
+def _may_read(cid: object, principal: object) -> bool:
+    """Content visibility, treating a file no version references as public.
+
+    ``content.may_read`` already does this for files with no content ref at
+    all, but a manifest that no version points at leaves a content ref with no
+    ``PaperVersion`` row; such a file is not pre-listing content and stays
+    public.  Guarding here keeps a manifest-only file (common in tests and
+    import snapshots) from being misclassified as private.
+    """
+    if content.may_read(cid, principal):
+        return True
+    content.refs.sync()
+    with db.SessionLocal() as session:
+        manifest_cids = {
+            mc
+            for (mc,) in session.query(content.refs.ContentRef.manifest_cid).filter(
+                content.refs.ContentRef.content_cid == cid
+            )
+        }
+        if not manifest_cids:
+            return True
+        versions = (
+            session.query(PaperVersion.version_cid)
+            .filter(PaperVersion.manifest_cid.in_(manifest_cids))
+            .all()
+        )
+        if not versions:
+            return True
+    return False
+
+
+def read_reason_file(kind: str, cid: str, signer=None, *, principal=None) -> str:
     """Read the reason a record keeps in the content store, or refuse with ``422``.
 
     Raises:
@@ -495,6 +526,24 @@ def read_reason_file(kind: str, cid: str) -> str:
             f"names a reasonCid {_clip(cid)!r} that has been removed",
             "reason_tombstoned",
         )
+
+    # Visibility: the signer may publish a reasonCid only when they may read the
+    # file under the content visibility rule (a public file, or one they own or
+    # authored).  Otherwise a private file's text could be copied into the
+    # public paper JSON.
+    if principal is None and signer is not None:
+        if isinstance(signer, Principal):
+            principal = signer
+        elif isinstance(signer, str) and signer:
+            from app.modules.ingest import author_tier
+
+            principal = Principal(did=signer, tier=author_tier(signer))
+    if not _may_read(cid, principal):
+        raise refuse(
+            f"names a reasonCid {_clip(cid)!r} that the signer may not read",
+            "reason_not_readable",
+        )
+
     if int(blob.size) > MAX_REASON_BYTES:
         raise refuse(
             f"names a reasonCid file larger than {MAX_REASON_BYTES} bytes",
@@ -658,7 +707,7 @@ def _handle_notice(kind: str, record: Mapping[str, Any]) -> str:
     reason = fields.reason
     if reason is None:
         assert fields.reason_cid is not None
-        reason = read_reason_file(kind, fields.reason_cid)
+        reason = read_reason_file(kind, fields.reason_cid, record.get("author"))
 
     save_notice(
         record_cid=record_cid,
