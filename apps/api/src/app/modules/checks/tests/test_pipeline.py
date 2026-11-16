@@ -33,6 +33,7 @@ from app import db
 from app.modules import checks, content, ledger
 from app.modules.submissions import VersionStateChanged, emit_state_changed
 from app.modules.submissions.models import PaperVersion
+from app.security import issue_access_token
 
 from .pdfs import simple_pdf
 
@@ -261,7 +262,9 @@ def test_the_checks_route_returns_the_report_the_web_parses(client):
     enter_moderation(version_cid, paper_cid)
     result = checks.get_check_result(version_cid)
 
-    response = client.get(f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks")
+    # The version is still in moderation, so only its authors and moderators may read it.
+    moderator = {"Authorization": f"Bearer {issue_access_token('did:key:z6MkModeratorForChecks', 4)}"}
+    response = client.get(f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator)
 
     assert response.status_code == 200
     report = response.json()

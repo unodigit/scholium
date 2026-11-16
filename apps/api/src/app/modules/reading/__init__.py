@@ -10,7 +10,7 @@ importing this package is enough to mount the router under ``/v1``.
 
 from __future__ import annotations
 
-from . import service
+from . import service, visibility
 from .router import router
 
-__all__ = ["router", "service"]
+__all__ = ["router", "service", "visibility"]

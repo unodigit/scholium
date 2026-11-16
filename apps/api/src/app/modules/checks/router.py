@@ -9,10 +9,22 @@ It returns the report the submit wizard's Checks step polls
 from the sanitizer, and the similarity, reference and metadata-match columns
 the background extraction job saves to ``check_results``.
 
-Reading is public, like reading a record or a consent report -- the checks are
-advisory and never block signing.  Until the version's checks have actually run
-there is no row to report, so the route answers **404 problem+json**; the web
-client treats that as "checks pending" rather than as a failed check.
+Reading follows the reading routes' rule, because the report quotes the
+version's text and the pipeline runs for a version as soon as it enters
+``moderation``: a ``listed`` version's checks are public, like reading a
+record or a consent report, while an unlisted version's are pre-listing
+content, served only to that version's authors and to moderators (tier 4).
+Everyone else, anonymous callers included, gets the unknown-version
+**404 problem+json** -- the same answer as for a version this node does not
+hold, and the one the web client already treats as "checks pending".  The
+rule lives in :mod:`app.modules.reading.visibility`, next to its
+content-route twin; it comes before the pending check, so a caller who may
+not read the version cannot even tell whether its checks have run.
+
+An ``Authorization: Bearer`` access token is optional: it is read only to
+widen access to an unlisted version (the caller's authorship or moderator
+tier).  A token that is missing or unusable simply leaves the caller
+anonymous.
 
 The payload carries both the natural camelCase spelling and the flat
 snake_case spellings of the ``check_results`` columns, because the web
@@ -23,9 +35,11 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.errors import ProblemException
+from app.security import InvalidAccessToken, Principal, decode_access_token
 
 from .models import ensure_check_results_table
 from .pipeline import manifest_entries
@@ -58,6 +72,29 @@ def _resolve(paper_id: str, n: int):
     try:
         return reading.resolve_version(paper_id, n)
     except ValueError:
+        return None
+
+
+#: Bearer credentials, read only to widen access to an unlisted version.
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _optional_principal(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> Optional[Principal]:
+    """The caller when the request carries a usable token, otherwise ``None``.
+
+    The report is public for a listed version; a token matters only for a
+    version that is not listed yet, where it carries the caller's authorship
+    or moderator tier.  A token that is present but unusable is ignored
+    rather than turning a readable report into a ``401`` (the same courtesy
+    ``content.router`` pays its readers).
+    """
+    if credentials is None:
+        return None
+    try:
+        return decode_access_token(credentials.credentials)
+    except InvalidAccessToken:
         return None
 
 
@@ -117,10 +154,21 @@ def _signed_title(version_cid: str) -> Optional[str]:
     "/papers/{paper_id}/v/{n}/checks",
     summary="Return a paper version's advisory checks report",
 )
-def get_paper_checks(paper_id: str, n: int) -> dict[str, Any]:
+def get_paper_checks(
+    paper_id: str,
+    n: int,
+    principal: Optional[Principal] = Depends(_optional_principal),
+) -> dict[str, Any]:
     """Return version ``n``'s checks report, or a 404 problem until checks ran."""
+    from app.modules.reading import visibility
+
     ref = _resolve(paper_id, n)
     if ref is None:
+        raise _not_found(paper_id, n)
+    if not visibility.may_read(ref, principal):
+        # Pre-listing report the caller may not see: the unknown-version 404,
+        # ahead of the pending check so it never reveals whether the version
+        # exists or whether its checks have run.
         raise _not_found(paper_id, n)
 
     ensure_check_results_table()

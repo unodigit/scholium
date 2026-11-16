@@ -25,10 +25,12 @@ from typing import Any, Optional
 __all__ = [
     "VersionRef",
     "VersionTakenDown",
+    "VersionUnlisted",
     "get_version_text",
     "is_taken_down",
     "paragraphs_for_version",
     "require_available",
+    "require_readable",
     "resolve_version",
     "text_for_version",
 ]
@@ -53,6 +55,25 @@ class VersionTakenDown(Exception):
         self.paper = paper
         #: The version number as the caller named it.
         self.n = n
+        #: cid of the ``paper.version`` record.
+        self.version_cid = version_cid
+
+
+class VersionUnlisted(ValueError):
+    """A version's text is withheld from the caller because it is not listed.
+
+    The checks pipeline extracts a version's paragraphs when it enters
+    moderation, so its text and checks are pre-listing content until a
+    moderator lists it: readable only by the version's authors and by
+    moderators (tier 4).  Deliberately a :class:`ValueError` -- the routes
+    read it exactly as they read "no such version", with the same ``404``,
+    so a refusal never reveals that the unlisted version exists.
+    """
+
+    def __init__(self, paper: str, version_cid: str) -> None:
+        super().__init__(f"version {version_cid} of {paper} is not listed")
+        #: Canonical paper short id.
+        self.paper = paper
         #: cid of the ``paper.version`` record.
         self.version_cid = version_cid
 
@@ -279,6 +300,20 @@ def require_available(ref: VersionRef, n: Any) -> None:
         raise VersionTakenDown(ref.paper, n, ref.version_cid)
 
 
+def require_readable(ref: VersionRef, principal: Any) -> None:
+    """Raise :class:`VersionUnlisted` when ``principal`` may not read ``ref``.
+
+    ``principal`` is the authenticated caller (an :class:`app.security.Principal`)
+    or ``None`` for an anonymous one.  The rule -- listed is public, unlisted
+    is the version's authors and moderators (tier 4) only -- lives in
+    :mod:`app.modules.reading.visibility`, next to its content-route twin.
+    """
+    from .visibility import may_read
+
+    if not may_read(ref, principal):
+        raise VersionUnlisted(ref.paper, ref.version_cid)
+
+
 def paragraphs_for_version(version_cid: Any) -> list:
     """Return the checks plugin's paragraphs for ``version_cid`` (``[]`` when none)."""
     from app.modules import checks
@@ -444,8 +479,17 @@ def _diff_paragraphs(from_paras: list, to_paras: list) -> dict[str, Any]:
     }
 
 
-def compare_versions(paper: Any, from_n: Any, to_n: Any) -> Optional[dict[str, Any]]:
-    """Compare two versions of ``paper`` and return a diff dict, or ``None``."""
+def compare_versions(
+    paper: Any, from_n: Any, to_n: Any, principal: Any = None
+) -> Optional[dict[str, Any]]:
+    """Compare two versions of ``paper`` and return a diff dict, or ``None``.
+
+    ``principal`` is the authenticated caller (or ``None``): a side that is
+    not ``listed`` may be quoted only to its authors and to moderators, so
+    :class:`VersionUnlisted` -- a :class:`ValueError`, read by the routes as
+    the unknown-version ``404`` -- is raised when the caller may not read
+    either side.
+    """
     from_ref = resolve_version(paper, from_n)
     if from_ref is None:
         return None
@@ -458,6 +502,13 @@ def compare_versions(paper: Any, from_n: Any, to_n: Any) -> Optional[dict[str, A
     # above, so a missing version stays a 404.
     require_available(from_ref, from_n)
     require_available(to_ref, to_n)
+
+    # The pre-listing gate comes next, for either side: the diff quotes both
+    # sides' paragraphs.  Listed versions read as public, an unlisted side
+    # only to its authors and moderators -- the same order /v1/content checks
+    # its tombstone before its listing gate.
+    require_readable(from_ref, principal)
+    require_readable(to_ref, principal)
 
     # Version numbers are not stored on VersionRef; resolve from the URL inputs.
     try:
