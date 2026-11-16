@@ -58,6 +58,8 @@ class Settings:
             problems.append("ORCID_MOCK must be 0")
         if self.ARXIV_MOCK:
             problems.append("ARXIV_MOCK must be 0")
+        if self.JOBS_EAGER:
+            problems.append("JOBS_EAGER must be 0 (jobs run on the background worker)")
         if self.AI_PROVIDER == "fake":
             problems.append("AI_PROVIDER must not be fake")
         if "*" in self.web_origins:

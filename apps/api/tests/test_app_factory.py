@@ -56,5 +56,27 @@ def test_production_accepts_safe_config():
     safe.ORCID_MOCK = 0
     safe.ARXIV_MOCK = 0
     safe.AI_PROVIDER = "anthropic"
+    safe.JOBS_EAGER = 0
     safe.WEB_ORIGINS = "https://scholium.example"
     safe.validate_for_environment()
+
+
+def test_worker_starts_with_app_when_jobs_are_not_eager(monkeypatch):
+    from app import jobs
+    calls = []
+    monkeypatch.setattr(settings, "JOBS_EAGER", 0)
+    monkeypatch.setattr(jobs, "start_worker", lambda: calls.append("start"))
+    monkeypatch.setattr(jobs, "stop_worker", lambda timeout=5.0: calls.append("stop"))
+    with TestClient(main.create_app()):
+        assert calls == ["start"]
+    assert calls == ["start", "stop"]
+
+
+def test_worker_not_started_in_eager_mode(monkeypatch):
+    from app import jobs
+    calls = []
+    monkeypatch.setattr(settings, "JOBS_EAGER", 1)
+    monkeypatch.setattr(jobs, "start_worker", lambda: calls.append("start"))
+    with TestClient(main.create_app()):
+        pass
+    assert calls == []

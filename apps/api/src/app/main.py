@@ -1,16 +1,31 @@
 """FastAPI application factory."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import db, module_loader
+from . import db, jobs, module_loader
 from .middleware import install_write_throttle
 from .settings import settings
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # With JOBS_EAGER=0 jobs are queued in the jobs table; something must run
+    # them. In eager mode (tests, local dev) enqueue runs each job inline.
+    if not jobs.is_eager():
+        jobs.start_worker()
+    try:
+        yield
+    finally:
+        if not jobs.is_eager():
+            jobs.stop_worker()
+
+
 def create_app() -> FastAPI:
     settings.validate_for_environment()
-    app = FastAPI(title="Scholium")
+    app = FastAPI(title="Scholium", lifespan=_lifespan)
 
     # Load modules first so their models register on Base.metadata.
     module_loader.load_modules(app)
