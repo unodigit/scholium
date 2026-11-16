@@ -1,5 +1,7 @@
 """The application factory wires kernel middleware and refuses unsafe production config."""
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -49,16 +51,144 @@ def test_production_refuses_default_secret_and_mocks():
     assert "JWT_SECRET" in str(err.value) and "ORCID_MOCK" in str(err.value)
 
 
-def test_production_accepts_safe_config():
+def _safe_production_settings(tmp_path, monkeypatch) -> Settings:
+    """A fully-configured production Settings, with every requirement satisfied."""
+    node_key = tmp_path / "node.key"
+    node_key.write_bytes(b"\x01" * 32)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     safe = Settings()
     safe.SCHOLIUM_ENV = "production"
     safe.JWT_SECRET = "x" * 48
     safe.ORCID_MOCK = 0
     safe.ARXIV_MOCK = 0
-    safe.AI_PROVIDER = "anthropic"
+    safe.AI_PROVIDER = "ollama"
     safe.JOBS_EAGER = 0
     safe.WEB_ORIGINS = "https://scholium.example"
-    safe.validate_for_environment()
+    safe.NEXT_PUBLIC_API_URL = "https://api.scholium.example"
+    safe.COMMITTEE_PUBLIC_KEY = "ab" * 32
+    safe.SMTP_URL = "smtp://mail.example.org:587"
+    safe.ORCID_CLIENT_ID = "client-id"
+    safe.ORCID_CLIENT_SECRET = "client-secret"
+    safe.NODE_KEY_PATH = str(node_key)
+    safe.REVIEW_UNIQUENESS_KEY = "r" * 48
+    return safe
+
+
+def test_production_accepts_safe_config(tmp_path, monkeypatch):
+    _safe_production_settings(tmp_path, monkeypatch).validate_for_environment()
+
+
+def test_production_refuses_every_missing_runtime_setting(tmp_path, monkeypatch):
+    """Every unsafe/missing setting is reported in one RuntimeError."""
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    unsafe.COMMITTEE_PUBLIC_KEY = ""
+    unsafe.SMTP_URL = ""
+    unsafe.NODE_KEY_PATH = str(tmp_path / "missing.key")
+    unsafe.ORCID_CLIENT_ID = ""
+    unsafe.ORCID_CLIENT_SECRET = ""
+    unsafe.AI_PROVIDER = "anthropic"
+    unsafe.WEB_ORIGINS = "http://localhost:3000"
+    unsafe.NEXT_PUBLIC_API_URL = "http://localhost:8000"
+    unsafe.REVIEW_UNIQUENESS_KEY = ""
+
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+
+    message = str(err.value)
+    for name in (
+        "COMMITTEE_PUBLIC_KEY",
+        "SMTP_URL",
+        "NODE_KEY_PATH",
+        "ORCID_CLIENT_ID",
+        "ORCID_CLIENT_SECRET",
+        "ANTHROPIC_API_KEY",
+        "WEB_ORIGINS",
+        "NEXT_PUBLIC_API_URL",
+        "REVIEW_UNIQUENESS_KEY",
+    ):
+        assert name in message, f"{name} not reported: {message}"
+
+
+def test_production_refuses_short_review_uniqueness_key(tmp_path, monkeypatch):
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    unsafe.REVIEW_UNIQUENESS_KEY = "too-short"
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "REVIEW_UNIQUENESS_KEY" in str(err.value)
+
+
+def test_create_app_refuses_unsafe_production(monkeypatch, tmp_path):
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    for name in (
+        "SCHOLIUM_ENV", "JWT_SECRET", "ORCID_MOCK", "ARXIV_MOCK", "AI_PROVIDER",
+        "JOBS_EAGER", "WEB_ORIGINS", "NEXT_PUBLIC_API_URL", "COMMITTEE_PUBLIC_KEY",
+        "SMTP_URL", "ORCID_CLIENT_ID", "ORCID_CLIENT_SECRET", "NODE_KEY_PATH",
+        "REVIEW_UNIQUENESS_KEY",
+    ):
+        monkeypatch.setattr(settings, name, getattr(unsafe, name))
+    monkeypatch.setattr(settings, "COMMITTEE_PUBLIC_KEY", "")
+    with pytest.raises(RuntimeError) as err:
+        main.create_app()
+    assert "COMMITTEE_PUBLIC_KEY" in str(err.value)
+
+
+def test_review_uniqueness_key_dev_default_is_derived_and_distinct(monkeypatch):
+    monkeypatch.delenv("REVIEW_UNIQUENESS_KEY", raising=False)
+    first = Settings()
+    second = Settings()
+    assert first.SCHOLIUM_ENV == "dev"
+    assert len(first.REVIEW_UNIQUENESS_KEY) >= 32
+    assert first.REVIEW_UNIQUENESS_KEY != first.JWT_SECRET
+    assert first.REVIEW_UNIQUENESS_KEY == second.REVIEW_UNIQUENESS_KEY
+
+
+def test_dev_outbox_never_logs_token_bearing_links(caplog):
+    """The outbox logger must not put verification tokens in the log."""
+    from app.modules.notifications.emailer import (
+        build_email,
+        clear_outbox,
+        get_outbox,
+        log_to_outbox,
+    )
+
+    token = "s3cr3t-verification-token"
+    clear_outbox()
+    try:
+        with caplog.at_level(logging.INFO, logger="outbox"):
+            email = build_email(
+                "did:example:alice",
+                "email.verification",
+                {"email": "alice@example.org", "link": f"https://api.example/v1/verify?token={token}"},
+            )
+            log_to_outbox(email)
+
+        assert "outbox email" in caplog.text
+        assert token not in caplog.text
+        # The body is still available from the in-process outbox.
+        assert token in get_outbox()[-1]["body"]
+    finally:
+        clear_outbox()
+
+
+def test_outbox_is_bounded():
+    from app.modules.notifications.emailer import (
+        OUTBOX_MAX_ENTRIES,
+        build_email,
+        clear_outbox,
+        get_outbox,
+        log_to_outbox,
+    )
+
+    clear_outbox()
+    try:
+        for index in range(OUTBOX_MAX_ENTRIES + 25):
+            log_to_outbox(build_email(f"did:example:user{index}", "digest"))
+        entries = get_outbox()
+        assert len(entries) == OUTBOX_MAX_ENTRIES
+        # Oldest entries are dropped; the newest are kept.
+        assert entries[-1]["did"] == f"did:example:user{OUTBOX_MAX_ENTRIES + 24}"
+    finally:
+        clear_outbox()
 
 
 def test_worker_starts_with_app_when_jobs_are_not_eager(monkeypatch):

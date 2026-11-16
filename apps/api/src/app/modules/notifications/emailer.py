@@ -3,9 +3,10 @@
 ``notify()`` renders one :class:`Email` per notification and then either
 
 * hands it to an SMTP server when ``SMTP_URL`` is configured, or
-* logs it to the outbox (a dedicated ``outbox`` logger plus an in-process
-  list) when it is not -- and also when an SMTP delivery fails, so an email
-  is never silently dropped.
+* records it in the outbox (a dedicated ``outbox`` logger plus a bounded
+  in-process list) when it is not -- and also when an SMTP delivery fails,
+  so an email is never silently dropped.  The log line names the recipient
+  and subject but never the body, which can carry a verification token.
 
 ``SMTP_URL`` accepts the usual URL forms::
 
@@ -23,6 +24,7 @@ from __future__ import annotations
 import logging
 import smtplib
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import Any, Mapping, Optional
@@ -31,6 +33,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 __all__ = [
     "DEFAULT_FROM",
     "Email",
+    "OUTBOX_MAX_ENTRIES",
     "SMTPConfig",
     "build_email",
     "get_outbox",
@@ -52,7 +55,11 @@ _LINK_KEYS = ("link", "url", "consent_link")
 
 outbox_logger = logging.getLogger("outbox")
 
-_outbox: list[dict[str, Any]] = []
+#: The in-process outbox is a development/test convenience, not a queue: keep
+#: it bounded so a long-running dev process cannot grow without limit.
+OUTBOX_MAX_ENTRIES = 100
+
+_outbox: deque[dict[str, Any]] = deque(maxlen=OUTBOX_MAX_ENTRIES)
 _outbox_lock = threading.Lock()
 
 
@@ -183,20 +190,25 @@ def log_to_outbox(email: Email, *, reason: str = "") -> dict[str, Any]:
         entry["reason"] = reason
     with _outbox_lock:
         _outbox.append(entry)
+    # Never put the body in the log: it can carry a verification token or
+    # consent link, and INFO logs are routinely shipped off the machine.  The
+    # full body stays in the bounded in-process outbox for local debugging.
     if reason:
         outbox_logger.info(
-            "outbox email (not sent: %s) to=%s subject=%s body=%s",
+            "outbox email (not sent: %s) to=%s subject=%s kind=%s notification_id=%s",
             reason,
             email.to,
             email.subject,
-            email.body,
+            email.kind,
+            email.notification_id,
         )
     else:
         outbox_logger.info(
-            "outbox email to=%s subject=%s body=%s",
+            "outbox email to=%s subject=%s kind=%s notification_id=%s",
             email.to,
             email.subject,
-            email.body,
+            email.kind,
+            email.notification_id,
         )
     return entry
 
