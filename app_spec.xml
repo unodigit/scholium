@@ -16,11 +16,12 @@
     library node operators. Pilot community: AI/ML researchers.
   </target_audience>
   <layout>
-    <zone root="apps/api" profile="uv-workspace"/>
+    <zone root="apps/api" profile="uv-workspace">
+      <seam tier="discovery">apps/api/src/app/module_loader.py</seam>
+    </zone>
     <zone root="apps/web" profile="pnpm-single-app">
       <root template="apps/web/src/app/({plugin})/**" optional="true"/>
     </zone>
-    <seam tier="discovery">apps/api/src/app/module_loader.py</seam>
   </layout>
   <technology_stack>
     <frontend>
