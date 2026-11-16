@@ -649,6 +649,12 @@ def _first_commit_at(version_cid: str) -> Optional[datetime]:
     return first
 
 
+def _require_revealed(sealed: Review) -> None:
+    """An update revises a revealed review; one still sealed keeps its gate shut (``409``)."""
+    if sealed.revealed_at is None:
+        raise RevealGateClosed(sealed.version_cid, _independent_reviewers(sealed.version_cid))
+
+
 def require_reveal_gate_open(version_cid: str) -> None:
     """Refuse (``409``) a reveal until the version's report gate opens.
 
@@ -961,12 +967,14 @@ def handle_review_reveal(record: Mapping[str, Any]) -> str:
         # An update is a review record too, and its rules need the endpoint's
         # caller; it is refused on the generic route before anything else.
         require_dedicated_route(REVIEW_FORMAL_TYPE, "POST /v1/reviews/reveal")
-        _require_update(fields, earlier)
-        # An update publishes a report for the version it targets, and that
-        # version's reviewers are independent of the earlier version's: the
-        # gate is about the target, and the earlier review being open changes
-        # nothing about it.
-        require_reveal_gate_open(fields.version_cid)
+        sealed = _require_update(fields, earlier)
+        # REV-5: a reviewer revises their review against a newer version.  The
+        # revised review was revealed, which the gate allowed only once it
+        # opened, so its report is already public; an update reveals nothing a
+        # new reviewer of the newer version could not already read.  Gating it
+        # on fresh commits for the newer version would leave a reviewer unable
+        # to answer the author's revision until strangers review it.
+        _require_revealed(sealed)
         return REVEALED
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:
@@ -1020,7 +1028,7 @@ def apply_review_reveal(
     earlier = _earlier_review(fields)
     if earlier is not None:
         sealed = _require_update(fields, earlier)
-        require_reveal_gate_open(fields.version_cid)
+        _require_revealed(sealed)
         return _save_public_signature(sealed, fields, signer_did)
     review = _require_sealed_review(fields)
     if review.revealed_at is not None:

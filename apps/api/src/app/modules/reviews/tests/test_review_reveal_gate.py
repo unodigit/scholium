@@ -313,7 +313,7 @@ def test_a_commit_the_log_could_not_append_does_not_keep_the_slot_it_reserved(mo
 
 
 # --------------------------------------------------------------------------- #
-# 2. The gate applies to an update, for the version it targets
+# 2. Updates (REV-5) and the 21-day fallback (REV-4)
 # --------------------------------------------------------------------------- #
 
 
@@ -325,74 +325,29 @@ def _revealed_on_v1_with_an_ungated_v2():
     return reviewer, paper, commit, first, v2
 
 
-def test_an_update_to_a_version_without_two_commits_is_refused_and_not_logged():
-    reviewer, paper, _, first, v2 = _revealed_on_v1_with_an_ungated_v2()
-    update = update_record(
-        reviewer, paper, v2, first["id"], report="A report nobody may read on v2 yet."
-    )
+def test_an_update_against_a_newer_version_needs_no_fresh_commits_on_it():
+    """REV-5: a reviewer revises a revealed review against v2 without waiting for v2 reviewers.
 
-    response = client.post(REVEAL_URL, json=update, headers=reviewer.headers)
-
-    assert response.status_code == 409, response.text
-    assert _problem_type(response) == REVEAL_GATE_CLOSED
-    assert response.json()["version"] == v2
-    # Nothing reached the append-only log, so GET /v1/records/{cid} cannot serve it.
-    assert ledger.entry_by_cid(update["id"]) is None
-    assert client.get(f"{RECORDS_URL}/{update['id']}").status_code == 404
-
-
-def test_one_commit_on_the_target_version_does_not_open_its_gate_for_an_update():
-    reviewer, paper, _, first, v2 = _revealed_on_v1_with_an_ungated_v2()
-    other = Reviewer()
-    body = other.rubric(paper)
-    body["target"] = v2
-    response = client.post(COMMIT_URL, json=_seal(other, paper, body), headers=other.headers)
-    assert response.status_code == 201, response.text
-    update = update_record(reviewer, paper, v2, first["id"])
-
-    response = client.post(REVEAL_URL, json=update, headers=reviewer.headers)
-
-    assert response.status_code == 409, response.text
-    assert _problem_type(response) == REVEAL_GATE_CLOSED
-    assert response.json()["committed"] == 1
-    assert ledger.entry_by_cid(update["id"]) is None
-
-
-def test_an_update_is_accepted_once_the_target_versions_gate_opens():
+    The revised review was revealed only after its own version's gate opened, so
+    its report is already public; the update reveals nothing a new reviewer of
+    v2 could not already read.
+    """
     reviewer, paper, commit, first, v2 = _revealed_on_v1_with_an_ungated_v2()
-    update = update_record(
-        reviewer, paper, v2, first["id"], report="The revised report, for an open gate."
-    )
-    refused = client.post(REVEAL_URL, json=update, headers=reviewer.headers)
-    assert refused.status_code == 409, refused.text
-    assert _problem_type(refused) == REVEAL_GATE_CLOSED
+    assert reveal_gate_open(v2) is False
+    update = update_record(reviewer, paper, v2, first["id"], report="The revised report.")
 
-    # Two independent people commit on v2: the gate opens for that version.
-    # ``commit_on`` also tops up a shadow when it is still short, so the count
-    # is two people whatever the helper's setup added.
-    newcomer = Reviewer()
-    body = newcomer.rubric(paper)
-    body["target"] = v2
-    commit_on(newcomer, paper, v2, body)
-    assert reveal_gate_open(v2) is True
     response = client.post(REVEAL_URL, json=update, headers=reviewer.headers)
 
     assert response.status_code == 201, response.text
-    # The REV-5 semantics are unchanged: the same review, replaced once.
     assert response.json()["review"] == commit["id"]
     assert response.json()["prev"] == first["id"]
-    stored = client.get(f"{RECORDS_URL}/{update['id']}")
-    assert stored.status_code == 200, stored.text
-    assert stored.json()["body"]["report"] == "The revised report, for an open gate."
 
 
-def test_applying_an_update_checks_the_gate_too():
-    """``apply_review_reveal`` runs after the append (and for the ledger subscriber)."""
+def test_applying_an_update_does_not_need_the_new_versions_gate():
     reviewer, paper, _, first, v2 = _revealed_on_v1_with_an_ungated_v2()
     update = update_record(reviewer, paper, v2, first["id"])
 
-    with pytest.raises(RevealGateClosed):
-        apply_review_reveal(update, signer_did=reviewer.did)
+    assert apply_review_reveal(update, signer_did=reviewer.did) is not None
 
 
 def _lone_commit():

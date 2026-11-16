@@ -528,23 +528,6 @@ def test_review_journey(client, node, reviewer):
     assert paper.json()["status"] == UNDER_REVIEW, paper.text
 
     # --- 7. the concerned reviewer revises their review against v2 ---------
-    # An update publishes a report for the version it targets, so that version
-    # has its own report gate: two independent reviewers commit on v2 first.
-    # Neither of the paper's two reviewers may commit again (one review per
-    # person per paper), so these are new members.
-    for _ in range(2):
-        newcomer = Reviewer(client)
-        newcomer_body = newcomer.review_body(
-            paper_cid,
-            v2,
-            score=3,
-            recommendation="minor_revisions",
-            report="A reviewer of version 2's report.",
-        )
-        committed = newcomer.commit(paper_cid, v2, newcomer_body)
-        assert committed.status_code == 201, committed.text
-    assert listed_reviews(client, short_id)["gate_open"] is True
-
     revised = second.update(
         paper_cid,
         v2,
@@ -564,10 +547,9 @@ def test_review_journey(client, node, reviewer):
     assert paper.json()["n"] == 2, paper.text
 
     # The updating reviewer is one entry with both reviews in its history, and
-    # the newest review is the one it stands on.  (The two reviewers who opened
-    # v2's gate are listed as sealed reviews of their own.)
+    # the newest review is the one it stands on.
     listing = listed_reviews(client, short_id)
-    entry = by_review_cid(listing)[second_commit_cid]
+    [entry] = listing["reviews"]
     assert entry["review_cid"] == second_commit_cid, entry
     assert [revision["n"] for revision in entry["history"]] == [1, 2], entry
     assert [revision["id"] for revision in entry["history"]] == [
