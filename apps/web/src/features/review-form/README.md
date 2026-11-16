@@ -22,7 +22,7 @@ card](#replying-and-rating-on-the-review-card)).
 | Right, top | The anonymity notice, in the design's words: "You are reviewing anonymously. Your identity is hidden from authors, readers and this node. It can be opened only by 3 of 5 integrity committee members in a misconduct case." Beneath it, **Sign with my name instead**. |
 | Right, above the form | **Conflict check** — the three checks for this reviewer, each with an icon and a status word: not an author, no co-authorship in 3 years, different institution. |
 | Right | Six rubric dimensions, each five `1`–`5` radios and a **required** justification box; **Confidence** (Low / Medium / High); **Recommendation** (Sound as is / Minor revisions / Major concerns / Fundamentally flawed); the checkbox "I used AI assistance in writing this review (declared on the report)"; a progress line. |
-| Right, bottom | **Commit review**. After a successful commit the form is replaced by **Your review is sealed**, the reveal date and the review id. |
+| Right, bottom | **Commit review**. After a successful commit the form is replaced by **Your review is sealed**, the reveal date, the review id and **Reveal review**; a revealed review says **Your review is revealed** (see [Revealing](#revealing)). |
 
 Nothing is pre-chosen: every radio starts unselected and the AI box starts
 unticked, so every answer is a decision.
@@ -183,6 +183,45 @@ draft in the form: a cancelled passkey, no device key, an ended session
 (`401`, with a sign-in link), a refused author or lower tier (`403`), a second
 review on the same paper (`409`), an offline API, or the API's own detail.
 
+## Revealing
+
+A commit only seals the review: the public record carries the commitment, not
+the review. `POST /v1/reviews/reveal` opens it as a signed `review.formal`
+whose content hashes to that commitment, and the API refuses a first reveal
+until the reveal gate is open (two independent reviews committed on the
+version, or `REVEAL_WINDOW_DAYS` after the first).
+
+The sealed card is where the reviewer opens it:
+
+- **The gate is read, then honoured.** Pressing **Reveal review** first reads
+  the public `GET /v1/papers/{id}/reviews` for this version's `gate_open`.
+  While it is shut the card says so in words ("The report gate is still closed
+  for this version…") and signs nothing, so no passkey prompt is spent on a
+  reveal the API would refuse. Once it opens the same action signs and sends.
+  An unreadable gate (or one about a newer version) still proceeds: **the API
+  is the gate**, and a refusal is shown in its own words.
+- **The reveal signs with the same per-paper key.** Pressing **Reveal review**
+  derives the review key again from the device key (one passkey prompt; the
+  seed is never stored), signs a `review.formal` with the sealed content plus
+  the commitment (`buildRevealBody`), and posts it to
+  `POST /v1/reviews/reveal` with the reviewer's access token. Nothing is sent
+  until the record is signed.
+- **The content is kept locally until then.** A successful commit stores the
+  material the reveal needs — the paper id, version, review cid, reveal date,
+  commitment and the `review.formal` body — under
+  `scholium.sealed-review.v1:{paperId}` in `localStorage`
+  (`sealed-review.ts`). Returning to `/review/{id}` therefore shows the sealed
+  card again instead of a blank form, with the reveal action. The entry is
+  removed the moment the reveal is accepted. The signing key is not stored:
+  it is derived again, from the device key, at reveal time.
+- **What it says.** While the gate is read the button reads **Checking…**, and
+  while the reveal is signing **Revealing…**. On success the card says **Your
+  review is revealed**, that the rubric and report are now public, and names
+  the review. A failure says what happened and **Nothing was sent.**, keeps
+  the sealed card and the action, and offers **Sign in** when the session has
+  ended. The gate's own `409` detail ("The report gate is still closed for
+  this version…") is shown as the API wrote it.
+
 ## Validation
 
 A dimension is complete only with **both** a score and a non-blank
@@ -268,8 +307,8 @@ chosen rating where it was.
 ### Mounting it on the card
 
 The review card itself belongs to `paper-reviews` (`reviews-tab.tsx`), another
-plugin, so this feature ships the component and does not edit that file. The
-card mounts it with one line after its replies:
+plugin, so this feature ships the component. The card mounts it with one line
+after its replies:
 
 ```tsx
 import { ReviewCardActions } from "../review-form";
@@ -277,8 +316,9 @@ import { ReviewCardActions } from "../review-form";
 <ReviewCardActions review={review} paperId={paperId} />
 ```
 
-`ReviewCard` needs `paperId`, which `ReviewsView` already holds. Until that
-line is added the Reviews tab shows no reply form or rating.
+`ReviewCard` takes `paperId`, which `ReviewsView` already holds. The actions
+decide for themselves whether there is anything to show, so the line is
+harmless on every card.
 
 ## Layout
 
@@ -323,7 +363,9 @@ reviews would invite a review of the wrong paper. The page sends
 | `conflict-check.tsx` | The three checks above the form (client component; loads when signed in). |
 | `review-key.ts` | Per-paper review key derivation and the nullifier. |
 | `commit.ts` | Canonical JSON, the commitment, the commit body, signing/submission and commit failures. |
-| `review-form.tsx` | The rubric form and Commit review (client component; holds the draft and the sealed state). |
+| `reveal.ts` | The reveal: the `review.formal` body, signing with the per-paper key, `POST /v1/reviews/reveal`, the gate read and reveal failures. |
+| `sealed-review.ts` | The committed-but-unrevealed review kept on the device, so a return to the page can reveal it. |
+| `review-form.tsx` | The rubric form, Commit review, the sealed card and its Reveal action (client components; hold the draft and the sealed state). |
 | `paper-pane.tsx` | The paper on the left. Server-safe; writes each block's `data-cite`. |
 | `anonymity-notice.tsx` | The notice and **Sign with my name instead** (client component; reads the session). |
 | `identity.ts` | The words for the identity choice and the stylometry tip, so the notice, the form and the sealed card never drift. Pure. |
@@ -341,7 +383,7 @@ reviews would invite a review of the wrong paper. The page sends
 | `review-actions.tsx` | `ReviewCardActions`, the reply form and the rating control (client components). |
 | `review-actions.css` | Their styles; every value is a design token; prefix `ra-`. |
 | `index.ts` | Public surface for later features of this plugin. |
-| `*.test.ts(x)` | Rubric, paper loading, conflict check, key derivation, commitment vectors (signed and anonymous, against the API's own digest), commit flow, form behaviour, the identity choice, selections and citations (real DOM ranges), page composition, server render of the route, stylesheet contract. |
+| `*.test.ts(x)` | Rubric, paper loading, conflict check, key derivation, commitment vectors (signed and anonymous, against the API's own digest), commit flow, the reveal flow and its gate, form behaviour, the identity choice, selections and citations (real DOM ranges), page composition, server render of the route, stylesheet contract. |
 | `app/(review-form)/layout.tsx` | Global nav + page shell (`rfs-shell`). |
 | `app/(review-form)/review-form-shell.css` | The shell's width (wider than the reading column). |
 | `app/(review-form)/review/[id]/page.tsx` | The `/review/[id]` route: metadata, id parsing, loading. |
@@ -350,9 +392,9 @@ reviews would invite a review of the wrong paper. The page sends
 
 - **No Save draft.** The design shows one beside Commit review; this feature
   commits only. A draft is not persisted, so a reload loses it.
-- **No reveal flow.** Committing seals the review; `POST /v1/reviews/reveal`
-  and its UI are a later feature. The commitment is built now so the reveal
-  can match it.
+- **No reveal from the dashboard.** `/me` lists a reviewer's sealed and
+  revealed reviews; opening one happens on `/review/{id}`, where the sealed
+  material is kept. A "Reveal" action on the dashboard card is a later feature.
 - **No stepped pages under 640 px.** design.md §10 asks for the review form as
   stepped pages on phones; here it is one long column under the paper.
 - **No "Open reproduction log"** beside Reproducibility (design.md §5.5).

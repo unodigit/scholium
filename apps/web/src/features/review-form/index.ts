@@ -23,6 +23,11 @@
  * <ReviewCardActions review={review} paperId="sch:k3f9-q2xz-7mwd" />
  * ```
  *
+ * Committing seals the review; {@link revealReview} opens it once the gate is
+ * open, and {@link SealedNotice} is the card that offers it. The sealed review
+ * is kept on the device (`sealed-review.ts`) so a return to the page can
+ * reveal it.
+ *
  * The anonymity notice offers "Sign with my name instead", the form shows the
  * stylometry tip to a reviewer who stays anonymous, and selecting text in the
  * paper offers "Cite in review". The three share a {@link ReviewSession}.
@@ -189,6 +194,47 @@ export {
   type SignCommitRecord,
   type SubmitCommitRecord,
 } from "./commit";
+
+export {
+  REVEAL_GATE_CLOSED_NOTE,
+  REVEAL_ENDPOINT,
+  REVEAL_LABEL,
+  REVEAL_SIGNING_NOTE,
+  REVEALED_HEADLINE,
+  REVEALED_TEXT,
+  REVIEW_FORMAL_TYPE,
+  ReviewRevealInputError,
+  WrongRevealRecordError,
+  buildRevealBody,
+  describeRevealError,
+  loadRevealGate,
+  parseRevealGate,
+  revealReview,
+  type GateClient,
+  type LoadRevealGate,
+  type RevealAccepted,
+  type RevealGate,
+  type RevealReview,
+  type RevealSeams,
+  type ReviewFormalBody,
+  type ReviewRevealInput,
+  type ReviewRevealResult,
+  type SignRevealRecord,
+  type SubmitRevealRecord,
+} from "./reveal";
+
+export {
+  SEALED_REVIEW_PREFIX,
+  browserSealedReviewStorage,
+  forgetSealedReview,
+  loadSealedReview,
+  parseSealedReview,
+  saveSealedReview,
+  sealedReviewFromCommit,
+  sealedReviewKey,
+  type SealedReview,
+  type SealedReviewStorage,
+} from "./sealed-review";
 
 export {
   REVIEW_KEY_DOMAIN,

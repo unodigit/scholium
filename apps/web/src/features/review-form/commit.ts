@@ -80,6 +80,12 @@ export interface ReviewCommitResult {
   readonly reviewCid: string;
   /** When the review will be revealed (ISO 8601, UTC). */
   readonly revealAt: string;
+  /**
+   * The `review.formal` content the commitment seals. The reveal signs this
+   * body with the commitment added (`reviewRevealBody`), so keep it: the form
+   * keeps it on the device until the reviewer reveals the review.
+   */
+  readonly revealBody: Record<string, unknown>;
   /** The signed record, for callers that need it. */
   readonly record: SignedRecord;
   /** The body that was signed. */
@@ -351,7 +357,12 @@ export async function commitReview(
   toReviewBody(input.draft);
 
   const key = await deriveKey(input.paperId);
-  const { body } = buildReviewCommit(input.draft, versionCid, key, input.paperId);
+  const { body, revealBody } = buildReviewCommit(
+    input.draft,
+    versionCid,
+    key,
+    input.paperId,
+  );
 
   const record = await sign(REVIEW_COMMIT_TYPE, body, null, {
     signer: reviewRecordSigner(key),
@@ -379,7 +390,7 @@ export async function commitReview(
     readText(accepted.revealAt) ??
     revealDateFor(record.created);
 
-  return { reviewCid, revealAt, record, body };
+  return { reviewCid, revealAt, revealBody, record, body };
 }
 
 /** What the form shows when a commit fails: a sentence and an optional sign-in. */

@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apiErrorFrom } from "../../lib/api";
+import { apiErrorFrom, tokenStore } from "../../lib/api";
 
 import { ReviewsTab } from "./reviews-tab";
 import { emptyReviews, parseReviews, type ReviewsData } from "./review";
@@ -49,7 +49,11 @@ function renderTab(initial: ReviewsData | undefined, extra: Record<string, unkno
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  tokenStore.clear();
+  vi.unstubAllGlobals();
+});
 
 describe("a review card", () => {
   it("shows the reviewer label, recommendation and date", () => {
@@ -146,6 +150,67 @@ describe("a review card", () => {
     const replies = container.querySelector(".pr-replies") as HTMLElement;
     expect(within(replies).getAllByText("Soundness")).toHaveLength(1);
     expect(within(replies).getAllByText("Evidence")).toHaveLength(1);
+  });
+});
+
+describe("the actions on a revealed review card", () => {
+  /** An unsigned JWT: the actions only read its claims. */
+  function sessionToken(claims: unknown): string {
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    return `${encode({ alg: "HS256" })}.${encode(claims)}.sig`;
+  }
+
+  const AUTHOR = "did:key:z6MkAuthor";
+  const MEMBER = "did:key:z6MkMember";
+
+  function stubByline(dids: string[]): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ authors: dids.map((did) => ({ did })) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("shows a paper author the point-by-point reply form", async () => {
+    tokenStore.set({ accessToken: sessionToken({ sub: AUTHOR, tier: 2 }) });
+    stubByline([AUTHOR]);
+
+    renderTab(dataOf(review({ report: "The paper is careful." })));
+
+    expect(await screen.findByText("Reply point by point")).toBeTruthy();
+  });
+
+  it("shows a tier-3 member the quality rating", async () => {
+    tokenStore.set({ accessToken: sessionToken({ sub: MEMBER, tier: 3 }) });
+    stubByline(["did:key:z6MkOther"]);
+
+    renderTab(dataOf(review({ report: "The paper is careful." })));
+
+    expect(await screen.findByText("Rate this review’s quality")).toBeTruthy();
+  });
+
+  it("offers nothing on a sealed review", () => {
+    tokenStore.set({ accessToken: sessionToken({ sub: MEMBER, tier: 3 }) });
+    const fetchMock = stubByline([]);
+
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [review()],
+      }),
+    );
+
+    expect(screen.queryByText("Rate this review’s quality")).toBeNull();
+    expect(screen.queryByText("Reply point by point")).toBeNull();
+    // A sealed review is not answered or rated, so there is no byline read.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

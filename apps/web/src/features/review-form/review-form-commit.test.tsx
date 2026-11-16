@@ -12,7 +12,11 @@ import {
   type ReviewDraft,
 } from "./rubric";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A successful commit keeps the review on the device for its later reveal.
+  window.localStorage.clear();
+});
 
 function completeDraft(): ReviewDraft {
   return RUBRIC_DIMENSIONS.reduce(
@@ -30,6 +34,13 @@ function result(revealAt = "2026-12-14T00:00:00.000Z"): ReviewCommitResult {
   return {
     reviewCid: "bafycommitted",
     revealAt,
+    revealBody: {
+      target: "bafyversion",
+      scores: {},
+      confidence: "high",
+      recommendation: "sound_as_is",
+      aiAssisted: false,
+    },
     record: {
       v: 1,
       type: "review.commit",

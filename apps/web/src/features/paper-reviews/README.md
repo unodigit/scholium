@@ -32,6 +32,8 @@ page's `/p/{id}[/v{n}]`; the `sch:` prefix is optional.
 │ ▸ Read the report                               │  ← <details>
 │ Author reply · v2                               │
 │   Soundness  The baseline is named in §3.2.     │
+│ ▸ Reply point by point   (authors)              │  ← review-form
+│ Rate this review’s quality (tier-3 members)     │  ← review-form
 └────────────────────────────────────────────────┘
 ```
 
@@ -49,6 +51,12 @@ page's `/p/{id}[/v{n}]`; the `sch:` prefix is optional.
 - **Author replies travel with the card.** Point-by-point answers
   (`review.response` items, keyed by rubric dimension) are labelled with the
   dimension they answer; a plain reply is shown as prose.
+- **A revealed card carries its actions.** The foot of every revealed card
+  mounts `ReviewCardActions` from `review-form`: a paper author sees **Reply
+  point by point** and a tier-3 member who is not an author sees **Rate this
+  review’s quality**. The component offers nothing on a sealed review or to a
+  reader who may not act, and the API is the gate for both. See
+  `review-form/README.md` for who is offered what.
 
 ## Where the data comes from
 
@@ -73,6 +81,6 @@ reader's browser.
 | --- | --- |
 | `review.ts` | Wire parsing, labels, medians, score text, dates |
 | `reviews-api.ts` | `GET /papers/{id}/reviews`, error classification |
-| `reviews-tab.tsx` | The panel, summary bar and review cards |
+| `reviews-tab.tsx` | The panel, summary bar and review cards (each revealed card mounts `review-form`'s `ReviewCardActions`) |
 | `reviews-tab.css` | Tokens-only styles (`pr-` prefix) |
 | `app/(paper-reviews)/` | The `/reviews/{id}[/v{n}]` route and shell |

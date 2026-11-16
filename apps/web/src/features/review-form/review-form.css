@@ -637,6 +637,19 @@
   overflow-wrap: anywhere;
 }
 
+/* The reveal action beneath the sealed card: what signing does, then the
+   button. The quiet "Check again" sits the same way. */
+.rf-reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.rf-reveal .rf-button {
+  margin-top: 0;
+}
+
 /* A link in prose: the accent colour and an underline, so it is not colour
    alone; the focus ring is the shared one. */
 .rf-link {

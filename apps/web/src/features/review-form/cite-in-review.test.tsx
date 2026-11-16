@@ -39,6 +39,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   window.getSelection()?.removeAllRanges();
+  // A successful commit keeps the review on the device for its later reveal.
+  window.localStorage.clear();
   vi.useRealTimers();
 });
 
@@ -376,6 +378,13 @@ describe("Cite in review when the draft may not change", () => {
     return {
       reviewCid: "bafycommitted",
       revealAt: "2026-12-14T00:00:00.000Z",
+      revealBody: {
+        target: "bafyversion",
+        scores: {},
+        confidence: "high",
+        recommendation: "sound_as_is",
+        aiAssisted: false,
+      },
       record: {
         v: 1,
         type: "review.commit",

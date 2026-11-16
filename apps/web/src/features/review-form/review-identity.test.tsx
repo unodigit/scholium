@@ -30,7 +30,11 @@ import {
   type ReviewDraft,
 } from "./rubric";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A successful commit keeps the review on the device for its later reveal.
+  window.localStorage.clear();
+});
 
 const PAPER: ReviewPaper = {
   shortId: "sch:6sel-2dio-orm6",
@@ -58,6 +62,13 @@ function result(): ReviewCommitResult {
   return {
     reviewCid: "bafycommitted",
     revealAt: "2026-12-14T00:00:00.000Z",
+    revealBody: {
+      target: "bafyversion",
+      scores: {},
+      confidence: "high",
+      recommendation: "sound_as_is",
+      aiAssisted: false,
+    },
     record: {
       v: 1,
       type: "review.commit",

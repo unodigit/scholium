@@ -14,6 +14,12 @@
  * "Your review is sealed" and the date the review will be revealed. A failed
  * commit says what happened and that nothing was sent; the draft is kept.
  *
+ * The sealed card is where the review is opened. It offers **Reveal review**,
+ * which checks the reveal gate, then signs the `review.formal` with the same
+ * per-paper key and posts it to `POST /v1/reviews/reveal`; the content the
+ * reveal needs was kept on the device at commit time, so returning to the
+ * page shows the sealed card rather than a second blank form.
+ *
  * Two things around the rubric belong to feature 167 and share state with the
  * rest of the page through the review session (`review-session.tsx`):
  *
@@ -44,6 +50,7 @@ import {
 
 import { useSignedIn } from "../../components/nav/session";
 import { Icon } from "../ui-kit/icons";
+import type { ActionFailure } from "./action-errors";
 import { appendCitation, describeCitation, type Citation } from "./citation";
 import {
   SEALED_HEADLINE,
@@ -62,10 +69,31 @@ import {
 } from "./identity";
 import { reviewSignInHref } from "./links";
 import {
+  REVEAL_GATE_CLOSED_NOTE,
+  REVEAL_LABEL,
+  REVEAL_SIGNING_NOTE,
+  REVEALED_HEADLINE,
+  REVEALED_TEXT,
+  describeRevealError,
+  loadRevealGate,
+  revealReview,
+  type LoadRevealGate,
+  type RevealGate,
+  type RevealReview,
+  type ReviewRevealResult,
+} from "./reveal";
+import {
   ReviewSessionProvider,
   useReviewSession,
   type ReviewSession,
 } from "./review-session";
+import {
+  forgetSealedReview,
+  loadSealedReview,
+  saveSealedReview,
+  sealedReviewFromCommit,
+  type SealedReview,
+} from "./sealed-review";
 import {
   CONFIDENCE_OPTIONS,
   RECOMMENDATION_OPTIONS,
@@ -123,6 +151,10 @@ export interface ReviewFormProps {
   signInHref?: string;
   /** Replace the commit flow (derive key, sign and send), for tests. */
   commit?: CommitReview;
+  /** Replace the reveal flow (derive key, sign and send), for tests. */
+  reveal?: RevealReview;
+  /** Replace the reveal-gate read, for tests. */
+  loadGate?: LoadRevealGate;
 }
 
 type Phase = "editing" | "signing" | "sealed";
@@ -160,6 +192,8 @@ function ReviewFormBody({
   signedIn: signedInOverride,
   signInHref: signInHrefOverride,
   commit: commitOverride,
+  reveal: revealOverride,
+  loadGate,
   session,
 }: ReviewFormProps & { session: ReviewSession }) {
   const uid = useId();
@@ -176,7 +210,7 @@ function ReviewFormBody({
   const [visited, setVisited] = useState<Partial<Record<DimensionId, true>>>({});
   const [submitted, setSubmitted] = useState(false);
   const [phase, setPhase] = useState<Phase>("editing");
-  const [sealed, setSealed] = useState<ReviewCommitResult | null>(null);
+  const [sealed, setSealed] = useState<SealedReview | null>(null);
   const [error, setError] = useState<CommitFailure | null>(null);
 
   // Cite in review: the box a quote goes into, and the last quote placed.
@@ -220,12 +254,31 @@ function ReviewFormBody({
     box.scrollTop = box.scrollHeight;
   }, [cited]);
 
+  // A reviewer who comes back to the page still has the review they sealed:
+  // what the commit left on the device is what the reveal needs. Read after
+  // mount so the server's blank form and the browser's first render agree.
+  useEffect(() => {
+    if (sealed !== null || paperId.trim() === "") return;
+    const stored = loadSealedReview(paperId);
+    if (stored === null) return;
+    setSealed(stored);
+    setPhase("sealed");
+  }, [paperId, sealed]);
+
   const problems = validateDraft(draft);
   const progress = progressOf(draft);
   const complete = isComplete(problems);
 
   if (phase === "sealed" && sealed !== null) {
-    return <SealedNotice result={sealed} signed={signed} />;
+    return (
+      <SealedNotice
+        sealed={sealed}
+        signed={signed}
+        reveal={revealOverride}
+        loadGate={loadGate}
+        signInHref={signInHref}
+      />
+    );
   }
 
   const commit = async (): Promise<void> => {
@@ -256,7 +309,11 @@ function ReviewFormBody({
         // reviewer sees is what the commitment covers.
         draft: { ...draft, signed },
       });
-      setSealed(result);
+      const stored = sealedReviewFromCommit(result, paperId);
+      // Nothing is kept for a form used without a paper id (there is no page
+      // to return to); the sealed card still offers the reveal.
+      if (paperId.trim() !== "") saveSealedReview(stored);
+      setSealed(stored);
       setPhase("sealed");
     } catch (thrown) {
       setError(describeCommitError(thrown));
@@ -463,17 +520,101 @@ function ReviewFormBody({
 }
 
 /**
- * What replaces the form once the commit is accepted. A review that will carry
- * its reviewer's name (`signed`) says so; an anonymous one says nothing more.
+ * What replaces the form once the commit is accepted, and what reveals it.
+ *
+ * A review that will carry its reviewer's name (`signed`) says so; an
+ * anonymous one says nothing more. The card always offers **Reveal review**:
+ * pressing it reads whether the gate is open (two reviews on the version, or
+ * 21 days after the first), then signs the `review.formal` with the same
+ * per-paper key and posts it to `POST /v1/reviews/reveal`. A shut gate is said
+ * in words and signs nothing, so no passkey prompt is spent on a reveal the
+ * API would refuse.
  */
 export function SealedNotice({
-  result,
+  sealed,
   signed = false,
+  reveal = revealReview,
+  loadGate = loadRevealGate,
+  signInHref = "/signin",
 }: {
-  result: ReviewCommitResult;
+  sealed: SealedReview;
   signed?: boolean;
+  /** Replace the reveal flow, for tests. */
+  reveal?: RevealReview;
+  /** Replace the gate read, for tests. */
+  loadGate?: LoadRevealGate;
+  /** Where "Sign in" goes when a session has ended. */
+  signInHref?: string;
 }) {
-  const revealDate = formatRevealDate(result.revealAt);
+  const revealDate = formatRevealDate(sealed.revealAt);
+  const named = signed || sealed.revealBody.signed === true;
+
+  const [phase, setPhase] = useState<"sealed" | "checking" | "revealing" | "revealed">(
+    "sealed",
+  );
+  const [revealed, setRevealed] = useState<ReviewRevealResult | null>(null);
+  const [failure, setFailure] = useState<ActionFailure | null>(null);
+  // Said when the gate is shut: information, not an error.
+  const [note, setNote] = useState<string | null>(null);
+  // One action at a time, even across the render a click has not reached yet.
+  const working = useRef(false);
+
+  const open = async (): Promise<void> => {
+    if (working.current) return;
+    working.current = true;
+    setFailure(null);
+    setNote(null);
+
+    try {
+      // Ask whether the gate is open first: a reveal the API would refuse is
+      // not worth a passkey prompt. An unreadable gate is not a refusal — the
+      // API is the gate, and it answers when the record is signed and sent.
+      if (sealed.paperId.trim() !== "") {
+        setPhase("checking");
+        let gate: RevealGate | null = null;
+        try {
+          gate = await loadGate(sealed.paperId);
+        } catch {
+          gate = null;
+        }
+        if (gate !== null && gateApplies(gate, sealed.versionCid) && !gate.open) {
+          setNote(REVEAL_GATE_CLOSED_NOTE);
+          setPhase("sealed");
+          return;
+        }
+      }
+
+      setPhase("revealing");
+      const result = await reveal({ sealed });
+      // The locally kept copy has done its job; do not offer the review again.
+      forgetSealedReview(sealed.paperId);
+      setRevealed(result);
+      setPhase("revealed");
+    } catch (thrown) {
+      setFailure(describeRevealError(thrown));
+      setPhase("sealed");
+    } finally {
+      working.current = false;
+    }
+  };
+
+  if (phase === "revealed" && revealed !== null) {
+    return (
+      <section
+        className="rf-sealed"
+        role="status"
+        aria-live="polite"
+        data-state="revealed"
+      >
+        <h2 className="rf-form-title">{REVEALED_HEADLINE}</h2>
+        <p className="rf-sealed-text">{REVEALED_TEXT}</p>
+        <p className="rf-sealed-id mono-id">Review {revealed.reviewCid}</p>
+      </section>
+    );
+  }
+
+  const busy = phase === "checking" || phase === "revealing";
+
   return (
     <section
       className="rf-sealed"
@@ -485,14 +626,65 @@ export function SealedNotice({
       <p className="rf-sealed-text">
         It will be revealed with the others when a second review is committed,
         or on{" "}
-        <time className="rf-sealed-date" dateTime={result.revealAt}>
+        <time className="rf-sealed-date" dateTime={sealed.revealAt}>
           {revealDate}
         </time>
         .
       </p>
-      {signed ? <p className="rf-sealed-text">{SEALED_SIGNED_NOTE}</p> : null}
-      <p className="rf-sealed-id mono-id">Review {result.reviewCid}</p>
+      {named ? <p className="rf-sealed-text">{SEALED_SIGNED_NOTE}</p> : null}
+      <p className="rf-sealed-id mono-id">Review {sealed.reviewCid}</p>
+
+      <div className="rf-reveal">
+        <p className="rf-commit-note">{REVEAL_SIGNING_NOTE}</p>
+        <button
+          type="button"
+          className="rf-button"
+          disabled={busy}
+          aria-busy={busy ? true : undefined}
+          onClick={() => void open()}
+        >
+          {phase === "checking"
+            ? "Checking…"
+            : phase === "revealing"
+              ? "Revealing…"
+              : REVEAL_LABEL}
+        </button>
+      </div>
+
+      {note !== null ? <p className="rf-sealed-text">{note}</p> : null}
+
+      {failure !== null ? (
+        <p className="rf-error rf-commit-error" role="alert">
+          <Icon name="alert" className="rf-error-icon" />
+          <span>
+            {failure.message}
+            {failure.signIn ? (
+              <>
+                {" "}
+                <a className="rf-link" href={signInHref}>
+                  Sign in
+                </a>
+              </>
+            ) : null}
+          </span>
+        </p>
+      ) : null}
     </section>
+  );
+}
+
+/**
+ * Whether a gate answer is about the version this review sealed.
+ *
+ * The reviews listing answers for the paper's resolved version. If that is no
+ * longer the version this review targets, the answer says nothing about it —
+ * treat it as unknown and let the API decide.
+ */
+function gateApplies(gate: RevealGate, versionCid: string): boolean {
+  return (
+    gate.versionCid === null ||
+    versionCid.trim() === "" ||
+    gate.versionCid === versionCid
   );
 }
 

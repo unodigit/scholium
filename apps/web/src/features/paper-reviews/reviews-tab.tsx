@@ -33,6 +33,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { ReviewCardActions } from "../review-form";
 import { SCORE_MAX } from "../review-form/rubric";
 import { EmptyState, Icon, type IconName } from "../ui-kit";
 import {
@@ -211,7 +212,7 @@ function ReviewsView({ data, paperId }: { data: ReviewsData; paperId: string }) 
       <ol className="pr-list">
         {reviews.map((review) => (
           <li className="pr-list__item" key={review.key}>
-            <ReviewCard review={review} gateOpen={data.gateOpen} />
+            <ReviewCard review={review} gateOpen={data.gateOpen} paperId={paperId} />
           </li>
         ))}
       </ol>
@@ -258,7 +259,15 @@ function MedianSummary({ rows }: { rows: ReturnType<typeof dimensionMedians> }) 
 }
 
 /** One formal review as a card. */
-function ReviewCard({ review, gateOpen }: { review: Review; gateOpen: boolean }) {
+function ReviewCard({
+  review,
+  gateOpen,
+  paperId,
+}: {
+  review: Review;
+  gateOpen: boolean;
+  paperId: string;
+}) {
   const headingId = `pr-review-${review.key.replace(/[^a-z0-9]+/gi, "-").slice(-48)}`;
   const tone = recommendationTone(review.recommendation);
   const date = formatReviewDate(review.committedAt);
@@ -313,6 +322,11 @@ function ReviewCard({ review, gateOpen }: { review: Review; gateOpen: boolean })
           ))}
         </section>
       ) : null}
+
+      {/* The reply and the rating for whoever may act (docs/design.md §5.2).
+          The component offers nothing on a sealed review, to a signed-out
+          reader, or to someone the API would refuse; the API is the gate. */}
+      <ReviewCardActions review={review} paperId={paperId} />
     </article>
   );
 }
