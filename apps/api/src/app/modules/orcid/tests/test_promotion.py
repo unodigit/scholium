@@ -4,7 +4,7 @@ An account is promoted only when *both* conditions hold and its ``accounts``
 row is still at tier 0: a linked ORCID ownership credential and a *verified*
 email.  Linking ORCID is the step that runs the check, so most tests drive
 :func:`app.modules.orcid.issue_orcid_credential` the way the OAuth callback
-does, plus one HTTP journey through ``/v1/auth/orcid/callback``.
+does, plus HTTP journeys through ``POST /v1/auth/orcid/complete``.
 
 Each test runs against the plugin conftest's per-test SQLite database, so the
 credential, profile, verification and account tables are all freshly created.
@@ -33,9 +33,10 @@ from app.modules.profiles import (
     mark_email_verified,
     save_profile,
 )
+from app.security import issue_access_token
 from app.settings import settings
 
-CALLBACK = "/v1/auth/orcid/callback"
+COMPLETE = "/v1/auth/orcid/complete"
 ORCID = "0000-0002-1825-0097"
 
 
@@ -187,11 +188,11 @@ def test_the_check_ignores_non_dids(bad_did):
 
 
 # --------------------------------------------------------------------------- #
-# The OAuth callback runs the same check
+# Completing the OAuth flow runs the same check
 # --------------------------------------------------------------------------- #
 
 
-def test_callback_promotes_a_tier_0_account_with_a_verified_email(
+def test_completing_the_link_promotes_a_tier_0_account_with_a_verified_email(
     client, node_key, subject_did, monkeypatch
 ):
     monkeypatch.setattr(settings, "ORCID_MOCK", 1)
@@ -199,9 +200,10 @@ def test_callback_promotes_a_tier_0_account_with_a_verified_email(
     _save_email(subject_did)
     _verify_email(subject_did)
 
-    response = client.get(
-        CALLBACK,
-        params={"code": f"mock-{ORCID}", "state": sign_state(did=subject_did)},
+    response = client.post(
+        COMPLETE,
+        json={"code": f"mock-{ORCID}", "state": sign_state(did=subject_did)},
+        headers={"Authorization": f"Bearer {issue_access_token(subject_did, 0)}"},
     )
 
     assert response.status_code == 200, response.text
@@ -209,16 +211,17 @@ def test_callback_promotes_a_tier_0_account_with_a_verified_email(
     assert _tier(subject_did) == MEMBER_TIER
 
 
-def test_callback_with_a_pending_email_links_without_promoting(
+def test_completing_the_link_with_a_pending_email_links_without_promoting(
     client, node_key, subject_did, monkeypatch
 ):
     monkeypatch.setattr(settings, "ORCID_MOCK", 1)
     _add_account(subject_did, tier=0)
     _save_email(subject_did)
 
-    response = client.get(
-        CALLBACK,
-        params={"code": f"mock-{ORCID}", "state": sign_state(did=subject_did)},
+    response = client.post(
+        COMPLETE,
+        json={"code": f"mock-{ORCID}", "state": sign_state(did=subject_did)},
+        headers={"Authorization": f"Bearer {issue_access_token(subject_did, 0)}"},
     )
 
     assert response.status_code == 200, response.text

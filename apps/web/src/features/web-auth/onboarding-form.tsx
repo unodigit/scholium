@@ -10,8 +10,9 @@
  * - **passkey** — done the moment a device key exists on this device;
  *   otherwise it links to `/signin`.
  * - **ORCID** — "Link your ORCID iD" sends the whole browser to the authorize
- *   URL from `GET /v1/auth/orcid/start`; coming back, the step remembers the
- *   attempt.
+ *   URL from `GET /v1/auth/orcid/start`; ORCID sends it back to
+ *   `/onboarding/orcid` (see {@link OrcidReturn}), which finishes the link as
+ *   the signed-in user. The step remembers the attempt.
  * - **categories** — chips to toggle (plus a free input), saved with
  *   `PUT /v1/me/follows/{category}`.
  * - **guardians** — five DID inputs saved with `PUT /v1/me/guardians`, with
@@ -23,7 +24,7 @@
  * file is markup only.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -49,13 +50,21 @@ import {
   ONBOARDING_SKIP_ACTION,
   ORCID_CONTINUE_ACTION,
   ORCID_LINKED_NOTE,
+  ORCID_RETURN_BACK_ACTION,
+  ORCID_RETURN_CONTINUE_ACTION,
+  ORCID_RETURN_FAILED_TITLE,
+  ORCID_RETURN_LINKED_TITLE,
+  ORCID_RETURN_SIGNIN_ACTION,
+  ORCID_RETURN_WORKING_NOTE,
+  ORCID_RETURN_WORKING_TITLE,
   ORCID_STARTING,
   ORCID_START_ACTION,
   ORCID_STARTED_NOTE,
   categoriesSavedMessage,
   onboardingProgressMessage,
+  orcidReturnLinkedMessage,
 } from "./onboarding-messages";
-import { useOnboarding } from "./use-onboarding";
+import { useOnboarding, useOrcidReturn } from "./use-onboarding";
 
 /** The `/onboarding` checklist. */
 export function OnboardingForm() {
@@ -320,6 +329,85 @@ function GuardiansBody({ onboarding }: { onboarding: ReturnType<typeof useOnboar
       </button>
       <p className="wa-requirement">{GUARDIANS_REQUIRED_NOTE}</p>
     </>
+  );
+}
+
+/**
+ * `/onboarding/orcid` — where ORCID sends the browser after the user signs in.
+ *
+ * Finishes the link as the signed-in user (`useOrcidReturn`), then shows the
+ * outcome: the success, or the API's own explanation of why nothing was
+ * linked — for example that the sign-in was started by a different account.
+ * Either way the way back to the checklist is one action away.
+ *
+ * Announcements: one polite `role="status"` region exists from the first
+ * render and its text changes (a region that is merely inserted is announced
+ * unreliably), and once the outcome is known focus moves to the heading so a
+ * screen reader reads the result instead of staying on an empty page.
+ */
+export function OrcidReturn() {
+  const { status, orcid, error, sessionExpired } = useOrcidReturn();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (status !== "completing") {
+      headingRef.current?.focus();
+    }
+  }, [status]);
+
+  const title =
+    status === "linked"
+      ? ORCID_RETURN_LINKED_TITLE
+      : status === "failed"
+        ? ORCID_RETURN_FAILED_TITLE
+        : ORCID_RETURN_WORKING_TITLE;
+  const message =
+    status === "linked"
+      ? orcidReturnLinkedMessage(orcid)
+      : status === "failed"
+        ? (error ?? "")
+        : ORCID_RETURN_WORKING_NOTE;
+
+  return (
+    <section
+      className="wa-card"
+      aria-labelledby="orcid-return-heading"
+      aria-busy={status === "completing"}
+    >
+      <p className="wa-wordmark">scholium</p>
+      <h1 id="orcid-return-heading" className="wa-title" ref={headingRef} tabIndex={-1}>
+        {title}
+      </h1>
+      <p className={status === "failed" ? "wa-lede wa-error" : "wa-lede"} role="status">
+        {message}
+      </p>
+
+      {status === "linked" ? (
+        <Link className="wa-button" href="/onboarding">
+          {ORCID_RETURN_CONTINUE_ACTION}
+        </Link>
+      ) : null}
+      {status === "failed" ? (
+        <>
+          {sessionExpired ? (
+            <Link className="wa-button" href="/signin">
+              {ORCID_RETURN_SIGNIN_ACTION}
+            </Link>
+          ) : (
+            <Link className="wa-button" href="/onboarding">
+              {ORCID_RETURN_BACK_ACTION}
+            </Link>
+          )}
+          {sessionExpired ? (
+            <p className="wa-meta">
+              <Link className="wa-link" href="/onboarding">
+                {ORCID_RETURN_BACK_ACTION}
+              </Link>
+            </p>
+          ) : null}
+        </>
+      ) : null}
+    </section>
   );
 }
 

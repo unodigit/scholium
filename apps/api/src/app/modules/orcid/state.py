@@ -3,7 +3,7 @@
 ``GET /v1/auth/orcid/start`` hands the browser an ORCID authorize URL whose
 ``state`` query parameter is a compact HS256 JSON Web Token signed with
 ``settings.JWT_SECRET``.  The value is self-contained, so the later
-``GET /v1/auth/orcid/callback`` can verify it without server-side storage,
+``POST /v1/auth/orcid/complete`` can verify it without server-side storage,
 and a tampered or expired state is refused::
 
     state = sign_state(did="did:key:z6Mk...")
@@ -20,14 +20,16 @@ Claims:
 ``jti``
     A random identifier, unique per issue; two calls never share a state.
 ``nonce``
-    A second, independent 256-bit random value for correlating the callback.
+    A second, independent 256-bit random value for correlating the redirect back from ORCID.
 ``did``
     Present only when the caller was authenticated: the DID of the access
     token that called ``/start``, which the resulting ORCID credential is to
-    be bound to.  It is never copied from a request parameter.
+    be bound to.  It is never copied from a request parameter.  It names who
+    *started* the flow, not who is finishing it, so ``/complete`` also
+    requires the caller's own access token to carry this very DID.
 
 There is deliberately no ``aud`` claim: the value is not a bearer credential
-and the callback authenticates it by its signature and ``purpose`` alone.
+and ``/complete`` authenticates it by its signature and ``purpose`` alone.
 """
 
 from __future__ import annotations
@@ -140,7 +142,7 @@ def verify_state(state: str) -> dict[str, Any]:
 # Single-use tracking
 # --------------------------------------------------------------------------- #
 
-#: Identifiers (``jti``) of states that have been consumed by a callback.
+#: Identifiers (``jti``) of states that have been consumed by ``/complete``.
 #: Kept in memory for the lifetime of the process; a consumed state can never
 #: be redeemed a second time, which closes the replay window that made the
 #: flow vulnerable to login CSRF.

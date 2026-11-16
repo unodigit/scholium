@@ -6,10 +6,16 @@ at the ORCID sandbox (``https://sandbox.orcid.org``) unless the operator sets
 that variable.  See :mod:`app.modules.orcid.router` for the contract and
 :mod:`app.modules.orcid.state` for the state's claims.
 
-For the callback (feature 32): :func:`verify_state` checks the ``state`` ORCID
-sends back and returns its claims.  The ``did`` claim is present only when
-``/start`` was called with a valid access token, in which case it is that
-token's DID -- it is never taken from a query string.
+For finishing the link (feature 32): ORCID redirects the browser to the web
+app's ``/onboarding/orcid`` page, which calls the authenticated
+``POST /v1/auth/orcid/complete`` with ``{code, state}``.  :func:`verify_state`
+checks the ``state`` and returns its claims.  The ``did`` claim is present only
+when ``/start`` was called with a valid access token, in which case it is that
+token's DID -- it is never taken from a query string -- and ``/complete``
+refuses (``403``) any caller whose DID is not that one, before the state is
+consumed.  The old unauthenticated ``GET /v1/auth/orcid/callback`` answers
+``410``: it trusted that DID, so any browser that completed the redirect linked
+its ORCID iD to whichever DID had started the flow.
 
 Feature 33: linking stores the nullifier ``H(issuer || orcid || domain)`` in the
 ``nullifiers`` table, so one ORCID iD maps to one active DID; a second link of
@@ -39,13 +45,19 @@ from .nullifier import (
 from .router import (
     AUTHORIZE_PATH,
     CALLBACK_PATH,
+    COMPLETE_PATH,
     DEFAULT_ORCID_BASE_URL,
     ORCID_AUTH_SCOPE,
+    ORCID_STATE_PRINCIPAL_MISMATCH,
+    REDIRECT_PATH,
+    OrcidCompleteRequest,
     OrcidStartResponse,
+    OrcidStatePrincipalMismatch,
     authorize_endpoint,
     build_authorize_url,
-    callback_url,
     orcid_base_url,
+    public_web_origin,
+    redirect_uri,
     router,
 )
 from .service import exchange_code, issue_orcid_credential
@@ -83,6 +95,7 @@ from .state import (
 __all__ = [
     "AUTHORIZE_PATH",
     "CALLBACK_PATH",
+    "COMPLETE_PATH",
     "CREDENTIAL_PRESENTATION_INVALID",
     "CREDENTIAL_SIGNATURE_INVALID",
     "CREDENTIAL_STATUS_INVALID",
@@ -97,17 +110,20 @@ __all__ = [
     "Nullifier",
     "ORCID_ALREADY_LINKED",
     "ORCID_AUTH_SCOPE",
+    "ORCID_STATE_PRINCIPAL_MISMATCH",
     "OrcidAlreadyLinked",
+    "OrcidCompleteRequest",
     "OrcidStartResponse",
+    "OrcidStatePrincipalMismatch",
     "PRESENT_PATH",
     "PresentationVerified",
     "READER_TIER",
+    "REDIRECT_PATH",
     "STATE_ALGORITHM",
     "STATE_PURPOSE",
     "STATE_TTL",
     "authorize_endpoint",
     "build_authorize_url",
-    "callback_url",
     "claim_nullifier",
     "compute_nullifier",
     "credential_nullifier",
@@ -119,6 +135,8 @@ __all__ = [
     "orcid_base_url",
     "promote_if_eligible",
     "promotion_eligible",
+    "public_web_origin",
+    "redirect_uri",
     "router",
     "consume_state",
     "is_state_consumed",

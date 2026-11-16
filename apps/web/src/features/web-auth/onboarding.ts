@@ -12,9 +12,14 @@
  * where each step stands:
  *
  * - **link ORCID** — `GET /v1/auth/orcid/start` (feature 31) returns the
- *   authorize URL; the browser is sent there whole-page and comes back. The
- *   start is remembered so the step can say "in progress", and a best-effort
- *   profile lookup flips it to done once a linked ORCID iD is visible there.
+ *   authorize URL; the browser is sent there whole-page and comes back to the
+ *   web app's `/onboarding/orcid` page, which POSTs the `code` and `state`
+ *   ORCID returned to the *authenticated* `POST /v1/auth/orcid/complete`. The
+ *   API only links the iD when the signed-in user is the account that started
+ *   the flow, so a link someone else opened cannot attach their iD to your
+ *   account (or yours to theirs). The start is remembered so the step can say
+ *   "in progress", and finishing it (or a best-effort profile lookup) flips it
+ *   to done once a linked ORCID iD is visible.
  * - **pick categories** — each pick is `PUT /v1/me/follows/{category}`
  *   (feature 179). Following is *not* a dependency of this feature, so when
  *   the endpoint answers 404/405/501 the picks are still kept (on this
@@ -276,10 +281,78 @@ export function parseOrcidStart(payload: unknown): OrcidStartInfo {
  * Ask the API where to send the user to link their ORCID iD.
  *
  * The shared client attaches the access token when there is one, which binds
- * the caller's DID into the signed state the callback later checks.
+ * the caller's DID into the signed state that `POST /v1/auth/orcid/complete`
+ * later checks against the signed-in user.
  */
 export async function startOrcidLink(client: OnboardingClient = apiClient): Promise<OrcidStartInfo> {
   return parseOrcidStart(await client.get<unknown>("/auth/orcid/start"));
+}
+
+/** The slice of {@link ApiClient} the ORCID return page uses. */
+export type OrcidCompleteClient = Pick<ApiClient, "post">;
+
+/** What ORCID put on the redirect back to `/onboarding/orcid`. */
+export type OrcidReturn =
+  /** A `code` and the signed `state`: ready to be completed by the API. */
+  | { kind: "ready"; code: string; state: string }
+  /** The user declined at ORCID (`?error=access_denied`, …). */
+  | { kind: "denied"; error: string; description: string }
+  /** Neither: the page was opened without coming back from ORCID. */
+  | { kind: "missing" };
+
+/**
+ * Read the `/onboarding/orcid` query string ORCID redirected to.
+ *
+ * Only `code` and `state` are used, and only to be handed to the API: the
+ * page never decides whose account the link is for.
+ */
+export function parseOrcidReturn(search: string): OrcidReturn {
+  const params = new URLSearchParams(search);
+  const error = params.get("error");
+  if (error) {
+    return { kind: "denied", error, description: params.get("error_description") ?? "" };
+  }
+  const code = params.get("code") ?? "";
+  const state = params.get("state") ?? "";
+  if (code.trim() === "" || state.trim() === "") {
+    return { kind: "missing" };
+  }
+  return { kind: "ready", code, state };
+}
+
+/** What a finished link reports back. */
+export interface OrcidLinkResult {
+  /** The ORCID iD the credential names, when the response carries it. */
+  orcid: string | null;
+}
+
+function orcidFromCredential(payload: unknown): string | null {
+  if (!isRecord(payload) || !isRecord(payload.credentialSubject)) {
+    return null;
+  }
+  const orcid = payload.credentialSubject.orcid;
+  return typeof orcid === "string" && orcid.trim() !== "" ? orcid : null;
+}
+
+/**
+ * Finish linking: `POST /v1/auth/orcid/complete` with what ORCID returned.
+ *
+ * The shared client sends the signed-in user's bearer token, and the API
+ * refuses (403 problem details) unless that user's DID is the one the signed
+ * `state` was issued to — so the body carries no DID of its own. Failures are
+ * thrown as the API's {@link ApiError} for the caller to describe (401 signed
+ * out, 403 started by another account, 400 expired/used/invalid, 409 already
+ * linked).
+ */
+export async function completeOrcidLink(
+  client: OrcidCompleteClient = apiClient,
+  input: { code: string; state: string } = { code: "", state: "" },
+): Promise<OrcidLinkResult> {
+  const credential = await client.post<unknown>("/auth/orcid/complete", {
+    code: input.code,
+    state: input.state,
+  });
+  return { orcid: orcidFromCredential(credential) };
 }
 
 /** JSON members a profile may carry the linked ORCID iD under. */

@@ -101,7 +101,7 @@ class OrcidAlreadyLinked(HTTPException):
         self.title = "Conflict"
         self.errors = [
             {
-                "loc": ["query", "code"],
+                "loc": ["body", "code"],
                 "msg": message,
                 "type": "orcid_already_linked",
             }

@@ -156,15 +156,21 @@ class Actor:
         return decode_access_token(self.access_token).tier
 
     def link_orcid(self, orcid: str) -> dict:
-        """Link ``orcid`` through the (mock) ORCID login; return the credential the node issues."""
+        """Link ``orcid`` through the (mock) ORCID login; return the credential the node issues.
+
+        ORCID redirects the browser to the web app's ``/onboarding/orcid`` page,
+        which posts what ORCID returned to the authenticated ``/complete`` as the
+        signed-in user -- that is what this does, with this actor's token.
+        """
         start = self.client.get("/v1/auth/orcid/start", headers=self.headers)
         assert start.status_code == 200, start.text
-        callback = self.client.get(
-            "/v1/auth/orcid/callback",
-            params={"code": f"mock-{orcid}", "state": start.json()["state"]},
+        completed = self.client.post(
+            "/v1/auth/orcid/complete",
+            json={"code": f"mock-{orcid}", "state": start.json()["state"]},
+            headers=self.headers,
         )
-        assert callback.status_code == 200, callback.text
-        return callback.json()
+        assert completed.status_code == 200, completed.text
+        return completed.json()
 
     def sign(self, text: str) -> str:
         """A detached signature over ``text`` by this actor's key (what a guardian signs to approve)."""

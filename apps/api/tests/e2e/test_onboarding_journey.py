@@ -69,15 +69,18 @@ def test_new_member_is_endorsed_in_cs_ai_and_refused_in_cs_cl(client, node, revi
     assert profile_tier(client, newcomer.did) == 0, "a verified email alone is not enough for tier 1"
 
     # 3. Linking an ORCID iD completes onboarding.  ORCID sends the browser back
-    #    with a code (in mock mode ``mock-<orcid>``) and the state the node signed.
+    #    to the web app's ``/onboarding/orcid`` page with a code (in mock mode
+    #    ``mock-<orcid>``) and the state the node signed; that page posts both to
+    #    the authenticated ``/complete`` as the signed-in newcomer.
     start = client.get("/v1/auth/orcid/start", headers=newcomer.headers)
     assert start.status_code == 200, start.text
-    callback = client.get(
-        "/v1/auth/orcid/callback",
-        params={"code": f"mock-{ORCID_ID}", "state": start.json()["state"]},
+    completed = client.post(
+        "/v1/auth/orcid/complete",
+        json={"code": f"mock-{ORCID_ID}", "state": start.json()["state"]},
+        headers=newcomer.headers,
     )
-    assert callback.status_code == 200, callback.text
-    credential = callback.json()
+    assert completed.status_code == 200, completed.text
+    credential = completed.json()
     assert "OrcidOwnershipCredential" in credential["type"]
     assert credential["issuer"] == did_key_from_signing_key(node)
     assert credential["credentialSubject"] == {"id": newcomer.did, "orcid": ORCID_ID}

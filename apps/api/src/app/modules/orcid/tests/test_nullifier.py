@@ -4,7 +4,7 @@ Linking an ORCID iD stores ``H(issuer || orcid || domain)`` in the
 ``nullifiers`` table, so one iD maps to one active DID; a second link is
 ``409`` problem details.  Covers the hash itself (determinism, normalisation,
 domain separation), the table row written by the real
-``GET /v1/auth/orcid/callback`` route, the 409 contract, what "active" means
+``POST /v1/auth/orcid/complete`` route, the 409 contract, what "active" means
 (a revoked or missing credential frees the iD, matched per iD), atomicity with
 the credential row, and the race the primary key settles.
 """
@@ -32,9 +32,10 @@ from app.modules.orcid import (
 from app.modules.orcid import nullifier as nullifier_module
 from app.modules.orcid import service as service_module
 from app.modules.orcid.models import Credential, Nullifier, ensure_tables
+from app.security import issue_access_token
 from app.settings import settings
 
-CALLBACK = "/v1/auth/orcid/callback"
+COMPLETE = "/v1/auth/orcid/complete"
 PROBLEM_JSON = "application/problem+json"
 ORCID = "0000-0002-1825-0097"
 OTHER_ORCID = "0000-0001-5109-3700"
@@ -47,12 +48,13 @@ def mock_orcid(monkeypatch):
 
 @pytest.fixture
 def linker(client, node_key):
-    """``link(did, orcid)``: run the callback for ``did`` and return the response."""
+    """``link(did, orcid)``: finish the flow as ``did`` and return the response."""
 
     def link(did: str, orcid: str = ORCID, *, code: str | None = None):
-        return client.get(
-            CALLBACK,
-            params={"code": code or f"mock-{orcid}", "state": sign_state(did=did)},
+        return client.post(
+            COMPLETE,
+            json={"code": code or f"mock-{orcid}", "state": sign_state(did=did)},
+            headers={"Authorization": f"Bearer {issue_access_token(did, 0)}"},
         )
 
     return link
@@ -94,7 +96,7 @@ def assert_conflict(response) -> dict:
     assert body["title"] == "Conflict", body
     assert body["type"] == ORCID_ALREADY_LINKED, body
     assert isinstance(body["detail"], str) and body["detail"], body
-    assert body["instance"] == CALLBACK, body
+    assert body["instance"] == COMPLETE, body
     assert body["errors"] and body["errors"][0]["type"] == "orcid_already_linked", body
     return body
 

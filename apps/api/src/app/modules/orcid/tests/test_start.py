@@ -56,6 +56,7 @@ def orcid_env(monkeypatch):
     monkeypatch.setattr(settings, "ORCID_BASE_URL", "https://orcid.org")
     monkeypatch.setattr(settings, "ORCID_CLIENT_ID", "APP-TESTCLIENT")
     monkeypatch.setattr(settings, "ORCID_MOCK", 1)
+    monkeypatch.setattr(settings, "WEB_ORIGINS", "http://localhost:3000")
     return settings
 
 
@@ -103,7 +104,9 @@ def test_returns_the_sandbox_authorize_url_with_oauth_parameters(orcid_env):
     assert query["client_id"] == "APP-TESTCLIENT"
     assert query["response_type"] == "code"
     assert query["scope"] == "/authenticate"
-    assert query["redirect_uri"] == "http://testserver/v1/auth/orcid/callback"
+    # ORCID sends the browser to the web app, which finishes the link as the
+    # signed-in user -- never to an unauthenticated API endpoint.
+    assert query["redirect_uri"] == "http://localhost:3000/onboarding/orcid"
     assert query["state"] == body["state"]
 
 

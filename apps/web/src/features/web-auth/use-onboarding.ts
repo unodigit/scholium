@@ -18,11 +18,15 @@
  * step is done: the API refuses every submission with 403 until they are
  * set, so the page's primary action stays locked (a gentle "skip for now"
  * is always offered — see `onboarding-messages.ts`).
+ *
+ * `useOrcidReturn` (below) drives the `/onboarding/orcid` page ORCID redirects
+ * back to: it hands the returned `code` and `state` to the authenticated
+ * `POST /v1/auth/orcid/complete` and reports how that went.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { apiClient, browserTokenStorage } from "../../lib/api";
+import { ApiError, apiClient, browserTokenStorage } from "../../lib/api";
 import type { ApiClient, TokenStorage } from "../../lib/api";
 
 import { deviceKey } from "./device-key";
@@ -32,6 +36,7 @@ import {
   ONBOARDING_CATEGORY_CHOICES,
   ONBOARDING_STEPS,
   checkOrcidLink,
+  completeOrcidLink,
   countCompletedSteps,
   emptyPersistedOnboarding,
   followCategories,
@@ -39,6 +44,7 @@ import {
   loadPersistedOnboarding,
   normalizeCategory,
   onboardingStepCompletion,
+  parseOrcidReturn,
   saveGuardians,
   startOrcidLink,
   updatePersistedOnboarding,
@@ -48,6 +54,8 @@ import {
 } from "./onboarding";
 import {
   CATEGORY_INVALID_MESSAGE,
+  ORCID_RETURN_DENIED_MESSAGE,
+  ORCID_RETURN_MISSING_MESSAGE,
   describeOnboardingError,
 } from "./onboarding-messages";
 
@@ -408,4 +416,133 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
     setGuardianValue,
     saveGuardiansAction,
   };
+}
+
+// ---------------------------------------------------------------------------
+// /onboarding/orcid — where ORCID sends the browser back to
+// ---------------------------------------------------------------------------
+
+/** The collaborators the ORCID return page needs; swappable in tests. */
+export interface OrcidReturnServices {
+  /** API client slice that finishes the link (sends the signed-in user's token). */
+  client: Pick<ApiClient, "post">;
+  /** Where the persisted onboarding progress lives. */
+  storage: TokenStorage;
+  /** The query string the browser arrived with (`?code=…&state=…`). */
+  readSearch(): string;
+  /** Drop the one-time `code` and `state` from the address bar and history entry. */
+  clearSearch(): void;
+}
+
+/** The real API, real storage and the real address bar. */
+export const defaultOrcidReturnServices: OrcidReturnServices = {
+  client: apiClient,
+  storage: browserTokenStorage,
+  readSearch(): string {
+    return typeof window === "undefined" ? "" : window.location.search;
+  },
+  clearSearch(): void {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const { pathname, hash } = window.location;
+    window.history.replaceState(window.history.state, "", pathname + hash);
+  },
+};
+
+/** Inputs for {@link useOrcidReturn}. */
+export interface UseOrcidReturnOptions {
+  /** Service overrides, for tests. Defaults to the app-wide services. */
+  services?: OrcidReturnServices;
+}
+
+/** How finishing the link went. */
+export type OrcidReturnStatus = "completing" | "linked" | "failed";
+
+/** What the `/onboarding/orcid` page renders. */
+export interface UseOrcidReturnResult {
+  /** `completing` until the API has answered (or the return is unusable). */
+  status: OrcidReturnStatus;
+  /** The ORCID iD that was linked, once `linked` and when the API said which. */
+  orcid: string | null;
+  /** Why the link did not happen, in plain language; `null` otherwise. */
+  error: string | null;
+  /** The failure is a signed-out session: offer sign-in. */
+  sessionExpired: boolean;
+}
+
+const COMPLETING: UseOrcidReturnResult = {
+  status: "completing",
+  orcid: null,
+  error: null,
+  sessionExpired: false,
+};
+
+function failedReturn(error: string, sessionExpired = false): UseOrcidReturnResult {
+  return { status: "failed", orcid: null, error, sessionExpired };
+}
+
+/**
+ * Finish the ORCID link the user just authorised.
+ *
+ * On mount it reads `code` and `state` from the URL ORCID redirected to,
+ * removes them from the address bar (they are one-time values that have no
+ * business in history or a bookmark), and sends them to
+ * `POST /v1/auth/orcid/complete` as the signed-in user. The API links the iD
+ * only when that user is the one who started the flow, and otherwise answers
+ * with a problem whose detail is shown as-is.
+ *
+ * It completes **once**: the state is single-use, so a second request (React
+ * StrictMode mounts effects twice in development) would be refused as "already
+ * used" and bury the success.
+ */
+export function useOrcidReturn(options: UseOrcidReturnOptions = {}): UseOrcidReturnResult {
+  const servicesRef = useRef<OrcidReturnServices>(
+    options.services ?? defaultOrcidReturnServices,
+  );
+  const [result, setResult] = useState<UseOrcidReturnResult>(COMPLETING);
+  const startedRef = useRef(false);
+  // Not a per-effect `active` flag: StrictMode runs this effect's cleanup and
+  // then the effect again, and the one request must still be able to report.
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    if (!startedRef.current) {
+      startedRef.current = true;
+      void (async () => {
+        const services = servicesRef.current;
+        const returned = parseOrcidReturn(services.readSearch());
+        services.clearSearch();
+
+        let next: UseOrcidReturnResult;
+        if (returned.kind === "denied") {
+          next = failedReturn(ORCID_RETURN_DENIED_MESSAGE);
+        } else if (returned.kind === "missing") {
+          next = failedReturn(ORCID_RETURN_MISSING_MESSAGE);
+        } else {
+          try {
+            const linked = await completeOrcidLink(services.client, returned);
+            updatePersistedOnboarding(services.storage, {
+              orcidLinkedAt: new Date().toISOString(),
+            });
+            next = { status: "linked", orcid: linked.orcid, error: null, sessionExpired: false };
+          } catch (failure) {
+            next = failedReturn(
+              describeOnboardingError(failure),
+              failure instanceof ApiError && failure.isUnauthorized,
+            );
+          }
+        }
+        if (mountedRef.current) {
+          setResult(next);
+        }
+      })();
+    }
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  return result;
 }

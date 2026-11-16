@@ -12,6 +12,7 @@ import {
   GuardianSaveError,
   OnboardingError,
   checkOrcidLink,
+  completeOrcidLink,
   countCompletedSteps,
   emptyPersistedOnboarding,
   followCategories,
@@ -22,6 +23,7 @@ import {
   loadPersistedOnboarding,
   normalizeCategory,
   onboardingStepCompletion,
+  parseOrcidReturn,
   parseOrcidStart,
   profileShowsLinkedOrcid,
   saveGuardians,
@@ -29,6 +31,7 @@ import {
   updatePersistedOnboarding,
   validateGuardians,
   type OnboardingClient,
+  type OrcidCompleteClient,
 } from "./onboarding";
 
 // Canonical Ed25519 did:keys, generated the same way the API's tests
@@ -191,6 +194,70 @@ describe("link ORCID", () => {
     } as unknown as OnboardingClient;
     await expect(checkOrcidLink(client, OWNER)).resolves.toBe(false);
     expect(client.get).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(OWNER)}`);
+  });
+});
+
+describe("finish linking ORCID (the page ORCID redirects back to)", () => {
+  const CREDENTIAL = {
+    type: ["VerifiableCredential", "OrcidOwnershipCredential"],
+    credentialSubject: { id: OWNER, orcid: "0000-0002-1825-0097" },
+  };
+
+  function postClient(handler: () => unknown = () => CREDENTIAL): OrcidCompleteClient {
+    return { post: vi.fn(async () => handler()) } as unknown as OrcidCompleteClient;
+  }
+
+  it("reads the code and state ORCID put on the redirect", () => {
+    expect(parseOrcidReturn("?code=abc123&state=eyJ.s.ig")).toEqual({
+      kind: "ready",
+      code: "abc123",
+      state: "eyJ.s.ig",
+    });
+    // A bare query string (no leading ?) is read the same way.
+    expect(parseOrcidReturn("code=abc123&state=s")).toMatchObject({ kind: "ready" });
+  });
+
+  it("reports the user cancelling at ORCID without calling anything", () => {
+    expect(
+      parseOrcidReturn("?error=access_denied&error_description=User+denied+access&state=s"),
+    ).toEqual({ kind: "denied", error: "access_denied", description: "User denied access" });
+  });
+
+  it.each(["", "?", "?code=abc", "?state=s", "?code=&state=s", "?code=abc&state="])(
+    "treats %j as an incomplete return",
+    (search) => {
+      expect(parseOrcidReturn(search)).toEqual({ kind: "missing" });
+    },
+  );
+
+  it("POSTs the code and state to the authenticated complete endpoint", async () => {
+    const client = postClient();
+
+    await expect(completeOrcidLink(client, { code: "c", state: "s" })).resolves.toEqual({
+      orcid: "0000-0002-1825-0097",
+    });
+
+    // The shared client attaches the signed-in user's bearer token; the body
+    // carries only what ORCID returned -- never a DID the caller could choose.
+    expect(client.post).toHaveBeenCalledWith("/auth/orcid/complete", { code: "c", state: "s" });
+  });
+
+  it("does not mind a response without the iD in it", async () => {
+    await expect(
+      completeOrcidLink(postClient(() => ({})), { code: "c", state: "s" }),
+    ).resolves.toEqual({ orcid: null });
+  });
+
+  it("lets the API's problem through untouched (403 mismatch, 401, 409, ...)", async () => {
+    const mismatch = apiErrorFrom(403, {
+      type: "urn:scholium:problem:orcid-state-principal-mismatch",
+      detail: "This ORCID sign-in was started by a different account.",
+    });
+    const client = postClient(() => {
+      throw mismatch;
+    });
+
+    await expect(completeOrcidLink(client, { code: "c", state: "s" })).rejects.toBe(mismatch);
   });
 });
 

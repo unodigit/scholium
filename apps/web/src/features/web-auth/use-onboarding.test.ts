@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MemoryTokenStorage, apiErrorFrom, NetworkError } from "../../lib/api";
@@ -8,8 +9,15 @@ import { ONBOARDING_STORAGE_KEY } from "./onboarding";
 import {
   CATEGORY_INVALID_MESSAGE,
   ONBOARDING_SESSION_EXPIRED_MESSAGE,
+  ORCID_RETURN_DENIED_MESSAGE,
+  ORCID_RETURN_MISSING_MESSAGE,
 } from "./onboarding-messages";
-import { useOnboarding, type OnboardingServices } from "./use-onboarding";
+import {
+  useOnboarding,
+  useOrcidReturn,
+  type OnboardingServices,
+  type OrcidReturnServices,
+} from "./use-onboarding";
 
 const OWNER = "did:key:z6MkrQDrTkUp4gGH7aUiPNDDT2B2DzAssL2wib7awcqYzKqG";
 const G1 = "did:key:z6MkmHq27QXR7YPRFhKZsCVfKBk5i855vPEuF7nfC7fALpih";
@@ -424,5 +432,158 @@ describe("useOnboarding", () => {
       );
       expect(result.current.canFinish).toBe(false);
     });
+  });
+});
+
+describe("useOrcidReturn (the /onboarding/orcid page)", () => {
+  const CREDENTIAL = {
+    type: ["VerifiableCredential", "OrcidOwnershipCredential"],
+    credentialSubject: { id: OWNER, orcid: "0000-0002-1825-0097" },
+  };
+
+  function makeReturn(
+    search: string,
+    post: (path: string, body?: unknown) => unknown = async () => CREDENTIAL,
+  ) {
+    const storage = new MemoryTokenStorage();
+    const postMock = vi.fn(async (path: string, body?: unknown) => post(path, body));
+    const services: OrcidReturnServices = {
+      client: { post: postMock } as unknown as OrcidReturnServices["client"],
+      storage,
+      readSearch: vi.fn(() => search),
+      clearSearch: vi.fn(),
+    };
+    return { services, storage, post: postMock, clearSearch: services.clearSearch as ReturnType<typeof vi.fn> };
+  }
+
+  async function settled(services: OrcidReturnServices, strict = false) {
+    const rendered = renderHook(() => useOrcidReturn({ services }), {
+      wrapper: strict ? StrictMode : undefined,
+    });
+    await waitFor(() => expect(rendered.result.current.status).not.toBe("completing"));
+    return rendered;
+  }
+
+  it("starts out completing, so the server-rendered page shows progress, not a result", () => {
+    const { services } = makeReturn("?code=c&state=s");
+
+    const { result } = renderHook(() => useOrcidReturn({ services }));
+
+    expect(result.current.status).toBe("completing");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("completes the link as the signed-in user and marks the onboarding step done", async () => {
+    const { services, storage, post } = makeReturn("?code=mock-0000-0002-1825-0097&state=the.signed.state");
+
+    const { result } = await settled(services);
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith("/auth/orcid/complete", {
+      code: "mock-0000-0002-1825-0097",
+      state: "the.signed.state",
+    });
+    expect(result.current.status).toBe("linked");
+    expect(result.current.orcid).toBe("0000-0002-1825-0097");
+    expect(result.current.error).toBeNull();
+    const stored = JSON.parse(storage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}");
+    expect(stored.orcidLinkedAt).toEqual(expect.any(String));
+  });
+
+  it("takes the one-time code and state out of the address bar", async () => {
+    const { services, clearSearch } = makeReturn("?code=c&state=s");
+
+    await settled(services);
+
+    expect(clearSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes only once even when React mounts the page twice (StrictMode)", async () => {
+    // A second POST would fail with "already been used" and bury the success.
+    const { services, post } = makeReturn("?code=c&state=s");
+
+    const { result } = await settled(services, true);
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe("linked");
+  });
+
+  it("shows the API's problem detail when a different account completes the flow (403)", async () => {
+    const detail =
+      "This ORCID sign-in was started by a different account. Sign in as the account that started it, or start linking your ORCID iD again.";
+    const { services, storage } = makeReturn("?code=c&state=s", async () => {
+      throw apiErrorFrom(403, {
+        type: "urn:scholium:problem:orcid-state-principal-mismatch",
+        title: "Forbidden",
+        detail,
+      });
+    });
+
+    const { result } = await settled(services);
+
+    expect(result.current.status).toBe("failed");
+    expect(result.current.error).toBe(detail);
+    expect(result.current.sessionExpired).toBe(false);
+    expect(result.current.orcid).toBeNull();
+    // Nothing was linked, so the checklist must not claim it was.
+    expect(storage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
+  it("asks a signed-out visitor to sign in again (401)", async () => {
+    const { services, storage } = makeReturn("?code=c&state=s", async () => {
+      throw apiErrorFrom(401, { title: "Unauthorized", detail: "Authentication is required." });
+    });
+
+    const { result } = await settled(services);
+
+    expect(result.current.status).toBe("failed");
+    expect(result.current.error).toBe(ONBOARDING_SESSION_EXPIRED_MESSAGE);
+    expect(result.current.sessionExpired).toBe(true);
+    expect(storage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
+  it("shows a conflict's detail (the iD is already linked)", async () => {
+    const { services } = makeReturn("?code=c&state=s", async () => {
+      throw apiErrorFrom(409, {
+        title: "Conflict",
+        detail: "This ORCID iD is already linked to an active DID.",
+      });
+    });
+
+    const { result } = await settled(services);
+
+    expect(result.current.status).toBe("failed");
+    expect(result.current.error).toBe("This ORCID iD is already linked to an active DID.");
+  });
+
+  it("explains a network failure", async () => {
+    const { services } = makeReturn("?code=c&state=s", async () => {
+      throw new NetworkError("offline");
+    });
+
+    const { result } = await settled(services);
+
+    expect(result.current.status).toBe("failed");
+    expect(result.current.error).toBe("Can't reach Scholium. Check your connection and try again.");
+  });
+
+  it("does not call the API when the user cancelled at ORCID", async () => {
+    const { services, post } = makeReturn("?error=access_denied&error_description=denied&state=s");
+
+    const { result } = await settled(services);
+
+    expect(post).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("failed");
+    expect(result.current.error).toBe(ORCID_RETURN_DENIED_MESSAGE);
+  });
+
+  it("does not call the API when someone opens the page without coming from ORCID", async () => {
+    const { services, post } = makeReturn("");
+
+    const { result } = await settled(services);
+
+    expect(post).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("failed");
+    expect(result.current.error).toBe(ORCID_RETURN_MISSING_MESSAGE);
   });
 });

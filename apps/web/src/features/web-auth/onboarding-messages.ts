@@ -44,6 +44,40 @@ export const ORCID_STARTED_NOTE =
 /** Link ORCID step, done. */
 export const ORCID_LINKED_NOTE = "Your ORCID iD is linked to this account.";
 
+/** `/onboarding/orcid`: heading while the link is being confirmed. */
+export const ORCID_RETURN_WORKING_TITLE = "Linking your ORCID iD…";
+
+/** `/onboarding/orcid`: shown while the link is being confirmed. */
+export const ORCID_RETURN_WORKING_NOTE = "Confirming with ORCID. This only takes a moment.";
+
+/** `/onboarding/orcid`: heading once the iD is linked. */
+export const ORCID_RETURN_LINKED_TITLE = "ORCID iD linked";
+
+/** `/onboarding/orcid`: heading when the link did not happen. */
+export const ORCID_RETURN_FAILED_TITLE = "We couldn't link your ORCID iD";
+
+/** `/onboarding/orcid`: what the success looks like, naming the iD when known. */
+export function orcidReturnLinkedMessage(orcid: string | null): string {
+  return orcid ? `Your ORCID iD ${orcid} is now linked to this account.` : ORCID_LINKED_NOTE;
+}
+
+/** `/onboarding/orcid`: the user chose not to share their iD at ORCID. */
+export const ORCID_RETURN_DENIED_MESSAGE =
+  "You didn't allow Scholium to confirm your ORCID iD, so nothing was linked. You can try again whenever you're ready.";
+
+/** `/onboarding/orcid`: opened without coming back from ORCID. */
+export const ORCID_RETURN_MISSING_MESSAGE =
+  "This page finishes linking your ORCID iD after you sign in at ORCID. Start from the setup checklist.";
+
+/** `/onboarding/orcid`: carry on with the checklist after a success. */
+export const ORCID_RETURN_CONTINUE_ACTION = "Continue setting up";
+
+/** `/onboarding/orcid`: go back to the checklist after a failure. */
+export const ORCID_RETURN_BACK_ACTION = "Back to setup";
+
+/** `/onboarding/orcid`: the session ended, so sign in again first. */
+export const ORCID_RETURN_SIGNIN_ACTION = "Sign in again";
+
 /** Categories step: save the picks. */
 export const CATEGORIES_SAVE_ACTION = "Save categories";
 
