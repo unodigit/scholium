@@ -7,5 +7,6 @@ export default defineConfig({
     // whole machine, which oversubscribes CPU and memory under parallel agents.
     maxWorkers: 2,
     passWithNoTests: true,
+    exclude: ["**/node_modules/**", "tests/e2e/**"],
   },
 });

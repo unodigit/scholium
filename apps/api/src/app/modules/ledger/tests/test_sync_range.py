@@ -41,6 +41,7 @@ WIRE_FIELDS = {
     "author_did",
     "body",
     "raw",
+    "sig",
     "prev_hash",
     "entry_hash",
     "received_at",

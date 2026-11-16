@@ -88,6 +88,9 @@ class SyncEntry(BaseModel):
     body: dict[str, Any]
     #: Canonical DAG-CBOR bytes of the record, standard base64.
     raw: str
+    #: The author's detached signature over ``raw``, when the node retained one
+    #: (ingest always passes a signed record). ``None`` for unsigned entries.
+    sig: Optional[str] = None
     #: Previous entry's ``entry_hash`` in hex; 32 zero bytes for the first entry.
     prev_hash: str
     #: ``sha256(prev_hash || record_cid || raw)`` in hex.
@@ -111,6 +114,7 @@ def serialise_entry(entry: EventLog) -> SyncEntry:
         author_did=entry.author_did,
         body=dict(entry.body),
         raw=base64.b64encode(bytes(entry.raw)).decode("ascii"),
+        sig=entry.sig,
         prev_hash=bytes(entry.prev_hash).hex(),
         entry_hash=bytes(entry.entry_hash).hex(),
         received_at=entry.received_at,

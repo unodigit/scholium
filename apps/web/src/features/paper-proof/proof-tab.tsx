@@ -189,6 +189,9 @@ export function ProofTab({
             <span className="pt-verdict__headline">{copy.headline}</span>
           </p>
           <p className="pt-verdict__summary">{outcome?.summary ?? copy.summary}</p>
+          {outcome !== null && (outcome.state === "anchor_pending" || outcome.state === "verified") ? (
+            <p className="pt-verified">Verified in your browser</p>
+          ) : null}
         </div>
         <button type="button" className="pt-button" onClick={rerun} disabled={checking}>
           Re-run check
