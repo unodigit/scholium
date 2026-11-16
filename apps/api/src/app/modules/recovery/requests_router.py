@@ -34,14 +34,15 @@ Nothing is saved and nobody is notified on any error.  See
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import AliasChoices, BaseModel, Field
 
 
 
 from app import db
+from app.security import Principal, get_current_principal
 from . import problems
 from . import approvals as _approvals
 from .opening import InvalidRecoveryRequest, NoGuardians, UnknownAccount, open_recovery_request
@@ -103,21 +104,30 @@ _GUARDIAN_FIELDS = ("guardian_did", "guardian", "did", "approver", "signer", "gu
 _SIGNATURE_FIELDS = ("signature", "sig", "proof", "proofValue", "approval", "signed_approval")
 
 
-def _extract_guardian_and_signature(body, principal):
-    guardian_did = None
+def _extract_approval(body: Any) -> tuple[Optional[str], Any]:
+    """The guardian DID a body *claims* and the signature it carries.
+
+    The claimed DID is only ever compared against the authenticated caller: it
+    can never select somebody else's identity.  A bare string body is taken as
+    the detached signature, so a client that has nobody to name can still
+    approve with its token alone.
+    """
+    if isinstance(body, str):
+        text = body.strip()
+        return None, (text or None)
+    if not isinstance(body, dict):
+        return None, None
+    claimed = None
+    for key in _GUARDIAN_FIELDS:
+        if isinstance(body.get(key), str):
+            claimed = body[key]
+            break
     signature = None
-    if isinstance(body, dict):
-        for key in _GUARDIAN_FIELDS:
-            if key in body and isinstance(body[key], str):
-                guardian_did = body[key]
-                break
-        for key in _SIGNATURE_FIELDS:
-            if key in body:
-                signature = body[key]
-                break
-    if guardian_did is None and principal is not None:
-        guardian_did = principal.did
-    return guardian_did, signature
+    for key in _SIGNATURE_FIELDS:
+        if isinstance(body.get(key), str):
+            signature = body[key]
+            break
+    return claimed, signature
 
 
 @requests_router.post(
@@ -127,55 +137,33 @@ def _extract_guardian_and_signature(body, principal):
 async def post_recovery_approval(
     request_id: str,
     request: Request,
-    authorization: str | None = Header(default=None),
-) :
-    # Resolve principal manually so an anonymous request is allowed.
-    resolved_principal = None
-    if authorization:
-        try:
-            from app.security import get_current_principal
-            # build a fake request? Instead, issue token parse manually is complex;
-            # fall back to decoding via dependency by calling get_current_principal with a synthesized principal not possible.
-            resolved_principal = None
-        except Exception:
-            resolved_principal = None
+    principal: Principal = Depends(get_current_principal),
+):
+    """Record the authenticated caller's signed approval.
 
+    An approval is accepted only when the caller's access token names a current
+    guardian *and* the body carries a valid Ed25519 signature by that
+    guardian's active key over the request id, the account DID and the new key.
+    A ``guardian_did`` in the body may repeat the caller's own DID (some
+    clients do), but naming any other DID is refused: the token decides who is
+    approving, never the body.
+    """
     try:
         body = await request.json()
     except Exception:
         body = None
-    guardian_did, signature = _extract_guardian_and_signature(body, resolved_principal)
-
-    # If an access token was supplied, try to resolve the DID from it.
-    if guardian_did is None and authorization and authorization.lower().startswith("bearer "):
-        token = authorization.split(" ", 1)[1].strip()
-        try:
-            from app.security import decode_access_token
-            claims = decode_access_token(token)
-            guardian_did = claims.get("sub") or claims.get("did")
-        except Exception:
-            try:
-                import jwt
-                # best effort: decode without verification? skip
-                guardian_did = None
-            except Exception:
-                guardian_did = None
-
-    if not isinstance(body, dict) and body is not None and guardian_did is None:
-        # body might be a bare signature string; guardian must come from auth
-        pass
-
-    # malformed body check
-    if guardian_did is None and not (isinstance(body, dict)):
-        raise problems.invalid_recovery_request([{"loc": ["body"], "msg": "guardian is required", "type": "missing_guardian"}])
+    claimed_did, signature = _extract_approval(body)
+    if claimed_did is not None and claimed_did != principal.did:
+        raise problems.not_a_guardian()
 
     try:
-        result = _approvals.approve_recovery_request(request_id, guardian_did, signature)
+        result = _approvals.approve_recovery_request(request_id, principal.did, signature)
     except LookupError:
-        raise problems.recovery_request_not_found() if hasattr(problems, "recovery_request_not_found") else problems.recovery_account_not_found()
-    except ValueError:
-        # not a guardian or bad input
-        raise HTTPException(status_code=403, detail="Not a guardian of this recovery request.")
+        raise problems.recovery_request_not_found()
+    except _approvals.NotAGuardian:
+        raise problems.not_a_guardian()
+    except _approvals.InvalidApprovalSignature:
+        raise problems.invalid_approval_signature()
 
     count = result.approval_count
     return {

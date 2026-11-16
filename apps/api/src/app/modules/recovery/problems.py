@@ -13,23 +13,38 @@ from typing import Any, Sequence
 
 __all__ = [
     "GUARDIANS_REQUIRED_TYPE",
+    "INVALID_APPROVAL_SIGNATURE_TYPE",
     "INVALID_GUARDIANS_TYPE",
     "INVALID_KEY_ROTATION_TYPE",
     "INVALID_RECOVERY_REQUEST_TYPE",
+    "NOT_A_GUARDIAN_TYPE",
     "RECOVERY_ACCOUNT_NOT_FOUND_TYPE",
     "RECOVERY_GUARDIANS_NOT_SET_TYPE",
     "RECOVERY_REQUEST_NOT_FOUND_TYPE",
+    "UNSIGNED_GUARDIAN_CHANGE_TYPE",
     "guardians_required",
+    "invalid_approval_signature",
     "invalid_guardians",
     "invalid_key_rotation",
     "invalid_recovery_request",
+    "not_a_guardian",
     "recovery_account_not_found",
     "recovery_guardians_not_set",
     "recovery_request_not_found",
+    "unsigned_guardian_change",
 ]
 
 #: Problem type for a submission by an account that has not set its guardians.
 GUARDIANS_REQUIRED_TYPE = "urn:scholium:problem:guardians-required"
+
+#: Problem type for a guardian-set change that carries no valid signature.
+UNSIGNED_GUARDIAN_CHANGE_TYPE = "urn:scholium:problem:unsigned-guardian-change"
+
+#: Problem type for an approval signed by the wrong key, or not signed at all.
+INVALID_APPROVAL_SIGNATURE_TYPE = "urn:scholium:problem:invalid-approval-signature"
+
+#: Problem type for an approval by an account that is not one of the guardians.
+NOT_A_GUARDIAN_TYPE = "urn:scholium:problem:not-a-guardian"
 
 #: Problem type for a guardian list that cannot be saved.
 INVALID_GUARDIANS_TYPE = "urn:scholium:problem:invalid-guardians"
@@ -149,4 +164,50 @@ def recovery_request_not_found() -> Any:
         404,
         "No recovery request with that id.",
         type=RECOVERY_REQUEST_NOT_FOUND_TYPE,
+    )
+
+
+def not_a_guardian() -> Any:
+    """The ``403`` raised when the caller is not one of the account's guardians.
+
+    An approval must come from a guardian's own session and be signed by that
+    guardian's active key; naming somebody else's DID in the body is refused.
+    """
+    from app.errors import ProblemException
+
+    return ProblemException(
+        403,
+        "The caller is not a current guardian of this account.",
+        type=NOT_A_GUARDIAN_TYPE,
+    )
+
+
+def invalid_approval_signature() -> Any:
+    """The ``403`` raised for an approval with no valid guardian signature.
+
+    The signature must be an Ed25519 signature by the caller's active key over
+    the request id, the account DID and the new key.
+    """
+    from app.errors import ProblemException
+
+    return ProblemException(
+        403,
+        "The approval signature is missing or does not verify against the caller's active key.",
+        type=INVALID_APPROVAL_SIGNATURE_TYPE,
+    )
+
+
+def unsigned_guardian_change() -> Any:
+    """The ``403`` raised for replacing a set of guardians without a signature.
+
+    A stolen access token must not be enough to redirect an account's
+    recovery: changing an existing guardian set requires an Ed25519 signature
+    by the account's active key over the new list.
+    """
+    from app.errors import ProblemException
+
+    return ProblemException(
+        403,
+        "Changing recovery guardians requires a signature by the account's active key.",
+        type=UNSIGNED_GUARDIAN_CHANGE_TYPE,
     )

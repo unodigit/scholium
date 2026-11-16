@@ -7,8 +7,9 @@ The story, told through ``/v1`` (and the job runner, which is the node's clock):
 2. the key is lost.  With only the ORCID iD and the public half of a new key the
    holder opens a recovery request, which needs no access token, and the five
    guardians are told about it;
-3. two guardians approve, each by signing the request id with their own key: not
-   enough, and nothing opens; a guardian approving twice still counts once;
+3. two guardians approve, each from their own session and each by signing the
+   request (id, account DID and new key) with their own key: not enough, and
+   nothing opens; a guardian approving twice still counts once;
 4. the third guardian's approval opens the 72-hour contest window.  Inside it
    nothing has changed: the old key still signs for the account, the new key
    does not yet, and the background job that would finalize the recovery has
@@ -38,6 +39,8 @@ from scholium_record_core import did_key_from_signing_key
 
 from app import jobs
 from app.modules.notifications import get_outbox
+from app.modules.recovery import approval_message
+from app.security import issue_access_token
 
 from .helpers import (
     Actor,
@@ -66,14 +69,21 @@ def post_body(text: str) -> dict:
     return {"target": "bafyreiexamplepaper", "anchor": "bafyreiexamplepaper", "text": text}
 
 
-def approve(client, request_id: str, guardian: Actor):
-    """``guardian`` approves ``request_id`` by signing the request id with their own key.
+def approve(client, request_id: str, guardian: Actor, account_did: str, new_key: str):
+    """``guardian`` approves ``request_id`` from their own session.
 
-    Guardians need no session: the approval is the signature.
+    The access token names the guardian, and the detached signature by that
+    guardian's key binds the request id, the account DID and the new key -- an
+    anonymous approval naming a guardian in the body is not enough.
     """
+    token = issue_access_token(guardian.did, 0)
     return client.post(
         f"{REQUESTS}/{request_id}/approvals",
-        json={"guardian_did": guardian.did, "signature": guardian.sign(request_id)},
+        json={
+            "guardian_did": guardian.did,
+            "signature": guardian.sign(approval_message(request_id, account_did, new_key)),
+        },
+        headers={"Authorization": f"Bearer {token}"},
     )
 
 
@@ -93,6 +103,7 @@ def parse_instant(text: str) -> datetime:
 def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(client, node):
     holder = Actor(client)  # the account; its did:key is its genesis key
     new_key = SigningKey.generate()  # what the holder will sign with from now on
+    new_key_did = did_key_from_signing_key(new_key)
     guardians = [Actor(client) for _ in range(5)]
     relay = Actor(client)  # whoever carries a signed record to the node
 
@@ -115,7 +126,7 @@ def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(
     # 2. The key is lost.  The holder opens a recovery request with no token at
     #    all: their ORCID iD identifies the account, the new key is its future.
     opened = client.post(
-        REQUESTS, json={"orcid": ORCID_ID, "new_public_key": did_key_from_signing_key(new_key)}
+        REQUESTS, json={"orcid": ORCID_ID, "new_public_key": new_key_did}
     )
     assert opened.status_code == 201, opened.text
     assert opened.json()["status"] == "pending"
@@ -127,13 +138,13 @@ def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(
     assert told == {g.did for g in guardians}, "each of the five guardians is notified"
 
     # 3. Two approvals are not enough.  The same guardian approving again changes nothing.
-    first = approve(client, request_id, guardians[0])
+    first = approve(client, request_id, guardians[0], holder.did, new_key_did)
     assert first.status_code == 200, first.text
     assert (first.json()["approval_count"], first.json()["status"]) == (1, "pending")
-    again = approve(client, request_id, guardians[0])
+    again = approve(client, request_id, guardians[0], holder.did, new_key_did)
     assert again.status_code == 200, again.text
     assert again.json()["approval_count"] == 1, "one guardian is one approval, however often they sign"
-    second = approve(client, request_id, guardians[1])
+    second = approve(client, request_id, guardians[1], holder.did, new_key_did)
     assert second.status_code == 200, second.text
     assert (second.json()["approval_count"], second.json()["status"]) == (2, "pending")
     assert second.json()["contest_until"] is None
@@ -141,7 +152,7 @@ def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(
 
     # 4. The third approval opens the 72-hour contest window.
     opened_at = datetime.now(timezone.utc)
-    third = approve(client, request_id, guardians[2])
+    third = approve(client, request_id, guardians[2], holder.did, new_key_did)
     assert third.status_code == 200, third.text
     window = third.json()
     assert (window["approval_count"], window["status"]) == (3, "contest")
@@ -163,7 +174,7 @@ def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(
     assert logged(client, "key.rotation") == [], "nothing is rotated while the window is open"
 
     # A fourth guardian approving later does not reopen or extend anything.
-    late = approve(client, request_id, guardians[3])
+    late = approve(client, request_id, guardians[3], holder.did, new_key_did)
     assert late.status_code == 200, late.text
     assert (late.json()["approval_count"], late.json()["status"]) == (4, "contest")
     assert late.json()["contest_until"] == window["contest_until"]

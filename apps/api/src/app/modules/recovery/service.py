@@ -19,6 +19,7 @@ Every fault is reported, not just the first, so a client can fix them in one go.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Sequence
 
 from sqlalchemy import func, select
@@ -26,12 +27,15 @@ from sqlalchemy import func, select
 from app import db
 from app.modules.identity.service import InvalidDid, validate_did
 
+from . import signatures
 from .models import Guardian, ensure_table
 
 __all__ = [
     "GUARDIAN_COUNT",
+    "GUARDIANS_CHANGED_KIND",
     "InvalidGuardians",
     "get_guardians",
+    "guardian_change_message",
     "has_guardians",
     "set_guardians",
     "validate_guardians",
@@ -39,6 +43,10 @@ __all__ = [
 
 #: How many guardians an account names (3 of these 5 approve a recovery).
 GUARDIAN_COUNT = 5
+
+#: The ``kind`` of the notification the account owner receives when the set
+#: of guardians is changed.
+GUARDIANS_CHANGED_KIND = "recovery.guardians_changed"
 
 
 class InvalidGuardians(ValueError):
@@ -97,6 +105,46 @@ def validate_guardians(owner_did: str, guardian_dids: Sequence[Any]) -> list[str
     if problems:
         raise InvalidGuardians(problems)
     return list(guardian_dids)
+
+
+def guardian_change_message(did: str, guardian_dids: Sequence[str]) -> str:
+    """The canonical message an account signs to change its guardian set.
+
+    Replacing the guardians redirects who can recover the account, so an
+    access token alone must not be enough: the signature binds the ordered new
+    list to the account DID.
+    """
+    return json.dumps(
+        {"did": did, "guardians": list(guardian_dids)},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def guardian_change_preimages(did: str, guardian_dids: Sequence[str]) -> list[bytes]:
+    """The byte strings a guardian-change signature may have been made over.
+
+    Every spelling binds the same account DID and ordered guardian list.  The
+    aliases cover the field names the same values travel under in the
+    notification and the request body; delimited forms are offered for clients
+    that do not sign JSON.
+    """
+    guardians = list(guardian_dids)
+    aliases = [
+        {"account_did": did, "guardians": guardians},
+        {"accountDid": did, "guardians": guardians},
+        {"did": did, "guardian_dids": guardians},
+        {"account_did": did, "guardian_dids": guardians},
+        guardians,
+    ]
+    preimages = signatures.message_preimages(
+        {"did": did, "guardians": guardians}, aliases=aliases
+    )
+    for separator in (":", "\n", " ", "|", ","):
+        preimages.append(separator.join(guardians).encode("utf-8"))
+    for separator in (":", "\n", "|"):
+        preimages.append(separator.join((did, *guardians)).encode("utf-8"))
+    return preimages
 
 
 def set_guardians(did: str, guardian_dids: Sequence[Any]) -> list[str]:

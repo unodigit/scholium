@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import pytest
+from nacl.signing import SigningKey
+from scholium_record_core import did_key_from_signing_key, encode_signature
 
 from app import db
+from app.modules.notifications import list_notifications
 from app.modules.recovery import (
     GUARDIAN_COUNT,
+    GUARDIANS_CHANGED_KIND,
     INVALID_GUARDIANS_TYPE,
+    UNSIGNED_GUARDIAN_CHANGE_TYPE,
     Guardian,
     get_guardians,
+    guardian_change_message,
     has_guardians,
 )
 
@@ -17,6 +23,28 @@ from .conftest import auth, new_did
 
 URL = "/v1/me/guardians"
 PROBLEM = "application/problem+json"
+
+
+def sign(seed: SigningKey, text: str) -> str:
+    return encode_signature(bytes(seed.sign(text.encode("utf-8")).signature))
+
+
+def keyed_account() -> tuple[SigningKey, str]:
+    """A ``(seed, did)`` pair whose private key these tests can sign with."""
+    seed = SigningKey.generate()
+    return seed, did_key_from_signing_key(seed)
+
+
+def change(client, seed: SigningKey, did: str, guardians: list[str]):
+    """PUT a *change* of guardians, signed by the account's own key."""
+    return client.put(
+        URL,
+        json={
+            "guardians": guardians,
+            "signature": sign(seed, guardian_change_message(did, guardians)),
+        },
+        headers=auth(did),
+    )
 
 
 def stored(did: str) -> list[tuple[int, str]]:
@@ -61,11 +89,12 @@ def test_the_order_sent_is_each_guardians_position(client, did, five_guardians):
     assert get_guardians(did) == reordered
 
 
-def test_setting_guardians_again_replaces_the_earlier_set(client, did, five_guardians):
+def test_setting_guardians_again_replaces_the_earlier_set(client, five_guardians):
+    seed, did = keyed_account()
     assert put(client, did, five_guardians).status_code == 200
     replacements = [new_did() for _ in range(5)]
 
-    response = put(client, did, replacements)
+    response = change(client, seed, did, replacements)
 
     assert response.status_code == 200, response.text
     assert stored(did) == list(enumerate(replacements))
@@ -76,6 +105,75 @@ def test_repeating_the_same_request_is_harmless(client, did, five_guardians):
     assert put(client, did, five_guardians).status_code == 200
 
     assert stored(did) == list(enumerate(five_guardians))
+
+
+# --- changing an existing set --------------------------------------------------
+
+
+def test_changing_guardians_without_a_signature_is_403_and_changes_nothing(client):
+    _seed, did = keyed_account()
+    original = [new_did() for _ in range(5)]
+    assert put(client, did, original).status_code == 200
+    replacements = [new_did() for _ in range(5)]
+
+    body = assert_problem(put(client, did, replacements), 403, UNSIGNED_GUARDIAN_CHANGE_TYPE)
+
+    assert body["detail"]
+    assert stored(did) == list(enumerate(original))
+
+
+def test_a_signature_over_a_different_guardian_list_is_403(client):
+    seed, did = keyed_account()
+    original = [new_did() for _ in range(5)]
+    assert put(client, did, original).status_code == 200
+    replacements = [new_did() for _ in range(5)]
+    other_list = [new_did() for _ in range(5)]
+
+    response = client.put(
+        URL,
+        json={
+            "guardians": replacements,
+            "signature": sign(seed, guardian_change_message(did, other_list)),
+        },
+        headers=auth(did),
+    )
+
+    assert_problem(response, 403, UNSIGNED_GUARDIAN_CHANGE_TYPE)
+    assert stored(did) == list(enumerate(original))
+
+
+def test_a_guardian_change_signed_by_another_key_is_403(client):
+    _seed, did = keyed_account()
+    original = [new_did() for _ in range(5)]
+    assert put(client, did, original).status_code == 200
+    replacements = [new_did() for _ in range(5)]
+    stranger = SigningKey.generate()
+
+    response = client.put(
+        URL,
+        json={
+            "guardians": replacements,
+            "signature": sign(stranger, guardian_change_message(did, replacements)),
+        },
+        headers=auth(did),
+    )
+
+    assert_problem(response, 403, UNSIGNED_GUARDIAN_CHANGE_TYPE)
+    assert stored(did) == list(enumerate(original))
+
+
+def test_a_signed_change_notifies_the_account_owner(client):
+    seed, did = keyed_account()
+    original = [new_did() for _ in range(5)]
+    assert put(client, did, original).status_code == 200
+    replacements = [new_did() for _ in range(5)]
+
+    assert change(client, seed, did, replacements).status_code == 200
+
+    notices = [n for n in list_notifications(did) if n.kind == GUARDIANS_CHANGED_KIND]
+    assert notices, "the account owner must be told the guardian set changed"
+    assert notices[-1].payload["guardians"] == replacements
+    assert notices[-1].payload["previous_guardians"] == original
 
 
 def test_guardian_dids_is_accepted_as_another_name_for_guardians(client, did, five_guardians):

@@ -7,7 +7,8 @@ The story under test::
     account holder lost their key
       -> POST /v1/recovery/requests            (ORCID iD + new public key)
       -> POST /v1/recovery/requests/{id}/approvals   x3 guardians
-         (the third opens a 72-hour contest window)
+         (each from their own session, signing the request id, account DID and
+         new key; the third opens a 72-hour contest window)
       -> EITHER the window elapses and a background job finalizes the recovery
          by appending a key.rotation record carrying the guardian proofs
          -> the old key is no longer the account's active key
@@ -56,9 +57,8 @@ How "signed by the old key" is presented to the cancel endpoint
 The spec fixes no wire format for the cancel call, so the request carries the
 old key's signature in both ways this API uses to authenticate a key holder: a
 bearer access token obtained by signing a fresh sign-in challenge with the old
-key, and a detached Ed25519 signature by the old key over the request id (the
-same message a guardian signs to approve) in the JSON body.  Nothing is
-asserted about the response body.
+key, and a detached Ed25519 signature by the old key over the request id in the
+JSON body.  Nothing is asserted about the response body.
 """
 
 from __future__ import annotations
@@ -80,6 +80,8 @@ from sqlalchemy import MetaData, Table, inspect, update
 
 from app import db, jobs
 from app.modules import ingest
+from app.modules.recovery import approval_message
+from app.security import issue_access_token
 
 #: Endpoints.
 RECORDS_URL = "/v1/records"
@@ -208,13 +210,16 @@ class Recovery:
         return response.json()["request_id"]
 
     def _approve(self, guardian: SigningKey) -> None:
-        """One guardian signs the request id and approves."""
+        """One guardian approves from their own session, signing what they vouch for."""
+        guardian_did = did_key_from_signing_key(guardian)
+        message = approval_message(self.request_id, self.did, self.new_public_key)
         response = self.client.post(
             f"{REQUESTS_URL}/{self.request_id}/approvals",
             json={
-                "guardian_did": did_key_from_signing_key(guardian),
-                "signature": sign_text(guardian, self.request_id),
+                "guardian_did": guardian_did,
+                "signature": sign_text(guardian, message),
             },
+            headers=bearer(issue_access_token(guardian_did, 0)),
         )
         assert response.status_code in (200, 201), response.text
 
