@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Follow-up from the commit security review of the ORCID state fix (2026-11-17). -->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/orcid/**,apps/web/src/features/web-auth/onboarding*.ts,apps/web/src/features/web-auth/onboarding-form.tsx,apps/web/src/features/web-auth/use-onboarding.ts,apps/web/src/features/web-auth/use-onboarding.test.ts"
+       creates="apps/web/src/app/(web-auth)/onboarding/orcid/page.tsx">
+    <title>ORCID link can be completed by a different browser: attacker links a victim's ORCID iD to the attacker's DID</title>
+    <symptoms>
+      GET /v1/auth/orcid/callback is an unauthenticated GET on the API; it trusts the DID inside the signed state and only checks that the state is unexpired and unused
+      The state is bound to the DID that called /start, not to the browser that will complete the flow
+    </symptoms>
+    <reproduction_steps>
+      As attacker A (signed in) call GET /v1/auth/orcid/start and take the authorize_url (state bound to A's DID)
+      Get victim V to open that URL; V authenticates at ORCID with V's iD and is redirected to /v1/auth/orcid/callback?code=..&amp;state=..
+      The callback issues and persists an ORCID credential binding V's ORCID iD to A's DID (201/200)
+    </reproduction_steps>
+    <expected>The ORCID redirect URI is a web-app page (/onboarding/orcid on the configured public web origin). That page POSTs {code, state} to a new authenticated POST /v1/auth/orcid/complete with the signed-in user's bearer token; the API verifies the state, rejects with 403 problem unless the caller's principal DID equals the state's did claim, and only then consumes the jti, exchanges the code and issues the credential. The old unauthenticated GET callback is removed (or returns 410 problem). The web onboarding ORCID step shows success or the problem detail and returns to the onboarding flow</expected>
+    <actual>Any browser that completes the ORCID redirect links its ORCID iD to whichever DID started the flow</actual>
+    <constraints>
+      <constraint>Keep state single-use, expiring, and bound to the starting DID; consume the jti only after the principal check passes</constraint>
+      <constraint>ORCID_MOCK mode must keep working for tests, seed-demo and the e2e journeys</constraint>
+      <constraint>Regression tests: the principal mismatch returns 403 and leaves the jti unconsumed; a missing token returns 401; the happy path links the ORCID iD</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
