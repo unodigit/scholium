@@ -18,7 +18,7 @@ in :mod:`app.modules.profiles.views`::
     {"did": "did:key:z6Mk...",
      "name": "Ada Lovelace",          # null once erased
      "affiliation": "Analytical Engine Co.",
-     "email": "ada@example.org",
+     "email": "ada@example.org",      # only when the caller is the owner
      "orcid": "0000-0002-1825-0097",  # null: not linked, or erased
      "tier": 1,
      "erased": false,
@@ -26,7 +26,9 @@ in :mod:`app.modules.profiles.views`::
 
 Every personal member is nullable: "nothing to show" is a normal answer for a
 DID that never saved a profile, and it is the *only* answer after erasure.
-``tier`` and ``reviews`` are never personal data, so they always appear.
+``email`` is also ``null`` for anyone but the owner: it is personal data, not
+part of the DID's public face.  ``tier`` and ``reviews`` are never personal
+data, so they always appear.
 
 ``POST /v1/profiles/{did}/verify-email`` (feature 178) takes the token from the
 emailed link either as a query parameter (the link itself) or as a small JSON
@@ -143,7 +145,8 @@ class PublicProfileOut(BaseModel):
     """The public view of a DID: who they are, and what they signed.
 
     A member that is ``null`` is one there is nothing to say about; ``did``,
-    ``tier``, ``erased`` and ``reviews`` are always present.
+    ``tier``, ``erased`` and ``reviews`` are always present.  ``email`` is
+    populated only for the owner's own read: it is personal data.
     """
 
     did: str

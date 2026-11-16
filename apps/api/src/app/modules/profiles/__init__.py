@@ -6,10 +6,12 @@ into ``profile.enc_blob``, and the key is held in the ``profile_keys`` table, so
 that erasing a profile later is just deleting its key (crypto-shredding).
 
 Feature 29: ``GET /v1/profiles/{did}`` returns the public view of a DID -- the
-decrypted name, affiliation and email, the linked ORCID iD, the trust tier and
-the public signed reviews.  After erasure the same route shows only the
-pseudonymous DID: the personal fields and the ORCID iD read as ``null`` while
-the tier and the signed reviews (public records, not personal data) remain.
+decrypted name and affiliation, the linked ORCID iD, the trust tier and the
+public signed reviews.  The email is personal data and is returned only to the
+owner reading their own profile; every other caller sees it as ``null``.  After
+erasure the same route shows only the pseudonymous DID: the personal fields and
+the ORCID iD read as ``null`` while the tier and the signed reviews (public
+records, not personal data) remain.
 
 Feature 178: saving a profile emails the owner a signed verification link, and
 ``POST /v1/profiles/{did}/verify-email`` redeems it, marking the stored address

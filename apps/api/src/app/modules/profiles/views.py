@@ -5,9 +5,13 @@
     from app.modules.profiles import public_profile
 
     view = public_profile("did:key:z6Mk...")
-    # PublicProfile(did=..., name="Ada", affiliation="Co.", email="...",
+    # PublicProfile(did=..., name="Ada", affiliation="Co.", email=None,
     #               orcid="0000-0002-1825-0097", tier=1, erased=False,
     #               reviews=[SignedReview(...), ...])
+
+The email is personal data and is returned only when the caller passes
+``viewer_did`` equal to the profile's DID -- the owner reading their own
+profile.  It is ``None`` for every other caller.
 
 The view is assembled from four sources, and only the first is this plugin's
 own storage:
@@ -192,7 +196,9 @@ class PublicProfile:
     """Everything ``GET /v1/profiles/{did}`` shows for one DID.
 
     ``name``/``affiliation``/``email``/``orcid`` are ``None`` when there is
-    nothing to show: never saved, or erased.  ``tier`` and ``reviews`` are
+    nothing to show: never saved, or erased.  ``email`` is also ``None``
+    unless the viewer is the profile's owner -- it is personal data, while
+    the other fields are the DID's public face.  ``tier`` and ``reviews`` are
     never personal data -- the tier is an account property and the reviews are
     signed public records -- so both survive erasure, which is the point: the
     DID stays pseudonymous, its history keeps verifying.
@@ -389,8 +395,14 @@ def _erasure_requested(did: str) -> bool:
         return conn.execute(query).first() is not None
 
 
-def public_profile(did: str) -> PublicProfile:
+def public_profile(did: str, *, viewer_did: Optional[str] = None) -> PublicProfile:
     """Assemble everything ``GET /v1/profiles/{did}`` shows for ``did``.
+
+    ``viewer_did`` is the authenticated caller, when there is one.  The email
+    is personal data (PRD ID-7, tech_architect §12): it is returned only when
+    the viewer *is* the profile's owner, and is ``None`` for everyone else,
+    including when no viewer is given.  The name, affiliation, ORCID iD, tier
+    and signed reviews are the DID's public face and are returned regardless.
 
     Raises :class:`~app.modules.profiles.crypto.ProfileDecryptionError` when a
     keyed blob still will not open: that is corruption, and the caller must
@@ -429,7 +441,8 @@ def public_profile(did: str) -> PublicProfile:
         erased=erased,
         name=name,
         affiliation=affiliation,
-        email=email,
+        # The address is personal data; only its owner may read it back.
+        email=email if viewer_did == did else None,
         # An ORCID iD identifies a person; an erased profile shows none.
         orcid=None if erased else read_orcid(did),
         reviews=read_signed_reviews(did),

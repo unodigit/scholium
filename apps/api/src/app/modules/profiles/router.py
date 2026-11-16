@@ -7,15 +7,17 @@ The module loader mounts this router under ``/v1``:
   ``profile.enc_blob``; the key lives in ``profile_keys``.  Answers ``200`` with
   the saved profile.  Saving again replaces the earlier profile.
 * ``GET /v1/profiles/{did}`` (feature 29) -- anyone reads the public view of a
-  DID: the decrypted name, affiliation and email, the linked ORCID iD, the
-  trust tier and the public signed reviews, with ``erased`` saying which of
-  the two states the profile is in.  No authentication is required -- a
-  profile is the DID's public face, and signed reviews are shown on it for
-  public credit -- but a token that is *sent* and unusable is still a ``401``,
-  never silently ignored, so a caller who meant to identify themselves finds
-  out (the stance ``GET /v1/auth/orcid/start`` takes).  A usable token changes
-  nothing: the answer is the same for the owner and a stranger.  Personal
-  data makes the response uncacheable (``no-store``), as with the PUT.
+  DID: the decrypted name and affiliation, the linked ORCID iD, the trust
+  tier and the public signed reviews, with ``erased`` saying which of the two
+  states the profile is in.  No authentication is required -- a profile is
+  the DID's public face, and signed reviews are shown on it for public credit
+  -- but a token that is *sent* and unusable is still a ``401``, never
+  silently ignored, so a caller who meant to identify themselves finds out
+  (the stance ``GET /v1/auth/orcid/start`` takes).  The email is personal
+  data (PRD ID-7, tech_architect section 12), so it is only filled in for the
+  owner reading their own profile; anonymous and different-DID callers read
+  ``null`` there.  Personal data makes the response uncacheable (``no-store``),
+  as with the PUT.
 * ``POST /v1/profiles/{did}/verify-email`` (feature 178) -- redeems the token
   from a verification link and returns ``200`` with ``email_verified: true``.
   The token is the credential: it reaches the address's owner by email and is
@@ -103,18 +105,20 @@ def require_owner(
 def get_profile(
     did: str,
     response: Response,
-    _caller: Optional[Principal] = Depends(optional_principal),
+    caller: Optional[Principal] = Depends(optional_principal),
 ) -> PublicProfileOut:
     """Return the public view of ``did``'s profile.
 
     ``200`` for any DID -- one with no profile at all answers with the
     pseudonymous DID, null personal fields, tier 0 and no reviews, which is
-    exactly what an erased profile answers too.  A stored blob that will not
-    decrypt although its key exists is corruption, not erasure, and answers
-    ``500`` problem details instead of quietly impersonating one.
+    exactly what an erased profile answers too.  ``email`` is personal data
+    and is filled in only when the caller *is* the profile's owner; an
+    anonymous or different-DID caller reads ``null`` there.  A stored blob
+    that will not decrypt although its key exists is corruption, not erasure,
+    and answers ``500`` problem details instead of quietly impersonating one.
     """
     try:
-        view = public_profile(did)
+        view = public_profile(did, viewer_did=None if caller is None else caller.did)
     except ProfileDecryptionError as exc:
         raise HTTPException(
             status_code=500,

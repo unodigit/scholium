@@ -182,9 +182,10 @@ def review_table():
 
 
 def test_get_returns_the_decrypted_profile(client, did, auth):
+    """The owner's read: the decrypted fields, including their own address."""
     client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
 
-    response = client.get(f"/v1/profiles/{did}")
+    response = client.get(f"/v1/profiles/{did}", headers=auth(did))
 
     assert response.status_code == 200
     assert response.json() == {
@@ -197,6 +198,50 @@ def test_get_returns_the_decrypted_profile(client, did, auth):
         "erased": False,
         "reviews": [],
     }
+
+
+# --- the email is personal data ---------------------------------------------
+
+
+def test_an_anonymous_get_does_not_reveal_the_email(client, did, auth):
+    """A profile's email is personal data (PRD ID-7, tech_architect §12).
+
+    The name and affiliation are the DID's public face; the address is not:
+    only the owner reading their own profile may see it.
+    """
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    body = client.get(f"/v1/profiles/{did}").json()
+
+    assert body["email"] is None
+    assert body["name"] == PROFILE["name"]
+    assert body["affiliation"] == PROFILE["affiliation"]
+
+
+def test_the_owner_sees_their_own_email(client, did, auth):
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    body = client.get(f"/v1/profiles/{did}", headers=auth(did)).json()
+
+    assert body["email"] == PROFILE["email"]
+
+
+def test_a_stranger_does_not_see_the_email(client, did, auth):
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    body = client.get(f"/v1/profiles/{did}", headers=auth(_did_key())).json()
+
+    assert body["email"] is None
+    assert body["name"] == PROFILE["name"]
+
+
+def test_public_profile_only_hands_the_email_to_its_owner(client, did, auth):
+    """The service layer is safe by default: no viewer, no address."""
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    assert public_profile(did).email is None
+    assert public_profile(did, viewer_did=_did_key()).email is None
+    assert public_profile(did, viewer_did=did).email == PROFILE["email"]
 
 
 def test_get_reads_the_fields_out_of_the_encrypted_blob(client, did, auth):
@@ -213,7 +258,7 @@ def test_get_survives_unicode(client, did, auth):
     body = {"name": "Zoë Çelik 李雷", "affiliation": "Université de Genève", "email": "zoe@example.ch"}
     client.put(f"/v1/profiles/{did}", json=body, headers=auth(did))
 
-    answer = client.get(f"/v1/profiles/{did}").json()
+    answer = client.get(f"/v1/profiles/{did}", headers=auth(did)).json()
 
     assert (answer["name"], answer["affiliation"], answer["email"]) == (
         body["name"], body["affiliation"], body["email"],
@@ -579,13 +624,16 @@ def test_a_malformed_scores_cell_is_not_fatal(client, did, review_table):
 
 
 def test_get_is_public_and_needs_no_token(client, did, auth):
+    """Anyone may read the public face; only the owner sees the email."""
     client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
 
     anonymous = client.get(f"/v1/profiles/{did}")
     owner = client.get(f"/v1/profiles/{did}", headers=auth(did))
 
     assert anonymous.status_code == owner.status_code == 200
-    assert anonymous.json() == owner.json()  # the owner sees no more than anyone
+    assert anonymous.json()["name"] == owner.json()["name"] == PROFILE["name"]
+    assert anonymous.json()["email"] is None
+    assert owner.json()["email"] == PROFILE["email"]
 
 
 def test_a_bad_token_is_rejected_even_on_a_public_read(client, did):
@@ -603,6 +651,7 @@ def test_a_token_for_someone_else_reads_the_same_public_view(client, did, auth):
 
     assert stranger.status_code == 200
     assert stranger.json()["name"] == PROFILE["name"]
+    assert stranger.json()["email"] is None
 
 
 # --- the service layer ------------------------------------------------------
