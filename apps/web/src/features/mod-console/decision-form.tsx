@@ -19,14 +19,17 @@
 import { useId, useState, type FormEvent } from "react";
 
 import { policyHref, type PolicyClause } from "../policies-page";
+import { useViewer } from "../review-form/use-viewer";
 import { Icon, RecordLink } from "../ui-kit";
 import {
-  DECISION_ACTIONS,
-  DECISION_ACTION_LABELS,
   PUBLIC_RECORD_NOTICE,
+  TOMBSTONE_ACTION,
+  actionOptionLabel,
   authorPreview,
   buildDecisionBody,
   describeDecisionError,
+  isSignableAction,
+  offeredActions,
   signModerationDecision,
   submitModerationDecision,
   validateDecisionDraft,
@@ -51,6 +54,13 @@ export interface DecisionFormProps {
   /** Injectable submitter; defaults to `POST /v1/moderation/decisions`. */
   submitDecision?: DecisionSubmitter;
   /**
+   * The signed-in moderator's trust tier, which decides whether the legal
+   * takedown (tombstone) is offered: tier 4 only. When omitted it is read from
+   * the claims in the access token. It only picks what to show; the API
+   * refuses a tombstone from anyone below tier 4.
+   */
+  tier?: number | null;
+  /**
    * Called after the API accepts the decision. The detail view uses it to say
    * the paper has moved on; the form itself already shows the result.
    */
@@ -70,6 +80,8 @@ export function stateLabel(state: string): string {
       return "Rejected";
     case "moderation":
       return "Still waiting for a decision";
+    case "tombstoned":
+      return "Taken down";
     default:
       return state === "" ? "Updated" : state;
   }
@@ -81,8 +93,11 @@ export function DecisionForm({
   clauses,
   signDecision = signModerationDecision,
   submitDecision = submitModerationDecision,
+  tier,
   onPublished,
 }: DecisionFormProps) {
+  const viewer = useViewer();
+  const actions = offeredActions(tier === undefined ? viewer.tier : tier);
   const [action, setAction] = useState<DecisionAction | "">("");
   const [clause, setClause] = useState("");
   const [reason, setReason] = useState("");
@@ -101,6 +116,7 @@ export function DecisionForm({
   const noticeId = `${baseId}-notice`;
   const failureId = `${baseId}-failure`;
 
+  const takedown = action === TOMBSTONE_ACTION;
   const draft: DecisionDraft = { action, clause, reason, category };
   const preview = authorPreview(draft, clauses);
   const selectedClause = clauses.find((item) => item.id === clause) ?? null;
@@ -199,9 +215,9 @@ export function DecisionForm({
           }}
         >
           <option value="">Choose an action…</option>
-          {DECISION_ACTIONS.map((value) => (
+          {actions.map((value) => (
             <option key={value} value={value}>
-              {DECISION_ACTION_LABELS[value]}
+              {actionOptionLabel(value)}
             </option>
           ))}
         </select>
@@ -285,7 +301,7 @@ export function DecisionForm({
 
       <div className="mc-field">
         <label className="mc-label" htmlFor={reasonId}>
-          Reason shown to the author{" "}
+          {takedown ? "Legal reason for the takedown" : "Reason shown to the author"}{" "}
           <span className="mc-required">(required)</span>
         </label>
         <textarea
@@ -302,7 +318,11 @@ export function DecisionForm({
             .filter((value): value is string => value !== null)
             .join(" ")}
           rows={5}
-          placeholder="Explain the decision in plain language."
+          placeholder={
+            takedown
+              ? "Name the legal basis, such as the order or notice and its reference."
+              : "Explain the decision in plain language."
+          }
           disabled={busy}
           onChange={(event) => {
             setReason(event.target.value);
@@ -312,6 +332,16 @@ export function DecisionForm({
         <p id={`${reasonId}-hint`} className="mc-hint">
           This text is published with the decision and shown to the author.
         </p>
+        {takedown ? (
+          <p className="mc-takedown-warning">
+            <Icon name="alert" className="mc-form-error-icon" />
+            <span>
+              A takedown deletes the version&rsquo;s files from this node and
+              denylists their ids so they cannot be served again. The signed
+              records stay. This cannot be undone.
+            </span>
+          </p>
+        ) : null}
         {errors.reason !== undefined ? (
           <FieldError id={`${reasonId}-error`} message={errors.reason} />
         ) : null}
@@ -418,7 +448,7 @@ function AuthorPreviewMessage({
 }
 
 function isPublishedAction(value: string): value is DecisionAction {
-  return (DECISION_ACTIONS as readonly string[]).includes(value);
+  return isSignableAction(value);
 }
 
 /** The record the moderator just published, with a link to read it back. */
@@ -446,7 +476,7 @@ function DecisionPublished({
         <div>
           <dt>Action</dt>
           <dd>
-            {action === "" ? accepted.action : DECISION_ACTION_LABELS[action]}
+            {action === "" ? accepted.action : actionOptionLabel(action)}
           </dd>
         </div>
         <div>

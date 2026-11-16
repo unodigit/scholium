@@ -98,19 +98,22 @@ export type FetchChecks = (ref: ChecksVersionRef, signal?: AbortSignal) => Promi
 /**
  * Ask the node for a version's check results.
  *
- * Reading is public, like reading a record or a consent report, so no token
- * is sent:
- *
  *     GET /v1/papers/{id}/v/{n}/checks
  *
- * The API does not expose this route yet (see the feature README); callers
- * that already have the data, or that run against a different node, pass
- * their own {@link FetchChecks}.
+ * A listed version's report is public, but an unlisted one (still being
+ * scanned, awaiting consent or in moderation, which is where the author's
+ * status tracker and this step look) is served only to its authors and to
+ * moderators; everyone else gets the unknown-version `404`. So the request
+ * goes through the client's own auth: the signed-in reader's bearer token is
+ * sent, and an anonymous reader of a listed paper sends none.
+ *
+ * Callers that already have the data, or that run against a different node,
+ * pass their own {@link FetchChecks}.
  */
 export const fetchVersionChecks: FetchChecks = async (ref, signal) => {
   const payload = await api.get<unknown>(
     `/papers/${encodeURIComponent(ref.paper)}/v/${encodeURIComponent(String(ref.version))}/checks`,
-    { auth: false, signal },
+    { signal },
   );
   return normalizeVersionChecks(payload, ref);
 };

@@ -1,12 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, NetworkError, apiErrorFrom } from "../../lib/api";
+import {
+  ApiError,
+  NetworkError,
+  apiErrorFrom,
+  resolveApiBaseUrl,
+  tokenStore,
+} from "../../lib/api";
 import {
   ReadingResponseError,
   describeReadingError,
   loadReadingText,
   parseReadingText,
   readingPath,
+  withSessionToken,
 } from "./reading";
 
 /**
@@ -102,16 +109,106 @@ describe("readingPath", () => {
 });
 
 describe("loadReadingText", () => {
-  it("reads the text anonymously and without caching", async () => {
+  afterEach(() => {
+    tokenStore.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the text through the client's own auth and without caching", async () => {
     const get = vi.fn().mockResolvedValue(body([{ paragraph_id: "p1", text: "Hi." }]));
 
     const text = await loadReadingText("sch:6sel-2dio-orm6", 2, { get });
 
+    // No `auth: false`: the client attaches the bearer token when there is
+    // one, and sends nothing when there is not.
     expect(get).toHaveBeenCalledWith("/papers/sch%3A6sel-2dio-orm6/v/2/text", {
-      auth: false,
       cache: "no-store",
     });
     expect(text.paragraphs).toEqual([{ id: "p1", text: "Hi." }]);
+  });
+
+  function stubFetch() {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(body([{ paragraph_id: "p1", text: "Hi." }])), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("sends the signed-in reader's bearer token (an unlisted version's text is 404 without it)", async () => {
+    tokenStore.set({ accessToken: "moderator-access-token" });
+    const fetchMock = stubFetch();
+
+    await loadReadingText("sch:6sel-2dio-orm6", 2);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/v1/papers/sch%3A6sel-2dio-orm6/v/2/text");
+    expect(new Headers(init?.headers).get("Authorization")).toBe(
+      "Bearer moderator-access-token",
+    );
+  });
+
+  it("sends no Authorization header when nobody is signed in (a listed paper)", async () => {
+    const fetchMock = stubFetch();
+
+    await loadReadingText("sch:6sel-2dio-orm6", 2);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+  });
+});
+
+describe("withSessionToken (PDF bytes)", () => {
+  const CONTENT = `${resolveApiBaseUrl()}/v1/content/bafkreiexample`;
+
+  /** A stand-in for PDF.js that records what it was asked to open. */
+  function fakePdfjs() {
+    const getDocument = vi.fn((_source: unknown) => ({
+      promise: Promise.resolve({ numPages: 1, getPage: vi.fn() }),
+      destroy: vi.fn(),
+    }));
+    return { getDocument };
+  }
+
+  afterEach(() => {
+    tokenStore.clear();
+  });
+
+  it("opens the file with the signed-in reader's bearer token", async () => {
+    tokenStore.set({ accessToken: "author-access-token" });
+    const inner = fakePdfjs();
+
+    const pdfjs = await withSessionToken(async () => inner)();
+    pdfjs.getDocument({ url: CONTENT, isEvalSupported: false });
+
+    expect(inner.getDocument).toHaveBeenCalledWith({
+      url: CONTENT,
+      isEvalSupported: false,
+      httpHeaders: { Authorization: "Bearer author-access-token" },
+    });
+  });
+
+  it("adds no header when nobody is signed in", async () => {
+    const inner = fakePdfjs();
+
+    const pdfjs = await withSessionToken(async () => inner)();
+    pdfjs.getDocument({ url: CONTENT, isEvalSupported: false });
+
+    expect(inner.getDocument).toHaveBeenCalledWith({ url: CONTENT, isEvalSupported: false });
+  });
+
+  it("never sends the token to a file that is not on this node's API", async () => {
+    tokenStore.set({ accessToken: "author-access-token" });
+    const inner = fakePdfjs();
+
+    const pdfjs = await withSessionToken(async () => inner)();
+    pdfjs.getDocument({ url: "https://elsewhere.example/paper.pdf" });
+
+    expect(inner.getDocument).toHaveBeenCalledWith({ url: "https://elsewhere.example/paper.pdf" });
   });
 });
 

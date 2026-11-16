@@ -68,13 +68,35 @@ change note and abstract. The route passes the `{cid}`; the browser fetches
 the record and the policy clauses after mount, so the server HTML is the shell
 and "Loading the paper…" (as on `/mod`).
 
+### The PDF and the text
+
+Metadata alone would have a moderator deciding blind, so beneath the record's
+card the paper column shows the version's **PDF** (the paper page's `PdfView`,
+one canvas per page) and its **extracted text** (plain paragraphs in a
+keyboard-focusable, scrollable frame). `version-content.tsx` draws them;
+`paper-content.ts` finds them.
+
+Neither is public while the version waits: `GET /v1/content/{cid}` and `GET
+/v1/papers/{id}/v/{n}/text` answer `404` to anyone but the version's authors
+and moderators. So both are fetched with the moderator's bearer token (the text
+through the shared client, the PDF by handing PDF.js the token as
+`httpHeaders`, only for a file on this node's API). The PDF is found from the
+version's signed `manifest` record (`GET /v1/records/{manifestCid}`, public),
+because the catalog's manifest route lists listed versions only.
+
+The two load independently of each other and of the form. A part that cannot
+be read says why, with **Try the PDF again** / **Try the text again**; "no PDF"
+and "no text extracted yet" are said in words; the decision form is never held
+back. PDF.js's "Open in a new tab" link cannot carry the token, so for a
+version still in moderation it opens the API's `404`; read the PDF in the page.
+
 ### The form
 
 | Field | Rule |
 | --- | --- |
-| Action | Required select: `list`, `hold`, `reclassify`, `reject` or `delist` |
+| Action | Required select: `list`, `hold`, `reclassify`, `reject` or `delist`; and, for tier 4 only, `tombstone` (below) |
 | Policy clause | Required select, every clause from `GET /v1/moderation/policies`; the chosen clause's text and `/policies#MOD-xx` link appear beneath it |
-| Reason | Required textarea; published verbatim, whitespace trimmed |
+| Reason | Required textarea; published verbatim, whitespace trimmed. For a tombstone it is the **legal reason** for the takedown |
 | New category | Required only when the action is `reclassify` (the API's rule) |
 
 The **author preview** is assembled from the same values that will be signed:
@@ -97,6 +119,25 @@ values stay up after any failure.
 to sign in (no request is made), and a non-moderator's decision is refused
 with `403` by the API. The tier claim inside a short-lived token is never used
 by the page to hide the form.
+
+### The legal takedown (tombstone)
+
+`tombstone` is the legal takedown (policy MOD-05): the API deletes the
+version's files from the node and denylists their ids (`/content` then answers
+`451`); the signed records and the log stay. It is accepted from tier 4 only.
+The form offers it, last in the action list, **only when the access token's
+`tier` claim is 4** (`offeredActions`, read with `useViewer`; a tier the token
+does not name offers nothing). That is the one thing the page does with the
+claim, and it only decides what to put in front of the moderator: a stale
+claim cannot let a lower tier through, because the API refuses them.
+
+Choosing it relabels the reason **Legal reason for the takedown (required)** —
+name the order or notice and its reference — and warns, in words and an icon,
+that the files are deleted and this cannot be undone. A blank legal reason is
+refused before the passkey prompt. The author preview says the paper's files
+were removed for legal reasons and quotes the reason and clause. Appeals word
+only the five standard actions (`DECISION_ACTIONS`), so a tombstone appears
+there as sent.
 
 ## Flags and appeals (beneath the queue on `/mod`)
 

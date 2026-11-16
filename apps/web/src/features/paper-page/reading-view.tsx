@@ -43,6 +43,7 @@ import {
 import { PdfView } from "./pdf-view";
 import type { LoadPdfjs } from "./pdf-render";
 import { READING_ID } from "./paper-links";
+import { loadPdfjsWithSession } from "./reading";
 
 export type ReadingViewId = "html" | "pdf";
 
@@ -239,7 +240,9 @@ export function ReadingViews({ pdfUrl, children, loadPdf }: ReadingViewsProps) {
       </div>
       {pdfUrl !== null && opened ? (
         <div className="ppg-view" hidden={showing !== "pdf"}>
-          <PdfView url={pdfUrl} loadPdf={loadPdf} />
+          {/* The default loader carries the reader's token: an unlisted
+              version's bytes are served only to its authors and moderators. */}
+          <PdfView url={pdfUrl} loadPdf={loadPdf ?? loadPdfjsWithSession} />
         </div>
       ) : null}
     </>

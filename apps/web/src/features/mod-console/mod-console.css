@@ -440,6 +440,103 @@
   margin-top: calc(var(--space-unit) * 5);
 }
 
+/* ---- The paper's PDF and text, under its metadata ------------------------ */
+
+/* The paper column: the signed metadata, then the PDF, then the text. */
+.mc-detail-paper {
+  display: grid;
+  gap: calc(var(--space-unit) * 6);
+  min-width: 0;
+}
+
+.mc-content {
+  display: grid;
+  gap: calc(var(--space-unit) * 6);
+  min-width: 0;
+}
+
+.mc-content-card {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+}
+
+.mc-content-title {
+  margin: 0 0 calc(var(--space-unit) * 3);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  letter-spacing: var(--tracking-title);
+  font-weight: var(--weight-title);
+}
+
+/* Why a part is missing, with the way to ask again beside it. */
+.mc-content-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+}
+
+.mc-content-note .mc-paper-muted {
+  margin: 0;
+}
+
+/* The extracted text scrolls inside its own frame, so a long paper does not
+   push the decision form's neighbours out of reach. It takes keyboard focus
+   (tabindex 0), so it needs a visible ring. */
+.mc-text {
+  max-block-size: 70vh;
+  padding: calc(var(--space-unit) * 4);
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+}
+
+.mc-text:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.mc-text-paragraph {
+  margin: 0 0 calc(var(--space-unit) * 4);
+  max-inline-size: var(--measure-reading);
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.mc-text-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+/* A takedown cannot be undone: said in words and an icon, in an accent-edged
+   note as the other expected conditions are, not in the fault colour. */
+.mc-takedown-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 1.5);
+  margin: calc(var(--space-unit) * 3) 0 0;
+  padding: calc(var(--space-unit) * 3);
+  border: 1px solid var(--rule);
+  border-inline-start: 4px solid var(--accent);
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.mc-takedown-warning .mc-form-error-icon {
+  color: var(--ink-2);
+}
+
 /* ---- Decision form ------------------------------------------------------ */
 
 .mc-decision-lede {
@@ -664,13 +761,24 @@
   border-radius: var(--corner-control);
 }
 
+/* Beside the paper, the form stays in view as the PDF and text scroll past. */
+@media (min-width: 64.0625rem) {
+  .mc-detail-grid > .mc-decision-card {
+    position: sticky;
+    inset-block-start: calc(var(--space-unit) * 4);
+    max-block-size: calc(100dvh - var(--space-unit) * 8);
+    overflow-y: auto;
+  }
+}
+
 @media (max-width: 64rem) {
   .mc-detail-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .mc-paper-card,
-  .mc-decision-card {
+  .mc-decision-card,
+  .mc-content-card {
     padding: calc(var(--space-unit) * 5);
   }
 }

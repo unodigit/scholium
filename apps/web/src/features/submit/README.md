@@ -284,9 +284,13 @@ per author, in order.
 node has one, `null` before the version exists — and never holds the author
 back: checks are advisory. Step 5 (`SignStep`) is wired into `SubmitWizard`;
 after signing, its status tracker polls `GET /v1/papers/{id}/v/{n}/checks`
-alongside the consents, shows **Checks pending** while the node answers 404
-(the route arrives with the text-extraction work), and displays the advisory
-report — the four verdicts, no blockers — once it lands.
+alongside the consents, shows **Checks pending** while the node answers 404,
+and displays the advisory report — the four verdicts, no blockers — once it
+lands. The request carries the author's bearer token: while a version is
+unlisted (awaiting consent, scanning, in moderation) its report is served only
+to its authors and to moderators, and anyone else gets that same 404, so a
+tokenless read would show an author nothing. A listed paper's report is still
+readable anonymously.
 `ConsentTracker` is exported on its own for the post-submit status page.
 
 ## Layout

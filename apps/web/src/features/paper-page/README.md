@@ -177,6 +177,16 @@ paragraphs (`GET /v1/papers/{id}/v/{n}/text`), each with a margin marker when it
 has been annotated. It has two renditions, HTML and PDF, and the header's PDF and
 HTML actions choose between them.
 
+**Who may read what.** A listed version's text and bytes are public. While a
+version is unlisted, `/text` and `GET /v1/content/{cid}` answer `404` to anyone
+but its authors and moderators. So `loadReadingText` goes through the client's
+own auth (the signed-in reader's token when there is one, nothing when there is
+not; the server render holds no token), and the column's PDF is opened with
+`loadPdfjsWithSession`: PDF.js fetches the file itself and sends no credentials,
+so `withSessionToken` hands it the token as `httpHeaders` — only for a file on
+this node's API, never for another origin. The moderation detail view
+(`mod-console`) reuses both.
+
 ### Math (KaTeX)
 
 The text arrives as plain paragraphs, and a paragraph with LaTeX has it written

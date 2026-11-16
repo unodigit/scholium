@@ -55,7 +55,7 @@ export const SIGN_DECISION_REASON = "Sign decision";
  */
 export const PUBLIC_RECORD_NOTICE = "This decision is a public signed record.";
 
-/** The five actions of the `moderation.decision` schema, in form order. */
+/** The five actions any moderator may choose, in form order. */
 export const DECISION_ACTIONS = [
   "list",
   "hold",
@@ -64,11 +64,25 @@ export const DECISION_ACTIONS = [
   "delist",
 ] as const;
 
-/** One action of a `moderation.decision`. */
-export type DecisionAction = (typeof DECISION_ACTIONS)[number];
+/**
+ * The legal takedown (policy MOD-05). The API deletes the version's files and
+ * denylists their ids, and accepts it from tier 4 only, so it is not one of
+ * {@link DECISION_ACTIONS}: the form adds it for a tier-4 moderator
+ * ({@link offeredActions}).
+ */
+export const TOMBSTONE_ACTION = "tombstone" as const;
 
-/** How each action reads to a moderator. */
-export const DECISION_ACTION_LABELS: Readonly<Record<DecisionAction, string>> =
+/** The trust tier that may issue a tombstone (`Tier.MODERATOR` in the API). */
+export const TOMBSTONE_MIN_TIER = 4;
+
+/** One of the five actions any moderator may choose. */
+export type StandardAction = (typeof DECISION_ACTIONS)[number];
+
+/** One action of a `moderation.decision` this form can sign. */
+export type DecisionAction = StandardAction | typeof TOMBSTONE_ACTION;
+
+/** How each of the five standard actions reads to a moderator. */
+export const DECISION_ACTION_LABELS: Readonly<Record<StandardAction, string>> =
   {
     list: "List the paper",
     hold: "Hold from listing",
@@ -77,12 +91,48 @@ export const DECISION_ACTION_LABELS: Readonly<Record<DecisionAction, string>> =
     delist: "Delist the paper",
   };
 
-/** True when `value` is one of the five decision actions. */
-export function isDecisionAction(value: unknown): value is DecisionAction {
+/** How the legal takedown reads to a moderator. */
+export const TOMBSTONE_LABEL = "Legal takedown (tombstone)";
+
+/** How any action the form can sign reads to a moderator. */
+export function actionOptionLabel(action: DecisionAction): string {
+  return action === TOMBSTONE_ACTION
+    ? TOMBSTONE_LABEL
+    : DECISION_ACTION_LABELS[action];
+}
+
+/** True when `value` is one of the five standard actions. */
+export function isDecisionAction(value: unknown): value is StandardAction {
   return (
     typeof value === "string" &&
     (DECISION_ACTIONS as readonly string[]).includes(value)
   );
+}
+
+/** True when `value` is an action this form can sign: a standard one or the tombstone. */
+export function isSignableAction(value: unknown): value is DecisionAction {
+  return value === TOMBSTONE_ACTION || isDecisionAction(value);
+}
+
+/**
+ * Whether a moderator of this tier is offered the tombstone.
+ *
+ * `tier` is read from the claims in the access token, so it only decides what
+ * to put in front of the moderator: the API is the gate and refuses a
+ * tombstone from anyone below tier 4. A tier the token does not name is not
+ * enough to offer it.
+ */
+export function canTombstone(tier: number | null | undefined): boolean {
+  return typeof tier === "number" && tier >= TOMBSTONE_MIN_TIER;
+}
+
+/** The actions to offer a moderator of this tier, in form order. */
+export function offeredActions(
+  tier: number | null | undefined,
+): readonly DecisionAction[] {
+  return canTombstone(tier)
+    ? [...DECISION_ACTIONS, TOMBSTONE_ACTION]
+    : DECISION_ACTIONS;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +382,8 @@ export class DecisionDraftError extends Error {
  *
  * - an action (`moderation.decision` requires one);
  * - a policy clause from the published list (the API refuses an unknown one);
- * - a non-blank reason (the API refuses a blank one);
+ * - a non-blank reason (the API refuses a blank one); for a tombstone it is
+ *   the legal reason for the takedown;
  * - a category for `reclassify` (the API requires it to move the paper).
  *
  * The action is required even though it is a select: an empty first option
@@ -342,14 +393,17 @@ export function validateDecisionDraft(
   draft: DecisionDraft,
 ): DecisionValidation {
   const errors: DecisionValidation = {};
-  if (!isDecisionAction(draft.action)) {
+  if (!isSignableAction(draft.action)) {
     errors.action = "Choose an action.";
   }
   if (draft.clause.trim() === "") {
     errors.clause = "Choose the policy clause this decision cites.";
   }
   if (draft.reason.trim() === "") {
-    errors.reason = "Write the reason the author will see.";
+    errors.reason =
+      draft.action === TOMBSTONE_ACTION
+        ? "State the legal reason for the takedown."
+        : "Write the reason the author will see.";
   }
   if (draft.action === "reclassify" && draft.category.trim() === "") {
     errors.category = "Name the category the paper moves to.";
@@ -381,7 +435,7 @@ export function buildDecisionBody(
   versionCid: string,
   draft: DecisionDraft,
 ): DecisionBody {
-  if (!isDecisionAction(draft.action)) {
+  if (!isSignableAction(draft.action)) {
     throw new DecisionDraftError("Choose an action before signing the decision.");
   }
   const clause = draft.clause.trim();
@@ -393,7 +447,9 @@ export function buildDecisionBody(
   const reason = draft.reason.trim();
   if (reason === "") {
     throw new DecisionDraftError(
-      "Write the reason the author will see before signing the decision.",
+      draft.action === TOMBSTONE_ACTION
+        ? "State the legal reason for the takedown before signing the decision."
+        : "Write the reason the author will see before signing the decision.",
     );
   }
 
@@ -443,7 +499,7 @@ export function authorPreview(
   draft: DecisionDraft,
   clauses: readonly PolicyClause[],
 ): AuthorPreview | null {
-  if (!isDecisionAction(draft.action)) {
+  if (!isSignableAction(draft.action)) {
     return null;
   }
 
@@ -467,6 +523,10 @@ export function authorPreview(
       break;
     case "delist":
       headline = "Your paper has been removed from the catalog.";
+      break;
+    case "tombstone":
+      headline =
+        "Your paper's files have been removed for legal reasons, and the paper is no longer listed.";
       break;
   }
 

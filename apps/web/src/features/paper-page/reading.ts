@@ -14,7 +14,16 @@
  * Pure data and functions (plus the injectable loader), no React.
  */
 
-import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+import {
+  ApiError,
+  NetworkError,
+  api,
+  authorizationHeader,
+  resolveApiBaseUrl,
+  tokenStore,
+  type ApiClient,
+} from "../../lib/api";
+import { loadPdfjs, type LoadPdfjs } from "./pdf-render";
 
 /** One paragraph of a version's text. */
 export interface ReadingParagraph {
@@ -92,18 +101,68 @@ export function parseReadingText(payload: unknown): ReadingText {
   };
 }
 
-/** Read one version's text through the shared API client. Public read. */
+/**
+ * Read one version's text through the shared API client.
+ *
+ * A listed version's text is public; an unlisted one (in moderation, held,
+ * rejected…) is served only to its authors and to moderators, and everyone
+ * else gets the unknown-version `404`. So the client's own auth applies: the
+ * signed-in reader's bearer token is sent when there is one, and an anonymous
+ * reader of a listed paper (or the server rendering the page, which holds no
+ * token) sends none.
+ */
 export async function loadReadingText(
   shortId: string,
   version: number,
   client: ReadingClient = api,
 ): Promise<ReadingText> {
   const payload = await client.get<unknown>(readingPath(shortId, version), {
-    auth: false,
     cache: "no-store",
   });
   return parseReadingText(payload);
 }
+
+/** Whether `url` is served by this node's API, the only place the token may go. */
+function isOnThisNode(url: string): boolean {
+  try {
+    const base = resolveApiBaseUrl();
+    return new URL(url, base).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * PDF.js that opens this node's files with the signed-in reader's token.
+ *
+ * `GET /v1/content/{cid}` serves an unlisted version's bytes only to its
+ * authors and to moderators, but PDF.js fetches the file itself and sends no
+ * credentials of its own, so the viewer would draw nothing for them. Wrapping
+ * the loader adds the bearer token as a request header
+ * (`getDocument`'s `httpHeaders`) when there is one, and only for a file this
+ * node's API serves: the token never leaves for another origin, and an
+ * anonymous reader of a listed paper still sends nothing.
+ */
+export function withSessionToken(load: LoadPdfjs): LoadPdfjs {
+  return async () => {
+    const pdfjs = await load();
+    return {
+      getDocument(source) {
+        const authorization = authorizationHeader(tokenStore.get());
+        if (authorization === undefined || !isOnThisNode(source.url)) {
+          return pdfjs.getDocument(source);
+        }
+        // A variable, not a literal: PDF.js takes `httpHeaders`, which the
+        // viewer's own slice of its options does not list.
+        const withHeaders = { ...source, httpHeaders: { Authorization: authorization } };
+        return pdfjs.getDocument(withHeaders);
+      },
+    };
+  };
+}
+
+/** {@link loadPdfjs} with the reader's token. One value, so the viewer is not restarted by a new function each render. */
+export const loadPdfjsWithSession: LoadPdfjs = withSessionToken(loadPdfjs);
 
 /** One plain sentence for why the text could not be shown. */
 export function describeReadingError(error: unknown): string {

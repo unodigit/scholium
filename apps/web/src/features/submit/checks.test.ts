@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api } from "../../lib/api";
+import { ApiError, api, tokenStore } from "../../lib/api";
 import {
   SIMILARITY_HIGH_PCT,
   SIMILARITY_NOTICE_PCT,
@@ -192,17 +192,57 @@ describe("normalizeVersionChecks", () => {
 });
 
 describe("fetchVersionChecks", () => {
-  it("asks the version's checks route, publicly, and normalizes the answer", async () => {
+  afterEach(() => {
+    tokenStore.clear();
+    vi.unstubAllGlobals();
+  });
+
+  /** A `fetch` that answers every request with the given body and records the calls. */
+  function stubFetch(body: unknown = { state: "moderation", similarity_pct: 2 }) {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("asks the version's checks route and normalizes the answer", async () => {
     const get = vi.spyOn(api, "get").mockResolvedValue({ state: "moderation", similarity_pct: 2 });
     const controller = new AbortController();
 
     const report = await fetchVersionChecks(REF, controller.signal);
 
     expect(get).toHaveBeenCalledWith("/papers/sch%3Aabcd-efgh-ijkl/v/1/checks", {
-      auth: false,
       signal: controller.signal,
     });
     expect(report.similarityPct).toBe(2);
+  });
+
+  it("sends the signed-in author's bearer token (an unlisted version's checks are 404 without it)", async () => {
+    tokenStore.set({ accessToken: "author-access-token" });
+    const fetchMock = stubFetch();
+
+    const report = await fetchVersionChecks(REF);
+
+    expect(report.state).toBe("moderation");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/v1/papers/sch%3Aabcd-efgh-ijkl/v/1/checks");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer author-access-token");
+  });
+
+  it("still reads anonymously when nobody is signed in (a listed paper's checks)", async () => {
+    const fetchMock = stubFetch();
+
+    const report = await fetchVersionChecks(REF);
+
+    expect(report.similarityPct).toBe(2);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(new Headers(init?.headers).has("Authorization")).toBe(false);
   });
 });
 

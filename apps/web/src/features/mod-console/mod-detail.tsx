@@ -11,6 +11,11 @@
  * tier-4 surface, so a visitor with no session is asked to sign in before any
  * request is made, and the API still refuses a decision from a non-moderator.
  *
+ * Beside the record's metadata the pane shows the version's PDF and its
+ * extracted text ({@link VersionContent}). Those are not public while the
+ * version waits, so they are fetched with the moderator's token, each on its
+ * own: a PDF or text that cannot be read never hides the form.
+ *
  * The first paint is the shell and a loading line (as on `/mod`): the record
  * and clauses are fetched in the browser so the server HTML never depends on
  * an API that may be unreachable, and a signed-in moderator never sees a
@@ -33,7 +38,13 @@ import {
   type DecisionSubmitter,
 } from "./decision";
 import { DecisionForm } from "./decision-form";
+import {
+  VersionContent,
+  type LoadPdfFile,
+  type LoadText,
+} from "./version-content";
 import { MOD_PATH, modDetailSignInHref } from "./queue";
+import type { LoadPdfjs } from "../paper-page/pdf-render";
 import "./mod-console.css";
 
 /** Reads the version's signed record; replaceable in tests. */
@@ -55,6 +66,17 @@ export interface ModDetailProps {
   loadPaper?: LoadPaper;
   /** Replace the clause loader, for tests or an alternate API client. */
   loadClauses?: LoadClauses;
+  /** Replace the text loader, for tests or an alternate API client. */
+  loadText?: LoadText;
+  /** Replace the PDF finder, for tests or an alternate API client. */
+  loadPdfFile?: LoadPdfFile;
+  /** Replace how PDF.js is fetched, for tests. Opens files with the moderator's token by default. */
+  loadPdfjs?: LoadPdfjs;
+  /**
+   * Pin the moderator's trust tier, which decides whether the legal takedown
+   * is offered. When omitted it is read from the access token.
+   */
+  tier?: number | null;
   /** Replace the passkey signer, for tests. */
   signDecision?: DecisionSigner;
   /** Replace the submitter, for tests. */
@@ -76,6 +98,10 @@ export function ModDetail({
   signedIn,
   loadPaper = loadModeratedPaper,
   loadClauses = loadDecisionClauses,
+  loadText,
+  loadPdfFile,
+  loadPdfjs,
+  tier,
   signDecision,
   submitDecision,
 }: ModDetailProps) {
@@ -136,10 +162,19 @@ export function ModDetail({
 
       {state.status === "ready" ? (
         <div className="mc-detail-grid">
-          <PaperPane paper={state.paper} />
+          <div className="mc-detail-paper">
+            <PaperPane paper={state.paper} />
+            <VersionContent
+              paper={state.paper}
+              loadText={loadText}
+              loadPdfFile={loadPdfFile}
+              loadPdfjs={loadPdfjs}
+            />
+          </div>
           <DecisionForm
             versionCid={state.paper.versionCid}
             clauses={state.clauses}
+            tier={tier}
             signDecision={signDecision}
             submitDecision={submitDecision}
           />
@@ -172,9 +207,9 @@ function DetailHeader({ versionCid }: { versionCid: string }) {
 /**
  * The paper as its signed version record describes it.
  *
- * The version is waiting for moderation, so it is not in the public catalog
- * and has no readable HTML rendition yet; what a moderator decides on is the
- * signed metadata and abstract. The record link opens the envelope itself.
+ * The version is waiting for moderation, so it is not in the public catalog.
+ * This card is the signed metadata and abstract; the PDF and extracted text
+ * follow it ({@link VersionContent}). The record link opens the envelope itself.
  */
 export function PaperPane({ paper }: { paper: ModeratedPaper }) {
   const titleId = useId();
