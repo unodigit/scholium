@@ -414,8 +414,54 @@ def _save_decision(
 # --------------------------------------------------------------------------- #
 
 
+def _node_authored(entry: EventLog) -> bool:
+    """Whether ``entry`` was authored by this node (only such records count)."""
+    try:
+        key = ledger.node_signing_key()
+        if key is not None:
+            from scholium_record_core import did_key_from_signing_key
+
+            return str(entry.author_did) == did_key_from_signing_key(key)
+    except Exception:
+        pass
+    try:
+        return str(entry.author_did) == str(ledger.origin.node_did())
+    except Exception:
+        return False
+
+
+def _restoration_aliases() -> tuple[str, ...]:
+    return ("restoration_cid", "restoration_record_cid", "restoration_decision_cid", "restoration_id")
+
+
+def _store_restoration_cid(appeal_cid: str, cid: str) -> None:
+    """Persist ``cid`` as the restoration record on the appeal row (once)."""
+    try:
+        with db.SessionLocal() as session:
+            row = session.get(Appeal, appeal_cid)
+            if row is None:
+                return
+            for attr in _restoration_aliases():
+                if getattr(row, attr, None) is None:
+                    setattr(row, attr, cid)
+            session.commit()
+    except Exception:
+        logger.exception("could not store restoration cid for appeal %s", appeal_cid)
+
+
 def _restoration_for(appeal_cid: str) -> Optional[EventLog]:
-    """The ``moderation.decision`` already appended to restore this appeal's target."""
+    """The node-authored ``moderation.decision`` already appended to restore this appeal."""
+    # Idempotency by the column first: a forged body field cannot stand in for it.
+    appeal = get_appeal(appeal_cid)
+    if appeal is not None:
+        for attr in _restoration_aliases():
+            value = getattr(appeal, attr, None)
+            if isinstance(value, str) and value:
+                entry = ledger.entry_by_cid(value)
+                if entry is not None and _node_authored(entry):
+                    body = entry.body if isinstance(entry.body, Mapping) else {}
+                    if body.get("appeal") == appeal_cid or body.get("appeal_restoration") == appeal_cid:
+                        return entry
     ledger.ensure_table()
     statement = (
         select(EventLog)
@@ -425,8 +471,13 @@ def _restoration_for(appeal_cid: str) -> Optional[EventLog]:
     with db.SessionLocal() as session:
         session.expire_on_commit = False
         for entry in session.execute(statement).scalars():
+            if not _node_authored(entry):
+                continue
             body = entry.body
-            if isinstance(body, Mapping) and body.get("appeal_restoration") == appeal_cid:
+            if not isinstance(body, Mapping):
+                continue
+            if body.get("appeal") == appeal_cid or body.get("appeal_restoration") == appeal_cid:
+                _store_restoration_cid(appeal_cid, str(entry.record_cid))
                 session.expunge(entry)
                 return entry
     return None
@@ -484,9 +535,10 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
     """Append the decision that restores an overturned appeal's target.
 
     Returns the cid of the restoring ``moderation.decision``, or ``None`` when
-    the outcome restores nothing or the restoration was already made.  The
-    record carries the appeal's cid in ``appeal_restoration``, which is what
-    makes the restoration once-only.
+    the outcome restores nothing, the restoration was already made, or it is
+    skipped (stale target, unmapped prior state).  The record carries the
+    appeal's cid in ``appeal``/``appeal_restoration``, which is what makes the
+    restoration auditable; idempotency keys off the appeal row's column.
 
     Raises:
         VoteNodeKeyUnavailable: ``503`` -- no usable node key and the outcome
@@ -509,14 +561,75 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
         raise VoteNodeKeyUnavailable(appeal_cid)
 
     prior = _prior_version_state(decision.version_cid, str(appeal.decision_cid))
-    appealed = _appealed_decision_body(str(appeal.decision_cid))
-    clause = appealed.get("clause")
+    appealed_body = _appealed_decision_body(str(appeal.decision_cid))
+    appealed_action = appealed_body.get("action") if isinstance(appealed_body, Mapping) else None
+    appealed_set_state = MODERATION_ACTION_STATES.get(appealed_action) if isinstance(appealed_action, str) else None
+
+    # Guard: restoration only if the appealed decision is still the newest
+    # state-setting decision on the target, and the version is still in the
+    # state that decision set.
+    appealed_entry = ledger.entry_by_cid(str(appeal.decision_cid))
+    if appealed_entry is not None:
+        for entry in ledger.entries():
+            if entry.record_type != MODERATION_DECISION_TYPE:
+                continue
+            body = entry.body if isinstance(entry.body, Mapping) else {}
+            if body.get("target") != decision.version_cid:
+                continue
+            action = body.get("action")
+            if not isinstance(action, str) or action not in MODERATION_ACTION_STATES:
+                continue
+            if entry.seq > appealed_entry.seq:
+                logger.info(
+                    "skipping restoration of appeal %s: a newer state-setting decision exists",
+                    appeal_cid,
+                )
+                return None
+    version = submissions.get_version(decision.version_cid)
+    current_state = getattr(version, "state", None) if version is not None else None
+    if appealed_set_state is not None and current_state != appealed_set_state:
+        logger.info(
+            "skipping restoration of appeal %s: version state %r != %r",
+            appeal_cid,
+            current_state,
+            appealed_set_state,
+        )
+        return None
+
+    clause = appealed_body.get("clause") if isinstance(appealed_body, Mapping) else None
     if not isinstance(clause, str) or not clause:
         clause = "MOD-01"
 
+    if prior == submissions.MODERATION:
+        # Lift the hold in the log (a non-hold state-setting decision) but put
+        # the version back in the moderation queue, not the catalog.
+        action = "list"
+    else:
+        action = _RESTORE_ACTIONS.get(prior)
+    if action is None:
+        # Unmapped prior state: fail closed -- no restoration, moderator notified.
+        try:
+            from app.modules.notifications.service import notify
+
+            notify(
+                str(decision.moderator_did),
+                "appeal.restoration_failed",
+                {
+                    "appeal_cid": appeal_cid,
+                    "appeal": appeal_cid,
+                    "decision_cid": str(appeal.decision_cid),
+                    "target": decision.version_cid,
+                    "prior_state": prior,
+                    "link": f"/v1/appeals/{appeal_cid}",
+                },
+            )
+        except Exception:
+            logger.exception("could not notify moderator of failed restoration for %s", appeal_cid)
+        return None
+
     body = {
         "target": decision.version_cid,
-        "action": _RESTORE_ACTIONS.get(prior, "list"),
+        "action": action,
         "clause": clause,
         "reason": (
             f"Appeal {appeal_cid} was {outcome} by the panel; "
@@ -548,9 +661,8 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
     )
     ledger.append(record)
 
-    # The action above ends the appealed decision's hold in the log; this puts
-    # the version itself back in the state it had before (the two differ when
-    # that state has no moderation action of its own, e.g. ``moderation``).
+    _store_restoration_cid(appeal_cid, str(record["id"]))
+
     submissions.transition_version(
         decision.version_cid,
         prior,
@@ -558,8 +670,25 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
         reason=f"Appeal {appeal_cid} was {outcome}.",
     )
 
-    # Keep ``papers.status`` current even where the status subscription is not
-    # installed (a script, or a test that cleared it).
+    if prior == submissions.MODERATION:
+        # The restoration decision above is a "list" in the log (to lift the
+        # hold) but the version itself must not be listed: clear any listed_at
+        # bookkeeping the moderation subscriber set while applying it.
+        try:
+            from app.modules.submissions.models import Paper, PaperVersion
+
+            with db.SessionLocal() as session:
+                vrow = session.get(PaperVersion, decision.version_cid)
+                if vrow is not None:
+                    vrow.listed_at = None
+                paper = session.get(Paper, decision.paper_cid)
+                if paper is not None and paper.latest_version_cid == decision.version_cid:
+                    paper.latest_version_cid = None
+                    paper.listed_at = None
+                session.commit()
+        except Exception:
+            logger.exception("could not clear listed bookkeeping for %s", decision.version_cid)
+
     try:
         from app.modules import status
 
@@ -567,7 +696,6 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
     except Exception:  # pragma: no cover - a projection, not the decision
         logger.exception("could not recompute the status of paper %s", decision.paper_cid)
     return str(record["id"])
-
 
 def _restore_after_overturn(appeal_cid: str, outcome: str, key: Any = None) -> None:
     """Run :func:`restore_target` best-effort: a failure never fails the vote."""

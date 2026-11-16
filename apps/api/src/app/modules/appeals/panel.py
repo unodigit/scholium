@@ -135,21 +135,28 @@ def eligible_members(excluded: Collection[str] = ()) -> list[str]:
 
 
 def panel_seed(appeal_cid: object) -> str:
-    """The cid the panel of ``appeal_cid`` is seeded from.
+    """The seed the panel of ``appeal_cid`` is drawn from.
 
-    The appealed decision's cid when the appeal has a saved row, because that is
-    what :func:`draw_panel` is seeded with and what an auditor can recompute the
-    draw from (see the module docstring).  An appeal this node has no row for --
-    a direct :func:`draw_panel` call in a test, say -- is its own seed.
+    The value stored on the appeal's row when it has one (see
+    :mod:`app.modules.appeals.service`): a hash fixed once the appeal is
+    appended, so neither the appellant nor the deciding moderator can grind
+    the draw.  An appeal this node has no row for -- or one whose seed has not
+    been stored yet -- falls back to its own cid, so a direct
+    :func:`draw_panel` call still gets a stable seed.
     """
     if not isinstance(appeal_cid, str) or not appeal_cid:
         return ""
     ensure_tables()
     with db.SessionLocal() as session:
-        decision_cid = session.execute(
-            select(Appeal.decision_cid).where(Appeal.appeal_cid == appeal_cid)
-        ).scalar_one_or_none()
-    return str(decision_cid) if decision_cid else appeal_cid
+        row = session.get(Appeal, appeal_cid)
+        if row is not None:
+            for attr in ("panel_seed", "seed", "draw_seed"):
+                value = getattr(row, attr, None)
+                if isinstance(value, str) and value:
+                    return value
+            if isinstance(row.decision_cid, str) and row.decision_cid:
+                return str(row.decision_cid)
+    return appeal_cid
 
 
 def get_panel(appeal_cid: object) -> list[AppealPanelMember]:

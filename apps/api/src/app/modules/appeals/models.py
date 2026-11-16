@@ -87,6 +87,13 @@ class Appeal(db.Base):
     grounds = Column(Text, nullable=False)
     status = Column(Text, nullable=False, default="pending")
     filed_at = Column(DateTime, nullable=False)
+    panel_seed = Column(Text, nullable=True)
+    seed = Column(Text, nullable=True)
+    draw_seed = Column(Text, nullable=True)
+    restoration_cid = Column(Text, nullable=True)
+    restoration_record_cid = Column(Text, nullable=True)
+    restoration_decision_cid = Column(Text, nullable=True)
+    restoration_id = Column(Text, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (

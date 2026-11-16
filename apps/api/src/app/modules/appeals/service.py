@@ -62,6 +62,7 @@ appeal.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -77,7 +78,7 @@ from app.modules.moderation import DECISION_TYPE, get_decision
 
 from .errors import AppealAlreadyFiled, AppealNotAuthorized, PanelUnavailable, UnknownAppealTarget
 from .models import Appeal, AppealPanelMember, ensure_tables
-from .panel import draw_panel, get_panel
+from .panel import draw_panel, get_panel, panel_seed
 
 logger = logging.getLogger(__name__)
 
@@ -469,7 +470,7 @@ def seat_panel(
     seats = draw_panel(
         str(appeal.appeal_cid),
         excluded=panel_exclusions(appeal, decision),
-        seed=decision.decision_cid,
+        seed=panel_seed(str(appeal.appeal_cid)),
     )
     notify_panel_seated(appeal, seats)
     return seats
@@ -486,6 +487,37 @@ def _seat_or_defer(appeal: Appeal, decision: AppealedDecision) -> None:
             exc.eligible,
             exc.needed,
         )
+
+
+
+def _store_panel_seed(appeal_cid: str, decision_cid: str) -> None:
+    """Compute and persist the panel seed for ``appeal_cid`` if it is not set.
+
+    The seed is ``sha256(decision cid, appeal cid, ledger head hash at the
+    appeal's append seq)``.  It is written once; a later call (a re-applied
+    appeal, say) never overwrites it, so the draw stays fixed.
+    """
+    current = get_appeal(appeal_cid)
+    if current is not None and any(
+        getattr(current, attr, None) for attr in ("panel_seed", "seed", "draw_seed")
+    ):
+        return
+    entry = ledger.entry_by_cid(appeal_cid)
+    if entry is not None:
+        head_hash = bytes(entry.entry_hash).hex()
+    else:
+        head_hash = ""
+    seed = hashlib.sha256(
+        f"{decision_cid}\n{appeal_cid}\n{head_hash}".encode("utf-8")
+    ).hexdigest()
+    with db.SessionLocal() as session:
+        row = session.get(Appeal, appeal_cid)
+        if row is None:
+            return
+        for attr in ("panel_seed", "seed", "draw_seed"):
+            if getattr(row, attr, None) is None:
+                setattr(row, attr, seed)
+        session.commit()
 
 
 def apply_appeal(record: Mapping[str, Any]) -> Appeal:
@@ -509,6 +541,8 @@ def apply_appeal(record: Mapping[str, Any]) -> Appeal:
     """
     fields, decision = _validated(record)
     row = get_appeal(fields.appeal_cid) or _save_appeal(fields, decision)
+    _store_panel_seed(fields.appeal_cid, decision.decision_cid)
+    row = get_appeal(fields.appeal_cid) or row
     _seat_or_defer(row, decision)
     return row
 

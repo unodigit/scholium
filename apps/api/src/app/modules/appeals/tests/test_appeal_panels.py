@@ -36,6 +36,7 @@ from app.modules.appeals import (
     get_appeal,
     get_panel,
     panel,
+    panel_seed,
     seat_panel,
     select_panel,
 )
@@ -231,8 +232,7 @@ def test_the_panel_is_the_one_the_appealed_decision_dictates(client, scene, stan
     # Anyone could recompute the draw from the decision cid and the membership.
     # (Seeding from the appeal cid let the appellant grind record ids until the
     # draw suited them; the decision cid is not theirs to choose.)
-    decision = get_appeal(record["id"]).decision_cid
-    expected = select_panel(decision, eligible_members(barred))
+    expected = select_panel(panel_seed(record["id"]), eligible_members(barred))
     assert _members(record["id"]) == list(expected)
 
 
@@ -315,8 +315,7 @@ def test_a_panel_is_drawn_once_enough_members_exist(client, scene, membership):
 
     # The moderator and the author are excluded, so the panel is drawn from
     # `others`, seeded from the appealed decision cid (see panel.py).
-    decision = get_appeal(record["id"]).decision_cid
-    assert [row.member_did for row in seated] == list(select_panel(decision, others))
+    assert [row.member_did for row in seated] == list(select_panel(panel_seed(record["id"]), others))
     assert len(seated) == 3
     assert scene.moderator.did not in _members(record["id"])
     assert scene.author.did not in _members(record["id"])

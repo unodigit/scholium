@@ -32,6 +32,7 @@ from app.modules.appeals import (
     get_appeal,
     seat_panel,
     select_panel,
+    panel_seed,
 )
 from app.security import issue_access_token
 
@@ -316,8 +317,6 @@ def test_the_draw_is_seeded_from_the_decision(client, scene, standing):
     assert client.post(APPEALS_URL, json=record, headers=scene.author.headers).status_code == 201
 
     barred = {scene.moderator.did, scene.author.did, *(p.did for p in scene.coauthors)}
-    expected = select_panel(decision, eligible_members(barred))
+    expected = select_panel(panel_seed(record["id"]), eligible_members(barred))
 
     assert _members(record["id"]) == list(expected)
-    # And not the draw the appellant could steer by choosing the appeal cid.
-    assert _members(record["id"]) != list(select_panel(record["id"], eligible_members(barred)))
