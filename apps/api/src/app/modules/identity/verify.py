@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
+from .cookies import set_refresh_cookie
 from .service import InvalidDid, InvalidNonce, InvalidSignature, verify_signin
 
 __all__ = [
@@ -62,7 +63,7 @@ def _unauthorized():
     response_model=VerifyResponse,
     summary="Verify a signed nonce and issue access and refresh tokens",
 )
-def post_verify(body: VerifyRequest, response: Response) -> VerifyResponse:
+def post_verify(body: VerifyRequest, response: Response, request: Request) -> VerifyResponse:
     try:
         access_token, refresh_token = verify_signin(body.did, body.nonce, body.signature)
     except InvalidDid as exc:
@@ -70,4 +71,7 @@ def post_verify(body: VerifyRequest, response: Response) -> VerifyResponse:
     except (InvalidNonce, InvalidSignature) as exc:
         raise _unauthorized() from exc
     response.headers["Cache-Control"] = "no-store"
+    # The refresh token also travels as an HttpOnly cookie scoped to the
+    # refresh path, so a browser never has to hold it in readable storage.
+    set_refresh_cookie(response, request, refresh_token)
     return VerifyResponse(access_token=access_token, refresh_token=refresh_token)

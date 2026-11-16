@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TOKEN_STORAGE_KEY } from "../../lib/api/tokens";
+import { tokenStore } from "../../lib/api";
 import { DEFAULT_CATEGORIES } from "./categories";
 import { GlobalNav, NavTabBarSpacer } from "./global-nav";
 
@@ -47,7 +47,10 @@ beforeEach(() => {
   window.location.hash = "";
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  tokenStore.clear();
+});
 
 /* ---------------------------------------------------------------------------
    Desktop header
@@ -238,10 +241,8 @@ describe("GlobalNav avatar", () => {
   });
 
   it("derives sign-in from the shared token store after mount", async () => {
-    window.localStorage.setItem(
-      TOKEN_STORAGE_KEY,
-      JSON.stringify({ accessToken: "token" }),
-    );
+    // The access token lives in memory only; seed the shared store directly.
+    tokenStore.set({ accessToken: "token" });
     render(<GlobalNav />);
 
     await waitFor(() =>

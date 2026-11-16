@@ -37,12 +37,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from app.security import InvalidAccessToken, decode_access_token
 
+from .cookies import clear_refresh_cookie
 from .service import revoke_refresh_token, revoke_refresh_tokens_for_did
 
 __all__ = [
@@ -89,6 +90,7 @@ def _unauthorized():
     summary="Revoke the caller's refresh token",
 )
 def post_logout(
+    request: Request,
     body: Optional[LogoutRequest] = None,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Response:
@@ -96,14 +98,19 @@ def post_logout(
     if body is not None:
         # Idempotent: an unknown or already-revoked token is still "logged out".
         revoke_refresh_token(body.refresh_token)
-        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        response = Response(status_code=204, headers={"Cache-Control": "no-store"})
+        clear_refresh_cookie(response, request)
+        return response
 
     if credentials is not None:
         try:
             principal = decode_access_token(credentials.credentials)
         except InvalidAccessToken as exc:
             raise _unauthorized() from exc
+        # The whole family goes, which covers the HttpOnly refresh cookie too.
         revoke_refresh_tokens_for_did(principal.did)
-        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        response = Response(status_code=204, headers={"Cache-Control": "no-store"})
+        clear_refresh_cookie(response, request)
+        return response
 
     raise _unauthorized()

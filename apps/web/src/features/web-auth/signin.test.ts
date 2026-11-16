@@ -241,10 +241,9 @@ describe("signIn: new account", () => {
     expect(verify?.body).toMatchObject({ did, nonce: "nonce-1-q3V7_abc" });
     expect(String(verify?.body?.signature)).toMatch(/^[A-Za-z0-9_-]{86}$/);
 
-    expect(h.tokenStore.get()).toMatchObject({
-      accessToken: "access-jwt",
-      refreshToken: "refresh-raw",
-    });
+    // The refresh token is an HttpOnly cookie; script never holds it.
+    expect(h.tokenStore.get()).toMatchObject({ accessToken: "access-jwt" });
+    expect(h.tokenStore.get()).not.toHaveProperty("refreshToken");
     expect(h.stages).toEqual(["creating-passkey", "requesting-challenge", "verifying"]);
   });
 

@@ -348,9 +348,11 @@ describe("ApiClient problem details", () => {
 });
 
 describe("ApiClient token refresh", () => {
-  it("refreshes on 401 and replays the request once", async () => {
+  // The refresh token is an HttpOnly cookie: the client never holds it, so a
+  // refresh is a bodiless POST that the browser attaches the cookie to.
+  it("refreshes on 401 via the cookie and replays the request once", async () => {
     const { client, store, fetchMock } = createHarness();
-    store.set({ accessToken: "old-access", refreshToken: "refresh-1" });
+    store.set({ accessToken: "old-access" });
 
     fetchMock
       .mockResolvedValueOnce(problemResponse({ status: 401, title: "Unauthorized" }, 401))
@@ -367,21 +369,37 @@ describe("ApiClient token refresh", () => {
 
     expect(requestUrl(fetchMock, 1)).toBe(`${BASE}/v1/auth/refresh`);
     expect(requestInit(fetchMock, 1).method).toBe("POST");
-    expect(requestInit(fetchMock, 1).body).toBe('{"refresh_token":"refresh-1"}');
+    // The cookie carries the token: no body, and credentials let the browser
+    // send it to a cross-origin API.
+    expect(requestInit(fetchMock, 1).body).toBeUndefined();
+    expect(requestInit(fetchMock, 1).credentials).toBe("include");
     expect(header(requestInit(fetchMock, 1), "Authorization")).toBeNull();
 
     expect(requestUrl(fetchMock, 2)).toBe(`${BASE}/v1/me`);
     expect(header(requestInit(fetchMock, 2), "Authorization")).toBe("Bearer new-access");
 
-    expect(store.get()).toMatchObject({
-      accessToken: "new-access",
-      refreshToken: "refresh-2",
-    });
+    expect(store.get()).toEqual({ accessToken: "new-access", tokenType: "Bearer" });
+  });
+
+  it("never keeps the refresh token the response body carries", async () => {
+    const { client, store, fetchMock } = createHarness();
+    store.set({ accessToken: "old-access" });
+    fetchMock
+      .mockResolvedValueOnce(problemResponse({ status: 401, title: "Unauthorized" }, 401))
+      .mockResolvedValueOnce(
+        jsonResponse({ access_token: "new-access", refresh_token: "refresh-2" }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    await client.get("/me");
+
+    expect(store.get()).not.toHaveProperty("refreshToken");
+    expect(JSON.stringify(store.get())).not.toContain("refresh-2");
   });
 
   it("shares one refresh between concurrent 401s", async () => {
     const { client, store, fetchMock } = createHarness();
-    store.set({ accessToken: "old-access", refreshToken: "refresh-1" });
+    store.set({ accessToken: "old-access" });
     let refreshCalls = 0;
 
     fetchMock.mockImplementation(async (input, init) => {
@@ -404,12 +422,12 @@ describe("ApiClient token refresh", () => {
     ]);
 
     expect(refreshCalls).toBe(1);
-    expect(store.refreshToken).toBe("refresh-2");
+    expect(store.accessToken).toBe("new-access");
   });
 
   it("clears tokens and surfaces the original problem when refresh fails", async () => {
     const { client, store, fetchMock } = createHarness();
-    store.set({ accessToken: "old-access", refreshToken: "refresh-1" });
+    store.set({ accessToken: "old-access" });
 
     fetchMock
       .mockResolvedValueOnce(
@@ -431,7 +449,7 @@ describe("ApiClient token refresh", () => {
 
   it("reports unrecoverable 401s to onUnauthorized", async () => {
     const store = new TokenStore(new MemoryTokenStorage());
-    store.set({ accessToken: "old-access", refreshToken: "refresh-1" });
+    store.set({ accessToken: "old-access" });
     const onUnauthorized = vi.fn();
     const fetchMock = vi
       .fn<FetchLike>()
@@ -449,18 +467,25 @@ describe("ApiClient token refresh", () => {
     expect(onUnauthorized.mock.calls[0]?.[0]).toBeInstanceOf(ApiError);
   });
 
-  it("does not attempt a refresh without a refresh token", async () => {
+  it("asks the API to refresh even though the client holds no refresh token", async () => {
+    // The cookie is invisible to script, so the only way to learn whether a
+    // refresh is possible is to try; a browser without the cookie gets a 4xx.
     const { client, store, fetchMock } = createHarness();
     store.set({ accessToken: "old-access" });
-    fetchMock.mockResolvedValue(problemResponse({ status: 401, title: "Unauthorized" }, 401));
+    fetchMock
+      .mockResolvedValueOnce(problemResponse({ status: 401, title: "Unauthorized" }, 401))
+      .mockResolvedValueOnce(problemResponse({ status: 422, title: "Unprocessable" }, 422));
 
     await expect(client.get("/me")).rejects.toBeInstanceOf(ApiError);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestUrl(fetchMock, 1)).toBe(`${BASE}/v1/auth/refresh`);
+    expect(store.get()).toBeNull();
   });
 
   it("honours retryOnUnauthorized: false", async () => {
     const { client, store, fetchMock } = createHarness();
-    store.set({ accessToken: "old-access", refreshToken: "refresh-1" });
+    store.set({ accessToken: "old-access" });
     fetchMock.mockResolvedValue(problemResponse({ status: 401, title: "Unauthorized" }, 401));
 
     await expect(
@@ -469,20 +494,38 @@ describe("ApiClient token refresh", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the current refresh token when rotation omits it", async () => {
+  it("does not refresh a 401 on an unauthenticated request", async () => {
+    const { client, fetchMock } = createHarness();
+    fetchMock.mockResolvedValue(problemResponse({ status: 401, title: "Unauthorized" }, 401));
+
+    await expect(client.get("/me")).rejects.toBeInstanceOf(ApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a session on page load from the cookie alone", async () => {
+    // Reload: the access token lived in memory and is gone, the cookie is not.
     const { client, store, fetchMock } = createHarness();
-    store.set({ accessToken: "old-access", refreshToken: "refresh-1" });
-    fetchMock
-      .mockResolvedValueOnce(problemResponse({ status: 401, title: "Unauthorized" }, 401))
-      .mockResolvedValueOnce(jsonResponse({ access_token: "new-access" }))
-      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    expect(store.get()).toBeNull();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ access_token: "restored-access", refresh_token: "refresh-3" }),
+    );
 
-    await client.get("/me");
+    await expect(client.refresh()).resolves.toMatchObject({ accessToken: "restored-access" });
 
-    expect(store.get()).toMatchObject({
-      accessToken: "new-access",
-      refreshToken: "refresh-1",
-    });
+    expect(requestUrl(fetchMock, 0)).toBe(`${BASE}/v1/auth/refresh`);
+    expect(requestInit(fetchMock, 0).credentials).toBe("include");
+    expect(requestInit(fetchMock, 0).body).toBeUndefined();
+    expect(store.accessToken).toBe("restored-access");
+  });
+
+  it("keeps the session when the refresh fails on the network", async () => {
+    const { client, store, fetchMock } = createHarness();
+    store.set({ accessToken: "old-access" });
+    fetchMock.mockRejectedValueOnce(new TypeError("offline"));
+
+    await expect(client.refresh()).resolves.toBeNull();
+
+    expect(store.accessToken).toBe("old-access");
   });
 });
 

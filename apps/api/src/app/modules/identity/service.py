@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -10,12 +12,13 @@ from typing import Optional
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 from scholium_record_core import (
+    ED25519_PUBLIC_KEY_LENGTH,
     did_key_from_public_key,
     public_key_from_did_key,
     decode_signature,
 )
 
-from sqlalchemy import update
+from sqlalchemy import delete, update
 
 from app import db
 from app.security import issue_access_token
@@ -55,8 +58,10 @@ __all__ = [
     "get_active_key_for",
     "active_key_at",
     "resolve_active_key_at",
+    "install_key_rotation_subscriber",
     "issue_challenge",
     "issue_refresh_token",
+    "purge_expired_challenges",
     "validate_did",
     "verify_signin",
     "resolve_active_key",
@@ -120,6 +125,23 @@ def _as_naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def purge_expired_challenges(*, now: Optional[datetime] = None) -> int:
+    """Delete every challenge row whose nonce has expired. Return how many.
+
+    Challenges are single-use rows that expire within :data:`CHALLENGE_TTL`;
+    without a purge the ``auth_challenges`` table grows without bound.  Each
+    issue run sweeps the rows that are already past their expiry.
+    """
+    checked_at = _utcnow() if now is None else _as_naive_utc(now)
+    ensure_table()
+    with db.SessionLocal() as session:
+        result = session.execute(
+            delete(AuthChallenge).where(AuthChallenge.expires_at <= checked_at)
+        )
+        session.commit()
+        return result.rowcount
+
+
 def issue_challenge(did: str, *, now: Optional[datetime] = None) -> AuthChallenge:
     validate_did(did)
     issued_at = _utcnow() if now is None else _as_naive_utc(now)
@@ -132,6 +154,11 @@ def issue_challenge(did: str, *, now: Optional[datetime] = None) -> AuthChalleng
     )
     with db.SessionLocal() as session:
         session.expire_on_commit = False
+        # Housekeeping: expired nonces can never be used again, so sweep them
+        # on every issue rather than letting the table grow without bound.
+        session.execute(
+            delete(AuthChallenge).where(AuthChallenge.expires_at <= issued_at)
+        )
         session.add(challenge)
         session.commit()
         session.expunge(challenge)
@@ -157,6 +184,36 @@ def issue_refresh_token(did: str, *, now: Optional[datetime] = None) -> str:
     return raw
 
 
+def _active_key_bytes(active_key: str) -> bytes:
+    """Return the raw 32-byte Ed25519 public key behind a resolved active key.
+
+    The active key may be a canonical ``did:key`` (a rotation may record one)
+    or raw Ed25519 public key material -- hex or base64 text decoding to
+    32 bytes, the formats a ``key.rotation`` record accepts as ``newKey``
+    (mirroring ingest's :func:`~app.modules.ingest.service._verification_key`).
+    Raises ``ValueError`` for anything no verifier could ever use.
+    """
+    if active_key.startswith("did:"):
+        return public_key_from_did_key(active_key)
+    text = active_key.strip()
+    try:
+        raw = bytes.fromhex(text)
+    except ValueError:
+        raw = b""
+    if len(raw) != ED25519_PUBLIC_KEY_LENGTH:
+        for decode in (base64.urlsafe_b64decode, base64.b64decode):
+            try:
+                candidate = decode(text + "=" * (-len(text) % 4))
+            except (binascii.Error, ValueError):
+                continue
+            if len(candidate) == ED25519_PUBLIC_KEY_LENGTH:
+                raw = candidate
+                break
+    if len(raw) != ED25519_PUBLIC_KEY_LENGTH:
+        raise ValueError(f"not usable Ed25519 public key material: {active_key!r}")
+    return raw
+
+
 def verify_signin(
     did: str,
     nonce: str,
@@ -165,6 +222,12 @@ def verify_signin(
     now: Optional[datetime] = None,
 ) -> tuple[str, str]:
     """Verify a sign-in and return ``(access_token, refresh_token)``.
+
+    The signature is checked against the account's *active* key
+    (:func:`resolve_active_key`), so a key rotation or a guardians recovery
+    takes effect for sign-in immediately: the retired key no longer verifies
+    and the newly activated one does.  A DID that never rotated resolves to
+    its own genesis key -- the key the ``did:key`` identifier encodes.
 
     Raises:
         InvalidDid: ``did`` is not a canonical Ed25519 did:key.
@@ -185,21 +248,34 @@ def verify_signin(
     ensure_account_table()
     ensure_refresh_tokens_table()
 
+    # Verify against the key that is authorised to sign for this DID *now*,
+    # not the key its identifier was born with.
+    active_key = resolve_active_key(did)
+    try:
+        key_bytes = _active_key_bytes(active_key)
+    except ValueError as exc:
+        raise InvalidSignature("the account's active signing key is unusable") from exc
+    try:
+        VerifyKey(key_bytes).verify(nonce.encode("utf-8"), raw_signature)
+    except BadSignatureError as exc:
+        raise InvalidSignature("signature does not verify") from exc
+
     with db.SessionLocal() as session:
-        challenge = session.get(AuthChallenge, nonce)
-        if challenge is None or challenge.did != did or challenge.used:
-            raise InvalidNonce("nonce is invalid or already used")
-        if challenge.expires_at <= checked_at:
-            raise InvalidNonce("nonce has expired")
-
-        public_key = public_key_from_did_key(did)
-        try:
-            VerifyKey(public_key).verify(nonce.encode("utf-8"), raw_signature)
-        except BadSignatureError as exc:
-            raise InvalidSignature("signature does not verify") from exc
-
-        # Consume the nonce.
-        challenge.used = True
+        # Consume the nonce atomically: the UPDATE only matches a challenge
+        # that is still unused, unexpired and bound to this did, so two
+        # concurrent verifies cannot both win -- the loser sees rowcount 0.
+        result = session.execute(
+            update(AuthChallenge)
+            .where(
+                AuthChallenge.nonce == nonce,
+                AuthChallenge.did == did,
+                AuthChallenge.used == False,  # noqa: E712 - SQL boolean
+                AuthChallenge.expires_at > checked_at,
+            )
+            .values(used=True)
+        )
+        if result.rowcount != 1:
+            raise InvalidNonce("nonce is invalid, expired, or already used")
 
         # Account: create on first sign-in at tier 0.
         account = session.get(Account, did)
@@ -229,6 +305,11 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
     with no account row, which cannot happen for an issued token but keeps
     the lookup total).
 
+    Presenting a token that was already retired -- rotated out *or* revoked
+    -- is treated as theft: only the legitimate holder ever sees the rotated
+    value, so a replay means the token leaked.  The whole token family for
+    that DID is revoked before the request is refused.
+
     Raises:
         InvalidRefreshToken: the token is unknown, expired, or was already
             rotated out -- in particular, presenting it a second time.
@@ -246,15 +327,20 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
         row = session.get(RefreshToken, token_hash)
         if row is None:
             raise InvalidRefreshToken("refresh token is invalid")
+        did = row.did
         if row.rotated:
+            # Reuse of a retired token: assume compromise and revoke every
+            # live refresh token for this DID (the token family).
+            session.rollback()
+            revoke_refresh_tokens_for_did(did)
             raise InvalidRefreshToken("refresh token was already used")
         if row.expires_at <= checked_at:
             raise InvalidRefreshToken("refresh token has expired")
-        did = row.did
 
         # Retire the token atomically: the UPDATE only matches while the row
         # is still unrotated, so two concurrent presentations cannot both win
-        # -- the loser sees rowcount 0 and is refused.
+        # -- the loser sees rowcount 0, treats it as reuse and revokes the
+        # family.
         result = session.execute(
             update(RefreshToken)
             .where(
@@ -264,6 +350,8 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
             .values(rotated=True)
         )
         if result.rowcount != 1:
+            session.rollback()
+            revoke_refresh_tokens_for_did(did)
             raise InvalidRefreshToken("refresh token was already used")
 
         account = session.get(Account, did)
@@ -509,3 +597,38 @@ def set_active_key(
 
 add_account_key = set_active_key
 record_active_key = set_active_key
+
+
+# ---------------------------------------------------------------------------
+# Key-rotation ledger subscription
+# ---------------------------------------------------------------------------
+
+
+def _on_key_rotation(entry: object) -> None:
+    """Ledger subscriber: a ``key.rotation`` retires the DID's refresh tokens.
+
+    A rotation -- whether the author submitted the record through ingest
+    (feature 37) or a guardians recovery finalized it (feature 40) -- means
+    the old key material must stop authenticating.  Tokens minted before the
+    rotation were issued while that old key was active, so every live
+    refresh token for the rotated DID is revoked and the account signs in
+    again with its new key.
+    """
+    did = getattr(entry, "author_did", None)
+    if isinstance(did, str) and did:
+        revoke_refresh_tokens_for_did(did)
+
+
+def install_key_rotation_subscriber() -> None:
+    """Subscribe identity's token revocation to ``key.rotation`` ledger events.
+
+    Idempotent: registering the same handler twice is a no-op, so re-importing
+    the package (or a test re-installing after ``clear_subscribers``) is
+    harmless.  The ledger is imported at call time -- it is a sibling plugin
+    under the module loader's scan, and whichever of the two the loader
+    reaches first must not depend on the other being importable during app
+    assembly.
+    """
+    from app.modules import ledger
+
+    ledger.subscribe("key.rotation", _on_key_rotation)

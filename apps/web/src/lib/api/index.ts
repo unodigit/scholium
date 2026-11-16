@@ -4,7 +4,7 @@
  * ```ts
  * import { api, ApiError, tokenStore } from "@/lib/api";
  *
- * tokenStore.set({ accessToken, refreshToken });
+ * tokenStore.set({ accessToken }); // memory only; the refresh token is an HttpOnly cookie
  *
  * try {
  *   const paper = await api.get<Paper>(`/papers/${id}`);
@@ -71,10 +71,10 @@ export {
   clearTokens,
   createTokenStore,
   getAccessToken,
-  getRefreshToken,
   getTokens,
   isAuthenticated,
   isTokenExpired,
+  purgeLegacyPersistedTokens,
   setAccessToken,
   setTokens,
   tokenStore,

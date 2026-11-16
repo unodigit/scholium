@@ -37,9 +37,15 @@ def create_app() -> FastAPI:
     # preflights and 429 responses both carry CORS headers.
     if settings.RATE_LIMIT_ENABLED:
         install_write_throttle(app)
+    # The refresh token travels in an HttpOnly cookie, so the browser must be
+    # allowed to send credentials cross-origin -- but only to the explicitly
+    # configured web origins.  With a wildcard origin Starlette would echo
+    # whatever Origin asks (credentials included), so a "*" entry keeps
+    # credentials off rather than opening them to every site.
+    web_origins = settings.web_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.web_origins,
+        allow_origins=web_origins,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
         allow_headers=[
             "Authorization", "Content-Type", "Accept", "Idempotency-Key",
@@ -49,7 +55,7 @@ def create_app() -> FastAPI:
             "Location", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining",
             "Tus-Resumable", "Upload-Offset", "Upload-Length", "Upload-Cid",
         ],
-        allow_credentials=False,  # tokens travel in the Authorization header, never cookies
+        allow_credentials="*" not in web_origins,
         max_age=600,
     )
 

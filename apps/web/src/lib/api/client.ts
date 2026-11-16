@@ -298,8 +298,8 @@ export class ApiClient {
    * Send a request and decode its body.
    *
    * Non-2xx responses are thrown as {@link ApiError} (never returned); a 401
-   * triggers one token refresh and a single replay when a refresh token is
-   * available.
+   * on an authenticated request triggers one token refresh (via the HttpOnly
+   * refresh cookie) and, if that succeeds, a single replay.
    */
   async request<T = unknown>(
     path: string,
@@ -358,30 +358,31 @@ export class ApiClient {
     const error = new ApiError(response.status, problem, { response, url });
 
     if (response.status === 401 && authorization && retryOnUnauthorized) {
-      if (this.tokenStore.get()?.refreshToken) {
-        const refreshed = await this.refreshTokens();
-        if (refreshed) {
-          const retryHeaders = new Headers(headers);
-          const retryAuthorization = authorizationHeader(refreshed);
-          if (retryAuthorization) {
-            retryHeaders.set("Authorization", retryAuthorization);
-          }
-          const retryResponse = await this.send(url, { ...requestInit, headers: retryHeaders });
-          if (retryResponse.ok) {
-            return (await readResponseBody(retryResponse, parse)) as T;
-          }
-          const retryProblem = await problemFromResponse(retryResponse);
-          const retryError = new ApiError(retryResponse.status, retryProblem, {
-            response: retryResponse,
-            url,
-          });
-          if (retryResponse.status === 401) {
-            // A fresh token was rejected too; the session is no longer usable.
-            this.tokenStore.clear();
-            this.notifyUnauthorized(retryError);
-          }
-          throw retryError;
+      // The refresh token is an HttpOnly cookie this code cannot see, so there
+      // is nothing to check first: ask the API, which answers 401/422 when the
+      // browser holds no valid cookie.
+      const refreshed = await this.refreshTokens();
+      if (refreshed) {
+        const retryHeaders = new Headers(headers);
+        const retryAuthorization = authorizationHeader(refreshed);
+        if (retryAuthorization) {
+          retryHeaders.set("Authorization", retryAuthorization);
         }
+        const retryResponse = await this.send(url, { ...requestInit, headers: retryHeaders });
+        if (retryResponse.ok) {
+          return (await readResponseBody(retryResponse, parse)) as T;
+        }
+        const retryProblem = await problemFromResponse(retryResponse);
+        const retryError = new ApiError(retryResponse.status, retryProblem, {
+          response: retryResponse,
+          url,
+        });
+        if (retryResponse.status === 401) {
+          // A fresh token was rejected too; the session is no longer usable.
+          this.tokenStore.clear();
+          this.notifyUnauthorized(retryError);
+        }
+        throw retryError;
       }
       this.notifyUnauthorized(error);
     }
@@ -432,9 +433,13 @@ export class ApiClient {
   }
 
   /**
-   * Force a token refresh now.  Returns the new tokens or `null` when no
-   * refresh token is available or the refresh was rejected (in which case the
-   * token store is cleared).
+   * Exchange the HttpOnly refresh cookie for a new access token.
+   *
+   * Call this on page load to restore a session: the access token lives in
+   * memory only, so a reload starts without one while the cookie survives.
+   * Returns the new tokens, or `null` when the browser holds no valid refresh
+   * cookie or the refresh was rejected (in which case the token store is
+   * cleared).
    */
   refresh(): Promise<AuthTokens | null> {
     return this.refreshTokens();
@@ -489,12 +494,6 @@ export class ApiClient {
   }
 
   private async performRefresh(): Promise<AuthTokens | null> {
-    const current = this.tokenStore.get();
-    const refreshToken = current?.refreshToken;
-    if (!refreshToken) {
-      return null;
-    }
-
     const url = joinUrl(
       resolveApiBaseUrl(this.optionsBaseUrl),
       this.refreshPath,
@@ -506,10 +505,11 @@ export class ApiClient {
         method: "POST",
         headers: {
           Accept: "application/json, application/problem+json",
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-        ...(this.credentials ? { credentials: this.credentials } : {}),
+        // No body: the refresh token travels only in the HttpOnly cookie,
+        // which the browser attaches to this one path.  `include` is what
+        // lets it do so when the API is on another origin.
+        credentials: "include",
       });
     } catch {
       // Transport failure: keep the tokens so a later attempt can succeed.
@@ -527,11 +527,10 @@ export class ApiClient {
       return null;
     }
 
+    // The rotated refresh token is already in the Set-Cookie header; the copy
+    // in the body is deliberately not kept.
     const stored = this.tokenStore.set({
       accessToken: tokens.accessToken,
-      // Rotation may issue a fresh refresh token; keep the current one if the
-      // response omits it.
-      refreshToken: tokens.refreshToken ?? refreshToken,
       tokenType: tokens.tokenType,
       expiresAt: tokens.expiresAt,
     });

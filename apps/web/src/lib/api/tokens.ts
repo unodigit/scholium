@@ -1,23 +1,42 @@
 /**
  * Auth token storage for the frontend API client.
  *
- * The API issues a 15-minute access token plus a rotating refresh token
- * (see the auth features).  The client keeps both here, persists them in
- * `localStorage` in the browser, and falls back to an in-memory store during
- * server rendering and in tests.
+ * The API issues a 15-minute access token and a rotating refresh token.  The
+ * refresh token is a 30-day bearer secret, so this client never stores or
+ * reads it: the API sets it as an HttpOnly, SameSite=Strict cookie scoped to
+ * the refresh endpoint, and the browser sends it by itself when the client
+ * calls `POST /v1/auth/refresh` (see `ApiClient.refresh`).
+ *
+ * What lives here is therefore only the short-lived access token, and only in
+ * memory: it is gone on reload (the client gets a new one from the cookie) and
+ * is never written to `localStorage`/`sessionStorage`, where any injected
+ * script could read it.  A `refreshToken` handed to {@link TokenStore.set} is
+ * ignored rather than retained.
  *
  * This module deliberately stores tokens only — it performs no crypto and no
  * network I/O, so the API client can stay testable.
  */
 
-/** Storage key used for the persisted token pair. */
+/**
+ * The `localStorage` key older builds persisted the token pair under.
+ *
+ * Nothing is written there any more; the key survives only so
+ * {@link purgeLegacyPersistedTokens} can delete the long-lived refresh token
+ * those builds left behind in users' browsers.
+ */
 export const TOKEN_STORAGE_KEY = "scholium.auth.tokens";
 
-/** The token pair returned by the API's auth endpoints. */
+/** The tokens the API's auth endpoints return. */
 export interface AuthTokens {
   /** Bearer token sent with authenticated requests. */
   accessToken: string;
-  /** Rotating refresh token used to obtain a new access token. */
+  /**
+   * The refresh token as parsed from an auth response body.
+   *
+   * Never stored: {@link TokenStore} drops it, and the refresh flow uses the
+   * HttpOnly cookie instead.  Present on parsed responses only so callers can
+   * see what the API returned.
+   */
   refreshToken?: string;
   /** Authorization scheme; defaults to `Bearer`. */
   tokenType?: string;
@@ -25,7 +44,7 @@ export interface AuthTokens {
   expiresAt?: number;
 }
 
-/** Partial token patch accepted by {@link TokenStore.set}. */
+/** Partial token patch accepted by {@link TokenStore.set} (`refreshToken` is ignored). */
 export type AuthTokensInput = Partial<AuthTokens>;
 
 /** The small subset of the Web Storage API the token store needs. */
@@ -60,6 +79,10 @@ export class MemoryTokenStorage implements TokenStorage {
  *
  * Next.js evaluates modules on the server first, where `window` does not
  * exist; deferring the lookup means the same store works in both environments.
+ *
+ * This is persistent, script-readable storage for *non-secret* client state
+ * (e.g. the new-account marker).  It must never hold credentials: the default
+ * {@link tokenStore} deliberately does not use it.
  */
 export const browserTokenStorage: TokenStorage = {
   getItem(key) {
@@ -101,6 +124,22 @@ function getLocalStorage(): Storage | undefined {
     // Access can throw in private-mode browsers or sandboxed iframes.
   }
   return undefined;
+}
+
+/**
+ * Delete the token pair older builds persisted in `localStorage`.
+ *
+ * Those builds stored the refresh token there, readable by any injected
+ * script.  Removing it on load means upgrading users do not keep a long-lived
+ * secret in the very place this module stopped using.  A no-op on the server
+ * and wherever storage is unavailable.
+ */
+export function purgeLegacyPersistedTokens(): void {
+  try {
+    getLocalStorage()?.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // Storage can be blocked; there is nothing further to do.
+  }
 }
 
 function readString(value: unknown): string | undefined {
@@ -179,22 +218,26 @@ export function authorizationHeader(tokens: AuthTokens | null): string | undefin
 }
 
 /**
- * Holds the current token pair and notifies subscribers of changes.
+ * Holds the current access token and notifies subscribers of changes.
  *
  * ```ts
- * tokenStore.set({ accessToken, refreshToken });
- * tokenStore.get()?.refreshToken; // => refreshToken
+ * tokenStore.set({ accessToken });
+ * tokenStore.get()?.accessToken; // => accessToken
  * ```
+ *
+ * Each store keeps its tokens in memory unless given another storage; pass a
+ * persistent one only in tests.  The refresh token is never kept (see the
+ * module comment).
  */
 export class TokenStore {
   private readonly storage: TokenStorage;
   private readonly listeners = new Set<TokenListener>();
 
-  constructor(storage: TokenStorage = browserTokenStorage) {
+  constructor(storage: TokenStorage = new MemoryTokenStorage()) {
     this.storage = storage;
   }
 
-  /** The current token pair, or `null` when signed out. */
+  /** The current tokens, or `null` when signed out. */
   get(): AuthTokens | null {
     const serialized = this.storage.getItem(TOKEN_STORAGE_KEY);
     if (!serialized) {
@@ -211,10 +254,6 @@ export class TokenStore {
         return null;
       }
       const tokens: AuthTokens = { accessToken };
-      const refreshToken = readString(raw.refreshToken);
-      if (refreshToken) {
-        tokens.refreshToken = refreshToken;
-      }
       const tokenType = readString(raw.tokenType);
       if (tokenType) {
         tokens.tokenType = tokenType;
@@ -230,12 +269,12 @@ export class TokenStore {
   }
 
   /**
-   * Merge a patch into the stored tokens and persist the result.
+   * Merge a patch into the stored tokens and keep the result.
    *
    * Passing an empty access token (or `null`/`undefined` to {@link clear})
-   * removes the token pair.  Unspecified fields keep their current value, so
-   * a refresh response that only carries `access_token` preserves the
-   * existing refresh token.
+   * removes the tokens.  Unspecified fields keep their current value.  A
+   * `refreshToken` in the patch is deliberately dropped: the refresh token
+   * lives only in the HttpOnly cookie.
    */
   set(patch: AuthTokensInput | null | undefined): AuthTokens | null {
     if (!patch) {
@@ -251,10 +290,6 @@ export class TokenStore {
     }
 
     const tokens: AuthTokens = { accessToken };
-    const refreshToken = readString(patch.refreshToken) ?? current?.refreshToken;
-    if (refreshToken) {
-      tokens.refreshToken = refreshToken;
-    }
     const tokenType = readString(patch.tokenType) ?? current?.tokenType;
     if (tokenType) {
       tokens.tokenType = tokenType;
@@ -278,11 +313,6 @@ export class TokenStore {
   /** The current access token, or `undefined`. */
   get accessToken(): string | undefined {
     return this.get()?.accessToken;
-  }
-
-  /** The current refresh token, or `undefined`. */
-  get refreshToken(): string | undefined {
-    return this.get()?.refreshToken;
   }
 
   /** True when an access token is present. */
@@ -309,27 +339,30 @@ export class TokenStore {
   }
 }
 
-/** Create a token store backed by `storage` (defaults to browser storage). */
+/** Create a token store backed by `storage` (defaults to a fresh in-memory store). */
 export function createTokenStore(storage?: TokenStorage): TokenStore {
   return new TokenStore(storage);
 }
 
-/** Application-wide token store used by the default API client. */
+/** Application-wide token store used by the default API client (in memory only). */
 export const tokenStore = createTokenStore();
 
-/** Read the current token pair from the default store. */
+// Upgrading users still have the old build's token pair in localStorage.
+purgeLegacyPersistedTokens();
+
+/** Read the current tokens from the default store. */
 export function getTokens(): AuthTokens | null {
   return tokenStore.get();
 }
 
-/** Merge tokens into the default store. */
+/** Merge tokens into the default store (a `refreshToken` is ignored). */
 export function setTokens(tokens: AuthTokensInput | null | undefined): AuthTokens | null {
   return tokenStore.set(tokens);
 }
 
 /** Convenience helper for setting just the access token. */
-export function setAccessToken(accessToken: string, refreshToken?: string): AuthTokens | null {
-  return tokenStore.set({ accessToken, ...(refreshToken ? { refreshToken } : {}) });
+export function setAccessToken(accessToken: string): AuthTokens | null {
+  return tokenStore.set({ accessToken });
 }
 
 /** Remove tokens from the default store. */
@@ -340,11 +373,6 @@ export function clearTokens(): void {
 /** Read the default store's access token. */
 export function getAccessToken(): string | undefined {
   return tokenStore.accessToken;
-}
-
-/** Read the default store's refresh token. */
-export function getRefreshToken(): string | undefined {
-  return tokenStore.refreshToken;
 }
 
 /** True when the default store holds an access token. */

@@ -10,6 +10,14 @@ from .challenge import (
     ChallengeResponse,
     router as challenge_router,
 )
+from .cookies import (
+    REFRESH_COOKIE_MAX_AGE,
+    REFRESH_COOKIE_NAME,
+    REFRESH_COOKIE_PATH,
+    clear_refresh_cookie,
+    refresh_token_from_request,
+    set_refresh_cookie,
+)
 from .document import (
     KEY_ROTATION_TYPE,
     DidDocument,
@@ -46,6 +54,7 @@ from .service import (
     InvalidSignature,
     NONCE_BYTES,
     REFRESH_TOKEN_TTL,
+    install_key_rotation_subscriber,
     refresh_access,
     revoke_refresh_token,
     revoke_refresh_tokens_for_did,
@@ -56,6 +65,7 @@ from .service import (
     issue_challenge,
     issue_refresh_token,
     key_for,
+    purge_expired_challenges,
     record_active_key,
     resolve_active_key,
     resolve_active_signing_key,
@@ -93,6 +103,12 @@ router.include_router(logout_router)
 router.include_router(refresh_router)
 router.include_router(verify_router)
 
+# A key rotation (or a guardians recovery) landing in the event log must
+# revoke every refresh token for the rotated DID.  Registered at import, the
+# same way the appeals and moderation plugins install their subscribers; the
+# ledger is imported inside the installer so package import order is free.
+install_key_rotation_subscriber()
+
 __all__ = [
     "Account",
     "AccountKey",
@@ -112,6 +128,9 @@ __all__ = [
     "LOGOUT_UNAUTHENTICATED_TYPE",
     "LogoutRequest",
     "NONCE_BYTES",
+    "REFRESH_COOKIE_MAX_AGE",
+    "REFRESH_COOKIE_NAME",
+    "REFRESH_COOKIE_PATH",
     "REFRESH_TOKEN_TTL",
     "RefreshRequest",
     "RefreshResponse",
@@ -119,11 +138,14 @@ __all__ = [
     "VERIFY_FAILED_TYPE",
     "VerifyRequest",
     "VerifyResponse",
+    "clear_refresh_cookie",
     "ensure_account_keys_table",
     "ensure_account_table",
     "ensure_refresh_tokens_table",
     "ensure_table",
+    "install_key_rotation_subscriber",
     "refresh_access",
+    "refresh_token_from_request",
     "revoke_refresh_token",
     "revoke_refresh_tokens_for_did",
     "active_key_for",
@@ -131,12 +153,14 @@ __all__ = [
     "add_account_key",
     "get_active_key",
     "key_for",
+    "purge_expired_challenges",
     "record_active_key",
     "resolve_active_key",
     "resolve_active_signing_key",
     "resolve_key",
     "resolve_signing_key",
     "set_active_key",
+    "set_refresh_cookie",
     "get_active_signing_key",
     "active_signing_key_for",
     "resolve_active_key_for",
