@@ -183,14 +183,18 @@ from .tools import (
     tool_versions,
 )
 from .scan_job import (
+    FILE_JOB_KIND,
     CHECK_FILE_MISSING,
     CHECK_FILE_UNREADABLE,
     CHECK_MANIFEST_UNREADABLE,
     JOB_KIND,
     FileScanResult,
     VersionScanResult,
+    enqueue_file_scan,
     enqueue_scan,
     ensure_subscribed,
+    scan_stored_file,
+    scan_stored_file_job,
     scan_pending_versions,
     scan_version,
     scan_version_job,
@@ -282,14 +286,18 @@ __all__ = [
     "scan_zip_bytes",
     "scan_zip_path",
     "scan_zip_stream",
+    "FILE_JOB_KIND",
     "CHECK_FILE_MISSING",
     "CHECK_FILE_UNREADABLE",
     "CHECK_MANIFEST_UNREADABLE",
     "JOB_KIND",
     "FileScanResult",
     "VersionScanResult",
+    "enqueue_file_scan",
     "enqueue_scan",
     "ensure_subscribed",
+    "scan_stored_file",
+    "scan_stored_file_job",
     "scan_pending_versions",
     "scan_version",
     "scan_version_job",
@@ -309,10 +317,10 @@ __all__ = [
 
 
 def on_startup(app: Optional[FastAPI] = None) -> None:
-    """Re-attach the version-state subscription when the app starts.
+    """Re-attach the version-state and manifest subscriptions when the app starts.
 
-    The subscription is also made at import time; doing it again here is
-    harmless (registration is idempotent) and restores it after anything
-    that clears the process-wide subscriber list, such as a test fixture.
+    The subscriptions are also made at import time; doing it again here is
+    harmless (registration is idempotent) and restores them after anything
+    that clears the process-wide subscriber lists, such as a test fixture.
     """
     ensure_subscribed()

@@ -71,6 +71,21 @@ def suspended(subscribed):
     sanitizer.ensure_subscribed()
 
 
+@pytest.fixture
+def files_not_scanned_early(subscribed):
+    """Record manifests without their files being scanned (see ``test_scan_ahead``).
+
+    A recorded manifest normally scans the files it names at once.  A test of
+    what the *version* scan does on its own removes that subscription first.
+    """
+    from app.modules.sanitizer import scan_job
+
+    ledger.unsubscribe("manifest", scan_job._on_manifest_recorded)
+    ledger.unsubscribe("paper.version", scan_job._on_manifest_recorded)
+    yield
+    sanitizer.ensure_subscribed()
+
+
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -326,7 +341,7 @@ def test_jobs_enqueue_accepts_the_kind(suspended):
 # --------------------------------------------------------------------------- #
 
 
-def test_a_version_not_in_scanning_state_is_left_alone():
+def test_a_version_not_in_scanning_state_is_left_alone(files_not_scanned_early):
     pdf = stored(clean_pdf(), MANUSCRIPT)
     version_cid = make_version([entry(pdf, "paper.pdf", MANUSCRIPT)])
 

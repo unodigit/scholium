@@ -73,14 +73,18 @@ from .reports import record_finding
 from .tools import KIND_BUNDLE, KIND_OTHER, KIND_PDF, tool_versions
 
 __all__ = [
+    "FILE_JOB_KIND",
     "CHECK_FILE_MISSING",
     "CHECK_FILE_UNREADABLE",
     "CHECK_MANIFEST_UNREADABLE",
     "JOB_KIND",
     "FileScanResult",
     "VersionScanResult",
+    "enqueue_file_scan",
     "enqueue_scan",
     "ensure_subscribed",
+    "scan_stored_file",
+    "scan_stored_file_job",
     "scan_pending_versions",
     "scan_version",
     "scan_version_job",
@@ -91,6 +95,9 @@ logger = logging.getLogger(__name__)
 
 #: Job kind registered with :mod:`app.jobs`.
 JOB_KIND = "sanitizer.scan_version"
+
+#: Job kind that scans a single stored file ahead of its version.
+FILE_JOB_KIND = "sanitizer.scan_file"
 
 #: The state a version must be in for the job to scan it.
 SCANNING = "scanning"
@@ -480,6 +487,81 @@ def _scan_file(entry: Mapping[str, Any]) -> FileScanResult:
 
 
 # --------------------------------------------------------------------------- #
+# Scanning a file ahead of its version
+# --------------------------------------------------------------------------- #
+#
+# A version lists a co-author and waits in ``awaiting_consent`` until every
+# co-author has consented -- and only then enters ``scanning``.  A file is not
+# served until its blob is ``passed``, so if files were only scanned with their
+# version, the co-author asked to approve a manuscript would get ``423`` for it.
+# Each file named by a recorded manifest is therefore scanned on its own, as
+# soon as the manifest exists.  This does not touch the version's state: the
+# version scan after consent still runs, reads every file again and holds the
+# version on a failure, but finds a file that already passed and moves straight
+# on.
+
+
+def scan_stored_file(cid: object) -> Optional[FileScanResult]:
+    """Scan one stored file that has no verdict yet, whatever version names it.
+
+    Returns the file's :class:`FileScanResult`, or ``None`` when nothing was
+    scanned: ``cid`` is not a stored blob (a manifest may name bytes this node
+    has not received yet; the version scan deals with them later), or the blob
+    already has a verdict (``passed`` or ``failed`` is never re-decided here).
+    The findings of a failing file are saved as reports exactly as the
+    version scan saves them; that write is an upsert, so the later version scan
+    leaves one row per check, not two.
+    """
+    if not isinstance(cid, str) or not cid:
+        return None
+
+    from app.modules import content
+
+    blob = content.get_blob(cid)
+    if blob is None or blob.scan_status != content.SCAN_SCANNING:
+        return None
+    return _scan_file({"cid": cid})
+
+
+def scan_stored_file_job(payload: Any) -> None:
+    """Job handler: scan the file named by ``payload["cid"]``."""
+    payload = payload if isinstance(payload, Mapping) else {}
+    scan_stored_file(payload.get("cid"))
+
+
+def enqueue_file_scan(cid: str) -> Optional[int]:
+    """Enqueue a scan of the file ``cid`` and return the job id.
+
+    Returns ``None`` -- enqueuing nothing -- when the file is not a stored blob
+    still waiting for its verdict, so a manifest that names a file already
+    cleared costs nothing.
+
+    Raises:
+        ValueError: if ``cid`` is not a non-empty string.
+    """
+    if not isinstance(cid, str) or not cid:
+        raise ValueError("a non-empty cid is required")
+
+    from app.modules import content
+
+    blob = content.get_blob(cid)
+    if blob is None or blob.scan_status != content.SCAN_SCANNING:
+        return None
+    return jobs.enqueue(FILE_JOB_KIND, {"cid": cid})
+
+
+def _on_manifest_recorded(entry: Any) -> None:
+    """Start a scan of every file a just-recorded manifest names."""
+    from app.modules.content import refs
+
+    for cid in refs.file_cids(getattr(entry, "body", None)):
+        try:
+            enqueue_file_scan(cid)
+        except Exception:  # noqa: BLE001 - one file must not stop the others, nor the append
+            logger.exception("could not enqueue a scan for file %s", _show(cid))
+
+
+# --------------------------------------------------------------------------- #
 # Scanning one version
 # --------------------------------------------------------------------------- #
 
@@ -771,19 +853,32 @@ def _on_version_state_changed(event: Any) -> None:
 
 
 def ensure_subscribed() -> None:
-    """Make sure this module hears about versions entering ``scanning``.
+    """Make sure this module hears about versions entering ``scanning`` and manifests.
+
+    A version entering ``scanning`` starts the scan of the version; a recorded
+    ``manifest`` starts the scan of each file it names, so a file is scanned
+    before -- not only after -- every co-author has consented.
 
     Registration is idempotent.  It is done at import time for a normally
     started node and again before every enqueue, so a test or tool that
     cleared the process-wide subscriber list does not silently stop scans
     from being scheduled.
     """
+    from app.modules import ledger
+    from app.modules.content import refs
     from app.modules.submissions import subscribe_version_state_changed
 
     subscribe_version_state_changed(_on_version_state_changed)
+    # Files are scanned when a manifest naming them is recorded, not only when
+    # their version is (see "Scanning a file ahead of its version").  A
+    # ``paper.version`` record may carry its manifest inline, as for the
+    # content-reference index.
+    ledger.subscribe(refs.MANIFEST_RECORD_TYPE, _on_manifest_recorded)
+    ledger.subscribe(refs.VERSION_RECORD_TYPE, _on_manifest_recorded)
 
 
-# Register at import time so ``jobs.enqueue`` accepts the kind, and so a
+# Register at import time so ``jobs.enqueue`` accepts the kinds, and so a
 # version entering ``scanning`` schedules its scan without any further wiring.
 jobs.register(JOB_KIND, scan_version_job)
+jobs.register(FILE_JOB_KIND, scan_stored_file_job)
 ensure_subscribed()

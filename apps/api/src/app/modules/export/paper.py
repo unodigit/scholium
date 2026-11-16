@@ -417,13 +417,17 @@ def _file_block(
 
     ``principal`` is the caller (``None`` for an anonymous export).  The
     visibility rule is the content route's own
-    (:func:`app.modules.content.may_read`), so an export never serves bytes
-    ``GET /v1/content/{cid}`` would refuse the same caller.
+    (:func:`app.modules.content.may_read`), and so is the scan gate (only a
+    blob whose ``scan_status`` is ``passed`` is served), so an export never
+    serves bytes ``GET /v1/content/{cid}`` would refuse the same caller.
     """
     if content.is_tombstoned(file_cid):
         return None  # moderation removed the bytes from the public archive
     if not content.may_read(file_cid, principal):
         return None  # pre-listing content the caller may not read
+    blob = content.get_blob(file_cid)
+    if blob is None or blob.scan_status != content.SCAN_PASSED:
+        return None  # still scanning, or failed its scan: no bytes until clean
     try:
         cid = parse_file_cid(file_cid)
         with content.open_blob(file_cid) as stream:

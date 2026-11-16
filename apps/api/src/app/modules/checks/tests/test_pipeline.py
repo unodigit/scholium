@@ -282,7 +282,7 @@ def test_the_checks_route_returns_the_report_the_web_parses(client):
             "path": "main.pdf",
             "cid": report["files"][0]["cid"],
             "role": "manuscript",
-            "status": "scanning",
+            "status": "passed",
             "failedChecks": [],
             "detail": None,
         }
