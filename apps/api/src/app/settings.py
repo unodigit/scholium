@@ -16,9 +16,20 @@ _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 #: Hosted AI providers and the environment variable holding their API key.
 _HOSTED_AI_KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY"}
 
+#: Accepted spellings of ``SCHOLIUM_ENV``, mapped to their canonical value.
+#: Anything else is unknown and is refused by
+#: :meth:`Settings.validate_for_environment` rather than starting the app.
+_ENV_ALIASES = {"dev": "dev", "prod": "production", "production": "production"}
+
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
+
+
+def _normalise_environment(value: str) -> str:
+    """Canonical ``SCHOLIUM_ENV`` value (unknown values are kept, then refused)."""
+    key = (value or "").strip().lower()
+    return _ENV_ALIASES.get(key, key)
 
 
 def _derive_review_uniqueness_key(jwt_secret: str) -> str:
@@ -69,8 +80,11 @@ class Settings:
     SMTP_URL: str = field(default_factory=lambda: _env("SMTP_URL", ""))
     JOBS_EAGER: int = field(default_factory=lambda: _int("JOBS_EAGER", 1))
     NEXT_PUBLIC_API_URL: str = field(default_factory=lambda: _env("NEXT_PUBLIC_API_URL", "http://localhost:8000"))
-    # dev | production. Production refuses insecure defaults (see validate_for_environment).
-    SCHOLIUM_ENV: str = field(default_factory=lambda: _env("SCHOLIUM_ENV", "dev"))
+    # dev | production (case-insensitive; "prod" is an alias for "production").
+    # Production refuses insecure defaults (see validate_for_environment).
+    SCHOLIUM_ENV: str = field(
+        default_factory=lambda: _normalise_environment(_env("SCHOLIUM_ENV", "dev"))
+    )
     # Comma-separated browser origins allowed to call the API (CORS).
     WEB_ORIGINS: str = field(default_factory=lambda: _env("WEB_ORIGINS", "http://localhost:3000"))
     # Per-tier write throttling (app.middleware). Tests disable it on the shared app.
@@ -82,7 +96,13 @@ class Settings:
 
     def validate_for_environment(self) -> None:
         """Refuse to run production with development-only defaults."""
-        if self.SCHOLIUM_ENV != "production":
+        environment = _normalise_environment(self.SCHOLIUM_ENV)
+        if environment != "production":
+            if environment != "dev":
+                raise RuntimeError(
+                    f"Unknown SCHOLIUM_ENV {self.SCHOLIUM_ENV!r}; "
+                    "expected 'dev', 'prod' or 'production'."
+                )
             return
         problems = []
         if self.JWT_SECRET in ("", _DEFAULT_JWT_SECRET) or len(self.JWT_SECRET) < 32:
@@ -95,8 +115,19 @@ class Settings:
             problems.append(
                 "REVIEW_UNIQUENESS_KEY must be set to a random value of at least 32 characters"
             )
-        if not (self.COMMITTEE_PUBLIC_KEY or "").strip():
+        committee_key = (self.COMMITTEE_PUBLIC_KEY or "").strip()
+        if not committee_key:
             problems.append("COMMITTEE_PUBLIC_KEY must be set for review escrow")
+        else:
+            # Escrow is the authority on the key format (hex or base64, 32
+            # bytes); reuse it so a key that would fail at sealing time is
+            # refused at startup instead.
+            from app.modules.reviews.escrow import CommitteeKeyError, _decode_key
+
+            try:
+                _decode_key(committee_key)
+            except CommitteeKeyError:
+                problems.append("COMMITTEE_PUBLIC_KEY must be 32 bytes of hex or base64")
         if not (self.SMTP_URL or "").strip():
             problems.append("SMTP_URL must be set so verification and notification emails are delivered")
         node_key_path = (self.NODE_KEY_PATH or "").strip()
@@ -104,6 +135,15 @@ class Settings:
             problems.append(
                 f"NODE_KEY_PATH must point at an existing node key file (got {node_key_path!r})"
             )
+        else:
+            # The runtime reads the key with this same loader; a file that
+            # exists but holds no usable Ed25519 key cannot sign anything.
+            from app.modules.ledger.origin import node_signing_key
+
+            if node_signing_key(node_key_path) is None:
+                problems.append(
+                    f"NODE_KEY_PATH must hold a valid Ed25519 key (got {node_key_path!r})"
+                )
         if not (self.ORCID_CLIENT_ID or "").strip() or not (self.ORCID_CLIENT_SECRET or "").strip():
             problems.append("ORCID_CLIENT_ID and ORCID_CLIENT_SECRET must be set")
         if self.ORCID_MOCK:
@@ -118,10 +158,23 @@ class Settings:
         key_env = _HOSTED_AI_KEY_ENV.get(provider)
         if key_env and not _env(key_env, "").strip():
             problems.append(f"{key_env} must be set when AI_PROVIDER is {provider}")
+        if not self.RATE_LIMIT_ENABLED:
+            problems.append("RATE_LIMIT_ENABLED must be 1 so write throttling is active in production")
         if "*" in self.web_origins:
             problems.append("WEB_ORIGINS must list explicit origins")
-        elif any(_is_loopback_url(origin) for origin in self.web_origins):
-            problems.append("WEB_ORIGINS must not point at localhost in production")
+        else:
+            if any(_is_loopback_url(origin) for origin in self.web_origins):
+                problems.append("WEB_ORIGINS must not point at localhost in production")
+            insecure_origins = [
+                origin
+                for origin in self.web_origins
+                if urlparse(origin).scheme.lower() != "https"
+            ]
+            if insecure_origins:
+                problems.append(
+                    "WEB_ORIGINS must use https in production: "
+                    + ", ".join(insecure_origins)
+                )
         if _is_loopback_url(self.NEXT_PUBLIC_API_URL):
             problems.append("NEXT_PUBLIC_API_URL must not point at localhost in production")
         if problems:

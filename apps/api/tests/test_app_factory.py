@@ -71,6 +71,7 @@ def _safe_production_settings(tmp_path, monkeypatch) -> Settings:
     safe.ORCID_CLIENT_SECRET = "client-secret"
     safe.NODE_KEY_PATH = str(node_key)
     safe.REVIEW_UNIQUENESS_KEY = "r" * 48
+    safe.RATE_LIMIT_ENABLED = 1
     return safe
 
 
@@ -115,6 +116,83 @@ def test_production_refuses_short_review_uniqueness_key(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError) as err:
         unsafe.validate_for_environment()
     assert "REVIEW_UNIQUENESS_KEY" in str(err.value)
+
+
+@pytest.mark.parametrize("spelling", ["prod", "Prod", "PROD", "production", "Production", " PRODUCTION "])
+def test_scholium_env_spelling_still_means_production(spelling):
+    """Any spelling of production must run the production checks."""
+    unsafe = Settings()
+    unsafe.SCHOLIUM_ENV = spelling
+    unsafe.JWT_SECRET = "change-me-in-production"
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "JWT_SECRET" in str(err.value), str(err.value)
+
+
+@pytest.mark.parametrize("spelling", ["dev", "Dev", "DEV", " dev "])
+def test_scholium_env_dev_spelling_is_accepted(spelling):
+    safe = Settings()
+    safe.SCHOLIUM_ENV = spelling
+    safe.validate_for_environment()
+
+
+@pytest.mark.parametrize("value", ["staging", "prodution", "", "1", "test"])
+def test_unknown_scholium_env_refuses_to_start(value):
+    unsafe = Settings()
+    unsafe.SCHOLIUM_ENV = value
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "SCHOLIUM_ENV" in str(err.value), str(err.value)
+
+
+def test_scholium_env_is_normalised_when_loaded(monkeypatch):
+    """The stored value is canonical, so every production guard sees it."""
+    monkeypatch.setenv("SCHOLIUM_ENV", "PrOd")
+    assert Settings().SCHOLIUM_ENV == "production"
+
+
+def test_create_app_refuses_prod_spelling_with_dev_defaults(monkeypatch):
+    monkeypatch.setattr(settings, "SCHOLIUM_ENV", "prod")
+    monkeypatch.setattr(settings, "JWT_SECRET", "change-me-in-production")
+    with pytest.raises(RuntimeError) as err:
+        main.create_app()
+    assert "JWT_SECRET" in str(err.value), str(err.value)
+
+
+@pytest.mark.parametrize("contents", [b"", b"not an ed25519 key", b"\x02" * 31])
+def test_production_refuses_empty_or_unparsable_node_key(tmp_path, monkeypatch, contents):
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    path = tmp_path / "node.key"
+    path.write_bytes(contents)
+    unsafe.NODE_KEY_PATH = str(path)
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "NODE_KEY_PATH" in str(err.value), str(err.value)
+
+
+@pytest.mark.parametrize("value", ["x", "not-a-key", "00" * 31])
+def test_production_refuses_unparsable_committee_public_key(tmp_path, monkeypatch, value):
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    unsafe.COMMITTEE_PUBLIC_KEY = value
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "COMMITTEE_PUBLIC_KEY" in str(err.value), str(err.value)
+
+
+def test_production_refuses_disabled_rate_limit(tmp_path, monkeypatch):
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    unsafe.RATE_LIMIT_ENABLED = 0
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "RATE_LIMIT_ENABLED" in str(err.value), str(err.value)
+
+
+def test_production_refuses_non_https_web_origins(tmp_path, monkeypatch):
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    unsafe.WEB_ORIGINS = "http://scholium.example"
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "WEB_ORIGINS" in str(err.value), str(err.value)
 
 
 def test_create_app_refuses_unsafe_production(monkeypatch, tmp_path):
