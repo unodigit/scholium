@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Follow-up from the commit security review of the text-extraction pipeline (2026-11-17). -->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/reading/**,apps/api/src/app/modules/checks/router.py">
+    <title>Text of versions still in moderation is served publicly by /text and /compare</title>
+    <symptoms>
+      The checks pipeline now extracts a version's paragraphs when it enters moderation (checks/pipeline.py _TRIGGER_STATES = {"moderation", "listed"}), before any moderator has approved it
+      GET /v1/papers/{id}/v/{n}/text (reading/router.py get_paper_text) and GET /v1/papers/{id}/compare resolve any version the node holds and never check its state, so anyone can read the full text of an unlisted (in-moderation, rejected or held) version
+      GET /v1/papers/{id}/v/{n}/checks returns the advisory checks report (similarity matches, references) of unlisted versions to anyone
+    </symptoms>
+    <reproduction_steps>
+      Submit and consent a version so it enters moderation and the pipeline extracts its text
+      Anonymously GET /v1/papers/{id}/v/{n}/text -> 200 with all paragraphs; GET .../compare?from=1&amp;to=n -> 200 with its text
+    </reproduction_steps>
+    <expected>For a version whose state is not listed, /text, /compare (when either side is unlisted) and /checks return 404 problem to anonymous callers and to anyone who is not one of the version's authors or a tier-4 moderator; authors and moderators still get the content (moderators need it to review). Listed versions are unchanged</expected>
+    <actual>Pre-moderation text and checks are public</actual>
+    <constraints>
+      <constraint>Use the same "is the caller an author of this version or tier 4" rule the content route uses for unlisted files; resolve the principal from an optional bearer token</constraint>
+      <constraint>Do not move extraction later: moderators rely on the text and checks during moderation</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
