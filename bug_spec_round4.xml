@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 4: findings of the final independent evaluation at 743a345 (2026-11-17).
+  Evidence: scratchpad eval3/FINDINGS3.md (headless Chromium, web :13000 -> API :18000).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/export/**">
+    <title>Paper export leaks the PDFs of unlisted papers to anonymous callers</title>
+    <symptoms>
+      Anonymous GET /v1/export/paper/{id}.car returns a CAR containing the PDF (%PDF bytes) of papers in moderation, held, or awaiting consent, while GET /v1/content/{cid} correctly returns 404 for the same file
+      export/paper.py falls back to resolving the paper from the ledger and only checks tombstones, never the content visibility rule
+    </symptoms>
+    <reproduction_steps>
+      Submit a version and leave it in moderation (or hold it); anonymously GET /v1/export/paper/{id}.car and search the bytes for %PDF
+    </reproduction_steps>
+    <expected>Every export path (paper CAR, per-paper records export, user CAR, archive CAR, OAI) includes a file block only when the caller may read that file under the same rule /v1/content uses (listed, or the caller is an author of the version or tier 4); records are still exported so verification works, and anonymous exports of unlisted papers contain no file bytes. Regression tests for each export path</expected>
+    <actual>Export bypasses the content visibility rule</actual>
+    <constraints>
+      <constraint>Reuse the content module's visibility check; do not duplicate the rule</constraint>
+      <constraint>`scholium verify` of an exported CAR of a listed paper still verifies</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="high"
+       touches_files="apps/web/src/features/paper-page/**,apps/web/src/app/(paper-page)/**">
+    <title>Authors get 404 on their own unlisted or held paper, so appeal, notice and new-version actions are unreachable; tombstoned papers show a bare 404</title>
+    <symptoms>
+      /p/{id} is rendered server-side without the user's token (the access token lives in browser memory), so a paper that is in moderation, held before listing, or awaiting consent returns 404 even for its own author; the dashboard "My papers" and "Moderation outcome ... Open" links lead there
+      The author therefore cannot reach File an appeal, Issue notice, New version, or their own checks, text and PDF in the UI, though the API serves all of them with the author's token
+      A tombstoned paper shows a bare 404 instead of design.md's "Content removed for legal reasons on {date}" state
+    </symptoms>
+    <reproduction_steps>
+      As an author, submit a paper and have a moderator hold it before listing; open /p/{id} from the dashboard -> 404
+      Tombstone a listed paper's PDF; open /p/{id} -> bare 404
+    </reproduction_steps>
+    <expected>When the server render gets 404 for a paper, the page hydrates a client view that retries with the signed-in user's token; authors and moderators then see the paper with a status banner (In moderation / Held: reason / Awaiting co-author consent) and the actions that apply (File an appeal when held or rejected, Issue notice, New version, the checks report), with text and PDF fetched with the token; everyone else still sees the not-found page with HTTP 404. A tombstoned version renders the design.md removed-content state with the date and policy, HTTP 451</expected>
+    <actual>Author locked out of their own paper; bare 404 for takedowns</actual>
+    <constraints>
+      <constraint>Listed papers keep their server-rendered page and metadata unchanged</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="3" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-reviews/**,apps/web/src/features/review-form/**">
+    <title>No in-app entry point for review updates; reveal secrets are trapped in one browser</title>
+    <symptoms>
+      The "Update for vN" action never appears: the reviews tab lists only the latest version's reviews, so a reviewer whose review targets v1 never sees it after v2; typing /review/{id}?prev=... works (201)
+      Revealing depends on secrets kept in the reviewer's browser; in a fresh browser profile the page shows no Reveal button, and committing again is refused 409, with no explanation
+    </symptoms>
+    <reproduction_steps>
+      Reveal a review on v1; author posts v2; open the reviews tab as the reviewer: no Update link
+      Commit a review, then open the paper in a new browser profile signed in as the same reviewer: no Reveal, no explanation
+    </reproduction_steps>
+    <expected>The reviews tab shows the signed-in reviewer's own revealed review on an older version with an Update for v{latest} action. After committing, the review form tells the reviewer the reveal secret is stored only in this browser and offers "Download review key" (an encrypted-at-rest JSON file) and, in another browser, "Import review key" which restores the Reveal action; when a sealed review exists but no local secret, the page explains that and offers the import</expected>
+    <actual>Hidden update path; secrets lost silently on another device</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/uploads/**">
+    <title>Upload quota and cleanup can be escaped by naming uploads in a standalone manifest</title>
+    <symptoms>
+      Any account, even a tier-0 stranger, can post a standalone manifest record naming any upload; that upload then counts as referenced, escaping the daily quota and the 7-day orphan cleanup (uploads A, B and D survived the reaper; only C was deleted)
+      The reaper ignores files referenced by discussion and notice records (reasonCid), so it could delete a file a record still names
+    </symptoms>
+    <reproduction_steps>
+      Upload a file as user X; as tier-0 user Y post a manifest naming its cid; run the reaper after the TTL: the upload survives and X's quota is freed
+    </reproduction_steps>
+    <expected>An upload counts as referenced only when it is named by a manifest of a version authored by the upload's owner (or co-authored), or by a discussion/notice/decision record signed by the owner; the daily quota counts all bytes uploaded per DID per day regardless of references; the reaper never deletes a file named by any record and deletes everything else past the TTL</expected>
+    <actual>Quota and cleanup bypassable</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/submissions/notices.py,apps/api/src/app/modules/moderation/decisions.py">
+    <title>A notice's reasonCid copies any stored file into the public paper JSON, even one the signer may not read</title>
+    <symptoms>
+      submissions/notices.py read_reason_file reads any content-store file named by reasonCid into notices.reason, which GET /v1/papers/{id} serves publicly; the signer got 404 reading that file directly, yet after posting a correction the file's text appeared in /v1/papers/...
+      moderation/decisions.py accepts reasonCid the same way
+    </symptoms>
+    <reproduction_steps>
+      As user A upload a private file (unlisted); as consented author B of another paper post a correction notice with reasonCid = A's file; GET /v1/papers/{B's paper} shows A's file text
+    </reproduction_steps>
+    <expected>reasonCid is accepted only when the signer may read the file under the content visibility rule (a public file, or one the signer owns/authored); otherwise 422 at body.reasonCid</expected>
+    <actual>Arbitrary private files can be published</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="medium"
+       touches_files="apps/web/src/features/submit/consent-page.tsx,apps/web/src/features/submit/consent-page.test.tsx,apps/web/src/features/submit/new-version.ts,apps/web/src/features/submit/new-version-page.tsx,apps/web/src/features/submit/new-version.test.ts,apps/web/src/features/submit/new-version-page.test.tsx">
+    <title>Co-authors get 404 for the PDF they must approve; the new-version form drops multi-category papers' categories</title>
+    <symptoms>
+      submit/consent-page.tsx:174 renders file links as plain &lt;a href&gt; with no token, so a co-author opening the PDF of a version awaiting their consent gets 404
+      The new-version form does not pre-select a paper's categories when it has two, so Continue stays disabled; single-category papers work
+    </symptoms>
+    <reproduction_steps>
+      As an invited co-author open /consent/{cid} and click the PDF -> 404
+      Open New version for a paper in cs.AI and cs.LG: no category selected, Continue disabled
+    </reproduction_steps>
+    <expected>The consent page shows the PDF in the existing PDF viewer (or downloads it) fetched with the bearer token; the new-version form pre-selects every category of the current version</expected>
+    <actual>404; disabled Continue</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/identity/**">
+    <title>Logout ignores the refresh cookie; grace-window replay stores an access token in the database</title>
+    <symptoms>
+      POST /v1/auth/logout authenticates only by bearer token: with no access token in memory it returns 401 and the refresh cookie stays valid
+      The refresh reuse grace window stores the successor access token in the database so it can be replayed
+    </symptoms>
+    <reproduction_steps>
+      Sign in, drop the in-memory access token, POST /v1/auth/logout with only the cookie -> 401; refresh still works
+    </reproduction_steps>
+    <expected>Logout revokes the refresh-token family identified by the cookie (bearer optional) and clears the cookie, returning 204; the grace window stores no access token: a replay within the window mints a fresh short-lived access token for the same successor refresh token</expected>
+    <actual>Cookie-only logout fails; access token at rest</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/endorse.ts,apps/web/src/features/dashboard/endorse-button.tsx,apps/web/src/features/dashboard/endorse.test.ts,apps/web/src/features/dashboard/endorse-button.test.tsx">
+    <title>Endorse UI offers endorsement to tier-2 users, which the API rejects</title>
+    <symptoms>
+      A tier-2 user is shown "Endorse in cs.AI"; clicking it returns 403 insufficient-tier (the API requires tier 3 to endorse)
+    </symptoms>
+    <reproduction_steps>
+      As a tier-2 user open another user's /u/{did}
+    </reproduction_steps>
+    <expected>The UI applies the same rule as the API (endorser tier and category) and hides the action otherwise</expected>
+    <actual>Offered then refused</actual>
+  </bug>
+
+  <bug index="9" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/appeals/**">
+    <title>A co-author who declined consent can appeal a decision on the paper</title>
+    <symptoms>
+      Code read: the appeal eligibility check counts any listed author, including one who declined consent (same rule just fixed for notices)
+    </symptoms>
+    <reproduction_steps>
+      List B as co-author; B declines; hold the paper; B files an appeal -> accepted
+    </reproduction_steps>
+    <expected>Only authors with an accepted consent (and the decision's subject author) may appeal; others 403</expected>
+    <actual>Declined co-author can appeal</actual>
+  </bug>
+
+  <bug index="10" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/content/**">
+    <title>Files named in inline manifests escape tombstones and the content index</title>
+    <symptoms>
+      Code read: a version whose manifest is inline in the version record (not a separate manifest record) is not indexed by the new content-reference index and its files are not matched by tombstone lookups
+    </symptoms>
+    <reproduction_steps>
+      Publish a version with an inline manifest; tombstone its PDF; GET /v1/content/{pdf cid}
+    </reproduction_steps>
+    <expected>The content index and tombstone checks treat inline and separate manifests the same; a tombstoned file returns 451 either way; regression tests for both shapes</expected>
+    <actual>Inline manifests bypass both</actual>
+  </bug>
+
+</bug_spec>
