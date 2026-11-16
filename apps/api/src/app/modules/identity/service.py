@@ -51,6 +51,7 @@ __all__ = [
     "refresh_access",
     "refresh_reuse_grace_seconds",
     "revoke_refresh_token",
+    "revoke_refresh_token_family",
     "revoke_refresh_tokens_for_did",
     "get_active_signing_key",
     "active_signing_key_for",
@@ -200,7 +201,12 @@ def _hash_token(raw: str) -> str:
 def _successor_within_grace(
     session, row: RefreshToken, presented: str, checked_at: datetime
 ):
-    """The successor pair ``row`` handed out, if ``presented`` is in its grace.
+    """The successor pair for ``row``, if ``presented`` is in its grace window.
+
+    The successor *refresh* token is the same one the rotation handed out (it
+    is derived from ``presented``).  The *access* token is not replayed: no
+    access token is ever stored, so a fresh short-lived one is minted for the
+    replay, as of ``checked_at``.
 
     Returns ``None`` when the row was not rotated at all, when the grace
     window has elapsed (genuine reuse/theft), or when the successor has since
@@ -221,11 +227,8 @@ def _successor_within_grace(
     if successor is None or successor.rotated:
         return None
 
-    access_token = row.successor_access_token
-    if not access_token:
-        tier = int(row.successor_tier) if row.successor_tier is not None else 0
-        access_token = issue_access_token(row.did, tier, now=rotated_at)
-    return access_token, successor_raw
+    tier = int(row.successor_tier) if row.successor_tier is not None else 0
+    return issue_access_token(row.did, tier, now=checked_at), successor_raw
 
 
 def purge_expired_challenges(*, now: Optional[datetime] = None) -> int:
@@ -438,12 +441,13 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
 
     A token presented again *within* :func:`refresh_reuse_grace_seconds` of
     its rotation is not theft: two tabs refreshing together both present the
-    same token, and the loser must receive the winner's successor pair rather
-    than be signed out.  Presenting a retired token after that window -- or
-    one revoked by logout or a key rotation -- is still treated as theft:
-    only the legitimate holder ever sees the rotated value, so a replay means
-    the token leaked.  The whole token family for that DID is revoked before
-    the request is refused.
+    same token, and the loser must receive the winner's successor refresh
+    token (with a freshly minted access token -- access tokens are never
+    stored) rather than be signed out.  Presenting a retired token after that
+    window -- or one revoked by logout or a key rotation -- is still treated
+    as theft: only the legitimate holder ever sees the rotated value, so a
+    replay means the token leaked.  The whole token family for that DID is
+    revoked before the request is refused.
 
     Raises:
         InvalidRefreshToken: the token is unknown, expired, or was already
@@ -494,12 +498,7 @@ def refresh_access(refresh_token: str, *, now: Optional[datetime] = None) -> tup
                 RefreshToken.token_hash == token_hash,
                 RefreshToken.rotated == False,  # noqa: E712 - SQL boolean
             )
-            .values(
-                rotated=True,
-                rotated_at=checked_at,
-                successor_access_token=access_token,
-                successor_tier=tier,
-            )
+            .values(rotated=True, rotated_at=checked_at, successor_tier=tier)
         )
         if result.rowcount != 1:
             session.rollback()
@@ -550,6 +549,33 @@ def revoke_refresh_token(refresh_token: str) -> bool:
         )
         session.commit()
         return result.rowcount == 1
+
+
+def revoke_refresh_token_family(refresh_token: str) -> int:
+    """Retire the whole token family ``refresh_token`` belongs to.
+
+    Logout by the ``HttpOnly`` cookie: the cookie is the only credential the
+    browser still holds, and it may be a stale copy of a token that has since
+    rotated, so revoking just that one row would leave its live successor
+    behind.  The family is every live refresh token of the DID the presented
+    token was issued to -- the same set a replayed token or a bearer logout
+    retires.
+
+    Idempotent and silent about existence, like :func:`revoke_refresh_token`:
+    an unknown token revokes nothing and returns ``0``.  Returns how many rows
+    were revoked.
+    """
+    if not isinstance(refresh_token, str) or not refresh_token:
+        return 0
+
+    ensure_refresh_tokens_table()
+
+    with db.SessionLocal() as session:
+        row = session.get(RefreshToken, _hash_token(refresh_token))
+        did = row.did if row is not None else None
+    if did is None:
+        return 0
+    return revoke_refresh_tokens_for_did(did)
 
 
 def revoke_refresh_tokens_for_did(did: str) -> int:

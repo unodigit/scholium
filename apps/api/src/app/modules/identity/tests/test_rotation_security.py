@@ -450,6 +450,22 @@ def test_logout_clears_the_refresh_cookie(secure_client):
     assert cleared.get("max-age") == "0"
 
 
+def test_logout_with_only_the_cookie_jar_ends_the_session(secure_client):
+    # The reported repro: sign in, lose the in-memory access token (page
+    # reload), then log out carrying nothing but the browser's cookie jar.
+    _, _, _, refresh_token = _sign_in(secure_client)
+
+    logout = secure_client.post(LOGOUT_URL)
+
+    assert logout.status_code == 204, logout.text
+    cleared = _refresh_cookie(logout)
+    assert cleared is not None and cleared.get("max-age") == "0"
+    # The browser dropped the cookie, and the token is dead server-side too.
+    assert secure_client.cookies.get("scholium_refresh") is None
+    revoked = secure_client.post(REFRESH_URL, json={"refresh_token": refresh_token})
+    assert revoked.status_code == 401, revoked.text
+
+
 def test_refresh_without_cookie_or_body_is_rejected(secure_client):
     response = secure_client.post(REFRESH_URL, json={})
 

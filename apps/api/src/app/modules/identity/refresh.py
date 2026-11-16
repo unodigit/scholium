@@ -24,8 +24,9 @@ the browser flow it is the only copy the client cannot lose track of.
 
 A token presented again within the reuse grace window
 (``REFRESH_REUSE_GRACE_SECONDS``, default 30 seconds) of its rotation returns
-the same successor pair -- two tabs refreshing together must not sign the user
-out.  Presenting a retired token after that window -- rotated out, revoked by
+the same successor refresh token -- two tabs refreshing together must not sign
+the user out.  The access token alongside it is minted afresh for the replay:
+no access token is ever stored, so none can be replayed.  Presenting a retired token after that window -- rotated out, revoked by
 logout, or revoked by a key rotation -- is treated as theft and revokes every
 refresh token for the account before the request is refused, so a stolen
 descendant dies with its ancestor.

@@ -39,6 +39,7 @@ __all__ = [
     "ensure_columns",
     "ensure_refresh_tokens_table",
     "ensure_table",
+    "scrub_stored_access_tokens",
 ]
 
 
@@ -78,11 +79,11 @@ class RefreshToken(db.Base):
     ``rotated`` retires a token for good; ``rotated_at`` additionally records
     *when* a token was rotated out (``NULL`` when it was revoked rather than
     rotated), which the short reuse-grace window uses to hand a concurrent
-    second request the same successor pair instead of revoking the family.
-    The successor's raw access token and tier are kept for that window so the
-    pair can be replayed byte-for-byte; the successor refresh token itself is
-    derived from the presented token and the server secret, so no raw refresh
-    token is ever stored.
+    second request the same successor instead of revoking the family.  The
+    successor's tier is kept for that window so the replay's freshly minted
+    access token carries it; the successor refresh token itself is derived
+    from the presented token and the server secret, so no raw refresh token is
+    ever stored -- and no access token is stored either.
     """
 
     __tablename__ = "refresh_tokens"
@@ -92,7 +93,6 @@ class RefreshToken(db.Base):
     expires_at = Column(DateTime, nullable=False)
     rotated = Column(Boolean, nullable=False, default=False, server_default=false())
     rotated_at = Column(DateTime, nullable=True)
-    successor_access_token = Column(Text, nullable=True)
     successor_tier = Column(Integer, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
@@ -103,9 +103,15 @@ class RefreshToken(db.Base):
 #: ``name -> DDL type``.  Every one is nullable, since existing rows get NULL.
 _ADDED_COLUMNS = {
     "rotated_at": "DATETIME",
-    "successor_access_token": "TEXT",
     "successor_tier": "INTEGER",
 }
+
+#: Column an earlier release filled with the successor's raw access token so a
+#: grace-window replay could return it byte-for-byte.  Nothing writes it any
+#: more and the model no longer maps it; databases created back then still
+#: carry the column and its values, which :func:`scrub_stored_access_tokens`
+#: clears.
+_LEGACY_ACCESS_TOKEN_COLUMN = "successor_access_token"
 
 
 def ensure_columns(bind: Engine) -> list[str]:
@@ -146,6 +152,34 @@ def ensure_columns(bind: Engine) -> list[str]:
                 raise
         added.append(name)
     return added
+
+
+def scrub_stored_access_tokens(bind: Engine) -> int:
+    """Null any access token an earlier release left in ``refresh_tokens``.
+
+    Access tokens are bearer credentials and must not rest in the database.  A
+    table created before that was fixed still has the legacy column with
+    tokens in it; blanking them closes that exposure for existing deployments.
+    A table without the column (or no table) is left alone.  Returns how many
+    rows were cleared; safe to call repeatedly.
+    """
+    inspector = inspect(bind)
+    if not inspector.has_table(RefreshToken.__tablename__):
+        return 0
+    present = {
+        column["name"] for column in inspector.get_columns(RefreshToken.__tablename__)
+    }
+    if _LEGACY_ACCESS_TOKEN_COLUMN not in present:
+        return 0
+    with bind.begin() as connection:
+        result = connection.execute(
+            text(
+                f"UPDATE {RefreshToken.__tablename__} "
+                f"SET {_LEGACY_ACCESS_TOKEN_COLUMN} = NULL "
+                f"WHERE {_LEGACY_ACCESS_TOKEN_COLUMN} IS NOT NULL"
+            )
+        )
+    return result.rowcount
 
 
 
@@ -223,6 +257,7 @@ def ensure_refresh_tokens_table() -> None:
         with _table_lock:
             if _columns_checked.get("refresh_tokens") is not db.engine:
                 ensure_columns(db.engine)
+                scrub_stored_access_tokens(db.engine)
                 _columns_checked["refresh_tokens"] = db.engine
 
 

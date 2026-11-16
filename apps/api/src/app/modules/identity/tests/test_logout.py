@@ -123,3 +123,92 @@ def test_body_without_refresh_token_is_rejected(client):
     response = client.post(URL, json={})
 
     assert response.status_code == 422, response.text
+
+
+# --------------------------------------------------------------------------- #
+# Cookie-identified logout: the bearer token is optional
+# --------------------------------------------------------------------------- #
+
+COOKIE_NAME = "scholium_refresh"
+
+
+def _cookie(token: str) -> dict[str, str]:
+    """The ``Cookie`` header a browser sends to ``/v1/auth/*``."""
+    return {"Cookie": f"{COOKIE_NAME}={token}"}
+
+
+def _clears_the_cookie(response) -> bool:
+    for header in response.headers.get_list("set-cookie"):
+        if header.lower().startswith(f"{COOKIE_NAME}="):
+            return "max-age=0" in header.lower()
+    return False
+
+
+def test_logout_with_only_the_refresh_cookie_revokes_it_and_clears_the_cookie(client):
+    # The in-memory access token is gone (page reload): only the HttpOnly cookie
+    # identifies the caller.
+    _, _, refresh_token = sign_in(client)
+
+    response = client.post(URL, headers=_cookie(refresh_token))
+
+    assert response.status_code == 204, response.text
+    assert response.content == b""
+    assert _clears_the_cookie(response), response.headers.get_list("set-cookie")
+    assert _row(refresh_token).rotated is True
+    assert client.post(REFRESH_URL, json={"refresh_token": refresh_token}).status_code == 401
+
+
+def test_cookie_logout_revokes_the_whole_family_not_just_the_presented_token(client):
+    _, _, first = sign_in(client)
+    rotated = client.post(REFRESH_URL, headers=_cookie(first))
+    assert rotated.status_code == 200, rotated.text
+    successor = _cookie_token(rotated)
+    assert _row(successor).rotated is False
+
+    # A stale copy of the cookie (the rotation's Set-Cookie had not landed yet)
+    # must not leave the live successor behind.
+    response = client.post(URL, headers=_cookie(first))
+
+    assert response.status_code == 204, response.text
+    assert _row(successor).rotated is True
+    assert client.post(REFRESH_URL, json={"refresh_token": successor}).status_code == 401
+
+
+def test_cookie_logout_succeeds_with_an_expired_or_invalid_bearer(client):
+    _, _, refresh_token = sign_in(client)
+
+    response = client.post(
+        URL,
+        headers={**_cookie(refresh_token), "Authorization": "Bearer not-a-real-token"},
+    )
+
+    assert response.status_code == 204, response.text
+    assert _clears_the_cookie(response)
+    assert _row(refresh_token).rotated is True
+
+
+def test_cookie_logout_with_a_valid_bearer_also_revokes_the_cookie_token(client):
+    _, access_token, refresh_token = sign_in(client)
+
+    response = client.post(
+        URL,
+        headers={**_cookie(refresh_token), "Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 204, response.text
+    assert _clears_the_cookie(response)
+    assert _row(refresh_token).rotated is True
+
+
+def test_unknown_refresh_cookie_still_answers_204_and_clears_it(client):
+    response = client.post(URL, headers=_cookie("not-a-token-we-issued"))
+
+    assert response.status_code == 204, response.text
+    assert _clears_the_cookie(response)
+
+
+def test_an_invalid_bearer_alone_is_still_rejected(client):
+    response = client.post(URL, headers={"Authorization": "Bearer not-a-real-token"})
+
+    assert response.status_code == 401, response.text
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
