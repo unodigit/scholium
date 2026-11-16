@@ -197,6 +197,23 @@ describe("SubmitWizard — Authors to Checks and back", () => {
     expect(screen.getByText("paper.pdf", { selector: ".sw-file__name" })).toBeTruthy();
   });
 
+  it("opens step 5, Sign, from step 4 before any version (and so any check result) exists", async () => {
+    // The checks run on the signed version, so a draft has no report to wait
+    // for: waiting for one would deadlock the wizard (checks are advisory,
+    // PRD PUB-4/MOD-1 — they never block signing).
+    await openAuthors({ submitterDid: ME });
+    chooseSubmitterRole();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Checks" }));
+
+    const next = screen.getByRole("button", { name: "Continue to Sign" }) as HTMLButtonElement;
+    expect(next.disabled).toBe(false);
+    fireEvent.click(next);
+
+    expect(screen.getByRole("heading", { level: 2, name: "Sign" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign and submit" })).toBeTruthy();
+    expect(railSteps()[4].getAttribute("aria-current")).toBe("step");
+  });
+
   it("shows the version's live results when the wizard is given one", async () => {
     const report = {
       paper: "sch:abcd-efgh-ijkl",

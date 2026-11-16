@@ -6,12 +6,16 @@
  * "Summary card + Sign and submit (passkey prompt)." Signs `paper.genesis`,
  * `manifest` and `paper.version`, submits each to the node, and afterwards
  * shows a status tracker: Submitted → Co-author consents → Moderation →
- * Listed → AI pre-review.
+ * Listed → AI pre-review. The tracker also polls the version's automated
+ * checks (`GET /v1/papers/{id}/v/{n}/checks`) once it exists: 404 until the
+ * node has scanned the version reads as "Checks pending", and the report that
+ * lands is advisory — signing has already happened.
  */
 
 import { useMemo, useState, type ReactElement } from "react";
 
 import { recordAuthors, type DraftAuthor } from "./authors";
+import { fetchVersionChecks, type ChecksVersionRef, type FetchChecks } from "./checks";
 import { ConsentTracker } from "./consent-tracker";
 import {
   countConsents,
@@ -24,6 +28,7 @@ import {
   type VersionRef,
 } from "./consents";
 import { emptyDetails, type DetailsValues } from "./details";
+import { useChecks, DEFAULT_CHECK_POLL_MS } from "./use-checks";
 import { useConsents, DEFAULT_CONSENT_POLL_MS } from "./use-consents";
 import { StatusTracker } from "./status-tracker";
 import type { SubmitFile } from "./upload-manager";
@@ -82,6 +87,10 @@ export interface SignStepProps {
   fetchConsents?: FetchConsents;
   pollMs?: number;
   consentsPollMs?: number;
+  /** Replaces the check report request (tests, callers with their own client). */
+  fetchChecks?: FetchChecks;
+  /** Milliseconds between check report refreshes; `0` asks once. */
+  checksPollMs?: number;
   versionNumber?: number;
   changeNote?: string;
   seed?: string;
@@ -134,10 +143,19 @@ export function SignStep(props: SignStepProps): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SignResult | null>(null);
   const [consentsRef, setConsentsRef] = useState<VersionRef | null>(null);
+  const [checksRef, setChecksRef] = useState<ChecksVersionRef | null>(null);
 
   const fetchConsentsProp = props.fetchConsents ?? fetchConsents;
   const pollMs = props.pollMs ?? props.consentsPollMs ?? DEFAULT_CONSENT_POLL_MS;
   const consents = useConsents(consentsRef, { fetcher: fetchConsentsProp, intervalMs: pollMs });
+  // The checks only run on the signed version, so this asks from signing
+  // onwards: 404 (route not mounted yet, or the version not scanned) reads as
+  // "Checks pending" in the tracker, and the report is advisory — signing has
+  // already happened, so nothing here blocks anything.
+  const checks = useChecks(checksRef, {
+    fetcher: props.fetchChecks ?? fetchVersionChecks,
+    intervalMs: props.checksPollMs ?? DEFAULT_CHECK_POLL_MS,
+  });
 
   const trackerEntries = useMemo(
     () =>
@@ -199,6 +217,7 @@ export function SignStep(props: SignStepProps): ReactElement {
       const signedResult: SignResult = { paperId, shortId, manifestId, versionId };
       setResult(signedResult);
       setConsentsRef({ paper: shortId ?? paperId, version: versionNumber });
+      setChecksRef({ paper: shortId ?? paperId, version: versionNumber });
       setPhase("submitted");
       onDone?.(signedResult);
     } catch (failure) {
@@ -282,6 +301,7 @@ export function SignStep(props: SignStepProps): ReactElement {
           consentsSummary={consentSummary(counts)}
           paper={result.shortId ?? result.paperId}
           version={props.versionNumber ?? 1}
+          checks={checks.report}
         />
       ) : null}
     </section>

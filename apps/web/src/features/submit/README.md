@@ -149,10 +149,13 @@ that has not run says **Not run yet**, it does not disappear or turn green.
   draft files with **Not scanned yet**. Pass `checksFor={{ paper, version }}` —
   the version the node holds, as with `consentsFor` on step 3 — and the step
   shows the version's real results and polls them.
-- **Continue** to Sign stays closed while any check has no verdict, after a
-  failed file safety scan, and after a title that is not on page 1; the hint
-  names the first problem and where to fix it. With no step 5 to go to in this
-  release it stays closed and says so. **Back to Authors** keeps everything.
+- **Continue** to Sign stays open before the version exists: the checks only
+  run on the signed version, so there is no report to wait for, and checks are
+  advisory (PRD PUB-4/MOD-1) — they never block signing. The hint still names
+  what has not run. With a report in hand (`checksFor`), a failed file safety
+  scan or a title that is not on page 1 is named in the hint with the place to
+  fix it. With no `onContinue` the button stays closed: there is no step 5 to
+  go to. **Back to Authors** keeps everything.
 
 ## The consent page — `/consent/[version]`
 
@@ -277,11 +280,14 @@ through `onContinue`. `recordAuthors(authors)` turns it into the byline the
 signed `paper.version` lists — `{ did, name?, orcid?, creditRoles, position }`
 per author, in order.
 
-`ChecksStep` reports the last `VersionChecks` through `onContinue` once every
-check has a verdict and nothing blocks. Step 5 (Sign) plugs into `SubmitWizard`
-beside the current four: pass an `onContinue` to `ChecksStep` and render the
-new step when `step` becomes `"sign"`. `ConsentTracker` is exported on its own
-for step 5 and the post-submit status page.
+`ChecksStep` reports through `onContinue` — the last `VersionChecks` when the
+node has one, `null` before the version exists — and never holds the author
+back: checks are advisory. Step 5 (`SignStep`) is wired into `SubmitWizard`;
+after signing, its status tracker polls `GET /v1/papers/{id}/v/{n}/checks`
+alongside the consents, shows **Checks pending** while the node answers 404
+(the route arrives with the text-extraction work), and displays the advisory
+report — the four verdicts, no blockers — once it lands.
+`ConsentTracker` is exported on its own for the post-submit status page.
 
 ## Layout
 

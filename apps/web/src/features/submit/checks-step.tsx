@@ -68,10 +68,13 @@ export interface ChecksStepProps {
   /** Go back to step 3, Authors. */
   onBack?: () => void;
   /**
-   * Go on to step 5. Without it Continue stays closed: there is no step 5 to
-   * go to in this release.
+   * Go on to step 5, Sign. Checks are advisory (PRD PUB-4/MOD-1): they never
+   * block signing, so this fires with the report when the node has one and
+   * with `null` before the version exists — the report can only exist once
+   * the version is signed. Without the callback Continue stays closed: there
+   * is no step 5 to go to.
    */
-  onContinue?: (report: VersionChecks) => void;
+  onContinue?: (report: VersionChecks | null) => void;
   /** The name of the step Continue leads to, for the button and its hint. */
   nextStepLabel?: string;
   /** Go to step 1 to replace a file the safety scan failed. */
@@ -80,7 +83,8 @@ export interface ChecksStepProps {
   onFixDetails?: () => void;
 }
 
-const STATE_TONES: Record<CheckState, string | undefined> = {
+/** The tone a check's state gives its chip; the word on the chip carries the state too. */
+export const CHECK_STATE_TONES: Record<CheckState, string | undefined> = {
   pending: undefined,
   running: "active",
   passed: "verified",
@@ -183,7 +187,13 @@ export function ChecksStep({
   const fileRows = useMemo(() => fileRowsFor(report, files), [report, files]);
   const blockers = checksBlockers(report);
   const warnings = checksWarnings(report);
-  const canContinue = report !== null && blockers.length === 0 && onContinue !== undefined;
+  // Checks are advisory (PRD PUB-4/MOD-1): they never block signing. Before
+  // the version exists — the draft wizard, or a node that answers 404 for a
+  // version it has not scanned yet — there is no report to wait for, because
+  // the checks only run on the signed version; waiting for one here would
+  // deadlock the wizard. The hint still names what has not run, so nothing is
+  // hidden; with a report in hand the same rules as ever apply.
+  const canContinue = (report === null || blockers.length === 0) && onContinue !== undefined;
   const hint =
     blockers[0] ??
     (onContinue === undefined ? `Step 5, ${nextStepLabel}, is not open in this release yet.` : null);
@@ -266,7 +276,7 @@ export function ChecksStep({
                     <span className="sw-check__name">{item.title}</span>
                     <span className="sw-check__summary">{item.summary}</span>
                   </span>
-                  <span className="sw-chip" data-tone={STATE_TONES[item.state]}>
+                  <span className="sw-chip" data-tone={CHECK_STATE_TONES[item.state]}>
                     <StateIcon state={item.state} />
                     {item.label}
                   </span>
@@ -324,11 +334,7 @@ export function ChecksStep({
           className="sw-button sw-button--primary"
           disabled={!canContinue}
           aria-describedby="sw-checks-continue-hint"
-          onClick={() => {
-            if (report !== null) {
-              onContinue?.(report);
-            }
-          }}
+          onClick={() => onContinue?.(report)}
         >
           Continue to {nextStepLabel}
         </button>

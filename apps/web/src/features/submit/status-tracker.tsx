@@ -1,9 +1,23 @@
 "use client";
 
+/**
+ * The post-submission status tracker (docs/design.md §5.4): Submitted →
+ * Co-author consents → Moderation → Listed → AI pre-review, with the consent
+ * tracker underneath.
+ *
+ * It can also carry the version's automated checks (`checks`, from
+ * `GET /v1/papers/{id}/v/{n}/checks`): `null` means the node has no report
+ * yet — a 404 until it has scanned the version — which reads as
+ * **Checks pending**; a report is shown as the four advisory verdicts. Checks
+ * never gate anything here: signing has already happened.
+ */
+
 import type { ReactElement, ReactNode } from "react";
 
 import { ConsentTracker } from "./consent-tracker";
 import { countConsents, consentSummary, trackerFromDraft, trackerFromReport, type ConsentReport, type TrackerEntry } from "./consents";
+import { CHECK_STATE_TONES } from "./checks-step";
+import { checkItems, checksSummary, type VersionChecks } from "./checks";
 import type { DraftAuthor } from "./authors";
 import "./submit.css";
 
@@ -18,6 +32,11 @@ export interface StatusTrackerProps {
   trackerEntries?: readonly TrackerEntry[];
   paper?: string;
   version?: number;
+  /**
+   * The version's check report, or `null` while the node has none (shown as
+   * "Checks pending"). Leave the prop out to show no checks at all.
+   */
+  checks?: VersionChecks | null;
   children?: ReactNode;
 }
 
@@ -61,7 +80,46 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
         ))}
       </ol>
       <ConsentTracker entries={entries} caption="Co-author consents" />
+      {props.checks !== undefined ? <TrackerChecks checks={props.checks} /> : null}
       {props.children}
+    </section>
+  );
+}
+
+/** The advisory check report at the bottom of the tracker; see {@link StatusTrackerProps.checks}. */
+function TrackerChecks({ checks }: { checks: VersionChecks | null }): ReactElement {
+  const items = checkItems(checks);
+  return (
+    <section className="sw-tracker" aria-labelledby="sw-tracker-checks-title">
+      <header className="sw-tracker__head">
+        <h3 id="sw-tracker-checks-title" className="sw-tracker__title">
+          Automated checks
+        </h3>
+        <p className="sw-tracker__summary" role="status">
+          {checks === null ? "Checks pending" : checksSummary(items)}
+        </p>
+      </header>
+      {checks === null ? (
+        <p className="sw-tracker__note">
+          They run once the version is signed and every co-author has consented; results appear here by themselves.
+        </p>
+      ) : (
+        <ul className="sw-tracker__list">
+          {items.map((item) => (
+            <li key={item.id} className="sw-tracker__row" data-check={item.id} data-state={item.state}>
+              <span className="sw-tracker__who">
+                <span className="sw-tracker__name">{item.title}</span>
+                {item.summary !== "" ? (
+                  <span className="sw-tracker__detail">{item.summary}</span>
+                ) : null}
+              </span>
+              <span className="sw-chip" data-tone={CHECK_STATE_TONES[item.state]}>
+                {item.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

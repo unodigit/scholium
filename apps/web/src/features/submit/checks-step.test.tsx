@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../../lib/api";
 import type { ChecksVersionRef, FileSafety, VersionChecks } from "./checks";
 import { ChecksStep } from "./checks-step";
 
@@ -160,6 +161,27 @@ describe("ChecksStep — waiting, errors and continuing", () => {
     expect(within(rows).getByText("Not scanned yet")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Continue to Sign" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("Checks have not run yet. They start when the version is signed.")).toBeTruthy();
+  });
+
+  it("keeps Continue to Sign open when the node answers 404 for the checks route", async () => {
+    // The route is mounted with the text-extraction work and answers 404 until
+    // the version has been signed and scanned; a missing report must not stop
+    // the author signing (checks are advisory).
+    const fetcher = vi.fn().mockRejectedValue(
+      new ApiError(404, { type: "about:blank", title: "Not Found", status: 404 }),
+    );
+    const onContinue = vi.fn();
+    render(
+      <ChecksStep checksFor={REF} fetchChecks={fetcher} pollMs={0} onContinue={onContinue} />,
+    );
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText("This node does not have that version yet, so it has no check results.")).toBeTruthy();
+
+    const next = screen.getByRole("button", { name: "Continue to Sign" }) as HTMLButtonElement;
+    expect(next.disabled).toBe(false);
+    fireEvent.click(next);
+    expect(onContinue).toHaveBeenCalledWith(null);
   });
 
   it("says the checks start after consent when the version is waiting for co-authors", async () => {
