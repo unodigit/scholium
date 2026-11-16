@@ -4,6 +4,8 @@ Covers:
 
 * ``PUT /v1/me/follows/{category}`` -- requires a token, answers ``204``, writes
   one ``follows`` row, and is idempotent;
+* ``GET /v1/me/follows`` -- requires a token and answers only the caller's
+  followed categories, alphabetically, as ``{"categories": [...]}``;
 * ``GET /v1/papers?tab=following`` -- requires a token, returns only the listed
   papers filed under the caller's followed categories, honours the catalog's
   sorts and keyset cursor, and stays per-account;
@@ -190,6 +192,38 @@ def test_delete_unfollows_and_is_idempotent(client):
     assert (first.status_code, second.status_code) == (204, 204)
     with db.SessionLocal() as session:
         assert session.get(Follow, (did, category)) is None
+
+
+# --------------------------------------------------------------------------- #
+# GET /v1/me/follows
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer not-a-token"}])
+def test_listing_follows_requires_a_usable_token(client, headers):
+    response = client.get(FOLLOWS_URL, headers=headers)
+
+    assert response.status_code == 401, response.text
+
+
+def test_listing_follows_returns_only_the_callers_categories(client):
+    did, other = _did(), _did()
+    cat_b, cat_a, other_category = _category(), _category(), _category()
+    client.put(f"{FOLLOWS_URL}/{cat_b}", headers=_auth(did))
+    client.put(f"{FOLLOWS_URL}/{cat_a}", headers=_auth(did))
+    client.put(f"{FOLLOWS_URL}/{other_category}", headers=_auth(other))
+
+    response = client.get(FOLLOWS_URL, headers=_auth(did))
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"categories": sorted([cat_a, cat_b])}
+
+
+def test_listing_follows_with_no_follows_is_empty(client):
+    response = client.get(FOLLOWS_URL, headers=_auth(_did()))
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"categories": []}
 
 
 # --------------------------------------------------------------------------- #

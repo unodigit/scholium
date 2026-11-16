@@ -3,10 +3,14 @@
 The module loader imports every package under ``app.modules`` and mounts the
 ``router`` it finds under ``/v1``.  This package serves:
 
+* ``GET /v1/me/follows`` -- every category the caller follows (``200``), as
+  ``{"categories": [...]}``;
 * ``PUT /v1/me/follows/{category}`` -- save that the caller follows a category
   (``204``), idempotently, in the ``follows`` table;
 * ``DELETE /v1/me/follows/{category}`` -- remove that follow (``204``), for the
   follow toggle;
+* ``GET /v1/me/saved-searches`` -- every search the caller saved (``200``), as
+  ``{"items": [...]}``;
 * ``POST /v1/me/saved-searches`` -- save a search to re-run later (``201``),
   one row per save, in the ``saved_searches`` table;
 * ``GET /v1/papers?tab=following`` -- the listed papers filed under any

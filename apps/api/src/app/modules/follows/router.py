@@ -2,17 +2,22 @@
 
 The module loader mounts ``router`` under ``/v1``, so this package serves::
 
+    GET    /v1/me/follows                -- the caller's followed categories (200)
     PUT    /v1/me/follows/{category}     -- follow a category (204)
     DELETE /v1/me/follows/{category}     -- unfollow a category (204)
     GET    /v1/papers?tab=following      -- listed papers in followed categories
+    GET    /v1/me/saved-searches         -- the caller's saved searches (200)
     POST   /v1/me/saved-searches         -- save a search to re-run later (201)
 
 ``PUT`` and ``DELETE`` authenticate with the caller's access token; any trust
 tier may manage its own follows.  Both are idempotent: repeating either is
-``204``.
+``204``.  ``GET /v1/me/follows`` reads the same table back as
+``{"categories": [...]}`` -- the list the dashboard and the follow toggle show.
 
 ``POST /v1/me/saved-searches`` (feature 180) saves the caller's search to the
-``saved_searches`` table.  The body carries the search as
+``saved_searches`` table, and ``GET /v1/me/saved-searches`` reads the caller's
+saves back as ``{"items": [...]}``, one row per save in the ``POST`` shape.
+The body carries the search as
 ``{"query": {...}}`` -- the filters of ``GET /v1/search`` (feature 86), stored
 in the canonical form :func:`app.modules.follows.service.normalise_query`
 produces so the save can be re-run as entered.  Each save is its own row and
@@ -60,8 +65,12 @@ from .models import SavedSearch
 
 __all__ = [
     "PAPERS_PATH",
+    "FollowsOut",
     "SavedSearchOut",
+    "SavedSearchListOut",
+    "list_follows",
     "list_papers",
+    "list_saved_searches",
     "save_search",
     "router",
 ]
@@ -146,6 +155,29 @@ def delete_follow(
     return Response(status_code=204)
 
 
+class FollowsOut(BaseModel):
+    """The caller's followed categories, as the client reads them back."""
+
+    #: Every category the caller follows, in a stable (alphabetical) order.
+    categories: list[str]
+
+
+@_me_router.get(
+    "/follows",
+    response_model=FollowsOut,
+    summary="List followed categories",
+)
+def list_follows(
+    principal: Principal = Depends(get_current_principal),
+) -> FollowsOut:
+    """Return every category the caller follows, alphabetically.
+
+    The dashboard and the follow toggle read this to say which categories are
+    already followed; ``categories`` is empty when the caller follows none.
+    """
+    return FollowsOut(categories=service.followed_categories(principal.did))
+
+
 class SavedSearchOut(BaseModel):
     """A saved search as the client reads it back."""
 
@@ -196,6 +228,35 @@ def save_search(
     except service.InvalidSearchQuery as exc:
         raise _problem(422, str(exc)) from None
     return SavedSearchOut(id=search.id, did=search.did, query=search.query)
+
+
+class SavedSearchListOut(BaseModel):
+    """The caller's saved searches, as the client reads them back."""
+
+    #: Every search the caller saved, in a stable (by id) order.
+    items: list[SavedSearchOut]
+
+
+@_me_router.get(
+    "/saved-searches",
+    response_model=SavedSearchListOut,
+    summary="List saved searches",
+)
+def list_saved_searches(
+    principal: Principal = Depends(get_current_principal),
+) -> SavedSearchListOut:
+    """Return every search the caller saved, each in the ``POST`` shape.
+
+    ``items`` is empty when the caller has saved no search; each row carries
+    the stored ``query`` in canonical form, re-runnable as entered.
+    """
+    searches = service.saved_searches(principal.did)
+    return SavedSearchListOut(
+        items=[
+            SavedSearchOut(id=search.id, did=search.did, query=search.query)
+            for search in searches
+        ]
+    )
 
 
 router.include_router(_me_router)

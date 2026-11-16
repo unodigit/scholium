@@ -2,10 +2,11 @@
 
 Covers ``POST /v1/me/saved-searches``: it requires the caller's access token,
 answers ``201`` with the saved search, and writes one ``saved_searches`` row
-per save.  The stored ``query`` is the canonical form of the filters the
-search endpoint (feature 86) accepts -- ``q``, ``category``, ``status``,
-``has_code`` and the ``from``/``to`` date range -- so a saved search can be
-re-run later (by the reader or the digest job) exactly as entered.
+per save.  ``GET /v1/me/saved-searches`` reads the caller's saves back as
+``{"items": [...]}``, per account.  The stored ``query`` is the canonical form
+of the filters the search endpoint (feature 86) accepts -- ``q``, ``category``,
+``status``, ``has_code`` and the ``from``/``to`` date range -- so a saved
+search can be re-run later (by the reader or the digest job) exactly as entered.
 
 Every test uses a fresh DID and a query unique to it, so the shared database
 and parallel workers never interfere.
@@ -189,3 +190,34 @@ def test_a_query_that_cannot_be_re_run_is_422(client, body, why):
     response = client.post(SAVED_URL, json=body, headers=_auth(_did()))
 
     assert response.status_code == 422, response.text
+
+
+# --------------------------------------------------------------------------- #
+# GET /v1/me/saved-searches
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer not-a-token"}])
+def test_listing_saved_searches_requires_a_usable_token(client, headers):
+    response = client.get(SAVED_URL, headers=headers)
+
+    assert response.status_code == 401, response.text
+
+
+def test_listing_returns_the_callers_saved_searches(client):
+    did, other = _did(), _did()
+    first = save(client, did, {"q": _term()}).json()
+    second = save(client, did, {"q": _term()}).json()
+    save(client, other, {"q": _term()})
+
+    response = client.get(SAVED_URL, headers=_auth(did))
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"items": sorted([first, second], key=lambda row: row["id"])}
+
+
+def test_listing_with_no_saves_is_empty(client):
+    response = client.get(SAVED_URL, headers=_auth(_did()))
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"items": []}
