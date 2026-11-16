@@ -9,12 +9,13 @@
  * Two reads feed the console:
  *
  * - **the list**, `GET /v1/flags` — one flag per entry, in the same shape the
- *   single read uses. The API serves a flag by id today but not yet as a list
- *   (the route answers `405`), so a `404`/`405` here is its own failure kind,
- *   `unsupported`, which the console words honestly instead of showing an
- *   empty queue that would say "no flags" when the truth is "cannot tell";
- * - **the lookup**, `GET /v1/flags/{id}` — works today, for a moderator who
- *   has a flag's id.
+ *   single read uses; tier 4 only, and the open flags unless a `state` is asked
+ *   for. A server without the route answers `404`/`405`, which is its own
+ *   failure kind, `unsupported`, which the console words honestly instead of
+ *   showing an empty queue that would say "no flags" when the truth is "cannot
+ *   tell";
+ * - **the lookup**, `GET /v1/flags/{id}` — for a moderator who has a flag's id,
+ *   open or decided.
  *
  * This module only validates those shapes and words them. Who may read a flag
  * is the API's call (it answers a lower tier with `404` for a single flag and

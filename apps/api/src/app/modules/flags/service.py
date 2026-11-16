@@ -98,15 +98,45 @@ def get_flag(flag_id: str) -> Optional[Flag]:
         return row
 
 
-def list_flags(*, reporter_did: Optional[str] = None, target_cid: Optional[str] = None) -> list[Flag]:
-    """Return flags, optionally filtered."""
+#: ``state`` values that mean "not decided yet" (the stored status is ``pending``).
+OPEN_STATES = ("open", PENDING)
+
+#: ``state`` value for every flag a decision has settled, whatever its status.
+DECIDED_STATE = DECIDED
+
+#: ``state`` value that applies no status filter.
+ALL_STATES = "all"
+
+
+def list_flags(
+    *,
+    reporter_did: Optional[str] = None,
+    target_cid: Optional[str] = None,
+    state: Optional[str] = None,
+) -> list[Flag]:
+    """Return flags, optionally filtered.
+
+    ``state`` narrows by lifecycle: ``open`` (or ``pending``) for flags nobody
+    has acted on, ``decided`` for every flag a decision settled (whatever
+    decided status it carries), ``all`` for both, and any other value for
+    flags with exactly that status (``dismissed``, ...).  ``None`` applies no
+    status filter.
+    """
     ensure_table()
+    wanted = state.strip().lower() if isinstance(state, str) else None
     with db.SessionLocal() as session:
         stmt = select(Flag)
         if reporter_did is not None:
             stmt = stmt.where(Flag.reporter_did == reporter_did)
         if target_cid is not None:
             stmt = stmt.where(Flag.target_cid == target_cid)
+        if wanted and wanted != ALL_STATES:
+            if wanted in OPEN_STATES:
+                stmt = stmt.where(Flag.status == PENDING)
+            elif wanted == DECIDED_STATE:
+                stmt = stmt.where(Flag.status != PENDING)
+            else:
+                stmt = stmt.where(Flag.status == wanted)
         rows = list(session.execute(stmt).scalars().all())
         for row in rows:
             session.expunge(row)

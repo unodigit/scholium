@@ -3,6 +3,7 @@
 The module loader mounts this router under ``/v1``, so the routes below serve:
 
 * ``POST /v1/flags`` -- file a flag against a paper, post, review or version.
+* ``GET  /v1/flags`` -- tier 4: list open flags (``?state=``, ``?target=``).
 * ``GET  /v1/flags/{id}`` -- read a flag's status and linked decision cid.
 """
 
@@ -10,10 +11,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Query
 
 from app.errors import ProblemException
-from app.security import Principal, Tier, get_current_principal
+from app.security import Principal, Tier, get_current_principal, require_tier
 
 from . import service
 from .models import ensure_table, ensure_tables
@@ -81,6 +82,31 @@ def create_flag(
         reason=reason,
     )
     return _to_dict(flag)
+
+
+@router.get("")
+def list_flags(
+    state: Optional[str] = Query(
+        default=None,
+        description="open (default) or pending, decided, all, or an exact decided status.",
+    ),
+    target: Optional[str] = Query(default=None, description="Only flags on this target cid."),
+    principal: Principal = Depends(require_tier(int(Tier.MODERATOR))),
+) -> list[dict[str, Any]]:
+    """List flags for the moderation console (tier 4 only).
+
+    Answers the open (``pending``) flags -- the moderators' work -- unless
+    ``state`` asks for something else: ``decided`` for flags a moderation
+    decision settled (each carries its ``decision_cid``), ``all`` for both, or
+    an exact status such as ``dismissed``.  ``target`` keeps only the flags on
+    one target cid.  Each item has the shape of ``GET /v1/flags/{id}``.  A
+    caller below tier 4 gets ``403``, because a flag exposes its reporter's DID.
+    """
+    ensure_tables()
+    wanted_state = (state or "").strip() or "open"
+    wanted_target = (target or "").strip() or None
+    flags = service.list_flags(target_cid=wanted_target, state=wanted_state)
+    return [_to_dict(flag) for flag in flags]
 
 
 @router.get("/{flag_id}")

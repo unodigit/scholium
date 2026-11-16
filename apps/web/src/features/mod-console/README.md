@@ -118,11 +118,13 @@ Written against the API as it is, not as the spec imagines it:
 | Cast a panel vote | `POST /v1/appeals/{cid}/votes` | **Exists** (feature 76) |
 | Read one flag | `GET /v1/flags/{id}` | **Exists** (feature 78); reporter or tier 4 |
 | List appeals | none | **Missing.** Read from the public log instead (below) |
-| List flags | none (`GET /v1/flags` answers `405`) | **Missing.** The list is coded and degrades honestly (below) |
+| List flags | `GET /v1/flags` | **Exists**; tier 4 only, open flags by default (`?state=`, `?target=`). An older server answers `404`/`405` and the console degrades honestly (below) |
 | Which members hold a seat | none | **Missing.** The vote's `403` is the only signal (below) |
 
-`GET /v1/moderation/queue` does not include flags either, although the flags
-package says a flag "is picked up by the moderation queue".
+`GET /v1/moderation/queue` lists versions, not flags: flags reach moderators
+through `GET /v1/flags`. A moderation decision on a flagged target settles that
+target's open flags (`pending` → `decided`, with the decision's cid), so they
+leave the list.
 
 ### Appeals: read from the public log
 
@@ -181,11 +183,14 @@ form on every open appeal and lets the API answer:
 Flags are moderator-only. The Flags section has two reads:
 
 - **The list**, `GET /v1/flags`, in the same item shape `GET /v1/flags/{id}`
-  already returns. This server does not serve it yet, and a `404`/`405` is its
-  own failure kind (`unsupported`): the section says "This server does not list
-  flags yet" in a note. It never shows "No flags are waiting" for a list it
-  could not read, because that would claim the opposite of what is known.
-- **Open a flag by its id**, `GET /v1/flags/{id}`, which works today. A `404`
+  returns: the open flags, tier 4 only (`?state=decided|all` and `?target=` filter
+  it; this section asks for the default). A server without the route answers
+  `404`/`405`, which is its own failure kind (`unsupported`): the section says
+  "This server does not list flags yet" in a note. It never shows "No flags are
+  waiting" for a list it could not read, because that would claim the opposite
+  of what is known.
+- **Open a flag by its id**, `GET /v1/flags/{id}`, which also reads a decided
+  flag and the cid of the decision that settled it. A `404`
   reads "No flag with that id is on this server" (the API answers a flag the
   caller may not read the same way, so ids cannot be probed).
 
@@ -202,8 +207,7 @@ shown as a note with their tier, not an alert.
 The web feature cannot add these (they belong to other plugins); they have been
 reported as shared edits:
 
-1. `GET /v1/flags` for tier 4: the list `flags.service.list_flags` already
-   builds, one `_to_dict` item per flag. The Flags list lights up unchanged.
+1. ~~`GET /v1/flags` for tier 4~~ — now served (see "Flags" above).
 2. `GET /v1/appeals` (and ideally `viewer_on_panel: bool` per appeal, from
    `appeal_panels`): replaces the log replay, and would let the form show only
    to the members who are drawn instead of to everyone.
@@ -264,8 +268,8 @@ The table is wider than a phone, so it scrolls inside a focusable
 
 - The detail view shows the signed metadata and abstract, not a PDF/HTML
   rendition: an unlisted version has no public reading endpoint yet.
-- Flags cannot be **listed** until the API serves `GET /v1/flags`; they can be
-  opened by id today. Appeals are read by replaying the public log until the API
+- The flag list shows open flags only (the API's default); decided flags are
+  reached by id. Appeals are read by replaying the public log until the API
   lists them.
 - The vote form is shown on every open appeal, because nothing says which
   members were drawn; see "API gaps".
