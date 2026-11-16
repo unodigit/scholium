@@ -337,17 +337,16 @@ def test_table_has_the_specified_columns_and_a_primary_key_on_version_and_positi
     assert set(primary_key) == {"version_cid", "position"}
 
 
-def test_module_is_discovered_and_registers_version_texts_without_adding_routes():
+def test_module_is_discovered_and_registers_version_texts_and_its_routes():
     app = FastAPI()
-    before = len(app.routes)
 
     loaded = module_loader.load_modules(app)
 
     assert checks in loaded
     assert "version_texts" in db.Base.metadata.tables
-    # Feature 65 is a library; this module contributes no router.
-    assert not hasattr(checks, "router")
-    assert not any(getattr(r, "path", "").startswith("/v1/checks") for r in app.routes[before:])
+    # The extraction bug added the advisory checks report route to this package.
+    assert hasattr(checks, "router")
+    assert "/v1/papers/{paper_id}/v/{n}/checks" in app.openapi()["paths"]
 
 
 def test_create_app_creates_the_version_texts_table():

@@ -457,16 +457,16 @@ def test_table_has_the_specified_columns():
     }
 
 
-def test_module_is_discovered_and_registers_check_results_without_adding_routes():
+def test_module_is_discovered_and_registers_check_results_and_its_routes():
     app = FastAPI()
-    before = len(app.routes)
 
     loaded = module_loader.load_modules(app)
 
     assert checks in loaded
     assert "check_results" in db.Base.metadata.tables
-    assert not hasattr(checks, "router")
-    assert not any(getattr(r, "path", "").startswith("/v1/checks") for r in app.routes[before:])
+    # The extraction bug added the advisory checks report route to this package.
+    assert hasattr(checks, "router")
+    assert "/v1/papers/{paper_id}/v/{n}/checks" in app.openapi()["paths"]
 
 
 def test_create_app_creates_the_check_results_table():

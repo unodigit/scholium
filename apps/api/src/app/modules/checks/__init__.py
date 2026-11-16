@@ -42,6 +42,23 @@ nothing is saved.  See :mod:`app.modules.checks.references` for
 how the list is found and split and :mod:`app.modules.checks.crossref` for how
 a DOI is resolved.
 
+The checks run by themselves: when a version passes the sanitizer and enters
+``moderation`` (or is listed without having passed through it), the
+``checks.extract_text`` background job extracts its manuscript PDF, indexes
+the body for full-text search, and saves the similarity, reference and
+metadata-match columns::
+
+    checks.extract_version_text(version_cid)   # what the job calls
+    checks.enqueue_extraction(version_cid)     # explicit, e.g. a re-run
+
+The trigger is a subscription to the existing ``version.state_changed`` event
+(see :mod:`app.modules.checks.pipeline`), so nothing in the submissions plugin
+had to change.
+
+``GET /v1/papers/{id}/v/{n}/checks`` (see :mod:`app.modules.checks.router`)
+returns the advisory report the submit wizard's Checks step polls; it is a 404
+problem until the checks have run.
+
 ``pdf_cid`` is the PDF's file id in the content store
 (:mod:`app.modules.content`).  A paragraph's id is the lowercase hex sha256 of
 its *normalized* text (Unicode NFKC, control and invisible characters removed,
@@ -54,10 +71,12 @@ into paragraphs.  See :mod:`app.modules.checks.metadata` for how a title is
 matched, :mod:`app.modules.checks.similarity` for how similarity is measured,
 and :mod:`app.modules.checks.results` for the ``check_results`` row.
 
-This package exposes no ``router``.  The module loader still discovers it,
-which registers the ``VersionText`` and ``CheckResult`` models on the shared
-declarative base before ``create_app`` creates tables.  Every check of this
-plugin writes its own column of the shared ``check_results`` row.
+The module loader discovers this package, which registers the ``VersionText``
+and ``CheckResult`` models on the shared declarative base before
+``create_app`` creates tables, mounts :data:`router`, and registers the
+extraction job and its ``version.state_changed`` subscription (through
+:mod:`app.modules.checks.pipeline`).  Every check of this plugin writes its
+own column of the shared ``check_results`` row.
 """
 
 from __future__ import annotations
@@ -85,6 +104,15 @@ from .paragraphs import (
     normalize_paragraph,
     paragraph_id,
 )
+from .pipeline import (
+    JOB_KIND,
+    enqueue_extraction,
+    ensure_subscribed,
+    extract_version_job,
+    extract_version_text,
+    manifest_entries,
+    manuscript_pdf_cid,
+)
 from .references import Reference, extract_references, find_doi
 from .results import (
     ReferenceCheck,
@@ -93,6 +121,7 @@ from .results import (
     save_metadata_match,
     save_reference_check,
 )
+from .router import router
 from .service import get_version_text, save_paragraphs, save_version_text
 from .similarity import (
     DEFAULT_SHINGLE_SIZE,
@@ -113,6 +142,7 @@ __all__ = [
     "ChecksError",
     "CrossrefError",
     "DEFAULT_SHINGLE_SIZE",
+    "JOB_KIND",
     "InvalidVersionCid",
     "MetadataMatchError",
     "PaperText",
@@ -126,21 +156,28 @@ __all__ = [
     "clean_text",
     "compute_similarity_pct",
     "crossref_enabled",
+    "enqueue_extraction",
     "ensure_check_results_table",
+    "ensure_subscribed",
     "ensure_table",
     "extract_first_page_text",
     "extract_paragraphs",
     "extract_references",
+    "extract_version_job",
+    "extract_version_text",
     "find_doi",
     "get_check_result",
     "get_version_text",
     "jaccard_index",
     "jaccard_similarity",
+    "manifest_entries",
+    "manuscript_pdf_cid",
     "metadata_match",
     "normalize_for_match",
     "normalize_paragraph",
     "paragraph_id",
     "resolve_dois",
+    "router",
     "save_check_result",
     "save_metadata_match",
     "save_paragraphs",
