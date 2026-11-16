@@ -6,6 +6,14 @@ the content store.
 
 Serving is deliberately strict, because these are untrusted uploads:
 
+* a blob a ``paper.version`` references through its manifest is public only
+  once at least one referencing version is ``listed``.  While every
+  referencing version is unlisted -- in ``moderation``, say -- the bytes are
+  pre-listing content (tech_architect threat 15) and are served only to
+  that version's authors and to moderators (tier 4); everyone else,
+  anonymous callers included, gets the same ``404`` as for a cid nothing is
+  stored for, so the answer never reveals that unlisted content exists.
+  The rule lives in :mod:`app.modules.content.visibility`;
 * bytes are handed out **only** for a blob whose ``scan_status`` is
   ``passed``; a blob still in ``scanning`` answers ``423 Locked`` and one
   the sanitizer rejected (or that moderation tombstoned) answers
@@ -17,6 +25,10 @@ Serving is deliberately strict, because these are untrusted uploads:
   ``X-Content-Type-Options: nosniff`` so a declared ``text/plain`` can
   never be sniffed into HTML.  No ``Set-Cookie`` is emitted (the endpoint
   is cookie-less), so a served file cannot plant a session.
+
+An ``Authorization: Bearer`` access token is optional: it is read only to
+widen access to unlisted bytes (the caller's authorship or moderator tier).
+A token that is missing or unusable simply leaves the caller anonymous.
 
 Errors are RFC 9457 problem details, rendered by the app-wide handlers.
 
@@ -30,13 +42,18 @@ installed.
 from __future__ import annotations
 
 import os
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.responses import FileResponse
+
+from app.security import InvalidAccessToken, Principal, decode_access_token
 
 from . import service
 from .models import SCAN_PASSED, SCAN_SCANNING
 from .store import blob_path
+from .visibility import may_read
 
 __all__ = [
     "CONTENT_SECURITY_POLICY",
@@ -81,8 +98,34 @@ def _not_found(cid: str) -> HTTPException:
     return _problem(404, f"No content is stored for cid {cid!r}.")
 
 
+#: Bearer credentials, read only to widen access to unlisted bytes.
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _optional_principal(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> Optional[Principal]:
+    """The caller when the request carries a usable token, otherwise ``None``.
+
+    Reading stored bytes is public; a token matters only for bytes whose
+    referencing versions are all unlisted, where it carries the caller's
+    authorship or moderator tier.  A token that is present but unusable is
+    ignored rather than turning a readable page into a ``401`` (the same
+    courtesy ``discussion.router`` pays its readers).
+    """
+    if credentials is None:
+        return None
+    try:
+        return decode_access_token(credentials.credentials)
+    except InvalidAccessToken:
+        return None
+
+
 @router.get("/{cid}")
-def get_content(cid: str) -> FileResponse:
+def get_content(
+    cid: str,
+    principal: Optional[Principal] = Depends(_optional_principal),
+) -> FileResponse:
     """Return the stored bytes for ``cid`` when (and only when) they are safe."""
     try:
         path = blob_path(cid)
@@ -99,6 +142,13 @@ def get_content(cid: str) -> FileResponse:
 
     blob = service.get_blob(cid)
     if blob is None:
+        raise _not_found(cid)
+
+    if not may_read(blob.cid, principal):
+        # Pre-listing content the caller may not see.  The answer is the
+        # unknown-cid 404, and it comes before the scan gates so an
+        # unauthenticated caller cannot even learn that unlisted bytes exist
+        # (a 423 would tell them).
         raise _not_found(cid)
 
     if blob.scan_status == SCAN_SCANNING:

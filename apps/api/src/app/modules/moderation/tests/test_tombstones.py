@@ -443,7 +443,16 @@ def test_citing_the_unlawful_content_clause_does_not_tombstone_by_itself(client,
     assert submission.state == "rejected"
     assert content.exists(submission.file_cid)
     assert get_denylist_entry(submission.file_cid) is None
-    assert client.get(f"/v1/content/{submission.file_cid}").status_code == 200
+    # The delisted version is no longer ``listed``, so its bytes stopped being
+    # public (pre-listing visibility, content/visibility.py): an anonymous
+    # reader gets 404 while the moderator who delisted it can still read them.
+    assert client.get(f"/v1/content/{submission.file_cid}").status_code == 404
+    assert (
+        client.get(
+            f"/v1/content/{submission.file_cid}", headers=moderator.headers
+        ).status_code
+        == 200
+    )
 
 
 # --------------------------------------------------------------------------- #

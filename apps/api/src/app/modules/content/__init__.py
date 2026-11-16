@@ -21,8 +21,11 @@ Feature 44: the package also exports ``router``, which serves
 ``GET /v1/content/{cid}``: the bytes only once ``scan_status`` is ``passed``,
 with ``Content-Security-Policy: sandbox`` and
 ``X-Content-Type-Options: nosniff``, answering ``423`` while scanning and
-``451`` for tombstoned (denylisted) content.  The module loader discovers the
-router by convention.
+``451`` for tombstoned (denylisted) content.  Bytes a paper version
+references through its manifest are served publicly only once a referencing
+version is ``listed``; until then they go only to that version's authors and
+to moderators (:func:`app.modules.content.visibility.may_read`).  The module
+loader discovers the router by convention.
 
 See :mod:`app.modules.content.store` for the on-disk layout and write
 guarantees, :mod:`app.modules.content.service` for the ``blobs`` row
@@ -61,6 +64,7 @@ from .service import (
     store_stream,
 )
 from .store import blob_path, content_dir, exists, open_blob
+from .visibility import MODERATOR_TIER, may_read
 
 __all__ = [
     "Blob",
@@ -70,6 +74,7 @@ __all__ = [
     "ContentError",
     "InvalidMediaType",
     "InvalidScanStatus",
+    "MODERATOR_TIER",
     "NOSNIFF",
     "SCAN_FAILED",
     "SCAN_PASSED",
@@ -82,6 +87,7 @@ __all__ = [
     "exists",
     "get_blob",
     "is_tombstoned",
+    "may_read",
     "normalize_media_type",
     "open_blob",
     "router",
