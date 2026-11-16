@@ -8,13 +8,16 @@ decision can be appealed once: a second appeal of the same decision is a
 
 Saving an appeal also seats its panel: three tier-3 or tier-4 members, never the
 deciding moderator or an author of the paper, drawn deterministically from the
-appeal cid and saved to ``appeal_panels`` (feature 75; see
-:mod:`app.modules.appeals.panel`).
+appealed decision's cid and saved to ``appeal_panels`` (feature 75; see
+:mod:`app.modules.appeals.panel`).  Every seated member is notified -- with a
+link to ``GET /v1/appeals/{cid}``, the view that names the panel -- so a seat
+is not invisible; the endpoint shows the panel to its members and to tier 4.
 
 The seated panel decides the appeal by voting: ``POST
 /v1/appeals/{cid}/votes`` records each member's vote, and once two of the three
 agree the node signs and appends an ``appeal.decision`` carrying the outcome
-and reasons (feature 76; see :mod:`app.modules.appeals.votes`).
+and reasons (feature 76; see :mod:`app.modules.appeals.votes`).  An outcome that
+overturns the appealed decision also restores its target and lifts the hold.
 
 Importing this package registers the ``appeal`` record type with the ingest
 pipeline and subscribes to the ledger, so an appeal is saved whether it arrives
@@ -46,12 +49,16 @@ from .panel import (
     draw_panel,
     eligible_members,
     get_panel,
+    panel_seed,
     select_panel,
 )
-from .router import router
+from .router import AppealDetailOut, PanelSeatOut, router
 from .service import (
     APPEAL_MIN_TIER,
     APPEAL_TYPE,
+    PANEL_NOTIFICATION_KIND,
+    PANEL_SEATED_KIND,
+    PANEL_SEAT_KIND,
     PENDING,
     AppealedDecision,
     AppealFields,
@@ -60,6 +67,7 @@ from .service import (
     get_appeal,
     get_appeal_for_decision,
     handle_appeal,
+    notify_panel_seated,
     panel_exclusions,
     persist_entry,
     require_appellant,
@@ -69,10 +77,12 @@ from .service import (
 from .votes import (
     DECIDING_VOTES,
     DECISION_TYPE,
+    RESTORING_OUTCOMES,
     VOTE_OUTCOMES,
     VoteCast,
     cast_vote,
     decision_for_appeal,
+    restore_target,
     vote_fields,
 )
 
@@ -84,6 +94,7 @@ __all__ = [
     "APPEAL_TYPE",
     "Appeal",
     "AppealAlreadyFiled",
+    "AppealDetailOut",
     "AppealFields",
     "AppealNotAuthorized",
     "AppealNotFound",
@@ -92,13 +103,18 @@ __all__ = [
     "AppealedDecision",
     "DECIDING_VOTES",
     "DECISION_TYPE",
+    "PANEL_NOTIFICATION_KIND",
     "PANEL_NOT_DRAWN",
+    "PANEL_SEATED_KIND",
+    "PANEL_SEAT_KIND",
     "PANEL_SIZE",
     "PANEL_TIERS",
     "PANEL_UNAVAILABLE",
     "PENDING",
+    "PanelSeatOut",
     "PanelNotDrawn",
     "PanelUnavailable",
+    "RESTORING_OUTCOMES",
     "UNKNOWN_APPEAL_TARGET",
     "UnknownAppealTarget",
     "VOTE_NODE_KEY_UNAVAILABLE",
@@ -119,10 +135,13 @@ __all__ = [
     "get_appeal_for_decision",
     "get_panel",
     "handle_appeal",
+    "notify_panel_seated",
     "panel_exclusions",
+    "panel_seed",
     "persist_entry",
     "require_appellant",
     "resolve_decision",
+    "restore_target",
     "router",
     "seat_panel",
     "select_panel",

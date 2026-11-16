@@ -43,11 +43,21 @@ Seating the panel
 
 Once the appeal is saved, :func:`seat_panel` draws its 3-member panel into
 ``appeal_panels`` (see :mod:`app.modules.appeals.panel` for who is eligible and
-how the draw is seeded from the appeal cid).  It is idempotent too, so the
-subscriber and the endpoint cannot seat two panels.  Too few eligible members is
-not a reason to refuse or unfile an appeal -- the appeal is already in the public
-log -- so :func:`apply_appeal` leaves the panel undrawn and logs it; calling
-:func:`seat_panel` again once the membership has grown draws it then.
+how the draw is seeded from the appealed decision cid).  It is idempotent too,
+so the subscriber and the endpoint cannot seat two panels.  Too few eligible
+members is not a reason to refuse or unfile an appeal -- the appeal is already
+in the public log -- so :func:`apply_appeal` leaves the panel undrawn and logs
+it; calling :func:`seat_panel` again once the membership has grown draws it
+then.
+
+When a panel is drawn, every seated member is told (:func:`notify_panel_seated`):
+a notification of kind :data:`PANEL_SEATED_KIND` whose payload names the appeal
+and links to ``GET /v1/appeals/{appeal cid}``.  Without it a seat is invisible --
+nothing else names the panel -- and nobody knows to vote.  The notice is sent
+exactly once per seat: a panel that is already seated is returned untouched, so
+the ledger subscriber and the endpoint applying the same appeal do not notify
+twice.  A notification that cannot be stored is logged and never fails the
+appeal.
 """
 
 from __future__ import annotations
@@ -74,6 +84,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "APPEAL_MIN_TIER",
     "APPEAL_TYPE",
+    "PANEL_SEATED_KIND",
     "PENDING",
     "AppealFields",
     "AppealedDecision",
@@ -82,6 +93,7 @@ __all__ = [
     "get_appeal",
     "get_appeal_for_decision",
     "handle_appeal",
+    "notify_panel_seated",
     "panel_exclusions",
     "persist_entry",
     "require_appellant",
@@ -99,6 +111,13 @@ APPEAL_MIN_TIER = 0
 
 #: Status of an appeal no panel has decided yet.
 PENDING = "pending"
+
+#: Kind of the notification a seated panel member receives.  It names the seat,
+#: not the appeal's progress: the panel member is the audience.
+PANEL_SEATED_KIND = "appeal.panel"
+#: Aliases covering the names a caller might reach for.
+PANEL_NOTIFICATION_KIND = PANEL_SEATED_KIND
+PANEL_SEAT_KIND = PANEL_SEATED_KIND
 
 
 def _invalid(loc: list[Any], message: str, error_type: str, value: Any = None) -> InvalidRecord:
@@ -389,6 +408,43 @@ def panel_exclusions(appeal: Appeal, decision: AppealedDecision) -> frozenset[st
     )
 
 
+def notify_panel_seated(appeal: Appeal, seats: list[AppealPanelMember]) -> int:
+    """Tell every member in ``seats`` they were drawn; return how many were told.
+
+    The payload names the appeal (the cid a vote is cast on), the decision it
+    answers and a ``link`` to ``GET /v1/appeals/{appeal cid}``, the only view
+    that names the panel.  The notifications plugin is imported at call time so
+    this module stays loadable without it.  One member's notification failing
+    must not stop the others or undo the panel: it is logged and skipped, like
+    every other best-effort notification in the project.
+    """
+    try:
+        from app.modules.notifications.service import notify
+    except Exception:  # pragma: no cover - notifications is a shipped plugin
+        logger.exception("notifications plugin unavailable; appeal panel not notified")
+        return 0
+
+    payload = {
+        "appeal_cid": str(appeal.appeal_cid),
+        "appeal": str(appeal.appeal_cid),
+        "decision_cid": str(appeal.decision_cid),
+        "target": str(appeal.decision_cid),
+        "appellant_did": str(appeal.appellant_did),
+        "grounds": str(appeal.grounds),
+        "link": f"/v1/appeals/{appeal.appeal_cid}",
+    }
+    notified = 0
+    for seat in seats:
+        did = str(seat.member_did)
+        try:
+            notify(did, PANEL_SEATED_KIND, dict(payload))
+        except Exception:
+            logger.exception("could not notify %s of their seat on appeal %s", did, appeal.appeal_cid)
+        else:
+            notified += 1
+    return notified
+
+
 def seat_panel(
     appeal: Appeal,
     decision: Optional[AppealedDecision] = None,
@@ -396,7 +452,9 @@ def seat_panel(
     """Draw ``appeal``'s panel into ``appeal_panels`` if it has none; return its seats.
 
     Idempotent: a drawn panel is returned as it is.  ``decision`` is looked up
-    from the appeal when the caller does not already hold it.
+    from the appeal when the caller does not already hold it.  A panel drawn
+    here notifies its members (see :func:`notify_panel_seated`); a panel that
+    was already drawn is returned without a second notice.
 
     Raises:
         UnknownAppealTarget: ``422`` -- the decision can no longer be resolved.
@@ -408,7 +466,13 @@ def seat_panel(
         return seated
     if decision is None:
         decision = resolve_decision(str(appeal.decision_cid))
-    return draw_panel(str(appeal.appeal_cid), excluded=panel_exclusions(appeal, decision))
+    seats = draw_panel(
+        str(appeal.appeal_cid),
+        excluded=panel_exclusions(appeal, decision),
+        seed=decision.decision_cid,
+    )
+    notify_panel_seated(appeal, seats)
+    return seats
 
 
 def _seat_or_defer(appeal: Appeal, decision: AppealedDecision) -> None:

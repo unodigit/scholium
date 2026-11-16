@@ -1,25 +1,30 @@
 """HTTP routes for the appeals plugin.
 
 The module loader mounts this router under ``/v1``, so the routes below serve
-``POST /v1/appeals`` and ``POST /v1/appeals/{cid}/votes``.
+``POST /v1/appeals``, ``GET /v1/appeals/{cid}`` and
+``POST /v1/appeals/{cid}/votes``.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any, Mapping, Optional
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from app.errors import ProblemException
 from app.modules import submissions
 from app.modules.ingest import ingest
-from app.security import Principal, Tier, require_tier
+from app.security import Principal, Tier, get_current_principal, require_tier
 
-from .service import APPEAL_TYPE, apply_appeal, resolve_decision
-from .votes import cast_vote, vote_fields
+from .errors import AppealNotFound
+from .panel import get_panel
+from .service import APPEAL_TYPE, apply_appeal, get_appeal, resolve_decision
+from .votes import cast_vote, decision_for_appeal, vote_fields
 
-__all__ = ["AppealAccepted", "VoteAccepted", "router"]
+__all__ = ["AppealAccepted", "AppealDetailOut", "PanelSeatOut", "VoteAccepted", "router"]
 
 router = APIRouter(prefix="/appeals", tags=["appeals"])
 
@@ -97,6 +102,129 @@ def post_appeal(
         target=str(appeal.decision_cid),
         status=str(appeal.status),
         anchor=result.anchor,
+    )
+
+
+class PanelSeatOut(BaseModel):
+    """One seat on an appeal's panel."""
+
+    #: The seated member's DID.
+    did: str
+    #: Alias of ``did``, matching ``appeal_panels.member_did``.
+    member_did: str
+    #: Alias of ``did``.
+    member: str
+    #: The member's vote, or ``null`` until they vote.
+    vote: Optional[str] = None
+
+
+class AppealDetailOut(BaseModel):
+    """The ``200 OK`` body of ``GET /v1/appeals/{cid}``.
+
+    ``panel`` is filled in only for a caller who holds a seat on it or whose
+    tier is 4 (:attr:`viewer_on_panel` says which): a seat is not public, and
+    showing it to other readers would let them lobby the panel and would tell
+    a member they were *not* drawn.
+    """
+
+    #: cid of the appeal record.
+    id: str
+    #: Alias of ``id``, matching ``appeals.appeal_cid``.
+    appeal_cid: str
+    #: cid of the ``moderation.decision`` being appealed.
+    decision_cid: str
+    #: Alias of ``decision_cid``.
+    decision: str
+    #: The DID that signed the appeal.
+    appellant_did: str
+    #: Alias of ``appellant_did``.
+    appellant: str
+    #: Why the decision is appealed.
+    grounds: str
+    #: ``pending`` until a panel decides it, then the panel's outcome.
+    status: str
+    #: When the appeal record is dated (UTC).
+    filed_at: datetime
+    #: The panel's outcome once it has decided, else ``null``.
+    outcome: Optional[str] = None
+    #: cid of the ``appeal.decision`` record, once there is one.
+    resolution: Optional[str] = None
+    #: Whether the caller holds a seat on this appeal's panel.
+    viewer_on_panel: bool = False
+    #: Who sits on the panel; empty unless the caller is seated or tier 4.
+    panel: list[PanelSeatOut] = []
+
+
+#: Bearer credentials, read to widen the appeal view for its panel and tier 4.
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _optional_principal(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> Optional[Principal]:
+    """The caller when a token is sent; ``None`` for a reader with none."""
+    if credentials is None:
+        return None
+    return get_current_principal(request, credentials)
+
+
+@router.get(
+    "/{cid}",
+    response_model=AppealDetailOut,
+    summary="Read one appeal; its panel to the panel and to moderators",
+)
+def get_appeal_detail(
+    cid: str,
+    caller: Optional[Principal] = Depends(_optional_principal),
+) -> AppealDetailOut:
+    """Return appeal ``cid``; its panel only to the seated members and tier 4.
+
+    The appeal itself is a public record, so any reader may see it, with no
+    token at all.  The three members the draw seated are not public: ``panel``
+    is filled in only for a caller holding a seat on it or at tier 4
+    (Moderator).  An unknown cid is ``404`` problem details.
+    """
+    appeal = get_appeal(cid)
+    if appeal is None:
+        raise AppealNotFound(cid)
+
+    seats = get_panel(cid)
+    on_panel = caller is not None and caller.did in {str(seat.member_did) for seat in seats}
+    may_see_panel = on_panel or (caller is not None and caller.tier >= int(Tier.MODERATOR))
+
+    decision = decision_for_appeal(cid)
+    outcome: Optional[str] = None
+    resolution: Optional[str] = None
+    if decision is not None:
+        resolution = str(decision.record_cid)
+        body = decision.body if isinstance(decision.body, Mapping) else {}
+        if isinstance(body.get("outcome"), str):
+            outcome = body["outcome"]
+
+    return AppealDetailOut(
+        id=str(appeal.appeal_cid),
+        appeal_cid=str(appeal.appeal_cid),
+        decision_cid=str(appeal.decision_cid),
+        decision=str(appeal.decision_cid),
+        appellant_did=str(appeal.appellant_did),
+        appellant=str(appeal.appellant_did),
+        grounds=str(appeal.grounds),
+        status=str(appeal.status),
+        filed_at=appeal.filed_at,
+        outcome=outcome,
+        resolution=resolution,
+        viewer_on_panel=on_panel,
+        panel=[
+            PanelSeatOut(
+                did=str(seat.member_did),
+                member_did=str(seat.member_did),
+                member=str(seat.member_did),
+                vote=seat.vote,
+            )
+            for seat in seats
+            if may_see_panel
+        ],
     )
 
 

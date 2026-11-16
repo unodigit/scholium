@@ -32,6 +32,32 @@ key cannot make the decision and answers ``503``; the votes already cast are
 kept, so the decision is made once a key is provisioned and a vote is cast
 again.
 
+What an overturn does
+---------------------
+
+An ``appeal.decision`` alone is a verdict: it does not by itself lift the
+appealed ``moderation.decision``, so an overturned hold would leave the paper
+``contested`` until a moderator relisted it by hand.  When the panel's outcome
+is one of :data:`RESTORING_OUTCOMES` (``overturned``, and the grant/allow
+spellings), the node therefore appends a **node-signed ``moderation.decision``**
+that puts the appealed target back in the state the appealed decision found it
+in (:func:`restore_target`):
+
+* the state before the appealed decision is read from the log -- the newest
+  state-setting ``moderation.decision`` on the same target dated before the
+  appealed one -- falling back to ``listed`` for a version that had been in the
+  catalog (:attr:`PaperVersion.listed_at`) and ``moderation`` for one that was
+  still being moderated;
+* the restoring record takes the appealed decision's clause and points at the
+  appeal (``appeal``/``appeal_restoration``) so the restoration is auditable and
+  is made once, however many votes follow;
+* the version is moved to that state and the paper's status is recomputed from
+  the log, so the hold is no longer in force.
+
+The restoration is best effort after the ``appeal.decision`` is public: it is
+logged if it fails and retried by a later vote, but it never turns a made
+decision into a failed vote.
+
 Voting twice is harmless: a member's latest vote replaces their earlier one,
 and a vote cast after the decision is recorded without producing a second
 decision.  The whole cast is serialised within the process, so two votes that
@@ -41,10 +67,11 @@ decision.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -52,22 +79,31 @@ from sqlalchemy import select
 from scholium_record_core import did_key_from_signing_key, sign_record, validate_body
 
 from app import db
-from app.modules import ledger
+from app.modules import ledger, submissions
 from app.modules.ingest import InvalidRecord
 from app.modules.ledger.models import EventLog
+from app.modules.moderation import (
+    ACTION_STATES as MODERATION_ACTION_STATES,
+    DECISION_TYPE as MODERATION_DECISION_TYPE,
+    get_decision as get_moderation_decision,
+)
 
 from .errors import AppealNotFound, PanelNotDrawn, VoteNodeKeyUnavailable, VoteNotAuthorized
 from .models import Appeal, AppealPanelMember, AppealVoteReasons, ensure_tables
 from .panel import get_panel
-from .service import get_appeal
+from .service import get_appeal, resolve_decision
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DECIDING_VOTES",
     "DECISION_TYPE",
+    "RESTORING_OUTCOMES",
     "VOTE_OUTCOMES",
     "VoteCast",
     "cast_vote",
     "decision_for_appeal",
+    "restore_target",
     "vote_fields",
 ]
 
@@ -93,6 +129,20 @@ VOTE_OUTCOMES = (
     "allowed",
     "dismissed",
 )
+
+#: Outcomes that mean the appealed decision no longer stands.  The panel's vote
+#: vocabulary draws them from the ``appeal.decision`` schema; the grant/allow
+#: spellings all mean the appellant won, so the target is restored as for an
+#: ``overturned``.  ``modified`` and ``remanded`` leave the appeal's outcome to
+#: a new moderation decision and change no state here.
+RESTORING_OUTCOMES = frozenset({"overturned", "granted", "grant", "allowed"})
+
+#: The ``moderation.decision`` action that puts a version back into each state.
+_RESTORE_ACTIONS: Mapping[str, str] = {
+    submissions.LISTED: "list",
+    submissions.HELD: "hold",
+    submissions.REJECTED: "reject",
+}
 
 #: Serialises casting within this process.  The panel read, the vote write and
 #: the majority check are one step, so two concurrent votes cannot both miss a
@@ -248,6 +298,27 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _created_after(reference: Optional[str]) -> str:
+    """Now, but unambiguously later than ``reference``.
+
+    The status rules compare decisions by ``created`` and break a tie by record
+    id, which is a hash: two decisions signed in the same second would order by
+    accident.  A restoration must follow the decision it undoes, so when the
+    clock has not yet moved past that second it is moved to the next one.
+    """
+    now = datetime.now(timezone.utc)
+    if isinstance(reference, str):
+        try:
+            prior = datetime.fromisoformat(reference.strip().replace("Z", "+00:00"))
+        except ValueError:
+            prior = None
+        if prior is not None:
+            if prior.tzinfo is None:
+                prior = prior.replace(tzinfo=timezone.utc)
+            now = max(now, prior.replace(microsecond=0) + timedelta(seconds=1))
+    return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _store_vote(appeal_cid: str, member_did: str, outcome: str, reasons: tuple[str, ...]) -> None:
     """Save (or replace) ``member_did``'s vote and reasons on ``appeal_cid``."""
     with db.SessionLocal() as session:
@@ -304,7 +375,12 @@ def _save_decision(
     votes: list[AppealPanelMember],
     reasons: dict[str, tuple[str, ...]],
 ) -> str:
-    """Sign and append the panel's ``appeal.decision``; return its cid."""
+    """Sign and append the panel's ``appeal.decision``; return its cid.
+
+    An outcome in :data:`RESTORING_OUTCOMES` also restores the appealed target
+    (:func:`restore_target`).  That happens after the decision is public, so a
+    restoration that fails is logged, not raised: the panel's decision stands.
+    """
     key = ledger.node_signing_key()
     if key is None:
         raise VoteNodeKeyUnavailable(appeal_cid)
@@ -329,7 +405,176 @@ def _save_decision(
     ledger.append(record)
 
     _mark_decided(appeal_cid, outcome)
+    _restore_after_overturn(appeal_cid, outcome, key)
     return str(record["id"])
+
+
+# --------------------------------------------------------------------------- #
+# Restoring the target of an overturned decision
+# --------------------------------------------------------------------------- #
+
+
+def _restoration_for(appeal_cid: str) -> Optional[EventLog]:
+    """The ``moderation.decision`` already appended to restore this appeal's target."""
+    ledger.ensure_table()
+    statement = (
+        select(EventLog)
+        .where(EventLog.record_type == MODERATION_DECISION_TYPE)
+        .order_by(EventLog.seq)
+    )
+    with db.SessionLocal() as session:
+        session.expire_on_commit = False
+        for entry in session.execute(statement).scalars():
+            body = entry.body
+            if isinstance(body, Mapping) and body.get("appeal_restoration") == appeal_cid:
+                session.expunge(entry)
+                return entry
+    return None
+
+
+def _appealed_decision_body(decision_cid: str) -> Mapping[str, Any]:
+    """The appealed decision's body, from its saved row or, failing that, the log."""
+    row = get_moderation_decision(decision_cid)
+    if row is not None:
+        return {"target": row.target_cid, "action": row.action, "clause": row.clause}
+    entry = ledger.entry_by_cid(decision_cid)
+    body = entry.body if entry is not None else None
+    return body if isinstance(body, Mapping) else {}
+
+
+def _prior_version_state(version_cid: str, decision_cid: str) -> str:
+    """The state ``version_cid`` had before ``decision_cid`` was made.
+
+    The newest state-setting ``moderation.decision`` on the same target that is
+    older in the log is the authority.  With none, a version that had been in
+    the catalog (:attr:`~app.modules.submissions.models.PaperVersion.listed_at`
+    is kept when it is held or rejected) was ``listed``; otherwise it was still
+    being moderated.
+    """
+    appealed = ledger.entry_by_cid(decision_cid)
+    before = appealed.seq if appealed is not None else None
+
+    prior: Optional[str] = None
+    with db.SessionLocal() as session:
+        statement = (
+            select(EventLog)
+            .where(EventLog.record_type == MODERATION_DECISION_TYPE)
+            .order_by(EventLog.seq)
+        )
+        if before is not None:
+            statement = statement.where(EventLog.seq < before)
+        for entry in session.execute(statement).scalars():
+            body = entry.body
+            if not isinstance(body, Mapping) or body.get("target") != version_cid:
+                continue
+            action = body.get("action")
+            state = MODERATION_ACTION_STATES.get(action) if isinstance(action, str) else None
+            if state is not None:
+                prior = state
+    if prior is not None:
+        return prior
+
+    version = submissions.get_version(version_cid)
+    if version is not None and getattr(version, "listed_at", None) is not None:
+        return submissions.LISTED
+    return submissions.MODERATION
+
+
+def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[str]:
+    """Append the decision that restores an overturned appeal's target.
+
+    Returns the cid of the restoring ``moderation.decision``, or ``None`` when
+    the outcome restores nothing or the restoration was already made.  The
+    record carries the appeal's cid in ``appeal_restoration``, which is what
+    makes the restoration once-only.
+
+    Raises:
+        VoteNodeKeyUnavailable: ``503`` -- no usable node key and the outcome
+            needs a signed record.  The caller treats this as best effort.
+        UnknownAppealTarget: the appealed decision can no longer be resolved.
+    """
+    if outcome not in RESTORING_OUTCOMES:
+        return None
+    existing = _restoration_for(appeal_cid)
+    if existing is not None:
+        return str(existing.record_cid)
+
+    appeal = get_appeal(appeal_cid)
+    if appeal is None:
+        return None
+    decision = resolve_decision(str(appeal.decision_cid))
+    if key is None:
+        key = ledger.node_signing_key()
+    if key is None:
+        raise VoteNodeKeyUnavailable(appeal_cid)
+
+    prior = _prior_version_state(decision.version_cid, str(appeal.decision_cid))
+    appealed = _appealed_decision_body(str(appeal.decision_cid))
+    clause = appealed.get("clause")
+    if not isinstance(clause, str) or not clause:
+        clause = "MOD-01"
+
+    body = {
+        "target": decision.version_cid,
+        "action": _RESTORE_ACTIONS.get(prior, "list"),
+        "clause": clause,
+        "reason": (
+            f"Appeal {appeal_cid} was {outcome} by the panel; "
+            "this decision restores the version's state."
+        ),
+        "paper": decision.paper_cid,
+        "appeal": appeal_cid,
+        "appeal_restoration": appeal_cid,
+    }
+    errors = validate_body(MODERATION_DECISION_TYPE, body)
+    if errors:  # pragma: no cover - the body is built from the record's own schema
+        raise _invalid(["body"], errors[0], "invalid_restoration")
+
+    appealed_entry = ledger.entry_by_cid(str(appeal.decision_cid))
+    appealed_created = (
+        ledger.stored_envelope(appealed_entry).created if appealed_entry is not None else None
+    )
+    record = sign_record(
+        {
+            "v": 1,
+            "type": MODERATION_DECISION_TYPE,
+            "author": did_key_from_signing_key(key),
+            "created": _created_after(appealed_created),
+            "prev": None,
+            "body": body,
+            "proofs": [],
+        },
+        key,
+    )
+    ledger.append(record)
+
+    # The action above ends the appealed decision's hold in the log; this puts
+    # the version itself back in the state it had before (the two differ when
+    # that state has no moderation action of its own, e.g. ``moderation``).
+    submissions.transition_version(
+        decision.version_cid,
+        prior,
+        actor=did_key_from_signing_key(key),
+        reason=f"Appeal {appeal_cid} was {outcome}.",
+    )
+
+    # Keep ``papers.status`` current even where the status subscription is not
+    # installed (a script, or a test that cleared it).
+    try:
+        from app.modules import status
+
+        status.recompute_paper_status(decision.paper_cid)
+    except Exception:  # pragma: no cover - a projection, not the decision
+        logger.exception("could not recompute the status of paper %s", decision.paper_cid)
+    return str(record["id"])
+
+
+def _restore_after_overturn(appeal_cid: str, outcome: str, key: Any = None) -> None:
+    """Run :func:`restore_target` best-effort: a failure never fails the vote."""
+    try:
+        restore_target(appeal_cid, outcome, key)
+    except Exception:
+        logger.exception("could not restore the target of appeal %s after %s", appeal_cid, outcome)
 
 
 def _mark_decided(appeal_cid: str, outcome: str) -> None:
@@ -388,6 +633,10 @@ def cast_vote(
         if existing is not None:
             existing_body = existing.body if isinstance(existing.body, Mapping) else {}
             decided = existing_body.get("outcome")
+            if isinstance(decided, str):
+                # A restoration the deciding vote could not finish is retried
+                # here; it is a no-op when one was already appended.
+                _restore_after_overturn(appeal_cid, decided, ledger.node_signing_key())
             return VoteCast(
                 appeal_cid=appeal_cid,
                 member_did=member_did,

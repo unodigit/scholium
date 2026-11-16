@@ -224,12 +224,15 @@ def test_the_panel_never_includes_the_moderator_or_any_author(client, standing):
         assert not (seated & barred)
 
 
-def test_the_panel_is_the_one_the_appeal_cid_dictates(client, scene, standing):
+def test_the_panel_is_the_one_the_appealed_decision_dictates(client, scene, standing):
     record = _file(client, scene)
     barred = {scene.moderator.did, scene.author.did, *(p.did for p in scene.coauthors)}
 
-    # Anyone could recompute the draw from the cid and the membership.
-    expected = select_panel(record["id"], eligible_members(barred))
+    # Anyone could recompute the draw from the decision cid and the membership.
+    # (Seeding from the appeal cid let the appellant grind record ids until the
+    # draw suited them; the decision cid is not theirs to choose.)
+    decision = get_appeal(record["id"]).decision_cid
+    expected = select_panel(decision, eligible_members(barred))
     assert _members(record["id"]) == list(expected)
 
 
@@ -310,8 +313,10 @@ def test_a_panel_is_drawn_once_enough_members_exist(client, scene, membership):
     membership([scene.moderator.did, scene.author.did, *others])
     seated = seat_panel(get_appeal(record["id"]))
 
-    # The moderator and the author are excluded, so the panel is drawn from `others`.
-    assert [row.member_did for row in seated] == list(select_panel(record["id"], others))
+    # The moderator and the author are excluded, so the panel is drawn from
+    # `others`, seeded from the appealed decision cid (see panel.py).
+    decision = get_appeal(record["id"]).decision_cid
+    assert [row.member_did for row in seated] == list(select_panel(decision, others))
     assert len(seated) == 3
     assert scene.moderator.did not in _members(record["id"])
     assert scene.author.did not in _members(record["id"])
