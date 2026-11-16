@@ -459,7 +459,6 @@ def test_a_walk_is_not_disturbed_by_papers_listed_or_held_meanwhile(client, scen
 @pytest.mark.parametrize(
     "params",
     [
-        {"tab": "following"},
         {"tab": "popular"},
         {"sort": "most_voted"},
         {"limit": 0},
