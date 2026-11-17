@@ -18,6 +18,19 @@ import {
   loadMe,
   parseDashboard,
   type DashboardClient,
+  NOTIFICATIONS_ENDPOINT,
+  describeNotificationsError,
+  loadNotifications,
+  markNotificationRead,
+  moderationChip,
+  notificationKindLabel,
+  notificationLink,
+  notificationSummary,
+  notificationTime,
+  orcidHref,
+  parseNotifications,
+  timeAgo,
+  type MyPaper,
 } from "./dashboard";
 
 /** A `GET /v1/me/dashboard` body, exactly as the `me` plugin serves it. */
@@ -327,5 +340,174 @@ describe("describeDashboardError", () => {
 
     expect(describeMeError(error)).toBe("Bad payload.");
     expect(describeMeDashboardError(error)).toBe("Bad payload.");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Notifications (GET /v1/me/notifications)                                    */
+/* -------------------------------------------------------------------------- */
+
+/** One row exactly as `NotificationOut` serialises it. */
+const NOTIFICATION_ROW = {
+  id: 7,
+  did: "did:key:z6MkfZrSgCZ1XFdNnVFY1cGM",
+  kind: "consent.request",
+  payload: { version_cid: "bafy-version-1", paper_cid: "bafy-genesis-1", n: 2 },
+  read: false,
+};
+
+describe("parseNotifications", () => {
+  it("keeps the API's order and every field the card needs", () => {
+    const rows = parseNotifications([NOTIFICATION_ROW, { ...NOTIFICATION_ROW, id: 8, read: true }]);
+
+    expect(rows.map((row) => row.id)).toEqual([7, 8]);
+    expect(rows[0]).toMatchObject({ kind: "consent.request", read: false });
+    expect(rows[1].read).toBe(true);
+    expect(rows[0].payload).toEqual(NOTIFICATION_ROW.payload);
+  });
+
+  it("treats an unreadable payload as empty rather than failing the list", () => {
+    expect(parseNotifications([{ ...NOTIFICATION_ROW, payload: "oops" }])[0].payload).toEqual({});
+  });
+
+  it("treats a row without an explicit read: true as unread", () => {
+    const { read: _read, ...bare } = NOTIFICATION_ROW;
+    expect(parseNotifications([bare])[0].read).toBe(false);
+  });
+
+  it("rejects a body that is not a list, never 'no notifications'", () => {
+    expect(() => parseNotifications(null)).toThrow(/list of notifications/);
+    expect(() => parseNotifications({ items: [] })).toThrow(/list of notifications/);
+  });
+
+  it("rejects a row with no id, which could never be marked read", () => {
+    expect(() => parseNotifications([{ ...NOTIFICATION_ROW, id: undefined }])).toThrow(/has no id/);
+  });
+});
+
+describe("loadNotifications / markNotificationRead", () => {
+  it("asks GET /me/notifications for a fresh copy with the viewer's token", async () => {
+    const get = vi.fn(async () => [NOTIFICATION_ROW]);
+
+    const rows = await loadNotifications({ get } as unknown as Parameters<typeof loadNotifications>[0]);
+
+    expect(NOTIFICATIONS_ENDPOINT).toBe("/me/notifications");
+    expect(get).toHaveBeenCalledWith("/me/notifications", { cache: "no-store" });
+    expect(rows).toHaveLength(1);
+  });
+
+  it("marks one read with POST /me/notifications/{id}/read, surviving a navigation", async () => {
+    const post = vi.fn(async () => ({ ...NOTIFICATION_ROW, read: true }));
+
+    await markNotificationRead(7, { post } as unknown as Parameters<typeof markNotificationRead>[1]);
+
+    expect(post).toHaveBeenCalledWith("/me/notifications/7/read", undefined, { keepalive: true });
+  });
+});
+
+describe("notification wording", () => {
+  it("names each kind", () => {
+    expect(notificationKindLabel("consent.request")).toBe("Consent request");
+    expect(notificationKindLabel("recovery.request")).toBe("Recovery approval");
+    expect(notificationKindLabel("moderation.decision")).toBe("Moderation outcome");
+    expect(notificationKindLabel("review.invitation")).toBe("Review invitation");
+    expect(notificationKindLabel("email.verify")).toBe("Email verification");
+    expect(notificationKindLabel("something.brand_new")).toBe("Something brand new");
+  });
+
+  it("summarises in plain words, not payload keys", () => {
+    expect(notificationSummary({ kind: "consent.request", payload: { n: 2 } })).toMatch(/co-author consent.*version 2/i);
+    expect(notificationSummary({ kind: "moderation.decision", payload: { action: "hold" } })).toMatch(/paper on hold/i);
+    expect(notificationSummary({ kind: "moderation.decision", payload: { action: "reject" } })).toMatch(/rejected/i);
+    expect(notificationSummary({ kind: "email.verify", payload: {} })).toMatch(/confirm your email/i);
+    expect(notificationSummary({ kind: "flag.decided", payload: { status: "upheld" } })).toMatch(/upheld/i);
+    expect(notificationSummary({ kind: "x.y", payload: { summary: "Heads up" } })).toBe("Heads up");
+    expect(notificationSummary({ kind: "x.y", payload: {} })).toBe("X y");
+  });
+
+  it("points at the web screen for the kinds that have one", () => {
+    expect(notificationLink({ kind: "consent.request", payload: { version_cid: "bafy-v" } })).toBe("/consent/bafy-v");
+    expect(notificationLink({ kind: "recovery.request", payload: { request_id: "rr-9" } })).toBe("/me/recovery/rr-9");
+    expect(notificationLink({ kind: "moderation.decision", payload: { target_cid: "bafy-v" } })).toBe("/p/bafy-v");
+  });
+
+  it("uses a payload link only when it is a web page or an absolute http(s) address", () => {
+    expect(notificationLink({ kind: "x.y", payload: { link: "/review/sch:abcd-efgh-jklm" } })).toBe(
+      "/review/sch:abcd-efgh-jklm",
+    );
+    expect(notificationLink({ kind: "x.y", payload: { link: "https://scholium.example/x" } })).toBe(
+      "https://scholium.example/x",
+    );
+    expect(notificationLink({ kind: "x.y", payload: { link: "javascript:alert(1)" } })).toBeNull();
+    expect(notificationLink({ kind: "x.y", payload: { link: "//evil.example/x" } })).toBeNull();
+    // An API route is not a page: the web origin would 404 it.
+    expect(notificationLink({ kind: "x.y", payload: { link: "/v1/appeals/bafy-a" } })).toBeNull();
+    expect(notificationLink({ kind: "x.y", payload: {} })).toBeNull();
+  });
+
+  it("reads the time from the payload when the kind carries one, else says nothing", () => {
+    expect(notificationTime({ payload: { requested_at: "2026-11-16T10:00:00Z" } })).toBe("2026-11-16T10:00:00Z");
+    expect(notificationTime({ payload: { created_at: "2026-11-15T10:00:00Z" } })).toBe("2026-11-15T10:00:00Z");
+    expect(notificationTime({ payload: { requested_at: "not a date" } })).toBeNull();
+    expect(notificationTime({ payload: {} })).toBeNull();
+  });
+});
+
+describe("timeAgo", () => {
+  const now = new Date("2026-11-17T12:00:00Z");
+
+  it("reads as a short relative phrase", () => {
+    expect(timeAgo("2026-11-17T11:59:40Z", now)).toBe("just now");
+    expect(timeAgo("2026-11-17T11:15:00Z", now)).toBe("45 minutes ago");
+    expect(timeAgo("2026-11-17T11:00:00Z", now)).toBe("1 hour ago");
+    expect(timeAgo("2026-11-16T12:00:00Z", now)).toBe("1 day ago");
+    expect(timeAgo("2026-11-10T12:00:00Z", now)).toBe("7 days ago");
+  });
+
+  it("falls back to the date once it is more than a month old, and to just now for the future", () => {
+    expect(timeAgo("2026-08-01T12:00:00Z", now)).toBe("2026-08-01");
+    expect(timeAgo("2026-11-17T13:00:00Z", now)).toBe("just now");
+  });
+});
+
+describe("describeNotificationsError", () => {
+  it("says it is the notifications that failed, in the API's own words when it has them", () => {
+    expect(describeNotificationsError(new ApiError(401, { detail: "Sign in." }))).toBe("Sign in.");
+    expect(describeNotificationsError(new NetworkError("/v1/me/notifications"))).toMatch(/could not reach the API/);
+    expect(describeNotificationsError("nope")).toBe("The API could not return your notifications.");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Credentials and My papers                                                   */
+/* -------------------------------------------------------------------------- */
+
+describe("orcidHref", () => {
+  it("links a linked iD to its public ORCID record", () => {
+    expect(orcidHref("0000-0002-1825-0097")).toBe("https://orcid.org/0000-0002-1825-0097");
+  });
+});
+
+describe("moderationChip", () => {
+  /** A paper with only the fields the chip reads. */
+  const paper = (state: string | null, status: string | null = "preprint"): MyPaper =>
+    ({ state, status }) as unknown as MyPaper;
+
+  it("names the moderation state as its own word", () => {
+    expect(moderationChip(paper("held"))?.label).toBe("Held");
+    expect(moderationChip(paper("rejected"))?.label).toBe("Rejected");
+    expect(moderationChip(paper("listed"))?.label).toBe("Listed");
+    expect(moderationChip(paper("awaiting_consent"))?.label).toBe("Awaiting consent");
+  });
+
+  it("says Appeal pending for a held or rejected paper whose appeal awaits a panel", () => {
+    expect(moderationChip(paper("held"), { appealPending: true })?.label).toBe("Appeal pending");
+    expect(moderationChip(paper("rejected"), { appealPending: true })?.label).toBe("Appeal pending");
+    // An appeal means nothing for a paper that is not stopped.
+    expect(moderationChip(paper("listed"), { appealPending: true })?.label).toBe("Listed");
+  });
+
+  it("has no chip when the paper has no version yet", () => {
+    expect(moderationChip(paper(null))).toBeNull();
   });
 });

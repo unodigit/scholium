@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, NetworkError, tokenStore } from "../../lib/api";
 
-import { DashboardPage, MeDashboardPage, MePage } from "./dashboard-page";
+import { DashboardPage, MeDashboardPage, MePage, hasPendingAppeal } from "./dashboard-page";
 import type { DashboardData } from "./dashboard";
 
 /** A parsed `GET /v1/me/dashboard` body with one item in every card. */
@@ -372,5 +372,262 @@ describe("alias exports", () => {
 
     render(<MeDashboardPage initialData={DATA} signedIn />);
     expect(screen.getByRole("heading", { level: 1, name: "Me" })).toBeTruthy();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Regressions: notifications, ORCID iD, moderation chip, public profile       */
+/* -------------------------------------------------------------------------- */
+
+/** The three unread rows the seeded author sees, oldest first as the API serves them. */
+const BELL_ROWS = [
+  {
+    id: 1,
+    did: DATA.did,
+    kind: "consent.request",
+    payload: { version_cid: "bafy-version-1", paper_cid: "bafy-genesis-1", n: 1 },
+    read: false,
+  },
+  {
+    id: 2,
+    did: DATA.did,
+    kind: "moderation.decision",
+    payload: { decision_cid: "bafy-decision-1", target_cid: "bafy-version-1", action: "hold" },
+    read: false,
+  },
+  {
+    id: 3,
+    did: DATA.did,
+    kind: "recovery.request",
+    payload: { request_id: "rr-9" },
+    read: false,
+  },
+];
+
+describe("/me Notifications card (bell regression)", () => {
+  it("lists what GET /v1/me/notifications returns instead of 'No notifications yet'", async () => {
+    const loadNotifications = vi.fn().mockResolvedValue(BELL_ROWS);
+
+    render(
+      <DashboardPage initialDashboard={DATA} signedIn loadNotifications={loadNotifications} />,
+    );
+
+    const notifications = within(card("Notifications"));
+    expect(await notifications.findAllByRole("listitem")).toHaveLength(3);
+    expect(loadNotifications).toHaveBeenCalledTimes(1);
+    expect(notifications.queryByText("No notifications yet.")).toBeNull();
+    expect(notifications.getAllByText("Unread")).toHaveLength(3);
+  });
+
+  it("clears an unread row through the API's mark-read call", async () => {
+    const markNotificationRead = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <DashboardPage
+        initialDashboard={DATA}
+        signedIn
+        loadNotifications={async () => BELL_ROWS}
+        markNotificationRead={markNotificationRead}
+      />,
+    );
+
+    const notifications = within(card("Notifications"));
+    const rows = await notifications.findAllByRole("listitem");
+    fireEvent.click(within(rows[0]).getByRole("button", { name: /mark as read/i }));
+
+    await waitFor(() => expect(notifications.getAllByText("Unread")).toHaveLength(2));
+    expect(markNotificationRead).toHaveBeenCalledWith(3);
+  });
+
+  it("keeps the empty state for a member the API says has none", async () => {
+    render(<DashboardPage initialDashboard={DATA} signedIn loadNotifications={async () => []} />);
+
+    expect(
+      await within(card("Notifications")).findByText("No notifications yet."),
+    ).toBeTruthy();
+  });
+
+  it("shows a retryable error rather than a false empty state when the load fails", async () => {
+    const loadNotifications = vi
+      .fn()
+      .mockRejectedValueOnce(new NetworkError("/v1/me/notifications"))
+      .mockResolvedValueOnce(BELL_ROWS);
+
+    render(
+      <DashboardPage initialDashboard={DATA} signedIn loadNotifications={loadNotifications} />,
+    );
+
+    const notifications = within(card("Notifications"));
+    const alert = await notifications.findByRole("alert");
+    expect(notifications.queryByText("No notifications yet.")).toBeNull();
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+
+    expect(await notifications.findAllByRole("listitem")).toHaveLength(3);
+  });
+});
+
+describe("/me Credentials card (ORCID regression)", () => {
+  it("shows the linked ORCID iD as a link to its ORCID record", async () => {
+    const loadLinkedOrcid = vi.fn().mockResolvedValue("0000-0002-1825-0097");
+
+    render(
+      <DashboardPage initialDashboard={DATA} signedIn loadLinkedOrcid={loadLinkedOrcid} />,
+    );
+
+    const credentials = within(card("Credentials"));
+    const iD = await credentials.findByRole("link", { name: "0000-0002-1825-0097" });
+    expect(iD.getAttribute("href")).toBe("https://orcid.org/0000-0002-1825-0097");
+    expect(loadLinkedOrcid).toHaveBeenCalledWith(DATA.did);
+    // The did:key stays alongside it.
+    expect(credentials.getByText(DATA.did)).toBeTruthy();
+  });
+
+  it("says no iD is linked when there is none", async () => {
+    render(
+      <DashboardPage initialDashboard={DATA} signedIn loadLinkedOrcid={async () => null} />,
+    );
+
+    const credentials = within(card("Credentials"));
+    expect(await credentials.findByText(/no ORCID iD linked/i)).toBeTruthy();
+    expect(credentials.queryByRole("link", { name: /\d{4}-\d{4}-\d{4}-\d{3}[\dX]/ })).toBeNull();
+  });
+
+  it("does not blank the card when the iD cannot be read", async () => {
+    render(
+      <DashboardPage
+        initialDashboard={DATA}
+        signedIn
+        loadLinkedOrcid={async () => {
+          throw new NetworkError("/v1/profiles");
+        }}
+      />,
+    );
+
+    const credentials = within(card("Credentials"));
+    expect(await credentials.findByText(/couldn.t read your ORCID iD/i)).toBeTruthy();
+    expect(credentials.getByText(DATA.did)).toBeTruthy();
+  });
+});
+
+describe("/me My papers moderation chip (Contested regression)", () => {
+  const HELD: DashboardData = {
+    ...DATA,
+    my_papers: [
+      {
+        ...DATA.my_papers[0],
+        // The computed review status is `contested` purely because a hold is in force.
+        status: "contested",
+        state: "held",
+        reviewCount: 0,
+        reviews: 0,
+      },
+    ],
+  };
+
+  it("labels a held paper Held, never Contested merely for being held", async () => {
+    render(<DashboardPage initialDashboard={HELD} signedIn loadAppealPending={async () => false} />);
+
+    const papers = within(card("My papers"));
+    expect(await papers.findByText("Held")).toBeTruthy();
+    expect(papers.queryByText(/Contested/)).toBeNull();
+  });
+
+  it("says Appeal pending once the author has appealed and no panel has decided", async () => {
+    const loadAppealPending = vi.fn().mockResolvedValue(true);
+
+    render(
+      <DashboardPage initialDashboard={HELD} signedIn loadAppealPending={loadAppealPending} />,
+    );
+
+    const papers = within(card("My papers"));
+    expect(await papers.findByText("Appeal pending")).toBeTruthy();
+    expect(papers.queryByText("Held")).toBeNull();
+    expect(loadAppealPending).toHaveBeenCalledTimes(1);
+    expect(loadAppealPending.mock.calls[0][0]).toMatchObject({ shortId: "sch:k3f9-q2xz-7mwd" });
+  });
+
+  it("only looks up appeals for papers that a moderator has stopped", () => {
+    const loadAppealPending = vi.fn().mockResolvedValue(false);
+
+    render(<DashboardPage initialDashboard={DATA} signedIn loadAppealPending={loadAppealPending} />);
+
+    expect(loadAppealPending).not.toHaveBeenCalled();
+  });
+
+  it("shows the moderation state beside the computed review status, as its own chip", async () => {
+    const listed: DashboardData = {
+      ...DATA,
+      my_papers: [{ ...DATA.my_papers[0], state: "listed", status: "under_review" }],
+    };
+
+    render(<DashboardPage initialDashboard={listed} signedIn />);
+
+    const papers = within(card("My papers"));
+    expect(papers.getByText("Under review (3)")).toBeTruthy();
+    expect(papers.getByText("Listed")).toBeTruthy();
+  });
+
+  it("falls back to Held when the appeal lookup fails", async () => {
+    render(
+      <DashboardPage
+        initialDashboard={HELD}
+        signedIn
+        loadAppealPending={async () => {
+          throw new NetworkError("/v1/export");
+        }}
+      />,
+    );
+
+    expect(await within(card("My papers")).findByText("Held")).toBeTruthy();
+  });
+});
+
+describe("/me public profile link", () => {
+  it("links to the member's own public profile at /u/{did}", () => {
+    render(<DashboardPage initialDashboard={DATA} signedIn />);
+
+    const link = screen.getByRole("link", { name: "View public profile" });
+    expect(link.getAttribute("href")).toBe(`/u/${encodeURIComponent(DATA.did)}`);
+  });
+});
+
+describe("hasPendingAppeal (reads the paper's public records)", () => {
+  const VERSION = "bafyrei-version-1";
+  const hold = {
+    seq: 4,
+    record_cid: "bafyrei-held",
+    record_type: "moderation.decision",
+    received_at: "2027-03-01T10:00:00Z",
+    body: { target: VERSION, action: "hold", clause: "MOD-01", reason: "Needs a licence." },
+  };
+  const appeal = {
+    seq: 5,
+    record_cid: "bafyrei-appeal-5",
+    record_type: "appeal",
+    received_at: "2027-03-05T10:00:00Z",
+    body: { target: "bafyrei-held", grounds: "Why." },
+  };
+  const verdict = {
+    seq: 6,
+    record_cid: "bafyrei-verdict-6",
+    record_type: "appeal.decision",
+    received_at: "2027-03-06T10:00:00Z",
+    body: { target: "bafyrei-appeal-5", outcome: "upheld" },
+  };
+
+  it("is true once the held version has an appeal no panel has decided", () => {
+    expect(hasPendingAppeal([hold, appeal], VERSION)).toBe(true);
+  });
+
+  it("is false before any appeal is filed", () => {
+    expect(hasPendingAppeal([hold], VERSION)).toBe(false);
+  });
+
+  it("is false once the panel has decided", () => {
+    expect(hasPendingAppeal([hold, appeal, verdict], VERSION)).toBe(false);
+  });
+
+  it("is false when there are no records at all", () => {
+    expect(hasPendingAppeal([], VERSION)).toBe(false);
   });
 });

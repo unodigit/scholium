@@ -217,12 +217,27 @@ a.db-review-title:focus-visible {
   color: var(--accent);
 }
 
+/* A paper's moderation chip and its review-status chip sit side by side. */
+.db-paper-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+}
+
 /* ---- Credentials --------------------------------------------------------- */
 
 .db-cred-id {
   margin: 0;
   color: var(--ink);
   overflow-wrap: anywhere;
+}
+
+.db-cred-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 2);
 }
 
 /* ---- Notices, buttons and loading --------------------------------------- */
@@ -341,6 +356,67 @@ a.db-review-title:focus-visible {
   gap: calc(var(--space-unit) * 3);
 }
 
+/* ---- Notifications -------------------------------------------------------
+   A row is a kind chip, an "Unread" chip while it is unread, and when it
+   happened; then the sentence and its actions. Unread is the word plus an
+   accent bar on the inline-start edge, never colour alone. The bar is a
+   transparent border on read rows, so marking one read moves nothing. */
+
+.db-notes-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  min-width: 0;
+}
+
+.db-notes-body > .db-list {
+  width: 100%;
+}
+
+.db-note {
+  width: 100%;
+  padding-inline-start: calc(var(--space-unit) * 3);
+  border-inline-start: 3px solid transparent;
+}
+
+.db-note[data-read="false"] {
+  border-inline-start-color: var(--accent);
+}
+
+.db-note:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.db-note-head,
+.db-note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.db-note-actions {
+  gap: calc(var(--space-unit) * 3);
+}
+
+.db-note-time {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-note-read {
+  min-block-size: calc(var(--space-unit) * 8);
+  padding-block: calc(var(--space-unit) * 1);
+  padding-inline: calc(var(--space-unit) * 3);
+}
+
+.db-note-read[aria-disabled="true"] {
+  cursor: progress;
+  color: var(--ink-2);
+}
+
 /* Announced to screen readers, never drawn. */
 .db-visually-hidden {
   position: absolute;
@@ -370,7 +446,8 @@ a.db-review-title:focus-visible {
 @media (pointer: coarse) {
   .db-button,
   .db-link,
-  .db-saved-delete {
+  .db-saved-delete,
+  .db-note-read {
     min-block-size: 44px;
   }
 }

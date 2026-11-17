@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
+import { filedAppeal } from "../paper-page/appeal-dialog";
+import { latestDecision, loadPaperRecords } from "../paper-page/unlisted-paper";
 import { EmptyState, StatusChip, isPaperStatus } from "../ui-kit";
 
 import { Card } from "./card";
@@ -12,12 +14,17 @@ import {
   SIGNIN_HREF,
   describeDashboardError,
   loadDashboard as fetchDashboard,
+  loadLinkedOrcid as fetchLinkedOrcid,
+  moderationChip,
+  orcidHref,
+  ownProfileHref,
   type AttentionItem,
   type DashboardData,
   type MyPaper,
   type MyReview,
   type NeedsAttention,
 } from "./dashboard";
+import { NotificationsCard, type NotificationsCardProps } from "./notifications-card";
 import { SavedSearchesCard, type SavedSearchesCardProps } from "./saved-searches-card";
 import "./dashboard-page.css";
 
@@ -57,7 +64,21 @@ export interface DashboardPageProps {
   loadSavedSearches?: SavedSearchesCardProps["loadSavedSearches"];
   /** Replace the saved-search delete call, for tests or an alternate API client. */
   deleteSavedSearch?: SavedSearchesCardProps["deleteSavedSearch"];
+  /** Replace the notifications loader, for tests or an alternate API client. */
+  loadNotifications?: NotificationsCardProps["loadNotifications"];
+  /** Replace the mark-read call, for tests or an alternate API client. */
+  markNotificationRead?: NotificationsCardProps["markNotificationRead"];
+  /** Replace the linked-ORCID-iD loader, for tests or an alternate API client. */
+  loadLinkedOrcid?: LoadLinkedOrcid;
+  /** Replace the appeal lookup for held papers, for tests or an alternate API client. */
+  loadAppealPending?: LoadAppealPending;
 }
+
+/** The ORCID iD linked to a DID, or `null` when none is. */
+export type LoadLinkedOrcid = (did: string) => Promise<string | null>;
+
+/** Whether a paper's appeal has been filed and still awaits a panel. */
+export type LoadAppealPending = (paper: MyPaper) => Promise<boolean>;
 
 type DashboardState =
   | { status: "loading" }
@@ -94,6 +115,10 @@ export function DashboardPage({
   signedIn,
   loadSavedSearches,
   deleteSavedSearch,
+  loadNotifications,
+  markNotificationRead,
+  loadLinkedOrcid,
+  loadAppealPending,
 }: DashboardPageProps = {}) {
   const initial =
     initialDashboard ?? initialData ?? initialMe ?? initialStatus ?? initialResult;
@@ -190,6 +215,10 @@ export function DashboardPage({
           signedIn={signedIn}
           loadSavedSearches={loadSavedSearches}
           deleteSavedSearch={deleteSavedSearch}
+          loadNotifications={loadNotifications}
+          markNotificationRead={markNotificationRead}
+          loadLinkedOrcid={loadLinkedOrcid}
+          loadAppealPending={loadAppealPending}
         />
       ) : null}
     </div>
@@ -217,23 +246,34 @@ function DashboardView({
   signedIn,
   loadSavedSearches,
   deleteSavedSearch,
+  loadNotifications,
+  markNotificationRead,
+  loadLinkedOrcid = fetchLinkedOrcid,
+  loadAppealPending = defaultLoadAppealPending,
 }: {
   data: DashboardData;
   onRefresh: () => void;
-} & SavedSearchesCardProps) {
+  loadLinkedOrcid?: LoadLinkedOrcid;
+  loadAppealPending?: LoadAppealPending;
+} & SavedSearchesCardProps &
+  NotificationsCardProps) {
   return (
     <div className="db-grid">
       <NeedsAttentionCard attention={data.needs_attention} onRefresh={onRefresh} />
-      <MyPapersCard papers={data.my_papers} />
+      <MyPapersCard papers={data.my_papers} loadAppealPending={loadAppealPending} />
       <MyReviewsCard reviews={data.my_reviews} />
       <SavedSearchesCard
         signedIn={signedIn}
         loadSavedSearches={loadSavedSearches}
         deleteSavedSearch={deleteSavedSearch}
       />
-      <CredentialsCard did={data.did} />
+      <CredentialsCard did={data.did} loadLinkedOrcid={loadLinkedOrcid} />
       <SecurityCard />
-      <NotificationsCard onRefresh={onRefresh} />
+      <NotificationsCard
+        signedIn={signedIn}
+        loadNotifications={loadNotifications}
+        markNotificationRead={markNotificationRead}
+      />
     </div>
   );
 }
@@ -312,7 +352,35 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   );
 }
 
-function MyPapersCard({ papers }: { papers: readonly MyPaper[] }) {
+/**
+ * Whether the paper's public records show an appeal of the decision that
+ * stands, which no panel has decided yet. The records are the same ones the
+ * paper page reads (`GET /v1/export/paper/{id}/records`), so the two screens
+ * can never disagree about an appeal.
+ */
+export function hasPendingAppeal(
+  entries: readonly unknown[],
+  versionCid: string | null,
+): boolean {
+  const appeal = filedAppeal(entries, latestDecision(entries, versionCid));
+  return appeal !== null && appeal.outcome === null;
+}
+
+async function defaultLoadAppealPending(paper: MyPaper): Promise<boolean> {
+  const id = paper.shortId ?? paper.paperCid;
+  if (id === null) {
+    return false;
+  }
+  return hasPendingAppeal(await loadPaperRecords(id), paper.latestVersionCid);
+}
+
+function MyPapersCard({
+  papers,
+  loadAppealPending,
+}: {
+  papers: readonly MyPaper[];
+  loadAppealPending: LoadAppealPending;
+}) {
   return (
     <Card title="My papers" anchor="papers">
       {papers.length === 0 ? (
@@ -337,7 +405,7 @@ function MyPapersCard({ papers }: { papers: readonly MyPaper[] }) {
                     {paper.title ?? paper.paper ?? "Untitled paper"}
                   </span>
                 )}
-                <PaperStatus paper={paper} />
+                <PaperChips paper={paper} loadAppealPending={loadAppealPending} />
               </div>
               <p className="db-paper-meta meta">
                 {countLabel(paper.reviewCount, "review")}
@@ -351,6 +419,62 @@ function MyPapersCard({ papers }: { papers: readonly MyPaper[] }) {
         </ul>
       )}
     </Card>
+  );
+}
+
+/**
+ * A paper's two chips: where moderation has it (Held, Appeal pending,
+ * Rejected, Listed, Awaiting consent…) and, beside it, the review status the
+ * API computed from the reviews.
+ *
+ * A hold alone makes the computed status `contested`, so for a paper a
+ * moderator has stopped that word is left off: the moderation chip already says
+ * what happened, and "Contested" would read as a reviewer's rejection.
+ */
+function PaperChips({
+  paper,
+  loadAppealPending,
+}: {
+  paper: MyPaper;
+  loadAppealPending: LoadAppealPending;
+}) {
+  const stopped = paper.state === "held" || paper.state === "rejected";
+  const [appealPending, setAppealPending] = useState(false);
+
+  useEffect(() => {
+    if (!stopped) {
+      return;
+    }
+    let cancelled = false;
+    loadAppealPending(paper).then(
+      (pending) => {
+        if (!cancelled) {
+          setAppealPending(pending);
+        }
+      },
+      () => {
+        // The records could not be read: the chip keeps saying Held.
+        if (!cancelled) {
+          setAppealPending(false);
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [stopped, paper, loadAppealPending]);
+
+  const chip = moderationChip(paper, { appealPending });
+  const hideContested = chip?.stopped === true && paper.status === "contested";
+  return (
+    <span className="db-paper-chips">
+      {chip === null ? null : (
+        <span className="db-chip" data-tone={chip.tone} data-moderation={chip.state}>
+          {chip.label}
+        </span>
+      )}
+      {hideContested ? null : <PaperStatus paper={paper} />}
+    </span>
   );
 }
 
@@ -417,15 +541,85 @@ function ReviewRow({ review }: { review: MyReview }) {
   );
 }
 
-function CredentialsCard({ did }: { did: string }) {
+type OrcidState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; orcid: string | null };
+
+/**
+ * The key the member signs with, the ORCID iD linked to it, and the way to
+ * their public profile. The iD is read on its own, so failing to read it
+ * never hides the key.
+ */
+function CredentialsCard({
+  did,
+  loadLinkedOrcid,
+}: {
+  did: string;
+  loadLinkedOrcid: LoadLinkedOrcid;
+}) {
+  const [orcid, setOrcid] = useState<OrcidState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOrcid({ status: "loading" });
+    loadLinkedOrcid(did).then(
+      (value) => {
+        if (!cancelled) {
+          setOrcid({ status: "ready", orcid: value });
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setOrcid({ status: "error" });
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [did, loadLinkedOrcid, attempt]);
+
   return (
     <Card title="Credentials" anchor="credentials">
       <p className="db-cred-label meta">You sign with this key</p>
       <p className="db-cred-id mono-id">{did}</p>
+
+      <p className="db-cred-label meta">ORCID iD</p>
+      {orcid.status === "loading" ? (
+        <p className="db-cred-note meta">Checking for a linked ORCID iD…</p>
+      ) : null}
+      {orcid.status === "ready" && orcid.orcid !== null ? (
+        <p className="db-cred-id mono-id">
+          <a className="db-link" href={orcidHref(orcid.orcid)} rel="noopener noreferrer">
+            {orcid.orcid}
+          </a>
+        </p>
+      ) : null}
+      {orcid.status === "ready" && orcid.orcid === null ? (
+        <p className="db-cred-note meta">No ORCID iD linked yet.</p>
+      ) : null}
+      {orcid.status === "error" ? (
+        <div className="db-cred-error">
+          <p className="db-cred-note meta">Couldn&rsquo;t read your ORCID iD.</p>
+          <button
+            type="button"
+            className="db-button"
+            onClick={() => setAttempt((count) => count + 1)}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+
       <p className="db-cred-note meta">
-        ORCID, affiliation, reviewer categories and contribution credentials appear
-        here, each with a proof you can share.
+        Affiliation, reviewer categories and contribution credentials appear here, each
+        with a proof you can share.
       </p>
+      <a className="db-button" href={ownProfileHref(did)}>
+        View public profile
+      </a>
     </Card>
   );
 }
@@ -440,17 +634,6 @@ function SecurityCard() {
       <a className="db-button" href={SECURITY_PATH}>
         Manage security
       </a>
-    </Card>
-  );
-}
-
-function NotificationsCard({ onRefresh }: { onRefresh: () => void }) {
-  return (
-    <Card title="Notifications" anchor="notifications">
-      <EmptyState
-        sentence="No notifications yet."
-        action={{ label: "Refresh", onClick: onRefresh }}
-      />
     </Card>
   );
 }

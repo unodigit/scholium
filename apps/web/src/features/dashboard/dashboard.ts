@@ -13,6 +13,8 @@
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
 
+import { loadProfile, profilePath, type ProfileClient } from "./profile";
+
 /** The `/me` route (docs/design.md §4: Dashboard). */
 export const ME_PATH = "/me";
 
@@ -385,4 +387,412 @@ export function describeMeError(error: unknown): string {
 /** Alias. */
 export function describeMeDashboardError(error: unknown): string {
   return describeDashboardError(error);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Public profile                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** The member's own public profile (`/u/{did}`), for the "View public profile" link. */
+export function ownProfileHref(did: string): string {
+  return profilePath(did);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Credentials: the linked ORCID iD                                            */
+/* -------------------------------------------------------------------------- */
+
+/** Where a linked ORCID iD resolves to. */
+export function orcidHref(orcid: string): string {
+  return `https://orcid.org/${orcid}`;
+}
+
+/**
+ * The ORCID iD linked to `did`, or `null` when none is.
+ *
+ * `GET /v1/dashboard` does not carry it; the profile document does
+ * (`GET /v1/profiles/{did}`, taken from the ORCID ownership credential), so
+ * the Credentials card asks for it on its own and a failure there never
+ * blanks the rest of `/me`.
+ */
+export async function loadLinkedOrcid(
+  did: string,
+  client: ProfileClient = api,
+): Promise<string | null> {
+  const profile = await loadProfile(did, client);
+  return profile.orcid;
+}
+
+/* -------------------------------------------------------------------------- */
+/* My papers: the moderation chip                                              */
+/* -------------------------------------------------------------------------- */
+
+/** The colour family of a chip; the word is always the information. */
+export type ChipTone = "neutral" | "verified" | "pending";
+
+/** The moderation state of a paper, as its own chip. */
+export interface ModerationChip {
+  /** The word on the chip. */
+  readonly label: string;
+  readonly tone: ChipTone;
+  /** The version state it was made from (`held`, `listed`, …). */
+  readonly state: string;
+  /** `true` for a held or rejected version: a moderator has stopped it. */
+  readonly stopped: boolean;
+}
+
+/**
+ * How each version state (`paper_versions.state`) reads on the card. These are
+ * the paper's *moderation* state, kept apart from the computed review status
+ * (`preprint`, `under_review`, `contested`, …) so a hold is never mistaken for
+ * a reviewer's rejection.
+ */
+const MODERATION_STATES: Readonly<Record<string, { label: string; tone: ChipTone }>> = {
+  draft: { label: "Draft", tone: "neutral" },
+  awaiting_consent: { label: "Awaiting consent", tone: "pending" },
+  scanning: { label: "Scanning", tone: "neutral" },
+  moderation: { label: "In moderation", tone: "pending" },
+  listed: { label: "Listed", tone: "verified" },
+  held: { label: "Held", tone: "pending" },
+  rejected: { label: "Rejected", tone: "pending" },
+};
+
+function sentenceCase(text: string): string {
+  const spaced = text.replace(/[._-]+/g, " ").trim();
+  return spaced === "" ? spaced : spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/**
+ * The moderation chip for a paper, or `null` when it has no version yet.
+ *
+ * `appealPending` is only meaningful for a paper a moderator stopped (held or
+ * rejected): the author has appealed and no panel has decided, so the chip
+ * says so instead of repeating the hold.
+ */
+export function moderationChip(
+  paper: Pick<MyPaper, "state">,
+  options: { readonly appealPending?: boolean } = {},
+): ModerationChip | null {
+  const state = paper.state;
+  if (state === null) {
+    return null;
+  }
+  const stopped = state === "held" || state === "rejected";
+  if (stopped && options.appealPending === true) {
+    return { label: "Appeal pending", tone: "pending", state, stopped };
+  }
+  const known = MODERATION_STATES[state];
+  return {
+    label: known?.label ?? sentenceCase(state),
+    tone: known?.tone ?? "neutral",
+    state,
+    stopped,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Notifications                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** `GET /v1/me/notifications`, relative to `/v1`. */
+export const NOTIFICATIONS_ENDPOINT = "/me/notifications";
+
+/** `POST` target that marks one notification read. */
+export function notificationReadEndpoint(id: number): string {
+  return `${NOTIFICATIONS_ENDPOINT}/${encodeURIComponent(String(id))}/read`;
+}
+
+/**
+ * Fired on `window` after a notification is marked read, so the global nav can
+ * lower its bell count without asking the API again.
+ * `detail.unread` is how many rows are still unread.
+ */
+export const NOTIFICATIONS_CHANGED_EVENT = "scholium:notifications-changed";
+
+/** One row of `GET /v1/me/notifications` (`NotificationOut`). */
+export interface NotificationItem {
+  readonly id: number;
+  readonly did: string;
+  /** What happened, e.g. `consent.request`. */
+  readonly kind: string;
+  /** Whatever the sending module recorded; never rendered raw. */
+  readonly payload: Readonly<Record<string, unknown>>;
+  /** `false` until the member opens it. */
+  readonly read: boolean;
+}
+
+/** What the notification calls need from the API client. */
+export type NotificationsClient = Pick<ApiClient, "get">;
+export type NotificationsWriteClient = Pick<ApiClient, "post">;
+
+/** Raised when the API answers with something that is not a notification list. */
+export class NotificationsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotificationsError";
+  }
+}
+
+/**
+ * Validate a `GET /v1/me/notifications` body.
+ *
+ * A body that is not a list, or a row with no `id` (it could never be marked
+ * read), is rejected rather than shown as "no notifications": an empty card
+ * would say there are none when the truth is "we don't know". Rows keep the
+ * API's order (oldest first); the card reverses them for display.
+ */
+export function parseNotifications(payload: unknown): NotificationItem[] {
+  if (!Array.isArray(payload)) {
+    throw new NotificationsError("The API did not return a list of notifications.");
+  }
+  return payload.map((row, index) => {
+    const id = isRecord(row) ? readNumber(row.id) : null;
+    if (!isRecord(row) || id === null) {
+      throw new NotificationsError(`Notification ${index + 1} has no id.`);
+    }
+    return {
+      id: Math.trunc(id),
+      did: readText(row.did) ?? "",
+      kind: readText(row.kind) ?? "notification",
+      payload: isRecord(row.payload) ? row.payload : {},
+      // Unknown state reads as "needs your attention", like the nav's badge.
+      read: row.read === true,
+    };
+  });
+}
+
+/** The viewer's notifications, oldest first, from `GET /v1/me/notifications`. */
+export async function loadNotifications(
+  client: NotificationsClient = api,
+): Promise<NotificationItem[]> {
+  const payload = await client.get<unknown>(NOTIFICATIONS_ENDPOINT, { cache: "no-store" });
+  return parseNotifications(payload);
+}
+
+/**
+ * Mark one notification read (`POST /v1/me/notifications/{id}/read`).
+ *
+ * `keepalive` lets the request outlive the page: opening a notification
+ * follows its link in the same click, and an ordinary request would be
+ * cancelled by that navigation.
+ */
+export async function markNotificationRead(
+  id: number,
+  client: NotificationsWriteClient = api,
+): Promise<void> {
+  await client.post<unknown>(notificationReadEndpoint(id), undefined, { keepalive: true });
+}
+
+/** How each notification kind is named on screen. */
+const NOTIFICATION_KIND_LABELS: Readonly<Record<string, string>> = {
+  "consent.request": "Consent request",
+  "recovery.request": "Recovery approval",
+  "recovery.guardians_changed": "Guardians changed",
+  "moderation.decision": "Moderation outcome",
+  "appeal.panel": "Appeal panel",
+  "flag.decided": "Flag decision",
+  "review.invitation": "Review invitation",
+  review_invitation: "Review invitation",
+  "email.verify": "Email verification",
+};
+
+/** The word for a notification kind; an unknown kind reads as itself, in words. */
+export function notificationKindLabel(kind: string): string {
+  return NOTIFICATION_KIND_LABELS[kind] ?? sentenceCase(kind);
+}
+
+type NotificationLike = Pick<NotificationItem, "kind" | "payload">;
+
+const MODERATION_ACTION_SUMMARIES: Readonly<Record<string, string>> = {
+  hold: "A moderator put your paper on hold.",
+  reject: "A moderator rejected your paper.",
+  release: "A moderator released your paper.",
+  list: "A moderator listed your paper.",
+  tombstone: "A moderator removed your paper.",
+};
+
+/** One plain sentence for what happened, never the payload's keys. */
+export function notificationSummary({ kind, payload }: NotificationLike): string {
+  switch (kind) {
+    case "consent.request": {
+      const version = readNumber(payload.n);
+      return `A co-author consent is waiting for your signature${
+        version === null ? "" : ` on version ${Math.trunc(version)}`
+      }.`;
+    }
+    case "recovery.request":
+      return "A recovery request needs your approval as a guardian.";
+    case "recovery.guardians_changed":
+      return "Your recovery guardians were changed.";
+    case "moderation.decision":
+      return (
+        MODERATION_ACTION_SUMMARIES[readText(payload.action) ?? ""] ??
+        "A moderator made a decision on your paper."
+      );
+    case "appeal.panel":
+      return "You were drawn for an appeal panel.";
+    case "flag.decided": {
+      const status = readText(payload.status);
+      return status === null ? "Your flag was decided." : `Your flag was ${status}.`;
+    }
+    case "review.invitation":
+    case "review_invitation":
+      return "You were invited to review a paper.";
+    case "email.verify":
+      return "Confirm your email address.";
+    default:
+      return (
+        readText(payload.summary) ??
+        readText(payload.message) ??
+        readText(payload.title) ??
+        sentenceCase(kind)
+      );
+  }
+}
+
+/** The reason a moderator or panel gave, when the notification carries one. */
+export function notificationDetail({ payload }: Pick<NotificationItem, "payload">): string | null {
+  return readText(payload.reason);
+}
+
+/** A path segment, with `:` left readable as the API's own links leave it. */
+function pathSegment(value: string): string {
+  return encodeURIComponent(value).replace(/%3A/gi, ":");
+}
+
+/**
+ * A link from the payload that is safe to put in an `href`: a path on this
+ * site, or an absolute http(s) address. `javascript:` and protocol-relative
+ * links are refused, and so is an API route (`/v1/…`), which the web origin
+ * would answer with a 404.
+ */
+function safePayloadLink(payload: Readonly<Record<string, unknown>>): string | null {
+  const link = readText(payload.link) ?? readText(payload.url);
+  if (link === null) {
+    return null;
+  }
+  if (link.startsWith("/")) {
+    return link.startsWith("//") || /^\/v1(\/|$)/.test(link) ? null : link;
+  }
+  try {
+    const url = new URL(link);
+    return url.protocol === "https:" || url.protocol === "http:" ? link : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where a notification leads: the consent page, the guardian approval, the
+ * paper a moderator decided on. Anything else uses the link the sender
+ * recorded, if it is safe; otherwise there is nothing to open.
+ */
+export function notificationLink({ kind, payload }: NotificationLike): string | null {
+  switch (kind) {
+    case "consent.request": {
+      const version = readText(payload.version_cid);
+      if (version !== null) {
+        return `/consent/${pathSegment(version)}`;
+      }
+      break;
+    }
+    case "recovery.request": {
+      const request = readText(payload.request_id);
+      if (request !== null) {
+        return `/me/recovery/${pathSegment(request)}`;
+      }
+      break;
+    }
+    case "moderation.decision": {
+      const target = readText(payload.target_cid);
+      if (target !== null) {
+        return `/p/${pathSegment(target)}`;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return safePayloadLink(payload);
+}
+
+/** Payload members that carry a time, most specific first. */
+const NOTIFICATION_TIME_KEYS = [
+  "created_at",
+  "createdAt",
+  "requested_at",
+  "requestedAt",
+  "decided_at",
+  "decidedAt",
+] as const;
+
+/**
+ * When a notification happened, as the ISO string its payload carries.
+ *
+ * The row itself has no timestamp, so this is only as good as what the sender
+ * recorded; `null` means "unknown", and the card then shows no time rather
+ * than inventing one.
+ */
+export function notificationTime({ payload }: Pick<NotificationItem, "payload">): string | null {
+  for (const key of NOTIFICATION_TIME_KEYS) {
+    const value = readText(payload[key]);
+    if (value !== null && !Number.isNaN(Date.parse(value))) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/** `45 minutes ago`, `1 day ago`; a plain date once it is over a month old. */
+export function timeAgo(iso: string, now: Date = new Date()): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) {
+    return iso;
+  }
+  const seconds = Math.floor((now.getTime() - then) / 1000);
+  if (seconds < 60) {
+    return "just now";
+  }
+  const plural = (count: number, unit: string) => `${count} ${unit}${count === 1 ? "" : "s"} ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return plural(minutes, "minute");
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return plural(hours, "hour");
+  }
+  const days = Math.floor(hours / 24);
+  if (days < 30) {
+    return plural(days, "day");
+  }
+  return new Date(then).toISOString().slice(0, 10);
+}
+
+/** Sort a failed notifications call into a plain message. */
+export function describeNotificationsError(error: unknown): string {
+  if (error instanceof ApiError) {
+    return error.detail || error.title || "The API could not return your notifications.";
+  }
+  if (error instanceof NetworkError) {
+    return "Scholium could not reach the API. Check your connection and try again.";
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return "The API could not return your notifications.";
+}
+
+/** Sort a failed mark-read call into a plain message. */
+export function describeMarkReadError(error: unknown): string {
+  if (error instanceof ApiError) {
+    return error.detail || error.title || "The API could not mark this notification read.";
+  }
+  if (error instanceof NetworkError) {
+    return "Scholium could not reach the API. Check your connection and try again.";
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return "The API could not mark this notification read.";
 }
