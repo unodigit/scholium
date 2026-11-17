@@ -246,7 +246,7 @@ describe("the order the reader does things in", () => {
     const { container, loadManifest } = renderPage();
 
     chooseFile(container, fileOf(MAIN, "main.pdf"));
-    await waitFor(() => expect(verdictOf(container).textContent).toContain("Enter the version id"));
+    await waitFor(() => expect(verdictOf(container).textContent).toContain("Could not check"));
     expect(loadManifest).not.toHaveBeenCalled();
 
     fireEvent.change(idInput(container), { target: { value: VERSION_ID } });

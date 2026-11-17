@@ -121,6 +121,126 @@ export function parseManifestResponse(body: unknown, ref: VersionRef): VersionMa
   };
 }
 
+/** One listed version whose manifest names a blob, as returned by the node. */
+export interface ContentVersion {
+  readonly paper: string;
+  readonly shortId: string;
+  readonly paperCid: string;
+  readonly versionCid: string;
+  readonly n: number;
+  readonly version: number;
+  readonly title: string;
+  readonly path: string;
+  readonly fileName: string;
+  readonly role: string;
+  readonly schId?: string;
+}
+
+/** Loads the listed versions naming a blob. */
+export type LoadContentVersions = (cid: string, signal?: AbortSignal) => Promise<readonly ContentVersion[]>;
+
+function baseNameOf(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const trimmed = normalized.replace(/\/+$/, "");
+  const name = trimmed.split("/").pop();
+  return name && name !== "" ? name : "download";
+}
+
+function parseContentVersion(entry: unknown, index: number): ContentVersion {
+  const where = `version ${index + 1}`;
+  if (!isMapping(entry)) {
+    throw new ManifestUnavailableError(`The node's version list was not readable (${where}).`);
+  }
+  const paper = entry.paper ?? entry.shortId ?? entry.short_id;
+  const n = entry.n ?? entry.version;
+  const title = entry.title;
+  const path = entry.path;
+  const fileName = entry.fileName ?? entry.file_name;
+  const paperCid = entry.paperCid ?? entry.paper_cid;
+  const versionCid = entry.versionCid ?? entry.version_cid;
+  if (typeof paper !== "string" || paper.trim() === "") {
+    throw new ManifestUnavailableError(`The node's version list was not readable (${where} has no paper).`);
+  }
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
+    throw new ManifestUnavailableError(`The node's version list was not readable (${where} has no version).`);
+  }
+  if (typeof title !== "string" || title.trim() === "") {
+    throw new ManifestUnavailableError(`The node's version list was not readable (${where} has no title).`);
+  }
+  if (typeof path !== "string" || path.trim() === "") {
+    throw new ManifestUnavailableError(`The node's version list was not readable (${where} has no path).`);
+  }
+  const resolvedFileName =
+    typeof fileName === "string" && fileName.trim() !== "" ? fileName : baseNameOf(path);
+  return {
+    paper: paper.trim(),
+    shortId: paper.trim(),
+    paperCid: typeof paperCid === "string" ? paperCid : "",
+    versionCid: typeof versionCid === "string" ? versionCid : "",
+    n,
+    version: n,
+    title: title.trim(),
+    path,
+    fileName: resolvedFileName,
+    role: typeof entry.role === "string" && entry.role.trim() !== "" ? entry.role : "other",
+    schId: `${paper.trim()}/v${n}`,
+  };
+}
+
+/**
+ * Read the content-versions response for `cid`.
+ *
+ * @throws {ManifestUnavailableError} if the answer is not a usable list.
+ */
+export function parseContentVersionsResponse(body: unknown, cid: string): readonly ContentVersion[] {
+  if (!isMapping(body)) {
+    throw new ManifestUnavailableError("The node's answer was not a version list.");
+  }
+  const versions = body.versions;
+  if (!Array.isArray(versions)) {
+    throw new ManifestUnavailableError("The node's answer was not a version list.");
+  }
+  // An empty list is a valid answer: "no listed paper contains this file".
+  return versions.map((entry, index) => parseContentVersion(entry, index));
+}
+
+/** Build a {@link LoadContentVersions} that reads a node's public catalog API. */
+export function createNodeContentVersionsLoader(client: ManifestClient = api): LoadContentVersions {
+  return async (cid, signal) => {
+    const body = await client.get<unknown>(`/content/${encodeURIComponent(cid)}/versions`, {
+      auth: false,
+      signal,
+    });
+    return parseContentVersionsResponse(body, cid);
+  };
+}
+
+/** The default loader: the shared API client, public read, no account. */
+export const loadContentVersions: LoadContentVersions = (cid, signal) =>
+  createNodeContentVersionsLoader()(cid, signal);
+
+// Aliases for callers that name the loader or parser differently.
+export const loadContentVersion = loadContentVersions;
+export const parseContentVersions = parseContentVersionsResponse;
+export const parseContentVersionResponse = parseContentVersionsResponse;
+export const createNodeContentLoader = createNodeContentVersionsLoader;
+export const describeContentVersions = describeContentVersionsError;
+
+/** A reader-facing sentence for why the content versions could not be loaded. */
+export function describeContentVersionsError(error: unknown): string {
+  if (error instanceof ManifestUnavailableError) return error.message;
+  if (error instanceof NetworkError) {
+    return "Scholium could not reach the node. You may be offline.";
+  }
+  if (error instanceof ApiError) {
+    return error.isNotFound
+      ? "No listed paper on this node contains this file."
+      : error.detail || error.title || "The node could not provide the signed files.";
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return "The signed files could not be loaded.";
+}
+
 /** Build a {@link LoadManifest} that reads a node's public catalog API. */
 export function createNodeManifestLoader(client: ManifestClient = api): LoadManifest {
   return async (ref, signal) => {

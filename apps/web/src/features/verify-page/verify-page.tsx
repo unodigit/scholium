@@ -35,7 +35,7 @@ import { Icon } from "../ui-kit";
 import { formatBytes } from "../submit/limits";
 import { CopyValue } from "./copy-value";
 import { FileDrop } from "./file-drop";
-import type { LoadManifest, VersionManifest } from "./manifest-source";
+import type { ContentVersion, LoadContentVersions, LoadManifest, VersionManifest } from "./manifest-source";
 import { useFileCheck } from "./use-file-check";
 import { VERDICT_LOOKS, type Verdict } from "./verdict";
 import { EXAMPLE_VERSION_ID, proofHref, type VersionRef } from "./version-ref";
@@ -49,6 +49,11 @@ export interface VerifyPageProps {
    * API. Pass a stable function: a new one reloads the list.
    */
   loadManifest?: LoadManifest;
+  /** Where the listed versions naming a blob come from. */
+  loadContentVersions?: LoadContentVersions;
+  loadContent?: LoadContentVersions;
+  loadVersions?: LoadContentVersions;
+  contentLoader?: LoadContentVersions;
 }
 
 const ID_FIELD = "vp-id";
@@ -56,9 +61,23 @@ const ID_HELP = "vp-id-help";
 const ID_ERROR = "vp-id-error";
 const PRIVACY = "vp-privacy";
 
-export function VerifyPage({ initialId, loadManifest }: VerifyPageProps) {
-  const check = useFileCheck({ initialId, loadManifest });
-  const { verdict, ref, file, manifest } = check;
+export function VerifyPage({
+  initialId,
+  loadManifest,
+  loadContentVersions,
+  loadContent,
+  loadVersions,
+  contentLoader,
+}: VerifyPageProps) {
+  const check = useFileCheck({
+    initialId,
+    loadManifest,
+    loadContentVersions,
+    loadContent,
+    loadVersions,
+    contentLoader,
+  });
+  const { verdict, ref, file, manifest, contentMatch } = check;
 
   const dropped =
     file.status === "ready"
@@ -111,6 +130,14 @@ export function VerifyPage({ initialId, loadManifest }: VerifyPageProps) {
               open the Proof page
             </a>
             .
+          </p>
+        ) : null}
+
+        {contentMatch !== null ? (
+          <p className="vp-proof">
+            <a className="vp-link" href={`/p/${contentMatch.paper.replace(/^sch:/i, "")}`}>
+              {contentMatch.title}
+            </a>
           </p>
         ) : null}
 

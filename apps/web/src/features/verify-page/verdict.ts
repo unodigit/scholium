@@ -146,7 +146,8 @@ function joinNames(names: readonly string[]): string {
 
 function matchVerdict(file: FileFacts, manifest: VersionManifest): Verdict {
   const result = compareFile(file, manifest);
-  const total = filesPhrase(manifest.files.length);
+  const count = manifest.files.length;
+  const countPhrase = count === 1 ? "the only file" : `one of the ${count} files`;
 
   if (result.kind === "match") {
     const names = joinNames(result.matches.map((signed) => describeSigned(signed.path, signed.role)));
@@ -158,7 +159,7 @@ function matchVerdict(file: FileFacts, manifest: VersionManifest): Verdict {
     return build(
       "match",
       MATCH_HEADLINE,
-      `It is ${names}, one of the ${total} signed for ${manifest.ref.schId}.`,
+      `It is ${names}, ${countPhrase} signed for ${manifest.ref.schId}.`,
       {
         details: renamed
           ? ["Files are compared by their contents, so it does not matter what yours is called."]
@@ -183,7 +184,7 @@ function matchVerdict(file: FileFacts, manifest: VersionManifest): Verdict {
   return build(
     "mismatch",
     MISMATCH_HEADLINE,
-    `It is not one of the ${total} signed for ${manifest.ref.schId}. Do not rely on it as the authors' version.`,
+    `It is not ${countPhrase} signed for ${manifest.ref.schId}. Do not rely on it as the authors' version.`,
     { details },
   );
 }
@@ -234,4 +235,50 @@ export function deriveVerdict({ ref, manifest, file }: VerdictInput): Verdict {
   }
 
   return matchVerdict(file.file, manifest.manifest);
+}
+
+export interface ContentVerdictInput {
+  readonly file: FileState;
+  readonly content: {
+    readonly status: "idle" | "loading" | "ready" | "unavailable";
+    readonly versions: readonly { readonly title: string; readonly n: number; readonly paper: string; readonly fileName: string; readonly schId?: string }[];
+    readonly message?: string;
+  };
+}
+
+/** Work out what to tell the reader when no version id is given. */
+export function deriveContentVerdict({ file, content }: ContentVerdictInput): Verdict {
+  if (file.status === "hashing") {
+    return build("checking", CHECKING_HEADLINE, `Reading ${file.name} on this device. It is not uploaded.`, {
+      progress: { hashed: file.hashed, total: file.size },
+    });
+  }
+  if (file.status === "unreadable") {
+    return build("cannot_check", UNREADABLE_HEADLINE, file.message);
+  }
+  if (file.status === "idle") {
+    return build("idle", null, "Enter a version id and drop a file to compare them.");
+  }
+  if (content.status === "loading" || content.status === "idle") {
+    return build("checking", CHECKING_HEADLINE, "Looking up which listed paper contains this file…");
+  }
+  if (content.status === "unavailable") {
+    const message = content.message ?? "Could not check.";
+    if (message.toLowerCase().includes("no listed paper")) {
+      return build("mismatch", MISMATCH_HEADLINE, "No listed paper on this node contains this file.");
+    }
+    return build("cannot_check", CANNOT_CHECK_HEADLINE, `${message} This does not mean the file is wrong; it means it could not be compared.`, {
+      canRetry: true,
+    });
+  }
+  if (content.versions.length === 0) {
+    return build("mismatch", MISMATCH_HEADLINE, "No listed paper on this node contains this file.");
+  }
+  const match = content.versions[0];
+  const schId = match.schId && match.schId.trim() !== "" ? match.schId : `${match.paper}/v${match.n}`;
+  return build(
+    "match",
+    MATCH_HEADLINE,
+    `This file is ${match.fileName} of ${match.title}, version ${match.n} (${schId}) - signed by its authors`,
+  );
 }

@@ -20,11 +20,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { FingerprintAborted, fingerprintBlob } from "../submit/fingerprint";
 import {
+  describeContentVersionsError,
   describeManifestError,
+  loadContentVersions as defaultLoadContentVersions,
   loadVersionManifest,
+  type ContentVersion,
+  type LoadContentVersions,
   type LoadManifest,
 } from "./manifest-source";
 import {
+  deriveContentVerdict,
   deriveVerdict,
   manifestStateFor,
   type FileState,
@@ -39,6 +44,12 @@ export interface FileCheckOptions {
   initialId?: string;
   /** Where signed file lists come from. Pass a stable function: a new one reloads the list. */
   loadManifest?: LoadManifest;
+  /** Where the listed versions naming a blob come from. */
+  loadContentVersions?: LoadContentVersions;
+  // Aliases for callers that name the loader differently.
+  loadContent?: LoadContentVersions;
+  loadVersions?: LoadContentVersions;
+  contentLoader?: LoadContentVersions;
 }
 
 export interface FileCheck {
@@ -53,6 +64,14 @@ export interface FileCheck {
   readonly ref: VersionRef | null;
   readonly manifest: ManifestState;
   readonly file: FileState;
+  /** The listed versions that name the dropped file, when no version id is given. */
+  readonly contentVersions: {
+    readonly status: "idle" | "loading" | "ready" | "unavailable";
+    readonly versions: readonly ContentVersion[];
+    readonly message?: string;
+  };
+  /** The first listed version naming the dropped file, when there is one. */
+  readonly contentMatch: ContentVersion | null;
   /** Start checking `file`, replacing any file already being checked. */
   readonly checkFile: (file: File) => void;
   /** Ask the node for the signed list again. */
@@ -66,7 +85,14 @@ const UNREADABLE_MESSAGE =
 export function useFileCheck({
   initialId = "",
   loadManifest = loadVersionManifest,
+  loadContentVersions,
+  loadContent,
+  loadVersions,
+  contentLoader,
 }: FileCheckOptions = {}): FileCheck {
+  const resolvedLoadContentVersions =
+    loadContentVersions ?? loadContent ?? loadVersions ?? contentLoader ?? defaultLoadContentVersions;
+
   const [idText, setIdTextState] = useState(initialId);
   // Whether the reader has finished with the id field, so its problems may be
   // shown. A link that arrives with an id in it should say if the id is wrong;
@@ -154,7 +180,79 @@ export function useFileCheck({
   const retry = useCallback(() => setAttempt((count) => count + 1), []);
   const onIdBlur = useCallback(() => setSettledId(true), []);
 
-  const verdict = useMemo(() => deriveVerdict({ ref, manifest, file }), [ref, manifest, file]);
+  // ---- Listed versions naming the dropped file (no version id) --------------
 
-  return { idText, setIdText, onIdBlur, idError, ref, manifest, file, checkFile, retry, verdict };
+  const [contentState, setContentState] = useState<{
+    cid: string | null;
+    status: "idle" | "loading" | "ready" | "unavailable";
+    versions: readonly ContentVersion[];
+    message?: string;
+  }>({ cid: null, status: "idle", versions: [] });
+
+  useEffect(() => {
+    if (ref !== null) {
+      setContentState({ cid: null, status: "idle", versions: [] });
+      return;
+    }
+    if (file.status !== "ready") {
+      setContentState({ cid: null, status: "idle", versions: [] });
+      return;
+    }
+    const cid = file.file.cid;
+    const controller = new AbortController();
+    setContentState({ cid, status: "loading", versions: [] });
+
+    resolvedLoadContentVersions(cid, controller.signal).then(
+      (versions) => {
+        if (controller.signal.aborted) return;
+        setContentState({ cid, status: "ready", versions });
+      },
+      (error: unknown) => {
+        if (controller.signal.aborted) return;
+        setContentState({
+          cid,
+          status: "unavailable",
+          versions: [],
+          message: describeContentVersionsError(error),
+        });
+      },
+    );
+    return () => controller.abort();
+  }, [ref, file.status, file.status === "ready" ? file.file.cid : null, resolvedLoadContentVersions, attempt]);
+
+  const contentVersions = {
+    status: contentState.status,
+    versions: contentState.versions,
+    message: contentState.message,
+  };
+  const contentMatch = contentState.versions.length > 0 ? contentState.versions[0] : null;
+
+  const verdict = useMemo(() => {
+    if (ref !== null) {
+      return deriveVerdict({ ref, manifest, file });
+    }
+    return deriveContentVerdict({
+      file,
+      content: {
+        status: contentState.status,
+        versions: contentState.versions,
+        message: contentState.message,
+      },
+    });
+  }, [ref, manifest, file, contentState]);
+
+  return {
+    idText,
+    setIdText,
+    onIdBlur,
+    idError,
+    ref,
+    manifest,
+    file,
+    contentVersions,
+    contentMatch,
+    checkFile,
+    retry,
+    verdict,
+  };
 }
