@@ -99,6 +99,11 @@ export {
   type ShowToastOptions,
 } from "./toast";
 
+export { BrandLogo, type BrandLogoProps } from "./brand-logo";
+export { BrandMark, type BrandMarkProps } from "./brand-mark";
+export type { BrandLogoSize } from "./brand-logo";
+export type { BrandSize, BrandVariant } from "./brand-mark";
+
 export { copyText } from "./clipboard";
 
 export {

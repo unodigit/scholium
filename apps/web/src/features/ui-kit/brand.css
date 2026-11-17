@@ -1,0 +1,89 @@
+/* ============================================================================
+   BrandMark / BrandLogo — docs/design.md §2 (Brand).
+   ----------------------------------------------------------------------------
+   All colours come from the design tokens in src/styles/tokens.css. No hex
+   literals live here, so light, dark and scoped data-theme subtrees re-theme
+   the mark automatically.
+   ============================================================================ */
+
+.sch-brand-mark {
+  --brand-mark-height: 20px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-inline-size: var(--brand-mark-height);
+  min-block-size: var(--brand-mark-height);
+  min-width: var(--brand-mark-height);
+  min-height: var(--brand-mark-height);
+  margin: calc(var(--brand-mark-height) / 2);
+
+  line-height: 0;
+}
+
+.sch-brand-mark[data-size="sm"] {
+  --brand-mark-height: 20px;
+}
+
+.sch-brand-mark[data-size="md"] {
+  --brand-mark-height: 28px;
+}
+
+.sch-brand-mark[data-size="lg"] {
+  --brand-mark-height: 48px;
+}
+
+.sch-brand-mark svg {
+  display: block;
+  width: auto;
+  height: 100%;
+}
+
+.sch-brand-logo {
+  --brand-mark-height: 20px;
+
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--brand-mark-height) / 5);
+
+  min-block-size: var(--brand-mark-height);
+  min-height: var(--brand-mark-height);
+  margin: calc(var(--brand-mark-height) / 2);
+
+  line-height: 0;
+}
+
+.sch-brand-logo[data-size="sm"] {
+  --brand-mark-height: 20px;
+}
+
+.sch-brand-logo[data-size="md"] {
+  --brand-mark-height: 28px;
+}
+
+.sch-brand-logo[data-size="lg"] {
+  --brand-mark-height: 48px;
+}
+
+.sch-brand-logo__mark {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+}
+
+.sch-brand-logo__mark svg {
+  display: block;
+  width: auto;
+  height: 100%;
+}
+
+.sch-brand-logo__wordmark {
+  font-family: var(--family-serif);
+  font-weight: 600;
+  color: var(--ink);
+  font-size: calc(var(--brand-mark-height) * 0.72);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
