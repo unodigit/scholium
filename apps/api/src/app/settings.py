@@ -32,6 +32,10 @@ _HOSTED_AI_KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY"}
 #: :meth:`Settings.validate_for_environment` rather than starting the app.
 _ENV_ALIASES = {"dev": "dev", "prod": "production", "production": "production"}
 
+#: Accepted spellings of ``SANDBOX_BACKEND``.  Kept here rather than imported
+#: from the sandbox module so production validation never has to import it.
+_SANDBOX_BACKENDS = ("docker", "podman", "remote", "none")
+
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
@@ -222,6 +226,18 @@ class Settings:
     OLLAMA_URL: str = field(default_factory=lambda: _env("OLLAMA_URL", "http://localhost:11434"))
     SMTP_URL: str = field(default_factory=lambda: _env("SMTP_URL", ""))
     JOBS_EAGER: int = field(default_factory=lambda: _int("JOBS_EAGER", 1))
+    # The reproducibility sandbox's runner: docker (default), podman, remote or
+    # none.  "remote" posts the bundle cid and limits to SANDBOX_URL with the
+    # bearer token SANDBOX_TOKEN (at least 32 characters in production); "none"
+    # never runs code.  See app.modules.ai_review.sandbox.
+    SANDBOX_BACKEND: str = field(
+        default_factory=lambda: (_env("SANDBOX_BACKEND", "docker") or "docker").strip().lower()
+    )
+    SANDBOX_URL: str = field(default_factory=lambda: _env("SANDBOX_URL", "").strip())
+    # Secret: excluded from repr() so it cannot reach logs or tracebacks.
+    SANDBOX_TOKEN: str = field(
+        default_factory=lambda: _env("SANDBOX_TOKEN", "").strip(), repr=False
+    )
     NEXT_PUBLIC_API_URL: str = field(default_factory=lambda: _env("NEXT_PUBLIC_API_URL", "http://localhost:8000"))
     # dev | production (case-insensitive; "prod" is an alias for "production").
     # Production refuses insecure defaults (see validate_for_environment).
@@ -320,6 +336,21 @@ class Settings:
             problems.append("ARXIV_MOCK must be 0")
         if self.JOBS_EAGER:
             problems.append("JOBS_EAGER must be 0 (jobs run on the background worker)")
+        sandbox_backend = (self.SANDBOX_BACKEND or "docker").strip().lower()
+        if sandbox_backend not in _SANDBOX_BACKENDS:
+            problems.append(
+                "SANDBOX_BACKEND must be one of " + ", ".join(_SANDBOX_BACKENDS)
+            )
+        elif sandbox_backend == "remote":
+            if not (self.SANDBOX_URL or "").strip():
+                problems.append(
+                    "SANDBOX_URL must be set when SANDBOX_BACKEND is remote"
+                )
+            if len((self.SANDBOX_TOKEN or "").strip()) < 32:
+                problems.append(
+                    "SANDBOX_TOKEN must be a random value of at least 32 characters "
+                    "when SANDBOX_BACKEND is remote"
+                )
         provider = (self.AI_PROVIDER or "").strip().lower()
         if provider == "fake":
             problems.append("AI_PROVIDER must not be fake")

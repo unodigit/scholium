@@ -61,7 +61,12 @@ def run_reproducibility_agent(
     image: Optional[str] = None,
     command: Optional[Sequence[str]] = None,
     docker_bin: str = "docker",
+    podman_bin: str = "podman",
     runner: Optional[Runner] = None,
+    backend: Optional[str] = None,
+    sandbox_url: Optional[str] = None,
+    sandbox_token: Optional[str] = None,
+    http_client: Optional[object] = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> AgentReport:
     """Run the code bundle in the sandbox, then the reproducibility agent over paper and log.
@@ -74,8 +79,9 @@ def run_reproducibility_agent(
         pdf_cid: the manuscript PDF, for the sanitizer's hidden-text findings.
         listed: whether the draft is listed, as for
             :func:`~app.modules.ai_review.run_agent`.
-        limits, image, command, docker_bin, runner: how the sandbox runs; see
-            :func:`~app.modules.ai_review.sandbox.run_bundle`.
+        limits, image, command, docker_bin, podman_bin, runner, backend,
+        sandbox_url, sandbox_token, http_client: how and where the sandbox
+        runs; see :func:`~app.modules.ai_review.sandbox.run_bundle`.
         max_tokens: the provider's response budget.
 
     Returns:
@@ -99,7 +105,12 @@ def run_reproducibility_agent(
         image=image,
         command=command,
         docker_bin=docker_bin,
+        podman_bin=podman_bin,
         runner=runner,
+        backend=backend,
+        sandbox_url=sandbox_url,
+        sandbox_token=sandbox_token,
+        http_client=http_client,
     )
     report = run_agent(
         "reproducibility",

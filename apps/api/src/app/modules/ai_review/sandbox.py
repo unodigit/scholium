@@ -1,4 +1,4 @@
-"""Running a paper's code bundle in a docker sandbox (feature 119).
+"""Running a paper's code bundle in a sandbox (features 119 and 12).
 
 The reproducibility agent reads the paper; this module is the part that runs
 its code, and the only part of the AI pre-review that executes anything the
@@ -8,6 +8,28 @@ author supplied::
     run.status        # "completed" | "failed" | "timeout" | "not_run"
     run.log_lines     # what the code printed, then one line from the sandbox
     run.findings()    # Finding objects whose evidence is a line of run.log
+
+Where the code runs
+    ``SANDBOX_BACKEND`` chooses the runner (:data:`SANDBOX_BACKENDS`):
+
+    ``docker`` (the default)
+        A container started through the docker CLI on this node.  Pull the
+        image ahead of time (``docker pull python:3.12-slim``, or the image
+        named by ``REPRO_DOCKER_IMAGE``); a run never pulls one.
+    ``podman``
+        The same container and the same limits through the podman CLI, so a
+        rootless podman 4.9 host needs no docker daemon.
+    ``remote``
+        The bundle's cid and the limits are POSTed to ``SANDBOX_URL`` (a
+        sandbox service, ``python -m app.sandbox_service``) with a bearer
+        ``SANDBOX_TOKEN``; the run id it returns is polled until the service
+        reports a result, which is mapped to :class:`SandboxRun`.
+    ``none``
+        The sandbox is switched off: every run is ``not_run`` with reason
+        :data:`REASON_SANDBOX_DISABLED` and nothing is executed or fetched.
+
+    docker and podman share :func:`build_create_args`, so they enforce exactly
+    the same limits; remote is sent the same :class:`SandboxLimits`.
 
 What the container gets
     ``docker run --network none`` semantics, spelled as ``docker create`` then
@@ -20,28 +42,29 @@ What the container gets
     (the working directory and ``$HOME``) so the code can write results, and
     ``/tmp`` is a second tmpfs.  Nothing the code writes survives the run.
 
-How a run goes
-    ``docker create`` -> ``start`` -> ``wait`` (up to the time limit; on
-    timeout ``kill``) -> ``logs`` -> ``rm -f``.  The container is removed in a
+How a local run goes
+    ``create`` -> ``start`` -> ``wait`` (up to the time limit; on timeout
+    ``kill``) -> ``logs`` -> ``rm -f``.  The container is removed in a
     ``finally``, so a crash in this process after ``create`` still removes it;
     only a killed process leaves one behind, and every sandbox container
     carries the label :data:`CONTAINER_LABEL` so an operator can sweep it
     (``docker rm -f $(docker ps -aq --filter label=scholium.sandbox)``).
-    Docker's own log is capped at 1 MB so a noisy bundle cannot fill the
+    The CLI's own log is capped at 1 MB so a noisy bundle cannot fill the
     daemon's disk.
 
 ``not_run``
-    Whatever stops the code from running -- docker is not installed, its
-    daemon cannot be reached, the image is not present, the bundle is missing,
-    unsafe or has no entry point -- is a ``not_run`` result with a
-    :data:`NOT_RUN_REASONS` code, never an exception and never a guess about
-    how the code would have behaved.  The sandbox is optional infrastructure
+    Whatever stops the code from running -- the container CLI is not
+    installed, its daemon cannot be reached, the image is not present, the
+    remote service cannot be reached, the bundle is missing, unsafe or has no
+    entry point -- is a ``not_run`` result with a :data:`NOT_RUN_REASONS`
+    code, never an exception and never a guess about how the code would have
+    behaved.  A runner that cannot be reached at all is
+    :data:`REASON_SANDBOX_UNREACHABLE`; it is never raised out of
+    :func:`run_bundle`.  The sandbox is optional infrastructure
     (``app_spec.xml``: "when docker is available").  The sandbox **image is
-    never pulled** by a run: pull it ahead of time
-    (``docker pull python:3.12-slim``, or the image named by
-    ``REPRO_DOCKER_IMAGE``); an absent image is ``docker_unavailable``.  The
+    never pulled** by a run; an absent image is ``docker_unavailable``.  The
     daemon must see the host's temporary directory at the same path, which is
-    the case when docker runs on the host the API runs on.
+    the case when docker or podman runs on the host the API runs on.
 
 The log
     :attr:`SandboxRun.log_lines` are the container's stdout and stderr
@@ -60,6 +83,7 @@ any paragraph of the paper, and never instructions.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import re
@@ -69,7 +93,12 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
+from urllib.parse import quote, urlparse
+
+import httpx
+
+from app.settings import settings
 
 from .bundle_files import (
     REASON_BUNDLE_REJECTED,
@@ -81,6 +110,11 @@ from .errors import BundleError
 from .findings import Evidence, Finding
 
 __all__ = [
+    "BACKEND_DOCKER",
+    "BACKEND_NONE",
+    "BACKEND_PODMAN",
+    "BACKEND_REMOTE",
+    "BACKEND_ENV",
     "CONTAINER_LABEL",
     "DEFAULT_IMAGE",
     "IMAGE_ENV",
@@ -90,23 +124,31 @@ __all__ = [
     "NOT_RUN_REASONS",
     "REASON_BUNDLE_REJECTED",
     "REASON_BUNDLE_UNAVAILABLE",
+    "REASON_CONTAINER_UNAVAILABLE",
     "REASON_DOCKER_UNAVAILABLE",
     "REASON_NO_BUNDLE",
     "REASON_NO_ENTRYPOINT",
+    "REASON_SANDBOX_DISABLED",
     "REASON_SANDBOX_ERROR",
+    "REASON_SANDBOX_UNREACHABLE",
+    "SANDBOX_BACKENDS",
     "STATUSES",
     "STATUS_COMPLETED",
     "STATUS_FAILED",
     "STATUS_NOT_RUN",
     "STATUS_PREFIX",
     "STATUS_TIMEOUT",
+    "TOKEN_ENV",
+    "URL_ENV",
     "CommandResult",
     "SandboxLimits",
     "SandboxRun",
     "build_create_args",
     "clean_log",
+    "resolve_backend",
     "run_bundle",
     "run_command",
+    "run_remote_bundle",
 ]
 
 logger = logging.getLogger(__name__)
@@ -116,7 +158,30 @@ DEFAULT_IMAGE = "python:3.12-slim"
 #: Environment variable that selects the sandbox image.
 IMAGE_ENV = "REPRO_DOCKER_IMAGE"
 
+#: Environment variable selecting the runner: docker, podman, remote or none.
+BACKEND_ENV = "SANDBOX_BACKEND"
+#: Environment variable naming the sandbox service's base URL (``remote``).
+URL_ENV = "SANDBOX_URL"
+#: Environment variable holding the shared bearer token (``remote``).
+TOKEN_ENV = "SANDBOX_TOKEN"
+
+#: A container through the docker CLI (the default).
+BACKEND_DOCKER = "docker"
+#: The same container through the podman CLI.
+BACKEND_PODMAN = "podman"
+#: A sandbox service reached over HTTP.
+BACKEND_REMOTE = "remote"
+#: No sandbox at all: every run is ``not_run``.
+BACKEND_NONE = "none"
+SANDBOX_BACKENDS: tuple[str, ...] = (
+    BACKEND_DOCKER,
+    BACKEND_PODMAN,
+    BACKEND_REMOTE,
+    BACKEND_NONE,
+)
+
 #: The wall-clock limit of a run, and the most a :class:`SandboxLimits` may ask.
+#: Also the ceiling of :class:`SandboxLimits`.
 MAX_TIME_LIMIT_SECONDS = 10 * 60
 
 #: Label on every sandbox container, for sweeping leftovers.
@@ -144,13 +209,22 @@ STATUSES: tuple[str, ...] = (
 REASON_NO_BUNDLE = "no_bundle"
 #: ``not_run`` reason: docker is missing, its daemon is down or the image is absent.
 REASON_DOCKER_UNAVAILABLE = "docker_unavailable"
+#: ``not_run`` reason: podman is missing or its service cannot be reached.
+REASON_CONTAINER_UNAVAILABLE = "container_unavailable"
+#: ``not_run`` reason: the sandbox service could not be reached at all.
+REASON_SANDBOX_UNREACHABLE = "sandbox_unreachable"
+#: ``not_run`` reason: ``SANDBOX_BACKEND=none`` switched the sandbox off.
+REASON_SANDBOX_DISABLED = "sandbox_disabled"
 #: ``not_run`` reason: the bundle has no ``reproduce.sh`` or ``run.sh``.
 REASON_NO_ENTRYPOINT = "no_entrypoint"
-#: ``not_run`` reason: docker failed to create or start the container.
+#: ``not_run`` reason: the sandbox failed to create or start the container.
 REASON_SANDBOX_ERROR = "sandbox_error"
 NOT_RUN_REASONS: tuple[str, ...] = (
     REASON_NO_BUNDLE,
     REASON_DOCKER_UNAVAILABLE,
+    REASON_CONTAINER_UNAVAILABLE,
+    REASON_SANDBOX_UNREACHABLE,
+    REASON_SANDBOX_DISABLED,
     REASON_BUNDLE_UNAVAILABLE,
     REASON_BUNDLE_REJECTED,
     REASON_NO_ENTRYPOINT,
@@ -172,6 +246,13 @@ _WRAPPER = f'cp -R {_BUNDLE_MOUNT}/. {_WORK_DIR}/ && cd {_WORK_DIR} && exec "$@"
 _CONTROL_TIMEOUT = 30.0
 _PROBE_TIMEOUT = 15.0
 _LOGS_TIMEOUT = 60.0
+
+#: HTTP timeouts for the remote runner: a slow connect is "unreachable".
+_REMOTE_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
+#: Seconds between polls of a remote run.
+_REMOTE_POLL_SECONDS = 0.25
+#: Extra seconds the client waits past the run's own limit before giving up.
+_REMOTE_GRACE_SECONDS = 30.0
 
 _IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}")
 # A path docker's ``--mount`` option can carry without quoting.
@@ -325,6 +406,24 @@ _NOT_RUN_FINDINGS: dict[str, tuple[str, str, str]] = {
         "high",
         "The code bundle was not run because the docker sandbox is not available "
         "on this node, so the paper's code is unchecked.",
+    ),
+    REASON_CONTAINER_UNAVAILABLE: (
+        "info",
+        "high",
+        "The code bundle was not run because the podman sandbox is not available "
+        "on this node, so the paper's code is unchecked.",
+    ),
+    REASON_SANDBOX_UNREACHABLE: (
+        "info",
+        "high",
+        "The code bundle was not run because the sandbox service could not be "
+        "reached, so the paper's code is unchecked.",
+    ),
+    REASON_SANDBOX_DISABLED: (
+        "info",
+        "high",
+        "The code bundle was not run because the sandbox is disabled on this node, "
+        "so the paper's code is unchecked.",
     ),
     REASON_BUNDLE_UNAVAILABLE: (
         "info",
@@ -528,16 +627,49 @@ def _locate_bundle(cid: str) -> Path:
     return content.blob_path(cid)
 
 
-def _warn(step: str, result: CommandResult) -> None:
-    # Docker's own message can name host paths, so it goes to the operator's
+def _warn(step: str, result: CommandResult, tool: str = "docker") -> None:
+    # The CLI's own message can name host paths, so it goes to the operator's
     # log and never into the run log that readers and the model see.
     logger.warning(
-        "sandbox: docker %s failed (exit %s%s): %s",
+        "sandbox: %s %s failed (exit %s%s): %s",
+        tool,
         step,
         result.returncode,
         ", timed out" if result.timed_out else "",
         result.stderr.decode("utf-8", errors="replace").strip()[:500],
     )
+
+
+def _configured(name: str, explicit: Optional[str], default: str = "") -> str:
+    """An explicit value, else the live environment, else ``settings``.
+
+    Settings are read once at import, so tests that change the environment
+    after importing the app (or an operator that exports a variable before a
+    process starts) see their value here too, exactly as the image setting is
+    read from the environment for every run.
+    """
+    if explicit is not None:
+        return str(explicit).strip()
+    live = os.environ.get(name)
+    if live is not None and live.strip():
+        return live.strip()
+    return str(getattr(settings, name, default) or default).strip()
+
+
+def resolve_backend(backend: Optional[str] = None) -> str:
+    """The runner ``SANDBOX_BACKEND`` selects, normalised to lowercase.
+
+    Raises:
+        ValueError: if the value is not one of :data:`SANDBOX_BACKENDS`; that
+            is a configuration mistake, not a problem with the paper.
+    """
+    chosen = _configured(BACKEND_ENV, backend, BACKEND_DOCKER).lower()
+    if chosen not in SANDBOX_BACKENDS:
+        raise ValueError(
+            f"not a sandbox backend: {chosen!r}; expected one of "
+            + ", ".join(SANDBOX_BACKENDS)
+        )
+    return chosen
 
 
 def run_bundle(
@@ -547,31 +679,96 @@ def run_bundle(
     image: Optional[str] = None,
     command: Optional[Sequence[str]] = None,
     docker_bin: str = "docker",
+    podman_bin: str = "podman",
     runner: Optional[Runner] = None,
+    backend: Optional[str] = None,
+    sandbox_url: Optional[str] = None,
+    sandbox_token: Optional[str] = None,
+    http_client: Optional[httpx.Client] = None,
+    poll_interval: float = _REMOTE_POLL_SECONDS,
 ) -> SandboxRun:
     """Run the code bundle ``bundle_cid`` in the sandbox and return what happened.
+
+    The runner is the one ``SANDBOX_BACKEND`` selects (:func:`resolve_backend`):
+    ``docker`` (the default), ``podman``, ``remote`` or ``none``.
 
     Args:
         bundle_cid: the bundle's cid in the content store, or ``None`` if the
             version has none.  It must have passed the file sanitizer.
-        limits: resource limits; defaults to the spec's.
-        image: the docker image; defaults to ``$REPRO_DOCKER_IMAGE`` and then
-            :data:`DEFAULT_IMAGE`.  It must already be present locally.
+        limits: resource limits; defaults to the spec's.  The same limits are
+            used by every backend.
+        image: the container image for docker and podman; defaults to
+            ``$REPRO_DOCKER_IMAGE`` and then :data:`DEFAULT_IMAGE`.  It must
+            already be present locally.  Unused by ``remote`` and ``none``.
         command: what to run in ``/work`` instead of ``sh ./reproduce.sh`` (or
-            ``run.sh``); the first word is looked up in the image.
+            ``run.sh``); the first word is looked up in the image.  Unused by
+            ``remote`` and ``none``.
         docker_bin: the docker executable.
-        runner: runs the docker commands; defaults to :func:`run_command`.
+        podman_bin: the podman executable.
+        runner: runs the container CLI commands; defaults to :func:`run_command`.
+        backend: the runner to use; defaults to ``$SANDBOX_BACKEND`` and then
+            ``settings.SANDBOX_BACKEND``.
+        sandbox_url: the sandbox service's base URL for ``remote``; defaults
+            to ``$SANDBOX_URL`` and then ``settings.SANDBOX_URL``.
+        sandbox_token: the bearer token for ``remote``; defaults to
+            ``$SANDBOX_TOKEN`` and then ``settings.SANDBOX_TOKEN``.
+        http_client: an ``httpx.Client`` to use for ``remote`` (e.g. with a
+            mock transport); by default one is created and closed per run.
+        poll_interval: seconds between polls of a remote run.
 
     Returns:
-        A :class:`SandboxRun`.  Problems with docker or with the bundle are a
-        ``not_run`` result, not an exception.
+        A :class:`SandboxRun`.  Problems with the runner or with the bundle
+        are a ``not_run`` result, never an exception; an unreachable remote
+        runner is ``not_run`` with reason :data:`REASON_SANDBOX_UNREACHABLE`.
 
     Raises:
-        ValueError: for an ``image`` that is not an image reference or an
-            empty ``command``; these are mistakes of the caller or the
-            configuration, not of the paper.
+        ValueError: for an unknown ``backend``, an ``image`` that is not an
+            image reference or an empty ``command``; these are mistakes of the
+            caller or the configuration, not of the paper.
     """
     limits = limits or SandboxLimits()
+    backend = resolve_backend(backend)
+
+    if backend == BACKEND_NONE:
+        # "none" means exactly that: nothing is fetched, unpacked or started.
+        return _not_run(
+            REASON_SANDBOX_DISABLED,
+            "the sandbox backend is none (SANDBOX_BACKEND=none)",
+            limits=limits,
+        )
+    if backend == BACKEND_REMOTE:
+        return run_remote_bundle(
+            bundle_cid,
+            limits=limits,
+            sandbox_url=sandbox_url,
+            sandbox_token=sandbox_token,
+            http_client=http_client,
+            poll_interval=poll_interval,
+        )
+
+    binary = podman_bin if backend == BACKEND_PODMAN else docker_bin
+    return _run_local_bundle(
+        bundle_cid,
+        limits=limits,
+        image=image,
+        command=command,
+        binary=binary,
+        backend=backend,
+        runner=runner,
+    )
+
+
+def _run_local_bundle(
+    bundle_cid: Optional[str],
+    *,
+    limits: SandboxLimits,
+    image: Optional[str],
+    command: Optional[Sequence[str]],
+    binary: str,
+    backend: str,
+    runner: Optional[Runner],
+) -> SandboxRun:
+    """Run the bundle through the docker or podman CLI on this node."""
     image = _resolve_image(image)
     if command is not None:
         # A bare string is a sequence of one-character strings: refuse it
@@ -582,31 +779,36 @@ def run_bundle(
         if not command or not all(isinstance(word, str) and word for word in command):
             raise ValueError("command must be a non-empty sequence of non-empty strings")
     run = runner or run_command
+    unavailable = (
+        REASON_CONTAINER_UNAVAILABLE
+        if backend == BACKEND_PODMAN
+        else REASON_DOCKER_UNAVAILABLE
+    )
 
     if not bundle_cid:
         return _not_run(REASON_NO_BUNDLE, "the version has no code bundle", limits=limits)
 
-    # Docker first, so a node without it never unpacks an untrusted archive.
-    docker = shutil.which(docker_bin)
-    if docker is None:
+    # The CLI first, so a node without it never unpacks an untrusted archive.
+    executable = shutil.which(binary)
+    if executable is None:
         return _not_run(
-            REASON_DOCKER_UNAVAILABLE, "the docker executable was not found",
+            unavailable, f"the {backend} executable was not found",
             image=image, limits=limits,
         )
-    server = run([docker, "version", "--format", "{{.Server.Version}}"], _PROBE_TIMEOUT, False)
+    server = run([executable, "version", "--format", "{{.Server.Version}}"], _PROBE_TIMEOUT, False)
     if not server.ok or not server.stdout.strip():
-        _warn("version", server)
+        _warn("version", server, backend)
         return _not_run(
-            REASON_DOCKER_UNAVAILABLE, "the docker daemon could not be reached",
+            unavailable, f"the {backend} daemon could not be reached",
             image=image, limits=limits,
         )
     found = run(
-        [docker, "image", "inspect", "--format", "{{.Id}}", image], _PROBE_TIMEOUT, False
+        [executable, "image", "inspect", "--format", "{{.Id}}", image], _PROBE_TIMEOUT, False
     )
     if not found.ok or not found.stdout.strip():
-        _warn("image inspect", found)
+        _warn("image inspect", found, backend)
         return _not_run(
-            REASON_DOCKER_UNAVAILABLE, f"the sandbox image {image} is not available locally",
+            unavailable, f"the sandbox image {image} is not available locally",
             image=image, limits=limits,
         )
     image_id = found.stdout.decode("utf-8", errors="replace").strip().splitlines()[-1]
@@ -630,7 +832,7 @@ def run_bundle(
                 logger.warning("sandbox: unusable temporary directory path %r", source)
                 return not_run(REASON_SANDBOX_ERROR, "no usable temporary directory")
             return _run_container(
-                run, docker, image, image_id, source, command, limits
+                run, executable, image, image_id, source, command, limits, backend
             )
     except BundleError as exc:
         return not_run(exc.reason, exc.detail)
@@ -644,6 +846,7 @@ def _run_container(
     source: str,
     command: Sequence[str],
     limits: SandboxLimits,
+    backend: str = BACKEND_DOCKER,
 ) -> SandboxRun:
     def not_run(detail: str) -> SandboxRun:
         return _not_run(
@@ -656,13 +859,13 @@ def _run_container(
         lines = created.stdout.decode("utf-8", errors="replace").split()
         container = lines[-1] if lines else ""
     if not _CONTAINER_ID.fullmatch(container):
-        _warn("create", created)
+        _warn("create", created, backend)
         return not_run("the sandbox container could not be created")
 
     try:
         started = run([docker, "start", container], _CONTROL_TIMEOUT, False)
         if not started.ok:
-            _warn("start", started)
+            _warn("start", started, backend)
             return not_run("the sandbox container could not be started")
         began = time.monotonic()
 
@@ -672,14 +875,14 @@ def _run_container(
         if waited.timed_out:
             killed = run([docker, "kill", container], _CONTROL_TIMEOUT, False)
             if not killed.ok:
-                _warn("kill", killed)
+                _warn("kill", killed, backend)
         else:
             try:
                 exit_code = int(waited.stdout.decode("utf-8", errors="replace").split()[-1])
             except (ValueError, IndexError):
                 exit_code = None
             if not waited.ok or exit_code is None:
-                _warn("wait", waited)
+                _warn("wait", waited, backend)
                 return not_run("the sandbox lost track of the container")
 
         oom = False
@@ -697,12 +900,12 @@ def _run_container(
             True,
         )
         if not fetched.ok:
-            _warn("logs", fetched)
+            _warn("logs", fetched, backend)
         output = clean_log(fetched.stdout if fetched.ok else b"")
     finally:
         removed = run([docker, "rm", "-f", "-v", container], _CONTROL_TIMEOUT, False)
         if not removed.ok:
-            _warn("rm", removed)
+            _warn("rm", removed, backend)
 
     if exit_code is None:
         status = STATUS_TIMEOUT
@@ -732,3 +935,337 @@ def _run_container(
         image_id=image_id,
         limits=limits,
     )
+
+
+# --------------------------------------------------------------------------- #
+# The remote runner                                                           #
+# --------------------------------------------------------------------------- #
+
+#: Statuses a remote run may report before it has finished.
+_REMOTE_PENDING = frozenset(
+    {"queued", "pending", "running", "started", "accepted", "in_progress", "in-progress"}
+)
+#: HTTP statuses that mean the service behind the URL cannot be reached.
+_UNREACHABLE_STATUS = frozenset({502, 503, 504})
+
+
+def _limits_payload(limits: SandboxLimits) -> dict[str, Any]:
+    """The limits as JSON: exactly the fields of :class:`SandboxLimits`."""
+    return dataclasses.asdict(limits)
+
+
+def _runs_endpoint(base: str) -> str:
+    """The service's ``POST /runs`` endpoint for a configured base URL.
+
+    A ``SANDBOX_URL`` that already names the endpoint is used as given, so an
+    operator can write either ``https://sandbox.example`` or
+    ``https://sandbox.example/runs``.
+    """
+    trimmed = base.strip().rstrip("/")
+    if urlparse(trimmed).path.rstrip("/").endswith("/runs"):
+        return trimmed
+    return trimmed + "/runs"
+
+
+def _payload_log_lines(data: Mapping[str, Any]) -> tuple[str, ...]:
+    """The run log in a remote reply, whichever of the accepted keys it uses."""
+    raw = data.get(
+        "log_lines", data.get("logLines", data.get("log", data.get("logs")))
+    )
+    if isinstance(raw, str):
+        candidates = raw.splitlines()
+    elif isinstance(raw, (list, tuple)):
+        candidates = [str(line) for line in raw]
+    else:
+        return ()
+    return tuple(line for line in candidates if line != "")
+
+
+def _final_status_line(
+    status: str,
+    *,
+    exit_code: Optional[int],
+    oom: bool,
+    limits: SandboxLimits,
+    reason: Optional[str],
+    detail: str,
+) -> str:
+    """The sandbox's own line for a remote reply that carried no log."""
+    if status == STATUS_COMPLETED:
+        return f"{STATUS_PREFIX}exit status 0"
+    if status == STATUS_TIMEOUT:
+        return (
+            f"{STATUS_PREFIX}stopped: the time limit of "
+            f"{limits.time_limit:g} seconds was reached"
+        )
+    if status == STATUS_FAILED:
+        if oom:
+            return (
+                f"{STATUS_PREFIX}stopped: the memory limit of {limits.memory_mb} MB "
+                f"was exceeded (exit status {exit_code})"
+            )
+        return f"{STATUS_PREFIX}exit status {exit_code}"
+    suffix = f": {detail}" if detail else ""
+    return f"{STATUS_PREFIX}not run ({reason}){suffix}"
+
+
+def _run_from_reply(
+    data: Mapping[str, Any],
+    *,
+    limits: SandboxLimits,
+    image: str = "",
+    image_id: Optional[str] = None,
+) -> Optional[SandboxRun]:
+    """Map a sandbox service reply to a :class:`SandboxRun`, or ``None``.
+
+    ``None`` means the reply does not (yet) describe a finished run -- no
+    usable ``status`` -- and is only meaningful while polling.  The reply's
+    word is not trusted blindly: a status or reason outside the sandbox's own
+    vocabulary becomes a ``sandbox_error`` rather than an invalid object.
+    """
+    status = str(data.get("status") or "").strip().lower()
+    if status not in STATUSES:
+        # Some services wrap the run in an envelope; accept the obvious keys.
+        for key in ("run", "result", "data"):
+            nested = data.get(key)
+            if isinstance(nested, Mapping):
+                return _run_from_reply(nested, limits=limits, image=image, image_id=image_id)
+        return None
+
+    raw_reason = data.get("reason")
+    reason = str(raw_reason).strip() if raw_reason is not None else None
+    detail = str(data.get("detail") or data.get("message") or "").strip()
+
+    raw_exit = data.get("exit_code", data.get("exitCode"))
+    try:
+        exit_code = int(raw_exit) if raw_exit is not None else None
+    except (TypeError, ValueError):
+        exit_code = None
+    oom = bool(data.get("oom_killed", data.get("oomKilled", False)))
+    try:
+        duration = float(data.get("duration", data.get("duration_seconds", 0.0)) or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+
+    reply_image = str(data.get("image") or image or "")
+    reply_image_id = data.get("image_id", data.get("imageId", image_id))
+    reply_image_id = str(reply_image_id) if reply_image_id is not None else None
+
+    if status == STATUS_NOT_RUN and reason not in NOT_RUN_REASONS:
+        # The service could not say why: report its failure, not an invalid run.
+        reason = REASON_SANDBOX_ERROR
+    log_lines = _payload_log_lines(data)
+    if not log_lines:
+        log_lines = (
+            _final_status_line(
+                status,
+                exit_code=exit_code,
+                oom=oom,
+                limits=limits,
+                reason=reason or REASON_SANDBOX_ERROR,
+                detail=detail,
+            ),
+        )
+    if status == STATUS_NOT_RUN:
+        return SandboxRun(
+            status=status,
+            reason=reason or REASON_SANDBOX_ERROR,
+            log_lines=log_lines,
+            image=reply_image,
+            image_id=reply_image_id,
+            limits=limits,
+        )
+    return SandboxRun(
+        status=status,
+        exit_code=exit_code,
+        log_lines=log_lines,
+        oom_killed=oom,
+        duration=duration,
+        image=reply_image,
+        image_id=reply_image_id,
+        limits=limits,
+    )
+
+
+def _response_body(response: Any) -> Optional[Mapping[str, Any]]:
+    """The JSON object a response carries, or ``None``."""
+    try:
+        data = response.json()
+    except Exception:  # a body that is not JSON is an unreadable reply
+        return None
+    return data if isinstance(data, Mapping) else None
+
+
+def _run_id_of(data: Optional[Mapping[str, Any]], response: Any) -> Optional[str]:
+    """The id of the run a service accepted, from the body or ``Location``."""
+    if data is not None:
+        for key in ("run_id", "runId", "id"):
+            value = data.get(key)
+            if isinstance(value, (str, int)) and str(value):
+                return str(value)
+    location = None
+    try:
+        location = response.headers.get("location")
+    except Exception:
+        location = None
+    if location:
+        candidate = location.rstrip("/").rsplit("/", 1)[-1]
+        if candidate:
+            return candidate
+    return None
+
+
+def _remote_failure(
+    status_code: int,
+    *,
+    limits: SandboxLimits,
+    action: str,
+    image: str = "",
+    image_id: Optional[str] = None,
+) -> SandboxRun:
+    """Map an HTTP failure of the sandbox service to a ``not_run`` result."""
+    if status_code in _UNREACHABLE_STATUS:
+        return _not_run(
+            REASON_SANDBOX_UNREACHABLE,
+            "the sandbox service could not be reached",
+            image=image, image_id=image_id, limits=limits,
+        )
+    if status_code in (401, 403):
+        detail = "the sandbox service rejected the request"
+    elif status_code == 422:
+        return _not_run(
+            REASON_BUNDLE_UNAVAILABLE,
+            "the sandbox service rejected the code bundle",
+            image=image, image_id=image_id, limits=limits,
+        )
+    else:
+        detail = f"the sandbox service answered {status_code} to {action}"
+    logger.warning("sandbox: remote %s failed (HTTP %s)", action, status_code)
+    return _not_run(
+        REASON_SANDBOX_ERROR, detail, image=image, image_id=image_id, limits=limits
+    )
+
+
+def run_remote_bundle(
+    bundle_cid: Optional[str],
+    *,
+    limits: Optional[SandboxLimits] = None,
+    sandbox_url: Optional[str] = None,
+    sandbox_token: Optional[str] = None,
+    http_client: Optional[httpx.Client] = None,
+    poll_interval: float = _REMOTE_POLL_SECONDS,
+) -> SandboxRun:
+    """Run the bundle through the sandbox service at ``SANDBOX_URL``.
+
+    The service is sent ``{"bundle_cid": ..., "limits": {...}}`` with
+    ``Authorization: Bearer $SANDBOX_TOKEN``.  Its ``POST /runs`` reply names a
+    run id; ``GET /runs/{id}`` is polled until it reports one of
+    :data:`STATUSES`, and that reply becomes the :class:`SandboxRun`.
+
+    A service that cannot be reached -- connection refused, DNS failure, a
+    timeout or a gateway saying it is unavailable -- is a ``not_run`` result
+    with reason :data:`REASON_SANDBOX_UNREACHABLE`; this function does not
+    raise for any answer of the service.
+    """
+    limits = limits or SandboxLimits()
+    if not bundle_cid:
+        return _not_run(REASON_NO_BUNDLE, "the version has no code bundle", limits=limits)
+
+    base = _configured(URL_ENV, sandbox_url)
+    token = _configured(TOKEN_ENV, sandbox_token)
+    if not base:
+        return _not_run(
+            REASON_SANDBOX_UNREACHABLE,
+            "the sandbox service URL is not configured (SANDBOX_URL)",
+            limits=limits,
+        )
+
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    payload = {"bundle_cid": bundle_cid, "limits": _limits_payload(limits)}
+    runs_url = _runs_endpoint(base)
+
+    owned = http_client is None
+    http = http_client if http_client is not None else httpx.Client(timeout=_REMOTE_TIMEOUT)
+
+    def unreachable() -> SandboxRun:
+        return _not_run(
+            REASON_SANDBOX_UNREACHABLE,
+            "the sandbox service could not be reached",
+            limits=limits,
+        )
+
+    try:
+        try:
+            created = http.post(runs_url, json=payload, headers=headers)
+        except Exception as exc:  # connection refused, DNS, TLS, bad URL, ...
+            logger.warning("sandbox: remote runner unreachable: %s", type(exc).__name__)
+            return unreachable()
+
+        if created.status_code not in (200, 201, 202):
+            return _remote_failure(
+                created.status_code, limits=limits, action="the run request"
+            )
+
+        data = _response_body(created)
+        if data is not None:
+            finished = _run_from_reply(data, limits=limits)
+            if finished is not None:
+                return finished
+        run_id = _run_id_of(data, created)
+        if run_id is None:
+            logger.warning("sandbox: remote runner returned no run id")
+            return _not_run(
+                REASON_SANDBOX_ERROR,
+                "the sandbox service did not return a run id",
+                limits=limits,
+            )
+
+        url = f"{runs_url}/{quote(run_id, safe='')}"
+        deadline = time.monotonic() + limits.time_limit + _REMOTE_GRACE_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return SandboxRun(
+                    status=STATUS_TIMEOUT,
+                    log_lines=(
+                        f"{STATUS_PREFIX}stopped: the time limit of "
+                        f"{limits.time_limit:g} seconds was reached",
+                    ),
+                    duration=limits.time_limit,
+                    limits=limits,
+                )
+            try:
+                polled = http.get(url, headers=headers)
+            except Exception as exc:
+                logger.warning("sandbox: remote runner unreachable: %s", type(exc).__name__)
+                return unreachable()
+
+            if polled.status_code not in (200, 201, 202):
+                return _remote_failure(
+                    polled.status_code, limits=limits, action="the run status request"
+                )
+            data = _response_body(polled)
+            if data is None:
+                logger.warning("sandbox: remote runner sent an unreadable status reply")
+                return _not_run(
+                    REASON_SANDBOX_ERROR,
+                    "the sandbox service sent an unreadable reply",
+                    limits=limits,
+                )
+            finished = _run_from_reply(data, limits=limits)
+            if finished is not None:
+                return finished
+            status = str(data.get("status") or "").strip().lower()
+            if status not in _REMOTE_PENDING:
+                logger.warning("sandbox: remote runner sent an unexpected status %r", status)
+                return _not_run(
+                    REASON_SANDBOX_ERROR,
+                    "the sandbox service sent an unexpected status",
+                    limits=limits,
+                )
+            time.sleep(min(max(poll_interval, 0.0), max(0.0, deadline - time.monotonic())))
+    finally:
+        if owned:
+            http.close()
