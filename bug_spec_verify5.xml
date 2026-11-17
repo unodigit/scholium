@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Verify sweep 5 (claw-forge-verify, 2026-11-17, main @ 69e54d3): real-browser journeys 01-16.
+  14/16 pass; 13 and 16 fail. Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/s5-*.png (local, gitignored).
+  Recorded decisions (by design, not filed): an affiliation match is a warning, not a block (REV-3 refuses co-authors only);
+  corrections/retractions by one author need no co-author step (PUB-7); a List decision cites a policy clause;
+  "Sign with my name" may be chosen when submitting an update.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/web/src/features/review-form/**,apps/web/src/features/paper-reviews/**,apps/api/src/app/modules/reviews/errors.py,apps/api/src/app/modules/reviews/router.py,apps/api/src/app/modules/reviews/tests/**">
+    <title>A reviewer without the local review secret gets a blank form for their revealed review; gate-opening update confirmation is wrong; v1 page shows v2 reviews</title>
+    <symptoms>
+      From /me "My reviews", a reviewer in a browser that does not hold their review secret opens /review/{id} and sees an empty rubric with "Commit review" and no sign of their revealed (and updated) review; submitting it is refused with "This reviewer has already committed a review of paper 'bafyrei...'; a person may commit one review per paper. Nothing was sent." (raw record id)
+      When an update is the second review committed on the newer version (so it opens the gate), the confirmation still says "Your written report unseals once 2 reviews are committed on this version, or on {date}" although the public page already shows it
+      On /p/{id}/v1 the Reviews tab shows "Version 2 · 2 reviews" (the latest version's listing) instead of version 1's; the header count also includes carried earlier-version reviews while none was committed on v2
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 steps 9 and 11 as solheim in a fresh browser (screenshots/13-new-version-and-review-update/s5-16-me-link-blank-form.png, s5-15-solheim-second-commit-probe.png, s5-11-solheim-updated.png)
+      Journey 08 step 7: open /p/{id}/v1 of a two-version paper, Reviews tab
+    </reproduction_steps>
+    <expected>The review page detects (via the reviews listing / a reviewer-scoped API read) that the signed-in account already has a review on this paper and shows it read-only (recommendation, scores, report, status sealed/revealed, version) with "Update for v{latest}" when applicable and "Import your review key" when the local secret is needed to act, never an empty Commit form; the one-review-per-paper refusal (409) carries a human message without CIDs and the form maps it to "You already reviewed this paper"; the update confirmation states the actual gate state after the update (report public now when this update opened the gate); the Reviews tab follows the version being viewed and its header counts reviews committed on that version separately from carried earlier-version reviews</expected>
+    <actual>Dead-end blank form; wrong confirmation; wrong version listing</actual>
+    <constraints>
+      <constraint>REV-4 sealing and REV-3 one-review-per-paper are unchanged; the API never reveals another reviewer's identity</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/app/site-metadata.ts,apps/web/src/app/layout-metadata.test.ts,apps/web/src/components/footer/**">
+    <title>Share-image URLs ignore a loopback NEXT_PUBLIC_SITE_URL in dev builds; footer "CAR archive" is not a link</title>
+    <symptoms>
+      With NEXT_PUBLIC_SITE_URL=http://localhost:3200 set for a non-production build, og:image and twitter:image still point at http://localhost:3000: resolveSiteUrl() in site-metadata.ts discards any loopback value outside production and uses DEFAULT_SITE_URL
+      The footer's "CAR archive" label next to Public export is plain text
+    </symptoms>
+    <reproduction_steps>
+      Build with NEXT_PUBLIC_SITE_URL=http://localhost:3200, curl / and a paper page, read meta og:image (journey 16 step 5)
+    </reproduction_steps>
+    <expected>Outside production any absolute http(s) URL in NEXT_PUBLIC_SITE_URL (loopback included) is used as given; only when it is unset/empty does the default apply; production keeps refusing unset or loopback values; the footer links the export with the "CAR archive" note as part of the same link or as a secondary link to the export documentation on /network</expected>
+    <actual>Wrong port in previews; dead label</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/me/**,apps/api/src/app/modules/notifications/**,apps/api/src/app/modules/consents/**,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/dashboard-page.tsx,apps/web/src/features/dashboard/dashboard-page.test.tsx,apps/web/src/features/dashboard/notifications-card.tsx,apps/web/src/features/dashboard/notifications-card.test.tsx">
+    <title>Needs-your-attention and notification texts show raw ids and actions, list non-actionable items, and stay after they are resolved</title>
+    <symptoms>
+      /me "Needs your attention" shows "Moderation decision: dismiss on sch:nu5m-cysk-3kl4" / "hold on sch:..." (raw action word, id instead of title); an author sees the dismissal of a flag against their paper as needing attention
+      "A co-author consent is waiting for your signature on version 1." names no paper and stays while the consent page shows all signed
+      "The post you wrote was hidden..." and "A moderator put your paper on hold." do not name the paper; "Recovery approval" does not name the requester; after the email is verified, the "Confirm your email address" notification stays
+      "My reviews" still labels a review "v1" after the reviewer updated it for v2
+    </symptoms>
+    <reproduction_steps>
+      Journeys 05, 06, 11 (screenshots/06-key-recovery/s5-10-mei-me-after-3of3.png, screenshots/05-follow-search-notify/s5-09-mei-consent-open.png, screenshots/11-moderation-hold-and-appeal/s5-04-sam-me.png)
+    </reproduction_steps>
+    <expected>Attention items are only things the viewer must act on (sign a consent, answer a recovery request, respond to a hold/appeal outcome that allows an appeal, review invitation) and each reads in words with the paper title and a link (e.g. 'Your paper "{title}" was put on hold: {reason}. You can appeal until {date}.'); informational outcomes (dismissals, listings) go to Notifications only; every notification text names its subject (paper title, post excerpt, requester name); a notification whose action is completed (consent signed, email verified, recovery answered or closed) is marked read and leaves Needs your attention at that moment; My reviews shows the version of the reviewer's latest review</expected>
+    <actual>Raw, unresolved, partly irrelevant items</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/search/**,apps/web/src/features/search-page/**">
+    <title>Semantic search lists each version as a separate hit, shows negative match scores and an internal model label</title>
+    <symptoms>
+      A two-version paper appears twice (v1 and v2 as separate hits); a result shows "-1% match"; the ranking is labelled "ranked by hashing-v1-1024"
+    </symptoms>
+    <reproduction_steps>
+      Journey 02: semantic search on a query matching a two-version paper (screenshots/02-search-and-discover/s5-04-semantic.png)
+    </reproduction_steps>
+    <expected>Search returns one hit per paper (its latest listed version, mentioning "v2 of 2"), match percentages are clamped to 0-100 and hidden below a relevance floor, and the ranking label reads "Semantic match" with the embedder name only in a tooltip/technical detail</expected>
+    <actual>Duplicate hits; impossible scores; jargon</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-proof/**,apps/web/src/features/verify-page/**,apps/web/src/features/ui-kit/verify.ts,apps/web/src/features/ui-kit/verify.test.ts,apps/web/src/features/paper-meta/**,apps/web/src/features/paper-page/compare.ts,apps/web/src/features/paper-page/compare.test.ts,apps/web/src/features/paper-page/compare-view.tsx,apps/web/src/features/paper-page/compare-route.tsx,apps/web/src/features/paper-page/compare-route.test.tsx"
+       creates="apps/web/src/features/ui-kit/format-bytes.ts,apps/web/src/features/ui-kit/format-bytes.test.ts">
+    <title>Verification copy: offline-check guidance points nowhere, three size formats, ungrammatical counts, signature count unclear, /verify hints stale</title>
+    <symptoms>
+      The archive menu's "How to verify" says the Proof tab explains the offline check, but the Proof tab only shows `scholium verify sch:.../v1 --node http://localhost:8200` (an online check)
+      Sizes appear as "3.0 KB", "759 B" and "735 bytes -> 759 bytes" on different pages
+      "All 1 prev link match", "Signed by all 2 listed authors"; a hyphen where a dash belongs in the /verify result
+      "2 versions · 2 signatures" for 2 authors on 2 versions does not say what is counted
+      /verify's idle hint still says "Enter a version id and drop a file"; its placeholder sch:6sel-2dio-orm6/v2 is not a real paper; dropping a paper archive (.car) reports "does not match" with no explanation
+      The Versions tab and margin say "Anchor pending" with no hint that anchoring is off
+    </symptoms>
+    <reproduction_steps>
+      Journey 08 (all steps), journey 09 step 3
+    </reproduction_steps>
+    <expected>The Proof tab has an "Offline check" section with the exact commands for the downloaded archive (scholium verify sch-{id}.car) and the online form, matching the download menu's wording; one shared formatBytes (B / KB / MB, 1 decimal) is used by Files, compare and /verify; counts pluralise naturally ("The previous-version link matches", "Signed by both listed authors"); the indicator says what it counts ("{m} author signatures across {n} versions", counting each author signature on version and consent records); /verify's hint matches its behaviour (drop a file; version optional), uses the current paper's id or a neutral placeholder, and recognises a .car archive with "This is a paper archive - verify it offline with: scholium verify {file}"; anchoring is described the same way everywhere ("Anchoring is not enabled on this node yet")</expected>
+    <actual>Inconsistent, partly misleading verification copy</actual>
+  </bug>
+
+</bug_spec>
