@@ -92,7 +92,8 @@ describe("ModDetail paper beside form", () => {
     expect(within(pane).getByText("Mei Zhang, Rafael Silva")).toBeTruthy();
     expect(within(pane).getByText("cs.AI, cs.LG")).toBeTruthy();
     expect(within(pane).getByText("sch:5jmi-pmva-4lmr/v2")).toBeTruthy();
-    expect(within(pane).getByText("CC-BY-4.0")).toBeTruthy();
+    // The licence reads by its full name; the id is what the record carries.
+    expect(within(pane).getByText("Creative Commons Attribution 4.0")).toBeTruthy();
     expect(
       within(pane).getByText(
         "We remove the quadratic term and evaluate on three benchmarks.",

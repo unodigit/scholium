@@ -142,7 +142,9 @@ def test_deciding_a_flag_notifies_the_reporter_once_with_the_decision():
     assert notification.payload == {
         "flag_id": created["id"],
         "target_cid": created["target_cid"],
-        "reason": "spam",
+        # The reason in words; ``reason_code`` keeps the code it was filed with.
+        "reason": "Spam or advertising",
+        "reason_code": "spam",
         "status": flags.DECIDED,
         "decision_cid": decision_cid,
         # What happened, in words, and where to open it.  This flag names no
@@ -150,8 +152,8 @@ def test_deciding_a_flag_notifies_the_reporter_once_with_the_decision():
         "action": None,
         "target_kind": "item",
         "item_kind": "item",
-        "summary": "The record you reported was reviewed.",
-        "outcome": "The record you reported was reviewed.",
+        "summary": "The record you reported was reviewed: Spam or advertising.",
+        "outcome": "The record you reported was reviewed: Spam or advertising.",
         "link": None,
     }
 

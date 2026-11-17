@@ -61,6 +61,12 @@ export interface DecisionFormProps {
    */
   tier?: number | null;
   /**
+   * The state of the version being decided (`listed`, `moderation`, …), when
+   * known. A listed paper is not offered "List the paper", which would change
+   * nothing; Dismiss, Hold and the takedown remain.
+   */
+  versionState?: string | null;
+  /**
    * Called after the API accepts the decision. The detail view uses it to say
    * the paper has moved on; the form itself already shows the result.
    */
@@ -94,10 +100,14 @@ export function DecisionForm({
   signDecision = signModerationDecision,
   submitDecision = submitModerationDecision,
   tier,
+  versionState,
   onPublished,
 }: DecisionFormProps) {
   const viewer = useViewer();
-  const actions = offeredActions(tier === undefined ? viewer.tier : tier);
+  const actions = offeredActions(
+    tier === undefined ? viewer.tier : tier,
+    versionState,
+  );
   const [action, setAction] = useState<DecisionAction | "">("");
   const [clause, setClause] = useState("");
   const [reason, setReason] = useState("");
@@ -217,7 +227,7 @@ export function DecisionForm({
           <option value="">Choose an action…</option>
           {actions.map((value) => (
             <option key={value} value={value}>
-              {actionOptionLabel(value)}
+              {actionOptionLabel(value, versionState)}
             </option>
           ))}
         </select>

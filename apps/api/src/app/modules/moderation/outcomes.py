@@ -7,8 +7,10 @@ things, written from the target rather than from the record type's internals:
 * what kind of thing was decided -- a paper, a discussion post, an inline
   annotation or a review -- so the sentence says "post" where it is a post and
   "paper" where it is a paper;
-* the outcome in words ("The post you reported was hidden", "The paper you
-  reported was kept listed"), never a raw action or status code;
+* the outcome in words, never a raw action or status code -- and, for the
+  reporter, which item it was: the paper's title, the start of the flagged text
+  and the reason they gave in words, not as a code
+  ('The post you reported on "Title" ("First words...") was hidden: Off topic.');
 * where to open it: the paper page, the paper's Discussion tab (where a hidden
   post's placeholder is), or the reviews tab (where a review lives).
 
@@ -23,12 +25,38 @@ from collections.abc import Mapping
 from typing import Optional
 
 __all__ = [
+    "EXCERPT_LIMIT",
+    "REASON_LABELS",
     "author_summary",
+    "excerpt",
     "item_link",
+    "paper_title",
+    "reason_label",
     "report_link",
     "reporter_summary",
     "target_kind",
 ]
+
+#: How many characters of a flagged post or review a notice quotes.
+EXCERPT_LIMIT = 80
+
+#: The words for every reason code a member can report with.  The reporter's
+#: panels offer these ids (``paper-discussion``'s ``REPORT_REASONS`` and
+#: ``PAPER_REPORT_REASONS``) and the moderation console reads them back through
+#: the same labels, so a reporter, a moderator and a notice all say the same
+#: thing.  A code not listed here is still shown as a sentence
+#: (:func:`reason_label`), never as the bare code.
+REASON_LABELS: Mapping[str, str] = {
+    "spam": "Spam or advertising",
+    "abuse": "Harassment or abuse",
+    "off-topic": "Off topic",
+    "misleading": "Misleading or false",
+    "legal": "Legal problem",
+    "misconduct": "Research misconduct",
+    "plagiarism": "Plagiarism",
+    "duplicated-figures": "Duplicated figures",
+    "other": "Something else",
+}
 
 #: Record types this module names, kept as strings so it stays import-light.
 _DISCUSSION_POST = "discussion.post"
@@ -148,26 +176,126 @@ def report_link(target: str, kind: Optional[str] = None) -> Optional[str]:
     return item_link(target, kind)
 
 
-def reporter_summary(kind: str, action: Optional[str]) -> str:
-    """The reporter's outcome in words: what happened to what they reported."""
-    noun = _KIND_WORDS.get(kind, "record")
+def reason_label(code: Optional[str]) -> str:
+    """A reason code in words: ``duplicated-figures`` -> ``Duplicated figures``.
+
+    A code outside :data:`REASON_LABELS` reads as a sentence (``bad_faith`` ->
+    ``Bad faith``); a blank one as ``No reason given``.
+    """
+    text = code.strip() if isinstance(code, str) else ""
+    if not text:
+        return "No reason given"
+    known = REASON_LABELS.get(text.lower().replace("_", "-"))
+    if known is not None:
+        return known
+    words = " ".join(text.replace("_", " ").replace("-", " ").split())
+    return words[:1].upper() + words[1:]
+
+
+def paper_title(target: str) -> Optional[str]:
+    """The title of the paper ``target`` is, or belongs to, when this node holds it."""
+    try:
+        from app.modules import submissions
+
+        version = submissions.get_version(target)
+        title = getattr(version, "title", None) if version is not None else None
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+        paper_cid = _paper_cid(target)
+        if paper_cid is None:
+            return None
+        named = _body(_entry(paper_cid)).get("title")
+        if isinstance(named, str) and named.strip():
+            return named.strip()
+        paper = submissions.get_paper(paper_cid)
+        latest = getattr(paper, "latest_version_cid", None) if paper is not None else None
+        version = submissions.get_version(latest) if isinstance(latest, str) and latest else None
+        title = getattr(version, "title", None) if version is not None else None
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+    except Exception:  # pragma: no cover - a title is never worth failing a notice
+        return None
+    return None
+
+
+def excerpt(target: str, limit: int = EXCERPT_LIMIT) -> Optional[str]:
+    """The first ``limit`` characters of the post or review ``target`` names.
+
+    White space is collapsed to single spaces, and ``...`` marks a cut.  A
+    paper has no excerpt -- its title says which it is -- nor does a record this
+    node cannot read.
+    """
+    entry = _entry(target)
+    record_type = getattr(entry, "record_type", None)
+    body = _body(entry)
+    if record_type == _DISCUSSION_POST:
+        text = body.get("text")
+    elif record_type == _REVIEW_FORMAL:
+        text = body.get("report")
+    else:
+        return None
+    if not isinstance(text, str):
+        return None
+    flat = " ".join(text.split())
+    if not flat:
+        return None
+    if len(flat) <= limit:
+        return flat
+    return f"{flat[:limit].rstrip()}..."
+
+
+def _reporter_outcome(kind: str, action: Optional[str]) -> str:
+    """What happened to the reported item, as a predicate: ``was hidden``."""
     if action == "hide":
-        return f"The {noun} you reported was hidden."
+        return "was hidden"
     if action == "dismiss":
-        return f"The {noun} you reported was reviewed and kept."
+        return "was reviewed and kept"
     if kind == "paper":
-        outcome = {
+        return {
             "list": "was kept listed",
             "hold": "was put on hold",
             "reject": "was rejected",
             "delist": "was delisted",
             "tombstone": "was removed",
             "release": "was restored",
-        }.get(action or "")
-        if outcome is not None:
-            return f"The paper you reported {outcome}."
-        return "The paper you reported was reviewed."
-    return f"The {noun} you reported was reviewed."
+        }.get(action or "", "was reviewed")
+    return "was reviewed"
+
+
+def reporter_summary(
+    kind: str,
+    action: Optional[str],
+    *,
+    target: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> str:
+    """The reporter's outcome in words: what happened to what they reported.
+
+    With the flag's ``target`` the sentence says which item it was -- the
+    paper's title and, for a post or a review, the first
+    :data:`EXCERPT_LIMIT` characters of it -- and with the flag's ``reason``
+    why they reported it, in words::
+
+        The post you reported on "Title" ("First words...") was hidden: Off topic.
+        The paper you reported, "Title", was kept listed: Plagiarism.
+
+    Whatever the node cannot read is left out, never replaced by a placeholder.
+    """
+    noun = _KIND_WORDS.get(kind, "record")
+    title = paper_title(target) if target else None
+    if kind == "paper":
+        subject = f'The paper you reported, "{title}",' if title else "The paper you reported"
+    else:
+        subject = f"The {noun} you reported"
+        if title:
+            subject += f' on "{title}"'
+        quote = excerpt(target) if target else None
+        if quote:
+            subject += f' ("{quote}")'
+    sentence = f"{subject} {_reporter_outcome(kind, action)}"
+    if isinstance(reason, str) and reason.strip():
+        return f"{sentence}: {reason_label(reason)}."
+    return f"{sentence}."
 
 
 def author_summary(kind: str, action: Optional[str]) -> str:

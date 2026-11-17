@@ -63,8 +63,9 @@ record."**
 A version in `moderation` is not in the public catalog, so `GET
 /v1/papers/{id}` answers `404` for it. The detail view reads the version's
 signed record from the public `GET /v1/records/{cid}` instead and shows what
-the record says: title, authors, categories, version (`sch:…/vN`), licence,
-change note and abstract. The route passes the `{cid}`; the browser fetches
+the record says: title, authors, categories, version (`sch:…/vN`), licence
+(by its full name, e.g. "Creative Commons Attribution 4.0", not the id the
+record carries), change note and abstract. The route passes the `{cid}`; the browser fetches
 the record and the policy clauses after mount, so the server HTML is the shell
 and "Loading the paper…" (as on `/mod`).
 
@@ -137,7 +138,7 @@ version still in moderation it opens the API's `404`; read the PDF in the page.
 
 | Field | Rule |
 | --- | --- |
-| Action | Required select: `list`, `hold`, `reclassify`, `reject` or `delist`; and, for tier 4 only, `tombstone` (below) |
+| Action | Required select: `list`, `hold`, `reclassify`, `reject` or `delist`; `dismiss`; and, for tier 4 only, `tombstone` (below). For a paper that is already **listed** (state read from `GET /v1/moderation/targets/{cid}`) `list` is not offered, since it would change nothing yet tell the authors "Your paper was listed."; Dismiss then reads "Dismiss the flag (keep the paper listed)". A state the console cannot read offers every action — the API is the gate |
 | Policy clause | Required select, every clause from `GET /v1/moderation/policies`; the chosen clause's text and `/policies#MOD-xx` link appear beneath it |
 | Reason | Required textarea; published verbatim, whitespace trimmed. For a tombstone it is the **legal reason** for the takedown |
 | New category | Required only when the action is `reclassify` (the API's rule) |
@@ -203,12 +204,17 @@ Written against the API as it is, not as the spec imagines it:
 | Read one flag | `GET /v1/flags/{id}` | **Exists** (feature 78); reporter or tier 4 |
 | List appeals | none | **Missing.** Read from the public log instead (below) |
 | List flags | `GET /v1/flags` | **Exists**; tier 4 only, open flags by default (`?state=`, `?target=`). An older server answers `404`/`405` and the console degrades honestly (below) |
+| Count flags | `GET /v1/moderation/flag-counts` | **Exists**; tier 4 only. `{open, decided_last_7_days, window_days}`. The list holds only open flags, so the Flags section's "N flags waiting · M decided in the last 7 days" line reads this; without it the line shows only what is waiting |
+| State of a decided record | `GET /v1/moderation/targets/{cid}` | **Exists**; tier 4 only. `{cid, kind, state}` — `kind` is `version`, `paper` or `record`; `state` is the version's state (`null` for a record) |
 | Which members hold a seat | none | **Missing.** The vote's `403` is the only signal (below) |
 
 `GET /v1/moderation/queue` lists versions, not flags: flags reach moderators
 through `GET /v1/flags`. A moderation decision on a flagged target settles that
 target's open flags (`pending` → `decided`, with the decision's cid), so they
-leave the list.
+leave the list. A flag's reason is shown in words (`duplicated-figures` →
+"Duplicated figures") from the labels the reporter's panel offers
+(`formatFlagReason`); the API words the reporter's outcome notice from the same
+mapping (`moderation/outcomes.py`, `REASON_LABELS`).
 
 ### Appeals: read from the public log
 

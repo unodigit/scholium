@@ -1,7 +1,8 @@
 """HTTP routes for the moderation plugin.
 
 The module loader mounts this router under ``/v1``, so the routes below serve
-``GET /v1/moderation/policies``, ``GET /v1/moderation/queue`` and
+``GET /v1/moderation/policies``, ``GET /v1/moderation/queue``,
+``GET /v1/moderation/flag-counts``, ``GET /v1/moderation/targets/{cid}`` and
 ``POST /v1/moderation/decisions``.
 """
 
@@ -180,6 +181,73 @@ def list_queue(
     scan result and whether the submitting account is new.
     """
     return _build_queue()
+
+
+#: How far back ``decided_last_7_days`` counts, in days.
+FLAG_COUNT_WINDOW_DAYS = 7
+
+
+@router.get("/flag-counts")
+def flag_counts(
+    principal: Principal = Depends(require_tier(4)),
+) -> dict[str, int]:
+    """How many flags are open, and how many a decision settled in the last 7 days.
+
+    ``GET /v1/flags`` lists the open flags, so a list alone cannot say how much
+    work was finished.  ``decided_last_7_days`` counts the flags whose settling
+    decision is dated within the last ``window_days`` days (a flag keeps the
+    decision that closed it, and the decision its date).
+    """
+    from sqlalchemy import func
+
+    from app.modules.flags.models import Flag, ensure_tables as ensure_flag_tables
+
+    from .models import ModerationDecision, ensure_tables as ensure_moderation_tables
+
+    ensure_flag_tables()
+    ensure_moderation_tables()
+    since = _now_naive() - timedelta(days=FLAG_COUNT_WINDOW_DAYS)
+    with db.SessionLocal() as session:
+        open_flags = (
+            session.query(func.count(Flag.id)).filter(Flag.status == "pending").scalar() or 0
+        )
+        decided = (
+            session.query(func.count(Flag.id))
+            .join(ModerationDecision, ModerationDecision.decision_cid == Flag.decision_cid)
+            .filter(Flag.status != "pending", ModerationDecision.decided_at >= since)
+            .scalar()
+            or 0
+        )
+    return {
+        "open": int(open_flags),
+        "decided_last_7_days": int(decided),
+        "window_days": FLAG_COUNT_WINDOW_DAYS,
+    }
+
+
+@router.get("/targets/{cid}")
+def get_target(
+    cid: str,
+    principal: Principal = Depends(require_tier(4)),
+) -> dict[str, Any]:
+    """What the decision form needs to know about the record it is deciding.
+
+    ``kind`` is ``version`` (a paper version; ``state`` is its state, e.g.
+    ``listed`` or ``moderation``), ``paper`` (a paper genesis; ``state`` is its
+    status) or ``record`` (a post, annotation or review; no state).  The form
+    reads it to leave out an action that would change nothing -- "List the
+    paper" for a paper that is already listed.  Unknown ids are ``404``.
+    """
+    version = submissions.get_version(cid)
+    if version is not None:
+        return {"cid": cid, "kind": "version", "state": str(version.state)}
+    paper = submissions.get_paper(cid)
+    if paper is not None:
+        return {"cid": cid, "kind": "paper", "state": str(paper.status)}
+    ledger.ensure_table()
+    if ledger.entry_by_cid(cid) is not None:
+        return {"cid": cid, "kind": "record", "state": None}
+    raise ProblemException(404, f"This node holds no record {cid!r}.")
 
 
 class DecisionAccepted(BaseModel):

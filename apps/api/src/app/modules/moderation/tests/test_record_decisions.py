@@ -411,8 +411,19 @@ def test_the_reporter_hears_the_outcome_in_words_and_where_to_open_it(
     [note] = [
         n for n in _notifications(stored.reporter_did) if n.kind == flags.FLAG_DECIDED_KIND
     ]
-    assert note.payload["summary"] == "The post you reported was hidden."
-    assert note.payload["outcome"] == "The post you reported was hidden."
+    # The notice names the paper and quotes the post, and gives the reason in
+    # words ("spam" was the code the flag was filed with).
+    from app.modules import ledger
+
+    genesis = ledger.entry_by_cid(post_record["body"]["paper"])
+    title = genesis.body["title"]
+    text = post_record["body"]["text"]
+    assert note.payload["summary"] == (
+        f'The post you reported on "{title}" ("{text}") was hidden: Spam or advertising.'
+    )
+    assert note.payload["outcome"] == note.payload["summary"]
+    assert note.payload["reason"] == "Spam or advertising"
+    assert note.payload["reason_code"] == "spam"
     assert note.payload["target_kind"] == "post"
     # The item is named and linked to the surface that now shows the
     # placeholder: the paper's Discussion tab.
@@ -459,7 +470,9 @@ def test_dismissing_a_paper_flag_tells_the_reporter_but_not_the_author(
     [note] = [
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
-    assert note.payload["summary"] == "The paper you reported was reviewed and kept."
+    assert note.payload["summary"] == (
+        f'The paper you reported, "{submission.title}", was reviewed and kept: Spam or advertising.'
+    )
     assert note.payload["link"] == f"/p/{submission.short_id}"
     # A dismiss makes no new listing decision, so the authors are not told
     # about a paper that did not change.
@@ -510,7 +523,9 @@ def test_a_list_decision_tells_the_reporter_the_paper_was_kept_listed(
     [note] = [
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
-    assert note.payload["summary"] == "The paper you reported was kept listed."
+    assert note.payload["summary"] == (
+        f'The paper you reported, "{submission.title}", was kept listed: Plagiarism.'
+    )
     assert note.payload["link"] == f"/p/{submission.short_id}"
 
 

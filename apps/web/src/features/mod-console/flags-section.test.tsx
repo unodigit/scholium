@@ -63,7 +63,7 @@ describe("FlagCard", () => {
     );
 
     const card = await screen.findByRole("article");
-    expect(within(card).getByRole("heading", { name: "Spam" })).toBeTruthy();
+    expect(within(card).getByRole("heading", { name: "Spam or advertising" })).toBeTruthy();
     expect(within(card).getByText(FLAG.targetCid)).toBeTruthy();
     expect(within(card).queryByText("Discussion post")).toBeNull();
   });

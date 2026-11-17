@@ -9,8 +9,10 @@ import {
   formatFlagReason,
   isFlagOpen,
   loadFlag,
+  loadFlagCounts,
   loadFlags,
   parseFlag,
+  parseFlagCounts,
   parseFlags,
   type FlagEntry,
 } from "./flags";
@@ -112,8 +114,17 @@ describe("parseFlags", () => {
 });
 
 describe("flag wording", () => {
-  it("title-cases the reason category", () => {
-    expect(formatFlagReason("spam")).toBe("Spam");
+  it("says a reason in words, never as the code the reporter filed it with", () => {
+    // The same labels the reporter's panel offers and the notice quotes.
+    expect(formatFlagReason("duplicated-figures")).toBe("Duplicated figures");
+    expect(formatFlagReason("off-topic")).toBe("Off topic");
+    expect(formatFlagReason("misleading")).toBe("Misleading or false");
+    expect(formatFlagReason("spam")).toBe("Spam or advertising");
+    expect(formatFlagReason("misconduct")).toBe("Research misconduct");
+    expect(formatFlagReason("other")).toBe("Something else");
+  });
+
+  it("title-cases a reason nobody mapped, and says so when there is none", () => {
     expect(formatFlagReason("bad_faith")).toBe("Bad faith");
     expect(formatFlagReason("  ")).toBe("No reason given");
     expect(formatFlagReason("")).toBe("No reason given");
@@ -200,5 +211,38 @@ describe("classifyFlagsError", () => {
       "Flag 2 has no id.",
     );
     expect(classifyFlagsError("boom").message).toBe("The flags could not be loaded.");
+  });
+});
+
+describe("flag counts", () => {
+  it("reads the open and decided-this-week counts the API serves", () => {
+    expect(
+      parseFlagCounts({ open: 2, decided_last_7_days: 5, window_days: 7 }),
+    ).toEqual({ open: 2, decided: 5, windowDays: 7 });
+  });
+
+  it("assumes the seven-day window when the API does not name one", () => {
+    expect(parseFlagCounts({ open: 0, decided_last_7_days: 0 })).toEqual({
+      open: 0,
+      decided: 0,
+      windowDays: 7,
+    });
+  });
+
+  it("rejects a body that is not two whole counts rather than showing zeros", () => {
+    expect(() => parseFlagCounts(null)).toThrow(FlagReadError);
+    expect(() => parseFlagCounts({ open: "2" })).toThrow(FlagReadError);
+    expect(() => parseFlagCounts({ open: 1, decided_last_7_days: -1 })).toThrow(
+      FlagReadError,
+    );
+  });
+
+  it("asks GET /moderation/flag-counts and never caches it", async () => {
+    const get = vi.fn(async () => ({ open: 1, decided_last_7_days: 4, window_days: 7 }));
+
+    const counts = await loadFlagCounts({ get } as never);
+
+    expect(counts).toEqual({ open: 1, decided: 4, windowDays: 7 });
+    expect(get).toHaveBeenCalledWith("/moderation/flag-counts", { cache: "no-store" });
   });
 });

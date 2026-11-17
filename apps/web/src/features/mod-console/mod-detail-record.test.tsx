@@ -199,7 +199,7 @@ describe("ModDetail for a flagged discussion post", () => {
     const flags = within(
       await screen.findByRole("region", { name: "Flags against this record" }),
     );
-    expect(await flags.findByRole("heading", { name: "Spam" })).toBeTruthy();
+    expect(await flags.findByRole("heading", { name: "Spam or advertising" })).toBeTruthy();
     expect(flags.getByText(shortenDid(FLAG.reporterDid!))).toBeTruthy();
   });
 

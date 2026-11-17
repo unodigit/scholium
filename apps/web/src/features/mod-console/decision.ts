@@ -120,10 +120,25 @@ export const RECORD_DECISION_ACTION_LABELS: Readonly<
   hide: "Hide from public reads",
 };
 
-/** How any action the form can sign reads to a moderator. */
-export function actionOptionLabel(action: DecisionAction): string {
+/** The state of a version that is in the public catalog. */
+export const LISTED_STATE = "listed";
+
+/**
+ * How any action the form can sign reads to a moderator.
+ *
+ * `versionState` is the state of the version being decided, when known: for a
+ * listed paper Dismiss says it keeps the paper listed, which is what a flag on
+ * a listed paper is usually answered with.
+ */
+export function actionOptionLabel(
+  action: DecisionAction,
+  versionState?: string | null,
+): string {
   if (action === TOMBSTONE_ACTION) {
     return TOMBSTONE_LABEL;
+  }
+  if (action === "dismiss" && versionState === LISTED_STATE) {
+    return "Dismiss the flag (keep the paper listed)";
   }
   if (isRecordDecisionAction(action)) {
     return RECORD_DECISION_ACTION_LABELS[action];
@@ -170,13 +185,26 @@ export function canTombstone(tier: number | null | undefined): boolean {
   return typeof tier === "number" && tier >= TOMBSTONE_MIN_TIER;
 }
 
-/** The actions to offer a moderator of this tier, in form order. */
+/**
+ * The actions to offer a moderator of this tier, in form order.
+ *
+ * `versionState` is the state of the version being decided, when it is known.
+ * A listed paper is not offered `list`: the API treats a move to the state a
+ * version already has as a no-op, yet still tells the authors "Your paper was
+ * listed." A flag on a listed paper is answered with Dismiss, Hold or the
+ * takedown instead. An unknown state offers everything -- the API is the gate.
+ */
 export function offeredActions(
   tier: number | null | undefined,
+  versionState?: string | null,
 ): readonly DecisionAction[] {
   // Dismiss settles a flag without moving the paper -- exactly what a flag on
   // an already-listed paper needs, so it is offered beside the state actions.
-  const actions: DecisionAction[] = [...DECISION_ACTIONS, "dismiss"];
+  const standard: readonly DecisionAction[] =
+    versionState === LISTED_STATE
+      ? DECISION_ACTIONS.filter((action) => action !== "list")
+      : DECISION_ACTIONS;
+  const actions: DecisionAction[] = [...standard, "dismiss"];
   return canTombstone(tier) ? [...actions, TOMBSTONE_ACTION] : actions;
 }
 
@@ -377,6 +405,35 @@ export async function loadModeratedPaper(
     { auth: false, cache: "no-store" },
   );
   return parseVersionRecord(payload, versionCid);
+}
+
+/** Endpoint path relative to `/v1`: what the node knows about a decided record. */
+export const TARGETS_ENDPOINT = "/moderation/targets";
+
+/** Reads the state of the version being decided; replaceable in tests. */
+export type LoadVersionState = (versionCid: string) => Promise<string | null>;
+
+/**
+ * The state of a paper version (`listed`, `moderation`, `held`, …), from
+ * `GET /v1/moderation/targets/{cid}` (tier 4).
+ *
+ * `null` when it is unknown -- the node cannot say, or the record has no state
+ * -- and never a failure: the decision form offers every action then, and the
+ * API stays the gate on each one. Not knowing must not stop a moderator.
+ */
+export async function loadVersionState(
+  versionCid: string,
+  client: PaperClient = api,
+): Promise<string | null> {
+  try {
+    const payload = await client.get<unknown>(
+      `${TARGETS_ENDPOINT}/${encodeURIComponent(versionCid)}`,
+      { cache: "no-store" },
+    );
+    return isRecord(payload) ? readText(payload.state) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Load the clauses a decision may cite. */

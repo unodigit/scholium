@@ -146,7 +146,7 @@ describe("flags", () => {
     const flags = within(await screen.findByRole("list", { name: "Flags" }));
     const [open, decided] = flags.getAllByRole("article");
 
-    expect(within(open!).getByRole("heading", { name: "Spam" })).toBeTruthy();
+    expect(within(open!).getByRole("heading", { name: "Spam or advertising" })).toBeTruthy();
     expect(within(open!).getByText("Waiting for a moderator")).toBeTruthy();
     expect(within(open!).getByText("bafy-flagged-1")).toBeTruthy();
     expect(within(open!).getByText("did:key:z6MkReporter")).toBeTruthy();
@@ -154,15 +154,58 @@ describe("flags", () => {
     expect(within(decided!).getByText("Decided")).toBeTruthy();
   });
 
-  it("counts what is waiting and what is decided", async () => {
+  it("counts what is waiting and what was decided in the last 7 days", async () => {
+    // `GET /v1/flags` lists only the open flags, so the decided count cannot
+    // come from the list: it is what the API counts.
     render(
       <ModCases
         signedIn
         {...quiet()}
-        loadFlags={async () => [flag(), flag({ id: "f2" }), flag({ id: "f3", status: "decided" })]}
+        loadFlags={async () => [flag(), flag({ id: "f2" })]}
+        loadFlagCounts={async () => ({ open: 2, decided: 5, windowDays: 7 })}
       />,
     );
-    expect(await screen.findByText("2 flags waiting · 1 decided")).toBeTruthy();
+    expect(await screen.findByText("2 flags waiting · 5 decided in the last 7 days")).toBeTruthy();
+  });
+
+  it("says one flag is waiting, in the singular", async () => {
+    render(
+      <ModCases
+        signedIn
+        {...quiet()}
+        loadFlags={async () => [flag()]}
+        loadFlagCounts={async () => ({ open: 1, decided: 0, windowDays: 7 })}
+      />,
+    );
+    expect(await screen.findByText("1 flag waiting · 0 decided in the last 7 days")).toBeTruthy();
+  });
+
+  it("still shows the counts when nothing is waiting", async () => {
+    render(
+      <ModCases
+        signedIn
+        {...quiet()}
+        loadFlags={async () => []}
+        loadFlagCounts={async () => ({ open: 0, decided: 3, windowDays: 7 })}
+      />,
+    );
+    expect(await screen.findByText("No flags are waiting.")).toBeTruthy();
+    expect(screen.getByText("0 flags waiting · 3 decided in the last 7 days")).toBeTruthy();
+  });
+
+  it("shows only what is waiting when the API cannot count what was decided", async () => {
+    render(
+      <ModCases
+        signedIn
+        {...quiet()}
+        loadFlags={async () => [flag(), flag({ id: "f2" })]}
+        loadFlagCounts={async () => {
+          throw new ApiError(404, { status: 404 });
+        }}
+      />,
+    );
+    expect(await screen.findByText("2 flags waiting")).toBeTruthy();
+    expect(screen.queryByText(/decided in the last/)).toBeNull();
   });
 
   it("sends an open flag to the decision view for what was flagged, and a decided one to its decision", async () => {
@@ -250,7 +293,7 @@ describe("flags", () => {
     const notice = (await screen.findByText("The flag table is locked.")).closest("[role=alert]")!;
     fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "Try again" }));
 
-    expect(await screen.findByRole("heading", { name: "Spam" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Spam or advertising" })).toBeTruthy();
     expect(loadFlags).toHaveBeenCalledTimes(2);
   });
 

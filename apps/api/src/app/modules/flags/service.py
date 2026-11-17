@@ -182,19 +182,26 @@ def flag_decided_payload(flag: Flag) -> dict[str, Any]:
     ``summary`` (also ``outcome``) says what happened in words, naming the kind
     of item, and ``link`` opens the item -- the paper page, the Discussion tab
     (where a hidden post's placeholder is), or the reviews tab.  The inbox
-    renders the words instead of a bare status code.
+    renders the words instead of a bare status code.  The sentence names the
+    paper and quotes the flagged text, and ``reason`` is the reporter's reason in
+    words (``reason_code`` keeps the code they filed it with).
     """
     action = _decision_action(flag.decision_cid)
+    reason = flag.reason
     try:
         from app.modules.moderation.outcomes import (
             item_link,
+            reason_label,
             reporter_summary,
             target_kind,
         )
 
         kind = target_kind(flag.target_cid)
-        summary = reporter_summary(kind, action)
+        summary = reporter_summary(
+            kind, action, target=flag.target_cid, reason=flag.reason
+        )
         link = item_link(flag.target_cid, kind)
+        reason = reason_label(flag.reason)
     except Exception:  # pragma: no cover - moderation is a shipped plugin
         logger.exception("could not word the outcome of flag %s", flag.id)
         kind = "item"
@@ -203,7 +210,8 @@ def flag_decided_payload(flag: Flag) -> dict[str, Any]:
     return {
         "flag_id": flag.id,
         "target_cid": flag.target_cid,
-        "reason": flag.reason,
+        "reason": reason,
+        "reason_code": flag.reason,
         "status": flag.status,
         "decision_cid": flag.decision_cid,
         "action": action,

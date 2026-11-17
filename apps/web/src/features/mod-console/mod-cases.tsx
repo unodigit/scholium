@@ -25,6 +25,7 @@ import {
   type LoadAppeals,
 } from "./appeals-section";
 import { FlagsSection, type LoadFlag, type LoadFlags } from "./flags-section";
+import type { LoadFlagCounts } from "./flags";
 import type { VoteCaster } from "./panel-vote";
 import type { LoadFlagTarget } from "./record";
 import type { LoadPersonName } from "./person";
@@ -38,6 +39,8 @@ export interface ModCasesProps {
    */
   signedIn?: boolean;
   loadFlags?: LoadFlags;
+  /** Reads the open and decided-in-the-last-7-days counts; replaceable in tests. */
+  loadFlagCounts?: LoadFlagCounts;
   loadFlag?: LoadFlag;
   /** Reads what each flag is about (record type, paper title, excerpt). */
   loadTarget?: LoadFlagTarget;
@@ -56,6 +59,7 @@ function pinnedSession(signedIn: boolean | undefined): Session {
 export function ModCases({
   signedIn,
   loadFlags,
+  loadFlagCounts,
   loadFlag,
   loadTarget,
   loadAppeals,
@@ -90,6 +94,7 @@ export function ModCases({
         <>
           <FlagsSection
             loadFlags={loadFlags}
+            loadFlagCounts={loadFlagCounts}
             loadFlag={loadFlag}
             loadTarget={loadTarget}
             loadPerson={loadPerson}

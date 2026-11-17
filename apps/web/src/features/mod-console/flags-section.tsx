@@ -31,9 +31,12 @@ import {
   formatFlagReason,
   isFlagOpen,
   loadFlag as fetchFlag,
+  loadFlagCounts as fetchFlagCounts,
   loadFlags as fetchFlags,
+  type FlagCounts,
   type FlagEntry,
   type FlagsFailure,
+  type LoadFlagCounts,
 } from "./flags";
 import { PersonName, type LoadPersonName } from "./person";
 import { SIGNIN_HREF } from "./queue";
@@ -54,6 +57,12 @@ export type LoadFlag = (id: string) => Promise<FlagEntry>;
 /** Props for {@link FlagsSection}. */
 export interface FlagsSectionProps {
   loadFlags?: LoadFlags;
+  /**
+   * Reads how many flags are open and how many were decided in the last 7
+   * days. The list holds only the open flags, so the decided count cannot come
+   * from it; replaceable in tests.
+   */
+  loadFlagCounts?: LoadFlagCounts;
   loadFlag?: LoadFlag;
   /**
    * Reads what a flag is about (record type, owning paper title and a short
@@ -66,12 +75,19 @@ export interface FlagsSectionProps {
 
 type ListState =
   | { status: "loading" }
-  | { status: "ready"; flags: readonly FlagEntry[]; refreshing: boolean }
+  | {
+      status: "ready";
+      flags: readonly FlagEntry[];
+      /** `null` when the API could not count; the section then counts the list. */
+      counts: FlagCounts | null;
+      refreshing: boolean;
+    }
   | { status: "failed"; failure: FlagsFailure };
 
 /** The flag list, the lookup by id, and every reason either might not show. */
 export function FlagsSection({
   loadFlags,
+  loadFlagCounts,
   loadFlag,
   loadTarget,
   loadPerson,
@@ -93,10 +109,19 @@ export function FlagsSection({
     );
 
     const load = loadFlags ?? fetchFlags;
-    load().then(
-      (flags) => {
+    const count = loadFlagCounts ?? fetchFlagCounts;
+    // The counts are a courtesy beside the list: when they cannot be read the
+    // list still shows, with only what it can honestly count.
+    const counts = count().catch(() => null);
+    Promise.all([load(), counts]).then(
+      ([flags, flagCounts]) => {
         if (!cancelled) {
-          setState({ status: "ready", flags, refreshing: false });
+          setState({
+            status: "ready",
+            flags,
+            counts: flagCounts,
+            refreshing: false,
+          });
         }
       },
       (error: unknown) => {
@@ -112,7 +137,7 @@ export function FlagsSection({
     return () => {
       cancelled = true;
     };
-  }, [attempt, loadFlags]);
+  }, [attempt, loadFlags, loadFlagCounts]);
 
   return (
     <section className="mc-section" aria-labelledby={headingId}>
@@ -137,6 +162,7 @@ export function FlagsSection({
       {state.status === "ready" ? (
         <FlagList
           flags={state.flags}
+          counts={state.counts}
           refreshing={state.refreshing}
           onRefresh={reload}
           loadTarget={loadTarget}
@@ -149,14 +175,36 @@ export function FlagsSection({
   );
 }
 
+/**
+ * "2 flags waiting · 5 decided in the last 7 days".
+ *
+ * The open count is the API's when it gave one (the list may be a page of it),
+ * else the list's. The decided part needs the API's count -- the list holds no
+ * decided flags -- so it is left out rather than shown as a made-up zero.
+ */
+export function flagCountsText(
+  flags: readonly FlagEntry[],
+  counts: FlagCounts | null,
+): string {
+  const open = counts?.open ?? flags.filter(isFlagOpen).length;
+  const waiting = `${open === 1 ? "1 flag" : `${open} flags`} waiting`;
+  if (counts === null) {
+    return waiting;
+  }
+  const days = counts.windowDays === 1 ? "day" : `${counts.windowDays} days`;
+  return `${waiting} · ${counts.decided} decided in the last ${days}`;
+}
+
 function FlagList({
   flags,
+  counts,
   refreshing,
   onRefresh,
   loadTarget,
   loadPerson,
 }: {
   flags: readonly FlagEntry[];
+  counts: FlagCounts | null;
   refreshing: boolean;
   onRefresh: () => void;
   loadTarget?: LoadFlagTarget;
@@ -164,25 +212,28 @@ function FlagList({
 }) {
   if (flags.length === 0) {
     return (
-      <EmptyState
-        className="mc-empty"
-        sentence="No flags are waiting."
-        action={{
-          label: "Check again",
-          onClick: onRefresh,
-          disabled: refreshing,
-        }}
-      />
+      <>
+        {counts !== null ? (
+          <p className="mc-count meta">{flagCountsText(flags, counts)}</p>
+        ) : null}
+        <EmptyState
+          className="mc-empty"
+          sentence="No flags are waiting."
+          action={{
+            label: "Check again",
+            onClick: onRefresh,
+            disabled: refreshing,
+          }}
+        />
+      </>
     );
   }
 
-  const open = flags.filter(isFlagOpen).length;
   return (
     <>
       <div className="mc-toolbar">
         <p className="mc-count meta" role="status">
-          {open === 1 ? "1 flag" : `${open} flags`} waiting ·{" "}
-          {flags.length - open} decided
+          {flagCountsText(flags, counts)}
         </p>
         <button
           type="button"

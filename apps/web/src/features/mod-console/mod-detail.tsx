@@ -34,14 +34,17 @@ import {
   PAPER_SIGNED_OUT_FAILURE,
   classifyPaperError,
   loadDecisionClauses,
+  loadVersionState,
   shortenDid,
   type DecisionSigner,
   type DecisionSubmitter,
+  type LoadVersionState,
   type ModeratedPaper,
   type PaperAuthor,
   type PaperFailure,
 } from "./decision";
 import { DecisionForm } from "./decision-form";
+import { licenceName } from "./licence";
 import {
   VersionContent,
   type LoadPdfFile,
@@ -94,6 +97,13 @@ export interface ModDetailProps {
   loadPaper?: LoadPaper;
   /** Replace the clause loader, for tests or an alternate API client. */
   loadClauses?: LoadClauses;
+  /**
+   * Replace the reader of the version's state (`listed`, `moderation`, …),
+   * which decides whether "List the paper" is offered. By default it is read
+   * from `GET /v1/moderation/targets/{cid}`; a state it cannot read offers
+   * every action.
+   */
+  loadVersionState?: LoadVersionState;
   /** Replace the flags-against-this-record loader, for tests. */
   loadFlags?: LoadTargetFlags;
   /** Replace the flag-target summary loader, for tests. */
@@ -123,6 +133,8 @@ type DetailState =
       status: "ready";
       item: ModerationItem;
       clauses: readonly PolicyClause[];
+      /** The state of the paper version being decided; `null` when unknown. */
+      versionState: string | null;
     }
   | { status: "failed"; failure: PaperFailure };
 
@@ -133,6 +145,7 @@ export function ModDetail({
   loadItem,
   loadPaper,
   loadClauses = loadDecisionClauses,
+  loadVersionState: readVersionState = loadVersionState,
   loadFlags,
   loadTarget,
   loadPerson,
@@ -173,10 +186,26 @@ export function ModDetail({
     let cancelled = false;
     setState({ status: "loading" });
 
-    Promise.all([load(versionCid), loadClauses()]).then(
-      ([item, clauses]) => {
+    Promise.all([
+      load(versionCid).then(async (item) => {
+        // The form leaves out "List the paper" for a paper that is listed, so
+        // the state is read before the form is shown. Not knowing it is not a
+        // failure: every action is offered then, and the API is the gate.
+        let versionState: string | null = null;
+        if (item.kind === "paper") {
+          try {
+            versionState = await readVersionState(item.paper.versionCid);
+          } catch {
+            versionState = null;
+          }
+        }
+        return { item, versionState };
+      }),
+      loadClauses(),
+    ]).then(
+      ([{ item, versionState }, clauses]) => {
         if (!cancelled) {
-          setState({ status: "ready", item, clauses });
+          setState({ status: "ready", item, clauses, versionState });
         }
       },
       (error: unknown) => {
@@ -189,7 +218,7 @@ export function ModDetail({
     return () => {
       cancelled = true;
     };
-  }, [attempt, load, loadClauses, signedIn, versionCid]);
+  }, [attempt, load, loadClauses, readVersionState, signedIn, versionCid]);
 
   return (
     <div className="mc-detail">
@@ -224,6 +253,7 @@ export function ModDetail({
             versionCid={state.item.paper.versionCid}
             clauses={state.clauses}
             tier={tier}
+            versionState={state.versionState}
             signDecision={signDecision}
             submitDecision={submitDecision}
           />
@@ -324,7 +354,7 @@ export function PaperPane({
         </div>
         <div>
           <dt>Licence</dt>
-          <dd>{paper.licence ?? "—"}</dd>
+          <dd>{paper.licence === null ? "—" : licenceName(paper.licence)}</dd>
         </div>
       </dl>
 

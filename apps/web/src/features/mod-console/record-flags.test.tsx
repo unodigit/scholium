@@ -45,7 +45,7 @@ describe("RecordFlags", () => {
     const region = within(
       await screen.findByRole("region", { name: "Flags against this record" }),
     );
-    expect(await region.findByRole("heading", { name: "Spam" })).toBeTruthy();
+    expect(await region.findByRole("heading", { name: "Spam or advertising" })).toBeTruthy();
     expect(await region.findByText("Discussion post")).toBeTruthy();
     expect(loadFlags).toHaveBeenCalledWith(TARGET);
   });
@@ -90,7 +90,7 @@ describe("RecordFlags", () => {
     expect(await screen.findByText("The flag table is locked.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
-    expect(await screen.findByRole("heading", { name: "Spam" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Spam or advertising" })).toBeTruthy();
     expect(loadFlags).toHaveBeenCalledTimes(2);
   });
 
@@ -100,7 +100,7 @@ describe("RecordFlags", () => {
       <RecordFlags targetCid={TARGET} loadFlags={loadFlags} loadTarget={loadTarget} />,
     );
 
-    await screen.findByRole("heading", { name: "Spam" });
+    await screen.findByRole("heading", { name: "Spam or advertising" });
     expect(loadFlags).toHaveBeenCalledTimes(1);
 
     view.rerender(
@@ -112,7 +112,7 @@ describe("RecordFlags", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: "Spam" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Spam or advertising" })).toBeTruthy();
     expect(loadFlags).toHaveBeenCalledTimes(2);
   });
 });

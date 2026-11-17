@@ -23,8 +23,11 @@
  */
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+// The labels the reporter's panel offers: one mapping, so what a member picked,
+// what the moderator reads here and what the outcome notice quotes agree.
+import { reportReason } from "../paper-discussion/discussion";
 import { MODERATOR_TIER, modDetailHref, type Signal } from "./queue";
-import { isRecord, readText } from "./wire";
+import { isRecord, readCount, readText } from "./wire";
 
 /** Endpoint path relative to `/v1`; the API client adds the prefix. */
 export const FLAGS_ENDPOINT = "/flags";
@@ -126,8 +129,20 @@ export function parseFlags(payload: unknown): FlagEntry[] {
   ];
 }
 
-/** `spam` → `Spam`, `bad_faith` → `Bad faith`; blank reads as no reason. */
+/**
+ * A reason code in words: `duplicated-figures` → `Duplicated figures`.
+ *
+ * The labels are the reporter panels' own (`REPORT_REASONS`,
+ * `PAPER_REPORT_REASONS`), the same ones the API words a reporter's outcome
+ * notice with. A code nobody mapped reads as a sentence (`bad_faith` →
+ * `Bad faith`), and blank reads as no reason.
+ */
 export function formatFlagReason(reason: string): string {
+  const code = reason.trim().toLowerCase().replace(/_/g, "-");
+  const known = code === "" ? null : reportReason(code);
+  if (known !== null) {
+    return known.label;
+  }
   const words = reason.replace(/[_-]+/g, " ").trim();
   if (words === "") {
     return "No reason given";
@@ -152,6 +167,60 @@ export function flagSignal(flag: FlagEntry): Signal {
 export function flagDecisionHref(flag: FlagEntry): string {
   return modDetailHref(flag.targetCid);
 }
+
+/** How many flags are open and how many were decided lately. */
+export interface FlagCounts {
+  /** Flags nobody has decided yet. */
+  readonly open: number;
+  /** Flags a decision settled within the last {@link windowDays} days. */
+  readonly decided: number;
+  /** The length of the "lately" window, in days. */
+  readonly windowDays: number;
+}
+
+/** The window `GET /v1/moderation/flag-counts` counts decided flags over. */
+export const DEFAULT_FLAG_COUNT_WINDOW_DAYS = 7;
+
+/** Endpoint path relative to `/v1`. */
+export const FLAG_COUNTS_ENDPOINT = "/moderation/flag-counts";
+
+/**
+ * Validate the body of `GET /v1/moderation/flag-counts`.
+ *
+ * Two whole counts are required: a body without them is rejected rather than
+ * shown as zeros, which would tell a moderator nothing was decided when the
+ * truth is "we do not know".
+ */
+export function parseFlagCounts(payload: unknown): FlagCounts {
+  if (!isRecord(payload)) {
+    throw new FlagReadError("The API did not return flag counts.");
+  }
+  const open = readCount(payload.open);
+  const decided =
+    readCount(payload.decided_last_7_days) ?? readCount(payload.decided);
+  if (open === null || decided === null) {
+    throw new FlagReadError("The flag counts are missing a number.");
+  }
+  return {
+    open,
+    decided,
+    windowDays:
+      readCount(payload.window_days) ?? DEFAULT_FLAG_COUNT_WINDOW_DAYS,
+  };
+}
+
+/** Load the open and recently-decided counts; never cached, it is live work. */
+export async function loadFlagCounts(
+  client: FlagsClient = api,
+): Promise<FlagCounts> {
+  const payload = await client.get<unknown>(FLAG_COUNTS_ENDPOINT, {
+    cache: "no-store",
+  });
+  return parseFlagCounts(payload);
+}
+
+/** Reads the flag counts; replaceable in tests. */
+export type LoadFlagCounts = () => Promise<FlagCounts>;
 
 /** Load every flag from `GET /v1/flags`; never cached, it is live work. */
 export async function loadFlags(
