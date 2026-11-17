@@ -48,10 +48,12 @@ import { fetchConsents, type FetchConsents } from "../submit/consents";
 import { NewVersionLink } from "../submit/new-version-link";
 import { useViewer } from "../review-form/use-viewer";
 import type { Viewer } from "../review-form/viewer";
+import { FollowToggle } from "../dashboard";
 import { AppealDialog } from "./appeal-dialog";
 import { CiteDialog } from "./cite-dialog";
 import { DownloadMenu } from "./download-menu";
 import { NoticeDialog } from "./notice-dialog";
+import { ReportPaper } from "./report-paper";
 import type { PdfAccess } from "./paper-facts";
 import { READING_ID } from "./paper-links";
 import { ReadingViewLink } from "./reading-view";
@@ -74,6 +76,8 @@ export interface PaperActionsProps {
   readonly archiveUrl: string;
   /** The paper's authors' DIDs: who is offered the author actions. */
   readonly authorDids: readonly string[];
+  /** Where "Sign in" goes when a session has ended. */
+  readonly signInHref?: string;
 }
 
 export function PaperActions({
@@ -85,6 +89,7 @@ export function PaperActions({
   citeUrl,
   archiveUrl,
   authorDids,
+  signInHref,
 }: PaperActionsProps) {
   return (
     <div className="ppg-actions-block">
@@ -110,6 +115,10 @@ export function PaperActions({
         </ReadingViewLink>
         <CiteDialog paperId={paperId} version={version} href={citeUrl} />
         <DownloadMenu href={archiveUrl} />
+      </div>
+      <div className="ppg-extra-actions" role="group" aria-label="Follow and report">
+        <FollowToggle category={paperId} />
+        <ReportPaper versionCid={versionCid} signInHref={signInHref} />
       </div>
       {pdf.kind === "unavailable" ? (
         <p id="ppg-pdf-note" className="ppg-actions-note">

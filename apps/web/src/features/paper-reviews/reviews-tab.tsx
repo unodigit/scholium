@@ -46,6 +46,7 @@ import {
 } from "../review-form";
 import { SCORE_MAX } from "../review-form/rubric";
 import { EmptyState, Icon, type IconName } from "../ui-kit";
+import { tokenStore } from "../../lib/api";
 import {
   dimensionMedians,
   formatReviewDate,
@@ -66,6 +67,13 @@ import {
   type ReviewsFailure,
 } from "./reviews-api";
 import { paperHref, reviewHref } from "./links";
+import {
+  ReportPanel,
+  paperPagePath,
+  reportPostFlag,
+  signInPath,
+  type ReportReason,
+} from "../paper-discussion";
 
 import "./reviews-tab.css";
 
@@ -366,6 +374,8 @@ function ReviewCard({
   const tone = recommendationTone(review.recommendation);
   const date = formatReviewDate(review.committedAt);
   const earlier = isEarlierRevealed(review, latestVersion);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reported, setReported] = useState<ReportReason | null>(null);
 
   const meta: string[] = ["Anonymous reviewer"];
   if (date !== null) meta.push(`Reviewed ${date}`);
@@ -432,6 +442,51 @@ function ReviewCard({
           The component offers nothing on a sealed review, to a signed-out
           reader, or to someone the API would refuse; the API is the gate. */}
       <ReviewCardActions review={review} paperId={paperId} />
+
+      {review.reviewCid !== null ? (
+        <div className="pr-report-action">
+          {reported === null ? (
+            <button
+              type="button"
+              className="pd-action pd-action--report"
+              data-action="report"
+              onClick={() => {
+                if (typeof window !== "undefined" && !tokenStore.isAuthenticated) {
+                  const href = signInPath(paperPagePath(paperId));
+                  if (typeof window.location.assign === "function") {
+                    window.location.assign(href);
+                  } else {
+                    window.location.href = href;
+                  }
+                  return;
+                }
+                setReportOpen(true);
+              }}
+            >
+              Report
+            </button>
+          ) : (
+            <span className="pd-reported" data-reported={reported}>
+              Reported
+            </span>
+          )}
+
+          {reportOpen && reported === null ? (
+            <div className="pd-panel">
+              <ReportPanel
+                authorLabel={review.label}
+                signInHref={signInPath(paperPagePath(paperId))}
+                onCancel={() => setReportOpen(false)}
+                onReport={async (reason) => {
+                  await reportPostFlag(review.reviewCid as string, reason);
+                  setReported(reason);
+                  setReportOpen(false);
+                }}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }

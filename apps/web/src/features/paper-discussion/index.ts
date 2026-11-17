@@ -22,6 +22,8 @@
 
 export { DiscussionTab, type DiscussionActions, type DiscussionTabProps } from "./discussion-tab";
 
+export { ReportPanel, type ReportPanelProps } from "./report-panel";
+
 export {
   DISCUSSION_RECORD_TYPE,
   DiscussionResponseError,

@@ -118,12 +118,13 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
   const markHelpful = async () => {
     if (helpfulBusy || voted) return;
     if (!actions.signedIn) {
-      setPanel(null);
-      setHelpfulFailure({
-        message: "You need to be signed in to mark a post helpful.",
-        signIn: true,
-        alreadyDone: false,
-      });
+      if (typeof window !== "undefined") {
+        if (typeof window.location.assign === "function") {
+          window.location.assign(actions.signInHref);
+        } else {
+          window.location.href = actions.signInHref;
+        }
+      }
       return;
     }
     setHelpfulBusy(true);
@@ -200,7 +201,19 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
             ref={replyButton}
             aria-expanded={panel === "reply"}
             aria-controls={panel === "reply" ? replyId : undefined}
-            onClick={() => togglePanel("reply")}
+            onClick={() => {
+              if (!actions.signedIn) {
+                if (typeof window !== "undefined") {
+                  if (typeof window.location.assign === "function") {
+                    window.location.assign(actions.signInHref);
+                  } else {
+                    window.location.href = actions.signInHref;
+                  }
+                }
+                return;
+              }
+              togglePanel("reply");
+            }}
           >
             Reply{" "}
             <span className="pd-visually-hidden">{`to post by ${who}`}</span>
@@ -214,7 +227,19 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
               ref={reportButton}
               aria-expanded={panel === "report"}
               aria-controls={panel === "report" ? reportId : undefined}
-              onClick={() => togglePanel("report")}
+              onClick={() => {
+                if (!actions.signedIn) {
+                  if (typeof window !== "undefined") {
+                    if (typeof window.location.assign === "function") {
+                      window.location.assign(actions.signInHref);
+                    } else {
+                      window.location.href = actions.signInHref;
+                    }
+                  }
+                  return;
+                }
+                togglePanel("report");
+              }}
             >
               <FlagIcon className="pd-action__icon" />
               Report{" "}

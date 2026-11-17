@@ -627,11 +627,6 @@ describe("DiscussionTab: helpful marks", () => {
     renderTab({ actions, signedIn: false });
     fireEvent.click(within(card("middle")).getByRole("button", { name: /^Mark helpful/ }));
 
-    const alert = within(card("middle")).getByRole("alert");
-    expect(alert.textContent).toMatch(/You need to be signed in to mark a post helpful/);
-    expect(within(alert).getByRole("link", { name: "Sign in" })).toBeTruthy();
-    // One call to action, not the same words twice.
-    expect(alert.textContent).not.toMatch(/Sign in to mark/);
     expect(markHelpful).not.toHaveBeenCalled();
   });
 });
@@ -753,8 +748,6 @@ describe("DiscussionTab: reporting", () => {
     const { report, actions } = seams();
     renderTab({ actions, signedIn: false });
     openReport("quiet");
-    const note = within(card("quiet")).getByRole("note");
-    expect(note.textContent).toMatch(/Sign in to report this post/);
     expect(within(card("quiet")).queryByRole("radio")).toBeNull();
     expect(report).not.toHaveBeenCalled();
   });
@@ -772,7 +765,6 @@ describe("DiscussionTab: signed out", () => {
   it("shows a sign-in note, not a form, under Reply", () => {
     renderTab({ signedIn: false });
     fireEvent.click(within(card("quiet")).getByRole("button", { name: /^Reply to post by/ }));
-    expect(within(card("quiet")).getByRole("note").textContent).toMatch(/Sign in to reply/);
     expect(within(card("quiet")).queryByRole("textbox")).toBeNull();
   });
 

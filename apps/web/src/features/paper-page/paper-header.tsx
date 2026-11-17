@@ -44,6 +44,7 @@ import {
   versionOfTotal,
 } from "./paper-facts";
 import { archiveHref, categoryHref, citeHref, versionPagePath } from "./paper-links";
+import { profilePath } from "../dashboard/profile";
 import type { PaperPageData } from "./paper-page-data";
 
 export interface PaperHeaderProps {
@@ -89,7 +90,9 @@ export function PaperHeader({ data }: PaperHeaderProps) {
                 key={`${author.did}-${index}`}
                 title={authorDetail(author)}
               >
-                {authorLabel(author)}
+                <a href={profilePath(author.did)} className="ppg-author-link">
+                  {authorLabel(author)}
+                </a>
               </li>
             ))}
           </ol>
