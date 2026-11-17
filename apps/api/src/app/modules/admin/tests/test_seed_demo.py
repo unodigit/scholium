@@ -30,10 +30,10 @@ from sqlalchemy.orm import sessionmaker
 from app import db
 from app.modules import ledger, moderation, reviews
 from app.modules.admin.cli import DEFAULT_KEYS_FILE, build_parser, main
-from app.modules.admin.demo.cast import PAPERS, PEOPLE, RUBRIC, people_by_slug
+from app.modules.admin.demo.cast import PAPERS, PEOPLE, RUBRIC, DemoPaper, people_by_slug
 from app.modules.admin.demo.keys import FORMAT_VERSION, DemoKeys, DemoKeysError
 from app.modules.admin.demo.manuscript import build_pdf
-from app.modules.admin.demo.seed import SeedError, _outcome, _Seeder, seed_demo
+from app.modules.admin.demo.seed import SeedError, SeedResult, _Actor, _outcome, _Seeder, seed_demo
 from app.modules.ai_review.background import ensure_subscribed as ensure_ai_review
 from app.modules.ledger.origin import node_signing_key
 from app.modules.checks.extract import extract_paragraphs
@@ -458,8 +458,141 @@ def test_the_cast_keeps_to_the_rules_the_node_enforces():
             assert review.reviewer not in authors
             assert reviewer.affiliation not in institutions
             assert all(people[a].endorsed_by != review.reviewer for a in authors)
+            # The node lets a reviewer who holds endorsements review only inside them, and one
+            # with none cannot start a paper: so a reviewer is endorsed in what they review.
+            assert set(paper.categories) <= set(reviewer.endorsed_in)
+            assert people[reviewer.endorsed_by].role == "reviewer"
             assert len(review.scores) == len(RUBRIC) and all(1 <= s <= 5 for s in review.scores)
         assert not paper.reviews or paper.listed, "only a listed paper can be reviewed"
+
+
+# --- what a person can do on fresh demo data --------------------------------
+
+
+@pytest.fixture
+def seeded(node):
+    """A freshly seeded node, and the keys file the cast signs with."""
+    keys_file = node.root / ".demo-keys.json"
+    result = seed_demo(keys_file)
+    return SimpleNamespace(node=node, keys_file=keys_file, result=result)
+
+
+def _dids(seeded) -> dict[str, str]:
+    return {account.slug: account.did for account in DemoKeys.load_or_create(seeded.keys_file).accounts()}
+
+
+def _start_a_paper(seeded, slug: str, categories: list[str]) -> tuple[int, str | None]:
+    """Start a paper as ``slug``: the ``paper.genesis`` step of ``/submit``.
+
+    That is where the node checks the author's tier, their endorsement in every
+    category, and the weekly limit on young authors.  Returns the node's status
+    and, for a refusal, its problem type.  Runs with the node's own settings, not
+    the seed's: the run pinned the write throttle off, a person does not get that.
+    """
+    from app.main import create_app
+
+    keys = DemoKeys.load_or_create(seeded.keys_file)
+    account = next(a for a in keys.accounts() if a.slug == slug)
+    with TestClient(create_app()) as http:
+        actor = _Actor(http, account)
+        actor.sign_in()
+        genesis = actor.record(
+            "paper.genesis",
+            {
+                "title": f"A paper started by {account.name} in {', '.join(categories)}",
+                "abstract": "Checks that the demo account may start a paper.",
+                "categories": categories,
+                "licence": "CC-BY-4.0",
+                "authors": [account.did],
+            },
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        response = http.post("/v1/records", json=genesis, headers=actor.headers)
+    problem = None if response.status_code == 201 else response.json().get("type")
+    return response.status_code, problem
+
+
+def test_a_demo_author_with_no_paper_is_endorsed_in_cs_ai_and_cs_lg_and_can_start_one(seeded):
+    """The young-author limit holds back everyone who started a seeded paper, so the publish journey needs Ana."""
+    ana = people_by_slug()["ana"]
+    assert (ana.name, ana.role, ana.tier) == ("Ana Costa", "author", 2)
+    assert set(ana.endorsed_in) == {"cs.AI", "cs.LG"}
+    assert ana.slug not in {paper.submitter for paper in PAPERS}
+    assert all(ana.slug not in {slug for slug, _ in paper.authors} for paper in PAPERS)
+    did = _dids(seeded)["ana"]
+
+    assert rows(seeded.node, "select tier from accounts where did = :d", d=did) == [(2,)]
+    assert {c for (c,) in rows(seeded.node, "select category from endorsements where endorsee_did = :d", d=did)} == {
+        "cs.AI",
+        "cs.LG",
+    }
+    assert rows(
+        seeded.node, "select count(*) from event_log where author_did = :d and record_type = 'paper.genesis'", d=did
+    ) == [(0,)]
+    # Both endorsements are used by one paper filed under both categories.
+    assert _start_a_paper(seeded, "ana", ["cs.AI", "cs.LG"]) == (201, None)
+
+
+def test_ana_can_publish_a_whole_paper_on_fresh_demo_data(seeded):
+    """PRD journey 1 minus the browser: upload, manifest, genesis, version, consent and scan, as Ana."""
+    from app.main import create_app
+
+    keys = DemoKeys.load_or_create(seeded.keys_file)
+    ana_paper = DemoPaper(
+        slug="ana-probe",
+        title="A Short Note Published From Fresh Demo Data",
+        abstract="Checks that a demo author can publish a paper after the seed has run.",
+        categories=("cs.AI", "cs.LG"),
+        authors=(("ana", ("Conceptualization", "Writing - original draft")),),
+        days_ago=0,
+        listed=False,
+        sections=(("1 Note", ("A fictional paragraph, published by a fictional author.",)),),
+    )
+    with TestClient(create_app()) as http:
+        seeder = _Seeder(http, keys, lambda _message: None, SeedResult("probe", seeded.keys_file, False))
+        seeder._sign_in()
+        published = seeder._publish(ana_paper)
+
+    assert published.created and published.state == "moderation"
+    assert rows(seeded.node, "select state from paper_versions where title = :t", t=ana_paper.title) == [
+        ("moderation",)
+    ]
+
+
+def test_each_reviewer_is_endorsed_in_the_categories_of_the_papers_they_reviewed(seeded):
+    dids = _dids(seeded)
+    endorsed = {(d, c) for d, c in rows(seeded.node, "select endorsee_did, category from endorsements")}
+    reviewed: dict[str, set[str]] = {}
+    for paper in PAPERS:
+        for review in paper.reviews:
+            reviewed.setdefault(review.reviewer, set()).update(paper.categories)
+    assert reviewed, "the cast has reviews"
+
+    for slug, categories in reviewed.items():
+        # Still a reviewer: an endorsement grants tier 2 and never demotes anyone.
+        assert rows(seeded.node, "select tier from accounts where did = :d", d=dids[slug]) == [(3,)]
+        assert {(dids[slug], category) for category in categories} <= endorsed, slug
+        # ... and so a reviewer, who is not held by the weekly limit, can start a paper in each.
+        for category in sorted(categories):
+            assert _start_a_paper(seeded, slug, [category]) == (201, None), (slug, category)
+
+
+def _record(seeded, cid: str) -> dict:
+    from app.main import create_app
+
+    with TestClient(create_app()) as http:
+        response = http.get(f"/v1/records/{cid}")
+    assert response.status_code == 200, (cid, response.text)
+    return response.json()
+
+
+def test_a_seeded_version_record_carries_its_papers_categories(seeded):
+    """The moderation item page reads ``body.categories`` of the version record, as the browser signs it."""
+    assert len(seeded.result.papers) == len(PAPERS)
+
+    for paper, stored in zip(PAPERS, seeded.result.papers):
+        body = _record(seeded, stored.version_cid)["body"]
+        assert body["categories"] == list(paper.categories), paper.title
 
 
 # --- manuscripts ------------------------------------------------------------

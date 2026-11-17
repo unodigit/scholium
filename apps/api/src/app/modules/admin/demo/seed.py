@@ -442,11 +442,17 @@ class _Seeder:
         self.log(f"saved {len(PEOPLE)} profiles")
 
     def _endorse(self) -> None:
-        """Reviewers endorse the authors, which is what grants tier 2 and the right to submit."""
+        """Reviewers endorse the authors, which is what grants tier 2 and the right to submit.
+
+        The cast has endorsements for its reviewers as well: tier 3 alone does not
+        let anyone start a paper, an endorsement in the category does.
+        """
         made = 0
-        for person in PEOPLE:
-            if person.endorsed_by is None:
-                continue
+        # Authors first, then the reviewers: a record is dated by how many came
+        # before it, and the authors' endorsements are the ones an earlier run
+        # may already have sent -- they must keep their dates, so their ids.
+        endorsed = [p for p in PEOPLE if p.endorsed_by is not None]
+        for person in sorted(endorsed, key=lambda p: p.role != "author"):
             endorser, endorsee = self.actors[person.endorsed_by], self.actors[person.slug]
             for step, category in enumerate(person.endorsed_in):
                 record = endorser.record(
@@ -459,7 +465,7 @@ class _Seeder:
             endorsee.refresh()  # the new tier is in the next token
             if endorsee.tier < 2:
                 raise SeedError(f"{person.name} is still tier {endorsee.tier} after being endorsed")
-        self.log("endorsed the authors")
+        self.log("endorsed the authors and the reviewers")
 
     # --- a paper ---------------------------------------------------------
 
@@ -531,6 +537,9 @@ class _Seeder:
                 "manifest": manifest["id"],
                 "licence": LICENCE,
                 "changeNote": "Initial version.",
+                # As the browser signs it: the moderation page, the consent page and
+                # the new-version form read the categories from this record, not the genesis.
+                "categories": list(paper.categories),
             },
             self._at(paper, _VERSION),
             prev=genesis["id"],

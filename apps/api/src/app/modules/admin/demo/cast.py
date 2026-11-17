@@ -13,10 +13,16 @@ Constraints the data keeps, because the node enforces or checks them:
 
 * a paper's *submitter* (its first author) is endorsed in every category it is
   filed under, and starts at most one paper -- a tier-2 account younger than 90
-  days may start one a week, and every demo account is new;
+  days may start one a week, and every demo account is new.  So the papers use
+  up their submitters' week, and one author (Ana Costa) starts none: she is the
+  account a person can sign in as to publish a paper on fresh demo data;
 * a reviewer works at a different institution from every author of a paper
   they review, never reviews a paper they wrote, and never reviews someone they
-  endorsed (the endorser, Dr. Okafor, reviews nothing).
+  endorsed (the endorser, Dr. Okafor, reviews nothing);
+* a reviewer is endorsed in every category of every paper they review.  Tier 3
+  does not let anyone start a paper -- an endorsement in the category does --
+  and the node only lets a reviewer who holds endorsements review inside them,
+  so these have to cover the reviews the cast already wrote.
 """
 
 from __future__ import annotations
@@ -55,7 +61,8 @@ class Person:
     name: str
     affiliation: str
     role: str
-    #: Who endorses this person, and in which categories (authors only).
+    #: Who endorses this person, and in which categories (authors, and the
+    #: reviewers, who need them to start a paper of their own).
     endorsed_by: Optional[str] = None
     endorsed_in: tuple[str, ...] = ()
 
@@ -112,12 +119,15 @@ class DemoPaper:
 PEOPLE: tuple[Person, ...] = (
     Person("priya", "Priya Nair", "Scholium moderation team", MODERATOR),
     Person("okafor", "Dr. Tunde Okafor", "Harbour University", REVIEWER),
-    Person("solheim", "Dr. Ingrid Solheim", "Nordlys Foundation", REVIEWER),
-    Person("keller", "Dr. Jonas Keller", "Alpine Research Trust", REVIEWER),
+    # Both review the first two papers, which between them are filed in these three categories.
+    Person("solheim", "Dr. Ingrid Solheim", "Nordlys Foundation", REVIEWER, "okafor", ("cs.AI", "cs.LG", "cs.MA")),
+    Person("keller", "Dr. Jonas Keller", "Alpine Research Trust", REVIEWER, "okafor", ("cs.AI", "cs.LG", "cs.MA")),
     Person("mei", "Mei Zhang", "Harbour University", AUTHOR, "okafor", ("cs.AI", "cs.MA")),
     Person("rafael", "Rafael Silva", "Harbour University", AUTHOR, "okafor", ("cs.AI", "cs.LG")),
     Person("lena", "Lena Haddad", "Harbour University", AUTHOR, "okafor", ("cs.LG",)),
     Person("sam", "Sam Rivera", "Independent researcher", AUTHOR, "okafor", ("cs.AI",)),
+    # Appended, not placed with the others, so everyone above keeps their place.  Starts no paper.
+    Person("ana", "Ana Costa", "Meridian Institute", AUTHOR, "okafor", ("cs.AI", "cs.LG")),
 )
 
 
