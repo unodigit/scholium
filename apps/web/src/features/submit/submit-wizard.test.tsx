@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { formatAllowedAt, type EligibilityFacts } from "./eligibility";
 import { SubmitWizard } from "./submit-wizard";
 import { WizardRail } from "./wizard-rail";
 import { WIZARD_STEPS, nextStep, stepIndex } from "./wizard-steps";
@@ -355,5 +356,104 @@ describe("SubmitWizard — Details to Authors and back", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add co-author" }));
     expect(resolveAuthor).toHaveBeenCalledWith({ kind: "email", value: "ada@example.org" });
     expect(await screen.findByText("Matched to an account")).toBeTruthy();
+  });
+});
+
+describe("SubmitWizard — eligibility is explained before any upload", () => {
+  const facts = (over: Partial<EligibilityFacts> = {}): EligibilityFacts => ({
+    tier: 2,
+    endorsedCategories: ["cs.AI"],
+    nextAllowedAt: null,
+    name: "Mei Chen",
+    ...over,
+  });
+  const askApi = (over: Partial<EligibilityFacts> = {}) => vi.fn().mockResolvedValue(facts(over));
+  const eligibilityRegion = (): Promise<HTMLElement> =>
+    screen.findByRole("status", { name: "Submission eligibility" });
+
+  it("says on opening /submit that a Member cannot submit yet, and how to get endorsed", async () => {
+    render(
+      <SubmitWizard
+        signedIn
+        submitterDid={ME}
+        fetchEligibility={askApi({ tier: 1, endorsedCategories: [] })}
+      />,
+    );
+    const region = await screen.findByText(/needs an Author account/);
+    const notice = region.closest("[role='status']") as HTMLElement;
+    expect(notice.textContent).toMatch(/Member/);
+    expect(within(notice).getByRole("link", { name: "How to get endorsed" }).getAttribute("href")).toBe(
+      `/u/${encodeURIComponent(ME)}`,
+    );
+    // It is said at step 1, with nothing uploaded yet.
+    expect(screen.getByRole("heading", { level: 2, name: "Files" })).toBeTruthy();
+    expect(screen.queryByText("paper.pdf", { selector: ".sw-file__name" })).toBeNull();
+  });
+
+  it("states the weekly limit with the next allowed date in the viewer's locale", async () => {
+    const next = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    render(<SubmitWizard signedIn submitterDid={ME} fetchEligibility={askApi({ nextAllowedAt: next })} />);
+    const region = await eligibilityRegion();
+    await vi.waitFor(() => expect(region.textContent).toMatch(/one new paper a week/i));
+    expect(region.textContent).toContain(formatAllowedAt(next));
+    expect(region.textContent).not.toMatch(/\d{4}-\d\d-\d\dT/);
+    expect(region.textContent).not.toContain("paper.genesis");
+  });
+
+  it("checks the categories as they are chosen on the Details step", async () => {
+    await openDetails({ submitterDid: ME, fetchEligibility: askApi({ endorsedCategories: ["cs.CL"] }) });
+    const region = await eligibilityRegion();
+    // Nothing is chosen yet, so nothing is wrong yet.
+    expect(region.textContent).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: /^cs\.AI/ }));
+    await vi.waitFor(() => expect(region.textContent).toMatch(/not endorsed in cs\.AI/));
+    expect(region.textContent).toMatch(/cs\.CL/);
+
+    // Choosing it again clears the problem.
+    fireEvent.click(screen.getByRole("button", { name: /^cs\.AI/ }));
+    await vi.waitFor(() => expect(region.textContent).toBe(""));
+  });
+
+  it("says nothing to someone who can submit", async () => {
+    const fetchEligibility = askApi();
+    render(<SubmitWizard signedIn submitterDid={ME} fetchEligibility={fetchEligibility} />);
+    const region = await eligibilityRegion();
+    await vi.waitFor(() => expect(fetchEligibility).toHaveBeenCalled());
+    expect(region.textContent).toBe("");
+  });
+
+  it("does not block the wizard when eligibility cannot be read: the node still decides at signing", async () => {
+    const fetchEligibility = vi.fn().mockRejectedValue(new Error("offline"));
+    render(<SubmitWizard signedIn submitterDid={ME} fetchEligibility={fetchEligibility} />);
+    const region = await eligibilityRegion();
+    await vi.waitFor(() => expect(fetchEligibility).toHaveBeenCalled());
+    expect(region.textContent).toBe("");
+    expect(screen.getByRole("heading", { level: 2, name: "Files" })).toBeTruthy();
+  });
+
+  it("does not ask the API on behalf of someone who is signed out", async () => {
+    const fetchEligibility = askApi();
+    render(<SubmitWizard signedIn={false} fetchEligibility={fetchEligibility} />);
+    await screen.findByRole("link", { name: "Sign in" });
+    expect(fetchEligibility).not.toHaveBeenCalled();
+  });
+
+  it("carries the profile name to the Sign step, where the summary shows it with the DID beneath", async () => {
+    await openDetails({ submitterDid: ME, fetchEligibility: askApi({ name: "Mei Chen" }) });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "CRediT roles for You" })).getByRole("button", {
+        name: /^Conceptualization/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Sign" }));
+
+    const row = within(screen.getByRole("list", { name: "Authors" })).getAllByRole("listitem")[0];
+    await vi.waitFor(() => expect(row.querySelector(".sw-summary__author-name")?.textContent).toBe("Mei Chen (you)"));
+    expect(row.querySelector(".sw-summary__author-did")?.textContent).toBe("did:key:z6MkhaXg…ta2doK");
+    expect(row.textContent).not.toContain(ME);
   });
 });

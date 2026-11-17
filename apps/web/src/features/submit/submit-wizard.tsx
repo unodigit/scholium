@@ -8,6 +8,11 @@
  * file list rather than an empty zone. The wizard owns the Details draft and
  * the author roster for the same reason. Step 5 (Sign) is a separate feature
  * that plugs in here.
+ *
+ * Whether the viewer may submit at all is read when the page opens (tier,
+ * endorsements) and re-checked as categories are chosen, and explained in a
+ * notice above the steps, before any upload. The node still decides when the
+ * paper is signed; a check that cannot be read never blocks the wizard.
  */
 
 import Link from "next/link";
@@ -19,6 +24,13 @@ import { AuthorsStep } from "./authors-step";
 import type { ChecksVersionRef, FetchChecks } from "./checks";
 import { ChecksStep } from "./checks-step";
 import { DetailsStep } from "./details-step";
+import {
+  describeBlocker,
+  fetchEligibility as readEligibility,
+  findBlockers,
+  type EligibilityFacts,
+  type FetchEligibility,
+} from "./eligibility";
 import { SignStep } from "./sign-step";
 import { emptyDetails, type DetailsValues } from "./details";
 import {
@@ -55,6 +67,8 @@ export interface SubmitWizardProps {
   fetchChecks?: FetchChecks;
   /** How often step 4 asks the node again while it is scanning. */
   checksPollMs?: number;
+  /** Replaces the tier / endorsement lookup, for tests and callers with their own client. */
+  fetchEligibility?: FetchEligibility;
   /** Persistence for the wizard draft. Tests may inject a store or an IndexedDB factory. */
   draftStorage?: SubmitDraftStorage;
   storage?: SubmitDraftStorage;
@@ -73,6 +87,7 @@ export function SubmitWizard({
   checksFor,
   fetchChecks,
   checksPollMs,
+  fetchEligibility,
   draftStorage,
   storage,
   draftStorageFactory,
@@ -103,6 +118,38 @@ export function SubmitWizard({
       setAuthors((current) => withSubmitterDid(current, ownDid));
     }
   }, [ownDid]);
+
+  // What the node says the viewer may do. `null` until it has answered, and
+  // again if it could not: then nothing is claimed and the node's answer at
+  // signing stands.
+  const [facts, setFacts] = useState<EligibilityFacts | null>(null);
+  const fetchEligibilityRef = useRef(fetchEligibility);
+  fetchEligibilityRef.current = fetchEligibility;
+  useEffect(() => {
+    if (!mounted || !isSignedIn) {
+      setFacts(null);
+      return;
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const read = fetchEligibilityRef.current ?? ((did, signal) => readEligibility(did, undefined, signal));
+        const result = await read(ownDid, controller.signal);
+        if (!controller.signal.aborted) {
+          setFacts(result);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setFacts(null);
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [mounted, isSignedIn, ownDid]);
+  const blockers = useMemo(
+    () => (facts === null ? [] : findBlockers(facts, details.categories)),
+    [facts, details.categories],
+  );
 
   // Pick the persistence backend. Props win; otherwise IndexedDB when the
   // browser has it, with an in-memory fallback for tests and SSR.
@@ -220,6 +267,24 @@ export function SubmitWizard({
         </p>
       ) : null}
 
+      {/* Always in the page, so a blocker appearing (or clearing) as categories change is announced. */}
+      <div className="sw-eligibility" role="status" aria-label="Submission eligibility">
+        {blockers.map((blocker) => {
+          const message = describeBlocker(blocker, { did: ownDid });
+          return (
+            <div key={blocker.kind} className="sw-eligibility__item" data-blocker={blocker.kind}>
+              <p className="sw-eligibility__title">{message.title}</p>
+              <p className="sw-eligibility__body">{message.body}</p>
+              {message.help !== null ? (
+                <Link className="sw-eligibility__help" href={message.help.href}>
+                  {message.help.label}
+                </Link>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
       <div hidden={step !== "files"}>
         <FilesStep
           managerDeps={managerDeps}
@@ -265,6 +330,7 @@ export function SubmitWizard({
           files={files}
           details={details}
           authors={authors}
+          submitterName={facts?.name ?? null}
           onBack={() => setStep("checks")}
         />
       ) : null}

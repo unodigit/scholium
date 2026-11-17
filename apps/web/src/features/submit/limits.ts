@@ -74,6 +74,16 @@ export function formatExactBytes(bytes: number): string {
   return `${bytes.toLocaleString("en-US")} bytes`;
 }
 
+/**
+ * A count with its noun, agreeing in number: `pluralize(1, "file")` is
+ * "1 file", `pluralize(2, "file")` is "2 files". A noun with an irregular plural
+ * names it: `pluralize(2, "category", "categories")`. Zero takes the plural, as
+ * in "0 files".
+ */
+export function pluralize(count: number, singular: string, plural: string = `${singular}s`): string {
+  return `${count.toLocaleString("en-US")} ${count === 1 ? singular : plural}`;
+}
+
 /** Why a file cannot be uploaded on size grounds alone. */
 export interface SizeProblem {
   code: "empty" | "too-large";

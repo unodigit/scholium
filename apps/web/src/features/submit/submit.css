@@ -1054,6 +1054,274 @@
   color: var(--ink);
 }
 
+/* A tracker that sits inside another step: the parent supplies the card and the heading. */
+.sw-tracker--embedded {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* ---- Status tracker -------------------------------------------------------
+   A vertical stepper in the rail's own language: a round marker, a hairline
+   to the next stage, the state in words beside the label. The consents stage
+   holds the people; the markers carry a number, a tick or a warning, never
+   colour alone. */
+
+.sw-status-tracker {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 5);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background: var(--surface);
+}
+
+.sw-status-tracker__title {
+  margin: 0;
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.sw-status-tracker__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sw-status-tracker__stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--space-unit) * 6) minmax(0, 1fr);
+  column-gap: calc(var(--space-unit) * 3);
+  padding-bottom: calc(var(--space-unit) * 5);
+}
+
+.sw-status-tracker__stage:last-child {
+  padding-bottom: 0;
+}
+
+/* The hairline from this marker down to the next one. */
+.sw-status-tracker__stage:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(var(--space-unit) * 3 - 0.5px);
+  top: calc(var(--space-unit) * 7);
+  bottom: var(--space-unit);
+  width: 1px;
+  background: var(--rule);
+}
+
+.sw-status-tracker__stage[data-state="done"]:not(:last-child)::before {
+  background: var(--verified);
+}
+
+.sw-status-tracker__marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: calc(var(--space-unit) * 6);
+  height: calc(var(--space-unit) * 6);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--duration-fast) var(--ease-decel),
+    border-color var(--duration-fast) var(--ease-decel);
+}
+
+.sw-status-tracker__stage[data-state="current"] .sw-status-tracker__marker {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.sw-status-tracker__stage[data-state="done"] .sw-status-tracker__marker {
+  border-color: var(--verified);
+  color: var(--verified);
+}
+
+.sw-status-tracker__stage[data-state="attention"] .sw-status-tracker__marker {
+  border-color: var(--critical);
+  color: var(--critical);
+}
+
+.sw-status-tracker__body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  min-width: 0;
+}
+
+.sw-status-tracker__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--space-unit) * 2);
+  /* Level with the marker, whose centre the label should share. */
+  min-height: calc(var(--space-unit) * 6);
+}
+
+.sw-status-tracker__label {
+  color: var(--ink-2);
+  font-size: var(--type-ui);
+  line-height: calc(var(--space-unit) * 6);
+  font-weight: 500;
+}
+
+.sw-status-tracker__stage[data-state="current"] .sw-status-tracker__label,
+.sw-status-tracker__stage[data-state="attention"] .sw-status-tracker__label,
+.sw-status-tracker__stage[data-state="done"] .sw-status-tracker__label {
+  color: var(--ink);
+}
+
+.sw-status-tracker__stage[data-state="current"] .sw-status-tracker__label,
+.sw-status-tracker__stage[data-state="attention"] .sw-status-tracker__label {
+  font-weight: 600;
+}
+
+.sw-status-tracker__count {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-status-tracker__state {
+  margin-inline-start: auto;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  white-space: nowrap;
+}
+
+.sw-status-tracker__stage[data-state="done"] .sw-status-tracker__state {
+  color: var(--verified);
+}
+
+.sw-status-tracker__stage[data-state="attention"] .sw-status-tracker__state {
+  color: var(--critical);
+}
+
+.sw-status-tracker__detail {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Sign your consent": a real button-sized target, never a bare underlined word. */
+.sw-status-tracker__action {
+  align-self: flex-start;
+  text-decoration: none;
+}
+
+.sw-status-tracker__action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Eligibility notice ----------------------------------------------------
+   Why the viewer cannot submit yet, said before any upload. The status colour
+   is carried by the border; the words stay --ink on the soft tint. */
+
+.sw-eligibility {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+}
+
+/* The region stays in the page so a change is announced; empty, it must not
+   leave the wizard's own gap behind. */
+.sw-eligibility:empty {
+  margin-block-end: calc(var(--space-unit) * -6);
+}
+
+.sw-eligibility__item {
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--pending);
+  border-radius: var(--corner-control);
+  background: var(--pending-soft);
+  color: var(--ink);
+}
+
+.sw-eligibility__title {
+  margin: 0;
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+}
+
+.sw-eligibility__body {
+  margin: var(--space-unit) 0 0;
+  max-width: var(--measure-reading);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sw-eligibility__help {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(var(--space-unit) * 6);
+  margin-top: calc(var(--space-unit) * 2);
+  color: var(--accent);
+  font-size: var(--type-meta);
+  text-decoration: underline;
+}
+
+.sw-eligibility__help:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .sw-eligibility__help {
+    min-height: calc(var(--space-unit) * 11);
+  }
+}
+
+/* ---- Summary: authors ------------------------------------------------------
+   A person by name, with their DID beneath in the mono face. */
+
+.sw-summary__authors {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sw-summary__author-name {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.sw-summary__author-did {
+  display: block;
+  color: var(--ink-2);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  overflow-wrap: anywhere;
+}
+
+.sw-summary__author-roles {
+  color: var(--ink-2);
+}
+
 /* ---- Checks --------------------------------------------------------------- */
 
 .sw-checks {
@@ -1220,6 +1488,7 @@
   .sw-drop,
   .sw-button,
   .sw-icon-button,
+  .sw-status-tracker__marker,
   .sw-meter__bar::-webkit-progress-value {
     transition: none;
   }

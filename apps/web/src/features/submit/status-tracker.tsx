@@ -1,9 +1,15 @@
 "use client";
 
 /**
- * The post-submission status tracker (docs/design.md §5.4): Submitted →
- * Co-author consents → Moderation → Listed → AI pre-review, with the consent
- * tracker underneath.
+ * The post-submission status tracker (docs/design.md §5.4): a stepper through
+ * Submitted → Co-author consents → Scan → Moderation → Listed → AI pre-review.
+ *
+ * Each stage is its own block: a marker, a label, a count where there is one,
+ * the stage's state *in words* (Done, In progress, Needs attention, Not
+ * started) and a line of detail. The consents stage carries each author's own
+ * state, and, while the viewer still owes a consent, a "Sign your consent"
+ * link to `/consent/{version}` — the submitter is listed as an author who has
+ * not signed, and the tracker used to give them no way to do it.
  *
  * It can also carry the version's automated checks (`checks`, from
  * `GET /v1/papers/{id}/v/{n}/checks`): `null` means the node has no report
@@ -12,6 +18,7 @@
  * never gate anything here: signing has already happened.
  */
 
+import Link from "next/link";
 import type { ReactElement, ReactNode } from "react";
 
 import { ConsentTracker } from "./consent-tracker";
@@ -19,6 +26,7 @@ import { countConsents, consentSummary, trackerFromDraft, trackerFromReport, typ
 import { CHECK_STATE_TONES } from "./checks-step";
 import { checkItems, checksSummary, type VersionChecks } from "./checks";
 import type { DraftAuthor } from "./authors";
+import { CheckIcon, WarningIcon } from "./icons";
 import "./submit.css";
 
 export interface StatusTrackerProps {
@@ -33,12 +41,43 @@ export interface StatusTrackerProps {
   paper?: string;
   version?: number;
   /**
+   * The id of the signed `paper.version`, which the consent link points at
+   * (`/consent/{versionCid}`). Used until the consent report arrives and says
+   * it itself; with neither, there is nothing to link to.
+   */
+  versionCid?: string;
+  /**
    * The version's check report, or `null` while the node has none (shown as
    * "Checks pending"). Leave the prop out to show no checks at all.
    */
   checks?: VersionChecks | null;
   children?: ReactNode;
 }
+
+type StageState = "done" | "current" | "attention" | "upcoming";
+
+interface Stage {
+  key: "submitted" | "consents" | "scan" | "moderation" | "listed" | "ai";
+  label: string;
+  /** "1/2": a fraction beside the label, for a stage that counts something. */
+  count?: string;
+  detail?: string;
+  done: boolean;
+  /** Something needs a person: a co-author declined. */
+  attention?: boolean;
+}
+
+const STATE_WORDS: Record<StageState, string> = {
+  done: "Done",
+  current: "In progress",
+  attention: "Needs attention",
+  upcoming: "Not started",
+};
+
+/** The version states that come after consents / after the scan. */
+const PAST_CONSENTS = new Set(["scanning", "moderation", "listed", "held", "rejected"]);
+const PAST_SCAN = new Set(["moderation", "listed", "held", "rejected"]);
+const PAST_MODERATION = new Set(["listed", "held", "rejected"]);
 
 export function StatusTracker(props: StatusTrackerProps): ReactElement {
   const report = props.report ?? props.consents ?? props.consentReport ?? null;
@@ -50,36 +89,108 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
   const summary = props.consentsSummary ?? consentSummary(counts);
 
   const state = report?.state ?? "awaiting_consent";
-  const consentsDone = counts.total > 0 && counts.signed === counts.total && counts.declined === 0;
-  const moderationDone = state === "listed" || state === "held" || state === "rejected";
-  const listedDone = state === "listed";
+  const consentsDone =
+    PAST_CONSENTS.has(state) || (counts.total > 0 && counts.signed === counts.total && counts.declined === 0);
 
-  const stages = [
+  const stages: Stage[] = [
     { key: "submitted", label: "Submitted", done: props.submitted ?? true },
-    { key: "consents", label: counts.total > 0 ? `Co-author consents (${counts.signed}/${counts.total})` : "Co-author consents", detail: summary, done: consentsDone },
-    { key: "moderation", label: "Moderation", detail: "target 48 h", done: moderationDone },
-    { key: "listed", label: "Listed", done: listedDone },
-    { key: "ai", label: "AI pre-review", done: false },
+    {
+      key: "consents",
+      label: "Co-author consents",
+      count: counts.total > 0 ? `${counts.signed}/${counts.total}` : undefined,
+      detail: summary,
+      done: consentsDone,
+      attention: counts.declined > 0 && !consentsDone,
+    },
+    { key: "scan", label: "Scan", detail: "Files and references are checked", done: PAST_SCAN.has(state) },
+    { key: "moderation", label: "Moderation", detail: "Target: 48 hours", done: PAST_MODERATION.has(state) },
+    { key: "listed", label: "Listed", done: state === "listed" },
+    { key: "ai", label: "AI pre-review", detail: "Advisory, after listing", done: false },
   ];
+  // The first stage that is not done is where the version is now.
+  const currentIndex = stages.findIndex((stage) => !stage.done);
+
+  // The node's own report names the version; the id from signing stands in until it arrives.
+  const versionCid = report?.versionCid ?? props.versionCid;
+  const owesConsent = entries.some((entry) => entry.isYou && entry.status === "waiting");
+  // A version back in draft (someone declined) is not asking for signatures.
+  const consentLink =
+    owesConsent && state === "awaiting_consent" && versionCid !== undefined && versionCid !== ""
+      ? `/consent/${encodeURIComponent(versionCid)}`
+      : null;
 
   return (
     <section className="sw-status-tracker" aria-label="Status tracker">
       <h3 className="sw-status-tracker__title">Status</h3>
-      <ol className="sw-status-tracker__list">
-        {stages.map((stage) => (
-          <li
-            key={stage.key}
-            className="sw-status-tracker__stage"
-            data-stage={stage.key}
-            data-done={stage.done ? "true" : "false"}
-          >
-            <span className="sw-status-tracker__label">{stage.label}</span>
-            {stage.detail ? <span className="sw-status-tracker__detail">{stage.detail}</span> : null}
-            {stage.done ? <span className="sw-status-tracker__check" aria-hidden="true">✓</span> : null}
-          </li>
-        ))}
+      <ol className="sw-status-tracker__list" aria-label="Submission status">
+        {stages.map((stage, index) => {
+          const stageState: StageState = stage.done
+            ? "done"
+            : index === currentIndex
+              ? stage.attention
+                ? "attention"
+                : "current"
+              : "upcoming";
+          // After listing, the AI pre-review is on its way rather than "in progress".
+          const stateWords = stage.key === "ai" && stageState === "current" ? "Pending" : STATE_WORDS[stageState];
+          return (
+            <li
+              key={stage.key}
+              className="sw-status-tracker__stage"
+              data-stage={stage.key}
+              data-state={stageState}
+              data-done={stage.done ? "true" : "false"}
+              aria-current={stageState === "current" || stageState === "attention" ? "step" : undefined}
+            >
+              <span className="sw-status-tracker__marker" aria-hidden="true">
+                {stageState === "done" ? (
+                  <CheckIcon />
+                ) : stageState === "attention" ? (
+                  <WarningIcon />
+                ) : (
+                  index + 1
+                )}
+              </span>
+              <div className="sw-status-tracker__body">
+                <div className="sw-status-tracker__head">
+                  <span className="sw-status-tracker__label">{stage.label}</span>
+                  {stage.count !== undefined ? (
+                    // The detail line already says "1 of 2 signed"; the fraction is for the eye.
+                    <span className="sw-status-tracker__count" aria-hidden="true">
+                      {stage.count}
+                    </span>
+                  ) : null}
+                  <span className="sw-status-tracker__state">{stateWords}</span>
+                </div>
+                {stage.detail ? (
+                  // The count of signatures changes by itself as co-authors answer, so it is announced politely.
+                  <p className="sw-status-tracker__detail" role={stage.key === "consents" ? "status" : undefined}>
+                    {stage.detail}
+                  </p>
+                ) : null}
+                {stage.key === "consents" ? (
+                  <>
+                    <ConsentTracker
+                      entries={entries}
+                      embedded
+                      caption={
+                        state === "awaiting_consent"
+                          ? "Each author gets a link to review and sign. The version moves on once everyone has signed."
+                          : undefined
+                      }
+                    />
+                    {consentLink !== null ? (
+                      <Link className="sw-button sw-button--primary sw-status-tracker__action" href={consentLink}>
+                        Sign your consent
+                      </Link>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
       </ol>
-      <ConsentTracker entries={entries} caption="Co-author consents" />
       {props.checks !== undefined ? <TrackerChecks checks={props.checks} /> : null}
       {props.children}
     </section>

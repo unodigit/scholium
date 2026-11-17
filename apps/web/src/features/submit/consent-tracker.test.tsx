@@ -111,3 +111,31 @@ describe("ConsentTracker", () => {
     expect(document.getElementById("b-title")).toBeTruthy();
   });
 });
+
+describe("ConsentTracker — inside another step", () => {
+  it("draws only the rows when embedded: no card, no second heading, no second live region", () => {
+    render(
+      <ConsentTracker
+        embedded
+        entries={[
+          entry({ key: "a", name: "Mei Chen", monogram: "MC", status: "signed", isYou: true, detail: "did:key:z6MkhaXg…ta2doK" }),
+          entry({ key: "b", status: "waiting" }),
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    const rows = within(screen.getByRole("list", { name: "Co-author consents" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.getAttribute("data-status"))).toEqual(["signed", "waiting"]);
+    expect(rows[0].textContent).toContain("Mei Chen (you)");
+    expect(rows[0].querySelector(".sw-tracker__detail")?.textContent).toBe("did:key:z6MkhaXg…ta2doK");
+    expect(document.querySelector(".sw-tracker--embedded")).toBeTruthy();
+  });
+
+  it("still says who declined, and still shows an error, when embedded", () => {
+    const { rerender } = render(<ConsentTracker embedded entries={[entry({ status: "declined" })]} />);
+    expect(screen.getByText(/Ada Lovelace declined authorship/)).toBeTruthy();
+    rerender(<ConsentTracker embedded entries={[entry({})]} error="Could not check." />);
+    expect(screen.getByRole("alert").textContent).toBe("Could not check.");
+  });
+});

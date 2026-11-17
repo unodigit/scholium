@@ -6,6 +6,12 @@
  * polite live region, so a screen reader hears "2 of 3 signed" when a poll
  * brings news. The tracker only draws; where the entries come from (the draft,
  * or `GET /v1/papers/{id}/v/{n}/consents`) is the caller's business.
+ *
+ * `embedded` draws just the rows (and the decline notice or error), for a
+ * parent that already carries the heading and the summary, such as the status
+ * tracker's consents stage. It leaves out the card, the heading and the live
+ * region, so the page does not say "Co-author consents" twice or announce the
+ * same count from two places.
  */
 
 import type { ReactElement, ReactNode } from "react";
@@ -25,6 +31,8 @@ export interface ConsentTrackerProps {
   error?: string | null;
   /** Name each author's CRediT roles under their name (the consent page does). */
   showRoles?: boolean;
+  /** Draw only the rows and notes, for a parent that supplies the heading and summary. */
+  embedded?: boolean;
 }
 
 export function ConsentTracker({
@@ -33,10 +41,63 @@ export function ConsentTracker({
   caption,
   error,
   showRoles = false,
+  embedded = false,
 }: ConsentTrackerProps): ReactElement {
   const counts = countConsents(entries);
   const declined = declineNotice(entries);
   const titleId = `${idPrefix}-title`;
+
+  const rows =
+    entries.length === 0 ? (
+      <p className="sw-tracker__note">No authors are listed on this version.</p>
+    ) : (
+      <ul className="sw-tracker__list" aria-label={embedded ? "Co-author consents" : undefined}>
+        {entries.map((entry) => {
+          return (
+            <li key={entry.key} className="sw-tracker__row" data-status={entry.status}>
+              <span className="sw-avatar" aria-hidden="true">
+                {entry.monogram ?? <PersonIcon />}
+              </span>
+              <span className="sw-tracker__who">
+                <span className="sw-tracker__name">
+                  {entry.name}
+                  {entry.isYou && entry.name !== "You" ? <span className="sw-tracker__you"> (you)</span> : null}
+                </span>
+                {entry.detail !== null ? <span className="sw-tracker__detail">{entry.detail}</span> : null}
+                {showRoles && entry.roles.length > 0 ? (
+                  <span className="sw-tracker__roles">{entry.roles.join(", ")}</span>
+                ) : null}
+              </span>
+              <span className="sw-chip" data-tone={TONES[entry.status]}>
+                <ConsentIcon status={entry.status} />
+                {CONSENT_STATUS_LABELS[entry.status]}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    );
+
+  const note = error ? (
+    <p className="sw-tracker__note" role="alert">
+      {error}
+    </p>
+  ) : declined !== null ? (
+    <p className="sw-tracker__note" data-tone="critical">
+      {declined}
+    </p>
+  ) : caption ? (
+    <p className="sw-tracker__note">{caption}</p>
+  ) : null;
+
+  if (embedded) {
+    return (
+      <div className="sw-tracker sw-tracker--embedded">
+        {rows}
+        {note}
+      </div>
+    );
+  }
 
   return (
     <section className="sw-tracker" aria-labelledby={titleId}>
@@ -48,48 +109,8 @@ export function ConsentTracker({
           {consentSummary(counts)}
         </p>
       </header>
-
-      {entries.length === 0 ? (
-        <p className="sw-tracker__note">No authors are listed on this version.</p>
-      ) : (
-        <ul className="sw-tracker__list">
-          {entries.map((entry) => {
-            return (
-              <li key={entry.key} className="sw-tracker__row" data-status={entry.status}>
-                <span className="sw-avatar" aria-hidden="true">
-                  {entry.monogram ?? <PersonIcon />}
-                </span>
-                <span className="sw-tracker__who">
-                  <span className="sw-tracker__name">
-                    {entry.name}
-                    {entry.isYou && entry.name !== "You" ? <span className="sw-tracker__you"> (you)</span> : null}
-                  </span>
-                  {entry.detail !== null ? <span className="sw-tracker__detail">{entry.detail}</span> : null}
-                  {showRoles && entry.roles.length > 0 ? (
-                    <span className="sw-tracker__roles">{entry.roles.join(", ")}</span>
-                  ) : null}
-                </span>
-                <span className="sw-chip" data-tone={TONES[entry.status]}>
-                  <ConsentIcon status={entry.status} />
-                  {CONSENT_STATUS_LABELS[entry.status]}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {error ? (
-        <p className="sw-tracker__note" role="alert">
-          {error}
-        </p>
-      ) : declined !== null ? (
-        <p className="sw-tracker__note" data-tone="critical">
-          {declined}
-        </p>
-      ) : caption ? (
-        <p className="sw-tracker__note">{caption}</p>
-      ) : null}
+      {rows}
+      {note}
     </section>
   );
 }

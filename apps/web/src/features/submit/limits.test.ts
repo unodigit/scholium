@@ -11,7 +11,29 @@ import {
   formatExactBytes,
   isPdf,
   maxBytesFor,
+  pluralize,
 } from "./limits";
+
+describe("pluralize", () => {
+  it("uses the singular for exactly one, so the page never says '1 files'", () => {
+    expect(pluralize(1, "file")).toBe("1 file");
+  });
+
+  it("uses the plural for zero and for more than one", () => {
+    expect(pluralize(0, "file")).toBe("0 files");
+    expect(pluralize(2, "file")).toBe("2 files");
+    expect(pluralize(12, "co-author")).toBe("12 co-authors");
+  });
+
+  it("takes an irregular plural when the noun has one", () => {
+    expect(pluralize(1, "category", "categories")).toBe("1 category");
+    expect(pluralize(3, "category", "categories")).toBe("3 categories");
+  });
+
+  it("groups thousands for the reader", () => {
+    expect(pluralize(1234, "reference")).toBe("1,234 references");
+  });
+});
 
 describe("limits", () => {
   it("match the API: 50 MiB for a PDF, 5 GiB for everything else", () => {

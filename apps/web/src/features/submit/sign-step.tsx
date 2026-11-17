@@ -14,7 +14,7 @@
 
 import { useMemo, useState, type ReactElement } from "react";
 
-import { recordAuthors, type DraftAuthor } from "./authors";
+import { authorLabel, recordAuthors, shortDid, type DraftAuthor } from "./authors";
 import { fetchVersionChecks, type ChecksVersionRef, type FetchChecks } from "./checks";
 import { ConsentTracker } from "./consent-tracker";
 import {
@@ -28,6 +28,8 @@ import {
   type VersionRef,
 } from "./consents";
 import { emptyDetails, type DetailsValues } from "./details";
+import { submissionProblemMessage } from "./eligibility";
+import { pluralize } from "./limits";
 import { useChecks, DEFAULT_CHECK_POLL_MS } from "./use-checks";
 import { useConsents, DEFAULT_CONSENT_POLL_MS } from "./use-consents";
 import { StatusTracker } from "./status-tracker";
@@ -54,6 +56,13 @@ export interface SignStepProps {
   authors?: readonly DraftAuthor[];
   roster?: readonly DraftAuthor[];
   authorsList?: readonly DraftAuthor[];
+  /**
+   * The submitting author's profile name, shown on the summary and the tracker
+   * in place of "You" when their draft entry carries no name. Display only: it
+   * is never written into the signed byline, which lists exactly what the
+   * author entered on the Authors step.
+   */
+  submitterName?: string | null;
   onBack?: () => void;
   onContinue?: (result: SignResult) => void;
   onSigned?: (result: SignResult) => void;
@@ -145,6 +154,21 @@ export function SignStep(props: SignStepProps): ReactElement {
   const [consentsRef, setConsentsRef] = useState<VersionRef | null>(null);
   const [checksRef, setChecksRef] = useState<ChecksVersionRef | null>(null);
 
+  // People are shown by name. The submitter's draft entry has none unless they
+  // typed one, so lend it the profile name for display; `authors` itself, which
+  // is what gets signed, is left as it is.
+  const submitterName = props.submitterName ?? null;
+  const shownAuthors = useMemo(
+    () =>
+      submitterName === null || submitterName.trim() === ""
+        ? authors
+        : authors.map((author) =>
+            author.isSubmitter && author.name.trim() === "" ? { ...author, name: submitterName.trim() } : author,
+          ),
+    [authors, submitterName],
+  );
+  const submitterDid = authors.find((author) => author.isSubmitter)?.did ?? null;
+
   const fetchConsentsProp = props.fetchConsents ?? fetchConsents;
   const pollMs = props.pollMs ?? props.consentsPollMs ?? DEFAULT_CONSENT_POLL_MS;
   const consents = useConsents(consentsRef, { fetcher: fetchConsentsProp, intervalMs: pollMs });
@@ -160,9 +184,9 @@ export function SignStep(props: SignStepProps): ReactElement {
   const trackerEntries = useMemo(
     () =>
       consents.report !== null
-        ? trackerFromReport(consents.report, authors)
-        : trackerFromDraft(authors),
-    [consents.report, authors],
+        ? trackerFromReport(consents.report, shownAuthors)
+        : trackerFromDraft(shownAuthors),
+    [consents.report, shownAuthors],
   );
 
   const handleSign = async (): Promise<void> => {
@@ -221,7 +245,9 @@ export function SignStep(props: SignStepProps): ReactElement {
       setPhase("submitted");
       onDone?.(signedResult);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      // The node's refusal says "paper.genesis" and prints a raw timestamp;
+      // the author gets the rule and the date in their own words.
+      setError(submissionProblemMessage(failure, { did: submitterDid }));
       setPhase("idle");
     }
   };
@@ -251,14 +277,28 @@ export function SignStep(props: SignStepProps): ReactElement {
         ) : null}
         <p className="sw-summary__licence">Licence: {details.licence}</p>
         <ul className="sw-summary__authors" aria-label="Authors">
-          {authors.map((author) => (
-            <li key={author.key}>
-              {author.name.trim() === "" ? author.identifier ?? "Author" : author.name}
-              {author.creditRoles.length > 0 ? ` — ${author.creditRoles.join(", ")}` : ""}
-            </li>
-          ))}
+          {shownAuthors.map((author) => {
+            const label = authorLabel(author);
+            const did = author.did ?? (author.kind === "did" ? author.identifier : null);
+            return (
+              <li key={author.key}>
+                <span className="sw-summary__author-name">
+                  {label}
+                  {author.isSubmitter && label !== "You" ? " (you)" : ""}
+                </span>
+                {author.creditRoles.length > 0 ? (
+                  <span className="sw-summary__author-roles"> — {author.creditRoles.join(", ")}</span>
+                ) : null}
+                {did !== null ? (
+                  <span className="sw-summary__author-did" title={did}>
+                    {shortDid(did)}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
-        <p className="sw-summary__files">{files.length} files</p>
+        <p className="sw-summary__files">{pluralize(files.length, "file")}</p>
         {files.length > 0 ? (
           <ul className="sw-summary__files-list" aria-label="Files">
             {files.map((file) => (
@@ -295,12 +335,13 @@ export function SignStep(props: SignStepProps): ReactElement {
           submitted
           report={consents.report}
           consents={consents.report}
-          authors={authors}
+          authors={shownAuthors}
           trackerEntries={trackerEntries}
           counts={counts}
           consentsSummary={consentSummary(counts)}
           paper={result.shortId ?? result.paperId}
           version={props.versionNumber ?? 1}
+          versionCid={result.versionId}
           checks={checks.report}
         />
       ) : null}
