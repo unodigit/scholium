@@ -1,4 +1,6 @@
 // @vitest-environment node
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_API_BASE_URL, resolveApiBaseUrl } from "./src/lib/api/client";
 import nextConfig from "./next.config.js";
@@ -164,6 +166,23 @@ describe("Content-Security-Policy", () => {
     expect(policy["style-src"]).toContain("'unsafe-inline'");
     // katex.min.css's fonts are bundled by Next and served from /_next/static.
     expect(policy["font-src"] ?? policy["default-src"]).toContain("'self'");
+  });
+});
+
+describe("the standalone build the web image runs", () => {
+  it("emits a self-contained server instead of requiring node_modules at runtime", () => {
+    expect(nextConfig.output).toBe("standalone");
+  });
+
+  it("traces from the npm workspace root so the server lands at apps/web/server.js", () => {
+    // The Containerfile copies .next/standalone/apps/web/server.js. A root that
+    // is inferred from an enclosing lockfile would move it (and every asset
+    // path) somewhere else, so the config pins it to the workspace root.
+    const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    expect(nextConfig.outputFileTracingRoot).toBe(workspaceRoot);
+    expect(path.relative(nextConfig.outputFileTracingRoot!, fileURLToPath(import.meta.url))).toBe(
+      path.join("apps", "web", "next.config.test.ts"),
+    );
   });
 });
 

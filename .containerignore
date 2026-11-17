@@ -1,0 +1,51 @@
+# Build context filter for deploy/containers/*.Containerfile.
+# Podman and buildah read this file from the context root; `docker build` reads
+# .dockerignore, so keep the entries in sync if one is ever added.
+#
+# Everything the images install themselves is excluded: dependencies and build
+# output come from uv/npm inside the build, never from the developer's tree.
+
+# Version control and tooling state
+.git
+.gitignore
+.claw-forge
+.github
+.claude
+run.sh
+*.xml
+**/conftest.py
+
+# Dependencies and caches (installed inside the build)
+**/node_modules
+**/.next
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.cache
+
+# Test and coverage output
+**/coverage
+**/.coverage
+**/htmlcov
+**/test-results
+**/playwright-report
+**/blob-report
+acceptance
+apps/api/tests
+apps/web/tests
+apps/web/playwright.config.ts
+
+# Local runtime state and secrets
+**/data
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+**/.DS_Store

@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /**
  * Security headers sent with every response (pages and /_next/static assets).
  *
@@ -212,10 +215,27 @@ function getSiteOrigin() {
   return siteOrigin();
 }
 
+/**
+ * The npm workspace root (this file lives in apps/web).
+ *
+ * Pinned instead of letting Next infer it: inference walks up until it finds a
+ * lockfile, and when the checkout is nested inside another repository (a git
+ * worktree, a CI cache) it picks that outer directory, which changes where the
+ * standalone server lands. A fixed root keeps the layout the Containerfile
+ * copies: .next/standalone/apps/web/server.js plus a shared node_modules.
+ */
+const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // `next build` writes a self-contained server to .next/standalone, which is
+  // what deploy/containers/web.Containerfile copies into its runtime stage.
+  // Headers from headers() below are baked into the standalone routes manifest,
+  // so the image serves exactly the policy these tests assert.
+  output: "standalone",
+  outputFileTracingRoot: WORKSPACE_ROOT,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders() }];
   },
