@@ -183,8 +183,8 @@ export interface LockupLayout {
   readonly wordmarkLift: number;
 }
 
-/** The glyph's own box (`BrandMark`'s `glyph` variant): 28 × 32. */
-const GLYPH_BOX = { width: 28, height: 32 } as const;
+/** The glyph's own box (`BrandMark`'s `glyph` variant): 52 × 54. */
+const GLYPH_BOX = { width: 52, height: 54 } as const;
 
 /**
  * Lockup proportions, from the mark's height: the wordmark's size and the gap
@@ -436,9 +436,11 @@ const TONE_COLOURS: Readonly<Record<StatusTone, { icon: string; fill: string; ed
 };
 
 /**
- * The glyph: an accent page with four light text lines, a thin margin-note
- * strip, and the closing bracket. The geometry is `BrandMark`'s `glyph`
- * variant, with the tokens resolved (the test compares the two).
+ * The glyph: a square-cornered accent page with five light text lines, a
+ * margin-note strip, and the closing bracket, 1.35 x the page's height. The
+ * geometry is `BrandMark`'s `glyph` variant (drawn from the delivered
+ * `scholium-logo-light.jpeg`; see brand-mark.tsx), with the tokens resolved
+ * (the test compares the two).
  */
 function glyphMark(markHeight: number): ReactElement {
   const { markWidth } = lockupLayout(markHeight);
@@ -449,13 +451,14 @@ function glyphMark(markHeight: number): ReactElement {
       height={markHeight}
       viewBox={`0 0 ${GLYPH_BOX.width} ${GLYPH_BOX.height}`}
     >
-      <rect width="18" height="32" rx="4" fill={C.accent} />
-      <rect x="3" y="6" width="12" height="3" rx="1.5" fill={C.paper} />
-      <rect x="3" y="12" width="12" height="3" rx="1.5" fill={C.paper} />
-      <rect x="3" y="18" width="12" height="3" rx="1.5" fill={C.paper} />
-      <rect x="3" y="24" width="8" height="3" rx="1.5" fill={C.paper} />
-      <rect x="20" y="0" width="2" height="32" fill={C.marginNote} />
-      <path fill={C.accent} d="M23 7h4v18h-4v-2h2V9h-2V7z" />
+      <rect y="7" width="36" height="40" fill={C.accent} />
+      <rect x="5.5" y="15" width="25" height="1.6" rx="0.8" fill={C.paper} />
+      <rect x="5.5" y="20.6" width="25" height="1.6" rx="0.8" fill={C.paper} />
+      <rect x="5.5" y="26.2" width="25" height="1.6" rx="0.8" fill={C.paper} />
+      <rect x="5.5" y="31.8" width="25" height="1.6" rx="0.8" fill={C.paper} />
+      <rect x="5.5" y="37.4" width="13" height="1.6" rx="0.8" fill={C.paper} />
+      <rect x="39" y="7" width="9" height="40" fill={C.marginNote} />
+      <path fill={C.accent} d="M39 0h13v54H39v-4h9V4h-9z" />
     </svg>
   );
 }

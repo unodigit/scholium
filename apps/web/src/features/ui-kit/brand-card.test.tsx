@@ -227,7 +227,7 @@ describe("the site card", () => {
   it("shows the glyph mark and the lowercase serif wordmark", () => {
     const glyphs = svgsOf(tree);
     expect(glyphs).toHaveLength(1);
-    expect(glyphs[0].props.viewBox).toBe("0 0 28 32");
+    expect(glyphs[0].props.viewBox).toBe("0 0 52 54");
     expect(glyphs[0].props.height).toBe(SITE_MARK_HEIGHT);
 
     const wordmark = textBox(tree, "scholium");
@@ -456,7 +456,7 @@ describe("the paper card", () => {
     it("keeps the mark, wordmark and gap in proportion at every size", () => {
       for (const height of [CORNER_MARK_HEIGHT, SITE_MARK_HEIGHT]) {
         const layout = lockupLayout(height);
-        expect(layout.markWidth / layout.markHeight).toBeCloseTo(28 / 32, 1);
+        expect(layout.markWidth / layout.markHeight).toBeCloseTo(52 / 54, 1);
         expect(layout.wordmarkSize / height).toBeGreaterThan(0.7);
         expect(layout.wordmarkSize / height).toBeLessThan(1.1);
         expect(layout.gap).toBe(Math.round(height / 5));
@@ -491,7 +491,7 @@ describe("the glyph mark", () => {
   };
 
   it("has the geometry of BrandMark's glyph variant, shape for shape", () => {
-    expect(fromCard()).toHaveLength(7);
+    expect(fromCard()).toHaveLength(8);
     expect(fromCard()).toEqual(fromBrandMark());
   });
 

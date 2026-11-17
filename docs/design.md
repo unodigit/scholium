@@ -52,10 +52,25 @@ The mark is also rendered as inline SVG by `BrandMark` / `BrandLogo` (`apps/web/
 
 The mark has two parts: a **page block** (an ink-blue rectangle standing in for a page of text) and a **closing bracket** to its right, the "margin note" that gives Scholium its name.
 
-- **Tile variant** (favicon / app icon): a rounded accent square (corner radius 6 px) with the page block and bracket cut out in the paper colour. The page block carries **four text lines**, the last one short, followed by the closing bracket.
-- **Glyph variant** (lockup): an accent-filled **page block** with **four light text lines** (the last one short), a thin **margin-note strip** in the margin-note colour between the page block and the accent **closing bracket** to its right.
+- **Tile variant** (favicon / app icon): a rounded accent square (corner radius 6 px) with the page block and bracket cut out in the paper colour. The page block carries **three text lines**, the last one short, followed by the closing bracket. The tile is exactly `docs/brand/scholium-favicon.svg`; it is not redrawn for the lockup.
+- **Glyph variant** (lockup): an accent-filled **page block** with **five light text lines** (the last one about half length), a **margin-note strip** in the margin-note colour between the page block and the accent **closing bracket** to its right.
+
+The glyph and the tile are different drawings. The tile has three lines because five would not survive at 16 px; the glyph has five because that is what the delivered lockup shows. Do not "reconcile" them.
 
 The margin-note strip is the signature detail: it is the scholium in the margin, the annotation that sits beside the text.
+
+#### Glyph proportions
+
+Measured on `docs/brand/scholium-logo-light.jpeg` (1376 × 768; `scholium-logo-dark.jpeg` is the same drawing to within 2 px) and drawn by `BrandMark` on a 52 × 54 grid in which the page block is 36 × 40:
+
+| Part | Reference (px) | As a proportion of the page block | In `BrandMark` (grid units) |
+| --- | --- | --- | --- |
+| Page block | 104 × 118, square corners | width : height ≈ 0.9 : 1 | 36 × 40, no corner radius |
+| Text lines | 5; 4–5 thick, 72 long, 16 in from each side; last 38 long | thickness 0.04 of the height; length 0.69 of the width; last ≈ half the others; centres at 22 / 36 / 50 / 64 / 78 % of the height | 5; 1.6 thick, round ends; 25 long at x = 5.5; last 13 long |
+| Closing bracket | 156 tall, strokes 12–13, 38 wide; centred on the page block | height ≈ 1.35 × the page block; stroke ≈ 0.1 × the page width | 54 tall, strokes 4, 13 wide, arm tips 3 right of the page |
+| Margin-note strip | fills the bracket's pocket, as tall as the page block | width ≈ 0.25 × the page width | 9 × 40, from the arm tips to the stem |
+
+The tight 52 × 54 box means the SVG is as tall as the bracket. The lockup's height (20 px minimum) is the bracket's height, so the page block itself is 0.74 of it.
 
 ### Light and dark lockups
 
@@ -63,6 +78,23 @@ The margin-note strip is the signature detail: it is the scholium in the margin,
 - **Dark lockup**: page block and bracket in accent `#8FA6F0` (the dark-mode equivalent from §3); text lines in paper `#14151A`; margin-note strip in `#3A3320`; wordmark in ink `#ECEBE6` on paper `#14151A`.
 
 Because every colour is read from the design tokens (`--accent`, `--bg`, `--ink`, `--margin-note`), the mark re-themes automatically between light and dark; no separate dark artwork is needed at runtime.
+
+Known difference in dark mode: the delivered `scholium-logo-dark.jpeg` shows no visible strip (its pocket is the page colour), whereas the app paints the strip in `--margin-note`, which is `#3A3320` in dark mode, as listed above. The strip is part of the mark in both themes; it is a muted brown band on dark.
+
+#### Lockup layout
+
+The wordmark is aligned to the mark by **baseline**, not centred, with these proportions of the lockup's height (the bracket's height, `--brand-mark-height`), all measured on the light lockup:
+
+| Measure | Proportion | Notes |
+| --- | --- | --- |
+| Gap, bracket's right edge to the wordmark's ink | 0.30 | The CSS gap is 0.26; the serif "s" supplies the rest as side bearing |
+| Wordmark x-height | 0.46 (0.61 of the page block) | Set with `font-size-adjust`, so a fallback serif keeps it |
+| Wordmark baseline above the lockup's bottom edge | 0.205 | 0.11 of the page block's height above the block's bottom edge |
+| Wordmark ascenders | reach about the top of the page block | |
+
+The mark inside the lockup carries no clear-space margins of its own: clear space belongs to the lockup as a whole. Putting the mark's half-height margin between the mark and the wordmark is what once pushed the wordmark about 0.75 mark-heights away.
+
+The social share cards draw the same glyph (`brand-card.tsx` keeps a copy with the colours resolved, and a test compares the two shape for shape). Their wordmark layout is tuned separately for the card renderer.
 
 ### Minimum sizes
 
@@ -88,7 +120,7 @@ No other colour may be used in the mark or tile.
 
 ### Wordmark typography
 
-The wordmark is set in **Source Serif 4 semibold**, always lowercase (`scholium`), in the ink colour, with optical spacing so the cap height of the wordmark aligns with the page block. It is never set in any other face, weight, case or colour.
+The wordmark is set in **Source Serif 4 semibold**, always lowercase (`scholium`), in the ink colour, set at the lockup's height and not tracked in, so that its ascenders reach about the top of the page block (see Lockup layout). It is never set in any other face, weight, case or colour.
 
 ### Do / don't
 

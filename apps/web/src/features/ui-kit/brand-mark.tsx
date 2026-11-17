@@ -14,6 +14,32 @@ export interface BrandMarkProps extends Omit<ComponentPropsWithoutRef<"span">, "
 
 const SIZE_PX: Record<BrandSize, number> = { sm: 20, md: 28, lg: 48 };
 
+/**
+ * The glyph, drawn to the delivered lockup (`docs/brand/scholium-logo-light.jpeg`,
+ * measured in pixels; `-dark.jpeg` is the same drawing). One unit is 1/40 of the
+ * page block's height, so the numbers below read as proportions of the page:
+ *
+ * - page block 36 × 40 (0.9 : 1, the reference's 104 × 118), square corners;
+ * - five text lines 1.6 thick with round ends, 25 long and inset 5.5 from both
+ *   sides, the last 13 long (about half); centres at 22 / 36 / 50 / 64 / 78 %
+ *   of the page height, 5.6 apart;
+ * - a closing bracket 54 tall (1.35 x the page), centred on it, strokes 4 thick
+ *   (0.11 x the page width), 13 wide, its arm tips 3 to the right of the page;
+ * - the margin-note strip fills the bracket's pocket: 9 wide (0.25 x the page
+ *   width), as tall as the page, from the arm tips to the stem.
+ *
+ * The viewBox is the drawing's tight bounding box, so the SVG's height is the
+ * bracket's height and `BrandLogo` can place the wordmark from it.
+ */
+const GLYPH = {
+  width: 52,
+  height: 54,
+  page: { width: 36, height: 40, y: 7 },
+  line: { x: 5.5, thickness: 1.6, length: 25, lastLength: 13, tops: [15, 20.6, 26.2, 31.8, 37.4] },
+  strip: { x: 39, width: 9 },
+  bracket: "M39 0h13v54H39v-4h9V4h-9z",
+} as const;
+
 function isBrandVariant(value: unknown): value is BrandVariant {
   return value === "tile" || value === "glyph";
 }
@@ -36,9 +62,9 @@ export function BrandMark({
   const px = SIZE_PX[resolvedSize];
 
   const svgProps = {
-    viewBox: resolvedVariant === "tile" ? "0 0 32 32" : "0 0 28 32",
-    width: resolvedVariant === "tile" ? 32 : 28,
-    height: 32,
+    viewBox: resolvedVariant === "tile" ? "0 0 32 32" : `0 0 ${GLYPH.width} ${GLYPH.height}`,
+    width: resolvedVariant === "tile" ? 32 : GLYPH.width,
+    height: resolvedVariant === "tile" ? 32 : GLYPH.height,
     xmlns: "http://www.w3.org/2000/svg",
     "data-variant": resolvedVariant,
     "aria-hidden": decorative ? ("true" as const) : undefined,
@@ -72,17 +98,34 @@ export function BrandMark({
         </svg>
       ) : (
         <svg {...svgProps}>
-          <rect width="18" height="32" rx="4" fill="var(--accent)" aria-hidden="true" />
-          <rect x="3" y="6" width="12" height="3" rx="1.5" fill="var(--bg)" aria-hidden="true" />
-          <rect x="3" y="12" width="12" height="3" rx="1.5" fill="var(--bg)" aria-hidden="true" />
-          <rect x="3" y="18" width="12" height="3" rx="1.5" fill="var(--bg)" aria-hidden="true" />
-          <rect x="3" y="24" width="8" height="3" rx="1.5" fill="var(--bg)" aria-hidden="true" />
-          <rect x="20" y="0" width="2" height="32" fill="var(--margin-note)" aria-hidden="true" />
-          <path
+          <rect
+            width={GLYPH.page.width}
+            height={GLYPH.page.height}
+            y={GLYPH.page.y}
             fill="var(--accent)"
-            d="M23 7h4v18h-4v-2h2V9h-2V7z"
             aria-hidden="true"
           />
+          {GLYPH.line.tops.map((top, index) => (
+            <rect
+              key={top}
+              x={GLYPH.line.x}
+              y={top}
+              width={index === GLYPH.line.tops.length - 1 ? GLYPH.line.lastLength : GLYPH.line.length}
+              height={GLYPH.line.thickness}
+              rx={GLYPH.line.thickness / 2}
+              fill="var(--bg)"
+              aria-hidden="true"
+            />
+          ))}
+          <rect
+            x={GLYPH.strip.x}
+            y={GLYPH.page.y}
+            width={GLYPH.strip.width}
+            height={GLYPH.page.height}
+            fill="var(--margin-note)"
+            aria-hidden="true"
+          />
+          <path fill="var(--accent)" d={GLYPH.bracket} aria-hidden="true" />
         </svg>
       )}
     </span>
