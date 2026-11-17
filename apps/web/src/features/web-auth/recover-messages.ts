@@ -236,6 +236,7 @@ export function formatRecoveryDeadlineLocal(
     hour: "2-digit",
     minute: "2-digit",
     timeZone: options.timeZone,
+    timeZoneName: "short",
   }).format(date);
 }
 

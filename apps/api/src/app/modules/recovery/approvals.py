@@ -25,6 +25,7 @@ from . import signatures
 from .models import RecoveryRequest, REQUEST_PENDING, ensure_requests_table
 from .finalize import JOB_KIND
 from .service import GUARDIAN_COUNT, get_guardians
+from app.modules.notifications import mark_read_for_subject
 
 __all__ = [
     "APPROVAL_THRESHOLD",
@@ -176,6 +177,7 @@ def approve_recovery_request(
         approvals = list(row.approvals or [])
         existing = {_guardian_of(item) for item in approvals}
         if guardian_did not in existing:
+            approved_at = _utcnow().isoformat() + "Z"
             record = {
                 "guardian": guardian_did,
                 "guardian_did": guardian_did,
@@ -183,6 +185,8 @@ def approve_recovery_request(
                 "signer": guardian_did,
                 "signature": signature,
                 "sig": signature,
+                "approved_at": approved_at,
+                "approvedAt": approved_at,
             }
             approvals.append(record)
             row.approvals = approvals
@@ -209,6 +213,20 @@ def approve_recovery_request(
         status = row.status
         contest_until = row.contest_until
         approvals_out = list(row.approvals or [])
+
+    # The guardian's own recovery-approval notice no longer needs attention.
+    try:
+        mark_read_for_subject(guardian_did, "recovery.request", request_id)
+    except Exception:
+        pass
+    # Once quorum is met, every guardian's notice is stale.
+    if count >= APPROVAL_THRESHOLD:
+        guardians = get_guardians(did)
+        for g in guardians:
+            try:
+                mark_read_for_subject(g, "recovery.request", request_id)
+            except Exception:
+                pass
 
     return ApprovalResult(
         request_id=request_id,

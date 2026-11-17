@@ -27,7 +27,7 @@ from app.settings import settings
 from .emailer import build_email, log_to_outbox, send_email
 from .models import Notification, ensure_table
 
-__all__ = ["list_notifications", "mark_read", "notify"]
+__all__ = ["list_notifications", "mark_read", "mark_read_for_subject", "notify"]
 
 logger = logging.getLogger(__name__)
 
@@ -196,5 +196,40 @@ def mark_read(did: str, notification_id: int) -> Optional[Notification]:
         notification.read = True
         session.commit()
         return notification
+    finally:
+        session.close()
+
+
+def mark_read_for_subject(did: str, kind: str, subject_value: str) -> None:
+    """Mark every unread notification for ``did`` of ``kind`` about ``subject_value`` read.
+
+    A subject is identified by its value (the request id, version cid, ...), so
+    the caller does not need to know which payload key carries it.  Unknown
+    recipients or subjects are a no-op.
+    """
+    if not isinstance(did, str) or not did.strip():
+        return
+    if not isinstance(kind, str) or not kind.strip():
+        return
+    if not isinstance(subject_value, str) or not subject_value.strip():
+        return
+    _require_did(did)
+    ensure_table()
+
+    session = db.SessionLocal()
+    try:
+        rows = (
+            session.query(Notification)
+            .filter(Notification.did == did, Notification.kind == kind, Notification.read.is_(False))
+            .all()
+        )
+        changed = False
+        for row in rows:
+            subject = _subject_of(row.payload)
+            if subject is not None and subject[1] == subject_value.strip():
+                row.read = True
+                changed = True
+        if changed:
+            session.commit()
     finally:
         session.close()

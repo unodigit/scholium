@@ -28,7 +28,7 @@
 import { useState } from "react";
 import Link from "next/link";
 
-import { normalizeOrcid, isCancellable, type RecoverySnapshot } from "./recover";
+import { normalizeOrcid, isCancellable, formatRecoveryDeadline, type RecoverySnapshot } from "./recover";
 import {
   RECOVER_ACCOUNT_LABEL,
   RECOVER_APPROVALS_HEADING,
@@ -245,7 +245,11 @@ function ProgressBody({
         <h2 className="wa-step-title" id="recover-window-heading">
           {RECOVER_SAFETY_WINDOW_HEADING}
         </h2>
-        <p className="wa-note" id="recover-window-note">
+        <p
+          className="wa-note"
+          id="recover-window-note"
+          title={formatRecoveryDeadline(snapshot.contestUntil) ?? undefined}
+        >
           {safetyWindowNote(snapshot)}
         </p>
 

@@ -8,8 +8,9 @@
  * has expired. `verify-email-form.tsx` renders the states.
  */
 
-import { ApiError, NetworkError } from "../../lib/api";
+import { ApiError, NetworkError, browserTokenStorage, type TokenStorage } from "../../lib/api";
 import type { ApiClient } from "../../lib/api";
+import { loadPersistedOnboarding } from "./onboarding";
 
 /** The query parameters an emailed verification link carries. */
 export interface VerifyEmailLink {
@@ -200,4 +201,54 @@ export function describeVerifyEmailFailure(error: unknown): VerifyEmailFailure {
     expired: false,
     sessionExpired: false,
   };
+}
+
+/** Whether onboarding (guardians step) is finished on this browser. */
+export function isOnboardingComplete(
+  storage: TokenStorage = browserTokenStorage,
+): boolean {
+  return loadPersistedOnboarding(storage).guardiansSavedAt !== null;
+}
+
+/** Alias for callers that name the check differently. */
+export function onboardingComplete(
+  storage: TokenStorage = browserTokenStorage,
+): boolean {
+  return isOnboardingComplete(storage);
+}
+
+/** Alias for callers that name the check differently. */
+export function hasCompletedOnboarding(
+  storage: TokenStorage = browserTokenStorage,
+): boolean {
+  return isOnboardingComplete(storage);
+}
+
+/** Alias for callers that name the check differently. */
+export function isOnboarded(
+  storage: TokenStorage = browserTokenStorage,
+): boolean {
+  return isOnboardingComplete(storage);
+}
+
+/** Where the verified page sends a member who still has setup to finish. */
+export const VERIFY_EMAIL_CONTINUE_SETUP_HREF = "/onboarding";
+
+/** Where the verified page sends a member who finished onboarding. */
+export const VERIFY_EMAIL_DASHBOARD_HREF = "/me";
+
+/** Label for the setup CTA. */
+export const VERIFY_EMAIL_CONTINUE_SETUP_LABEL = "Continue setting up";
+
+/** Label for the dashboard CTA. */
+export const VERIFY_EMAIL_DASHBOARD_LABEL = "Go to your dashboard";
+
+/** Pick the CTA target for the verified page. */
+export function verifyEmailContinueHref(onboarded: boolean): string {
+  return onboarded ? VERIFY_EMAIL_DASHBOARD_HREF : VERIFY_EMAIL_CONTINUE_SETUP_HREF;
+}
+
+/** Pick the CTA label for the verified page. */
+export function verifyEmailContinueLabel(onboarded: boolean): string {
+  return onboarded ? VERIFY_EMAIL_DASHBOARD_LABEL : VERIFY_EMAIL_CONTINUE_SETUP_LABEL;
 }

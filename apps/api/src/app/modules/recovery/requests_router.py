@@ -44,6 +44,7 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from app import db
 from app.security import Principal, get_current_principal
+from app.modules.notifications import mark_read_for_subject
 from . import problems
 from . import approvals as _approvals
 from .opening import InvalidRecoveryRequest, NoGuardians, UnknownAccount, open_recovery_request
@@ -330,5 +331,12 @@ async def cancel_recovery_request(request_id: str, request: Request, authorizati
         if row is not None:
             row.status = "cancelled"
             session.commit()
+
+    try:
+        guardians = get_guardians(did)
+        for g in guardians:
+            mark_read_for_subject(g, "recovery.request", request_id)
+    except Exception:
+        pass
 
     return {"status": "cancelled"}

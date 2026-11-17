@@ -403,7 +403,10 @@ export function parseRecoveryAttention(
       continue;
     }
     const status = readText(row.status) ?? "pending";
-    if (status !== "pending" && status !== "contest") {
+    // Only requests still gathering approvals need a guardian's attention: once
+    // the quorum is met (contest) or the request is closed, there is nothing
+    // left to answer.
+    if (status !== "pending") {
       continue;
     }
     const approvals = Array.isArray(row.approvals) ? row.approvals : [];
@@ -411,26 +414,70 @@ export function parseRecoveryAttention(
     if (viewer !== "" && answered.includes(viewer)) {
       continue;
     }
+    // A request that already reached its threshold needs no further answers.
+    const approvalCount =
+      readNumber(row.approval_count) ??
+      readNumber(row.approvals_count) ??
+      readNumber(row.count) ??
+      approvals.length;
+    const threshold = readNumber(row.threshold) ?? 3;
+    if (threshold > 0 && approvalCount >= threshold) {
+      continue;
+    }
     const accountDid =
       readText(row.did) ?? readText(row.account_did) ?? readText(row.accountDid) ?? "";
+    const requesterName =
+      readText(row.name) ??
+      readText(row.account_name) ??
+      readText(row.accountName) ??
+      readText(row.requester_name) ??
+      readText(row.requesterName) ??
+      readText(row.account);
+    const requesterLabel =
+      requesterName ?? (accountDid ? shortDid(accountDid) : null);
     items.push({
       kind: RECOVERY_ATTENTION_KIND,
-      summary: accountDid
-        ? `Approve the recovery of ${shortDid(accountDid)}`
-        : "Approve a recovery request",
+      summary:
+        requesterLabel !== null
+          ? `Approve the recovery of ${requesterLabel}`
+          : "Approve a recovery request",
       reason: "You are one of this account's guardians.",
       paper: null,
-      shortId: null,
+      shortId: accountDid ? shortDid(accountDid) : null,
       paperCid: null,
       version: null,
       versionCid: null,
       version_cid: null,
-      title: null,
+      title: requesterName !== null && accountDid ? shortDid(accountDid) : null,
       link: `/me/recovery/${encodeURIComponent(requestId)}`,
       createdAt: readText(row.requested_at) ?? readText(row.requestedAt),
+      accountName: requesterName,
     });
   }
   return items;
+}
+
+/** Read a public profile name, or `null` when it cannot be read. */
+async function readRecoveryProfileName(
+  did: string,
+  client: DashboardClient,
+): Promise<string | null> {
+  try {
+    const payload = await client.get<unknown>(`/profiles/${encodeURIComponent(did)}`, {
+      auth: false,
+      cache: "no-store",
+    });
+    if (!isRecord(payload) || payload.erased === true) {
+      return null;
+    }
+    return (
+      readText(payload.name) ??
+      readText(payload.display_name) ??
+      readText(payload.displayName)
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** Best-effort recovery attention; a failure never fails the dashboard. */
@@ -442,7 +489,46 @@ async function loadRecoveryAttention(
     const payload = await client.get<unknown>(RECOVERY_REQUESTS_ENDPOINT, {
       cache: "no-store",
     });
-    return parseRecoveryAttention(payload, viewerDid);
+    const rows = Array.isArray(payload)
+      ? payload
+      : isRecord(payload)
+        ? (payload.requests ?? payload.items ?? payload.recovery_requests)
+        : undefined;
+    if (!Array.isArray(rows)) {
+      return parseRecoveryAttention(payload, viewerDid);
+    }
+    const dids = [
+      ...new Set(
+        rows
+          .map((row) =>
+            isRecord(row)
+              ? readText(row.did) ?? readText(row.account_did) ?? readText(row.accountDid)
+              : null,
+          )
+          .filter((did): did is string => did !== null),
+      ),
+    ];
+    const names = new Map<string, string | null>();
+    await Promise.all(
+      dids.map(async (did) => {
+        names.set(did, await readRecoveryProfileName(did, client));
+      }),
+    );
+    const enriched = rows.map((row) => {
+      if (!isRecord(row)) {
+        return row;
+      }
+      const did =
+        readText(row.did) ?? readText(row.account_did) ?? readText(row.accountDid);
+      const name = did !== null ? names.get(did) : null;
+      return name !== null && name !== undefined ? { ...row, name } : row;
+    });
+    const enrichedPayload = Array.isArray(payload)
+      ? enriched
+      : isRecord(payload)
+        ? { ...payload, requests: enriched, items: enriched, recovery_requests: enriched }
+        : payload;
+    return parseRecoveryAttention(enrichedPayload, viewerDid);
   } catch {
     return [];
   }

@@ -28,11 +28,14 @@ import {
   VERIFY_EMAIL_RESENT_MESSAGE,
   VERIFY_EMAIL_SESSION_EXPIRED_MESSAGE,
   describeVerifyEmailFailure,
+  isOnboardingComplete,
   loadVerifyEmailAccountName,
   parseVerifyEmailLink,
   resendVerificationEmail,
   shortDid,
   verifyEmailAddress,
+  verifyEmailContinueHref,
+  verifyEmailContinueLabel,
   type VerifyEmailFailure,
   type VerifyEmailLink,
 } from "./verify-email";
@@ -76,6 +79,7 @@ export function VerifyEmailForm() {
   const [resendState, setResendState] = useState<ResendState>("idle");
   const [resendMessage, setResendMessage] = useState<string | null>(null);
   const [resendNeedsSignIn, setResendNeedsSignIn] = useState(false);
+  const [onboarded, setOnboarded] = useState(false);
 
   const headingRef = useRef<HTMLHeadingElement>(null);
   const startedRef = useRef(false);
@@ -102,6 +106,7 @@ export function VerifyEmailForm() {
     }
     startedRef.current = true;
 
+    setOnboarded(isOnboardingComplete());
     const parsed = parseVerifyEmailLink(window.location.search);
     setLink(parsed);
     if (parsed === null) {
@@ -199,8 +204,8 @@ export function VerifyEmailForm() {
 
       {phase.kind === "verified" ? (
         <div className="we-actions">
-          <Link className="wa-button" href="/onboarding">
-            Continue setting up
+          <Link className="wa-button" href={verifyEmailContinueHref(onboarded)}>
+            {verifyEmailContinueLabel(onboarded)}
           </Link>
           <p className="wa-meta">
             <Link className="wa-link" href="/">

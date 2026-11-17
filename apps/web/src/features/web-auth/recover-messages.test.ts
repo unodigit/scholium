@@ -96,7 +96,7 @@ describe("safety-window copy", () => {
       { timeZone: "UTC" },
     );
     expect(note).toContain("Approved by 3 of 5 guardians.");
-    expect(note).toContain("Your new passkey takes over on 18 Nov 2026, 00:00");
+    expect(note).toContain("Your new passkey takes over on 18 Nov 2026, 00:00 UTC");
     expect(note).toContain("until then your old key still works");
     expect(note).toContain("any guardian or you can cancel");
   });
@@ -123,10 +123,10 @@ describe("formatRecoveryDeadlineLocal", () => {
   it("writes a deadline in the reader's own zone, not UTC", () => {
     expect(
       formatRecoveryDeadlineLocal("2026-11-18T00:00:00Z", { timeZone: "UTC" }),
-    ).toBe("18 Nov 2026, 00:00");
+    ).toBe("18 Nov 2026, 00:00 UTC");
     expect(
       formatRecoveryDeadlineLocal("2026-11-18T00:00:00Z", { timeZone: "Asia/Tokyo" }),
-    ).toBe("18 Nov 2026, 09:00");
+    ).toBe("18 Nov 2026, 09:00 GMT+9");
   });
 
   it("returns null for an unreadable deadline", () => {
