@@ -44,9 +44,12 @@ function warnOnce(message: string): void {
  * Graph images) resolve against it. `||` rather than `??` so an empty
  * `NEXT_PUBLIC_SITE_URL=` in an env file falls back too.
  *
+ * Any absolute http(s) URL is used as given, loopback included — a development
+ * server on its own port is a normal configuration. The default applies only
+ * when the value is unset or empty, warning once.
+ *
  * A production build (NODE_ENV=production and SCHOLIUM_ENV=production) refuses
- * an unset or loopback value with a clear error; any other build falls back to
- * http://localhost:3000 and warns once.
+ * an unset or loopback value with a clear error.
  */
 export function resolveSiteUrl(): string {
   const configured = (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim();
@@ -77,16 +80,10 @@ export function resolveSiteUrl(): string {
       `NEXT_PUBLIC_SITE_URL must be an absolute http(s) URL such as https://scholium.example, got ${JSON.stringify(configured)}`,
     );
   }
-  if (isLoopbackUrl(configured)) {
-    if (production) {
-      throw new Error(
-        `NEXT_PUBLIC_SITE_URL must not point at localhost in production, got ${JSON.stringify(configured)}`,
-      );
-    }
-    warnOnce(
-      `NEXT_PUBLIC_SITE_URL points at localhost (${configured}); falling back to http://localhost:3000. Set it to the public origin of this deployment.`,
+  if (production && isLoopbackUrl(configured)) {
+    throw new Error(
+      `NEXT_PUBLIC_SITE_URL must not point at localhost in production, got ${JSON.stringify(configured)}`,
     );
-    return DEFAULT_SITE_URL;
   }
   return configured;
 }

@@ -62,14 +62,15 @@ describe("SiteFooter", () => {
     vi.stubEnv("NEXT_PUBLIC_API_URL", "");
     const footer = renderFooter();
 
-    const link = within(footer).getByRole("link", { name: "Public export" });
+    const link = within(footer).getByRole("link", { name: /Public export/ });
     expect(link.getAttribute("href")).toBe(
       "http://localhost:8000/v1/export/archive.car",
     );
 
-    const note = within(footer).getByText("CAR archive");
-    expect(note.id).not.toBe("");
-    expect(link.getAttribute("aria-describedby")).toBe(note.id);
+    // The note is part of the export link, not a dead label beside it.
+    const note = within(link).getByText("CAR archive");
+    expect(note).toBeTruthy();
+    expect(link.textContent).toBe("Public export CAR archive");
   });
 
   it("follows NEXT_PUBLIC_API_URL for the export, like the paper page's archive link", () => {
@@ -77,7 +78,7 @@ describe("SiteFooter", () => {
     const footer = renderFooter();
 
     expect(
-      within(footer).getByRole("link", { name: "Public export" }).getAttribute("href"),
+      within(footer).getByRole("link", { name: /Public export/ }).getAttribute("href"),
     ).toBe("https://api.scholium.example/v1/export/archive.car");
     expect(publicExportHref("https://other.example")).toBe(
       "https://other.example/v1/export/archive.car",
@@ -118,7 +119,7 @@ describe("SiteFooter", () => {
       "Network",
       "Verify a file",
       "Policies",
-      "Public export",
+      "Public export CAR archive",
     ]);
   });
 });

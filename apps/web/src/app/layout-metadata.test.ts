@@ -59,6 +59,34 @@ describe("the root layout metadata", () => {
 
     expect(metadata.metadataBase?.href).toBe("http://localhost:3000/");
   });
+
+  it("uses a configured loopback URL outside production as given", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("SCHOLIUM_ENV", "dev");
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "http://localhost:3200");
+
+    const { metadata } = await loadLayout();
+
+    expect(metadata.metadataBase?.href).toBe("http://localhost:3200/");
+  });
+
+  it("still refuses a loopback URL in a production build", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SCHOLIUM_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "http://localhost:3200");
+
+    await expect(loadLayout()).rejects.toThrow(
+      /must not point at localhost in production/,
+    );
+  });
+
+  it("still refuses an unset URL in a production build", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SCHOLIUM_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+
+    await expect(loadLayout()).rejects.toThrow(/must be set to a non-loopback/);
+  });
 });
 
 describe("the root layout viewport", () => {

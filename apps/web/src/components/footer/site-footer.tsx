@@ -10,7 +10,9 @@
  * - Verify a file (`/verify`) — check a file against what its authors signed,
  * - Policies (`/policies`) — the rules the node moderates by,
  * - Public export — the whole public archive as one CAR file the API serves at
- *   `GET /v1/export/archive.car`, so anyone can rebuild the archive themselves.
+ *   `GET /v1/export/archive.car`, so anyone can rebuild the archive themselves;
+ *   the "CAR archive" note is part of the same link so the whole label is the
+ *   download's target.
  *
  * It is a server component with no state: the glyph, a one-line description of
  * the site and a labelled list of links. On phones it also pads its bottom edge
@@ -33,9 +35,6 @@ export const PUBLIC_EXPORT_PATH = "/v1/export/archive.car";
  * the word "node", which design.md §8 keeps out of primary UI.
  */
 export const SITE_FOOTER_DESCRIPTION = "Signed, open preprints and peer review";
-
-/** Ties the "CAR archive" note to the export link as its description. */
-const EXPORT_NOTE_ID = "site-footer-export-note";
 
 /**
  * The public export's address. It is an absolute URL on the API origin
@@ -74,16 +73,10 @@ export function SiteFooter() {
             </Link>
           </li>
           <li className="sf-export">
-            <a
-              className="sf-link"
-              href={publicExportHref()}
-              aria-describedby={EXPORT_NOTE_ID}
-            >
-              Public export
+            <a className="sf-link" href={publicExportHref()}>
+              Public export{" "}
+              <span className="sf-note">CAR archive</span>
             </a>
-            <span className="sf-note" id={EXPORT_NOTE_ID}>
-              CAR archive
-            </span>
           </li>
         </ul>
       </nav>

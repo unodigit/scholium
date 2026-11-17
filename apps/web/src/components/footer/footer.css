@@ -124,7 +124,14 @@
   color: var(--accent);
 }
 
+/* The note is part of the export link, separated from its label by the same
+   8px the link's inline padding uses, and it follows the link's hover colour
+   so the combined control reads as one target. */
 .sf-note {
-  padding-inline-end: calc(var(--space-unit) * 2);
+  margin-inline-start: calc(var(--space-unit) * 2);
   color: var(--ink-2);
+}
+
+.sf-link:hover .sf-note {
+  color: var(--accent);
 }
