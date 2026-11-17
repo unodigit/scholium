@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification mode="brownfield">
+  <project_name>Scholium — UI/UX branding from the logo and favicon</project_name>
+  <addition_summary>
+    Apply the Scholium brand delivered in docs/brand (scholium-logo-light.jpeg, scholium-logo-dark.jpeg,
+    scholium-favicon.svg, scholium-favicon-tile.jpeg, favicon.ico, apple-touch-icon.png) across the web app:
+    the real favicon set and web manifest, a vector logo component (mark + lowercase serif wordmark) with light
+    and dark variants, the logo lockup in the global navigation and auth screens, branded page metadata and
+    social share images, branded not-found and error pages, a branded HTML notification email, and a written
+    brand guide in docs/design.md. The mark is a text page (filled ink-blue block with four light text lines,
+    the last one short) with a closing square bracket to its right, the scholium margin note, matching
+    docs/design.md §2. Brand colours are the existing tokens: accent #2F4BA0 (dark mode #8FA6F0), paper
+    #FBFAF7, ink #1B1D22 (dark mode #ECEBE6), margin-note #FFF6D6; the wordmark is Source Serif 4 semibold.
+  </addition_summary>
+  <existing_context>
+    <stack>FastAPI + SQLite API in apps/api (uv workspace); Next.js 15 App Router + TypeScript + Tailwind web app in apps/web (npm workspace); colour tokens in apps/web/src/styles/tokens.css (light default, dark via prefers-color-scheme or data-theme="dark"); Source Serif 4 and Inter self-hosted via apps/web/src/styles/fonts.css; current favicon apps/web/src/app/icon.svg is a hand-drawn approximation of the mark; the global nav shows the plain text wordmark "scholium"</stack>
+    <test_baseline>npm test green: API pytest 4663 passed, web vitest 4770 passed; Playwright journeys (npm run test:e2e) 19 passed</test_baseline>
+    <conventions>Feature code in apps/web/src/features/&lt;feature&gt;/ with colocated *.test.ts(x) and *.css.test.ts; never hardcode a hex in a component (read CSS custom properties from tokens.css); docs/design.md is the UI authority; brand voice plain, precise, collegial</conventions>
+  </existing_context>
+  <layout>
+    <zone root="apps/api" profile="uv-workspace">
+      <seam tier="discovery">apps/api/src/app/module_loader.py</seam>
+    </zone>
+    <zone root="apps/web" profile="pnpm-single-app">
+      <root template="apps/web/src/app/({plugin})/**" optional="true"/>
+    </zone>
+  </layout>
+  <features_to_add>
+    <category name="Brand Foundation">
+      <feature index="1" depends_on="" shape="core"
+               touches_files="apps/web/src/app/icon.svg,apps/web/src/app/layout.tsx,apps/web/package.json"
+               creates="apps/web/src/app/favicon.ico,apps/web/src/app/apple-icon.png,apps/web/src/app/manifest.ts,apps/web/src/app/manifest.test.ts,apps/web/public/brand/scholium-logo-light.png,apps/web/public/brand/scholium-logo-dark.png,apps/web/public/brand/icon-192.png,apps/web/public/brand/icon-512.png,apps/web/public/brand/icon-maskable-512.png,apps/web/src/app/layout-metadata.test.ts">
+        <description>System serves the delivered favicon set and web manifest: apps/web/src/app/icon.svg becomes exactly docs/brand/scholium-favicon.svg (32x32 viewBox, #2F4BA0 rounded tile, #FBFAF7 page-with-lines and bracket); favicon.ico and apple-icon.png (180x180) are copied from docs/brand (favicon.ico, apple-touch-icon.png) into apps/web/src/app so Next serves them; apps/web/public/brand gets PNG renditions made from the delivered files (icon-192.png and icon-512.png from scholium-favicon-tile.jpeg cropped to the tile, icon-maskable-512.png with the mark inside the 80% safe zone on #2F4BA0, and the two logo lockups converted from the JPEGs to PNG, cropped to the artwork with even padding); apps/web/src/app/manifest.ts returns a web app manifest (name "Scholium", short_name "scholium", description "Signed, open preprints and peer review", start_url "/", display "standalone", background_color "#FBFAF7", theme_color "#2F4BA0", icons 192, 512 and maskable 512); the root layout metadata sets title default "Scholium" with template "%s · Scholium", description "Signed, open preprints and peer review", applicationName, metadataBase from NEXT_PUBLIC_SITE_URL (falling back to http://localhost:3000), and a viewport export with themeColor #FBFAF7 for light and #14151A for dark; tests assert the manifest fields, the metadata title template and that icon.svg matches the delivered SVG</description>
+      </feature>
+      <feature index="2" depends_on="" shape="core"
+               touches_files="apps/web/src/features/ui-kit/index.ts"
+               creates="apps/web/src/features/ui-kit/brand-mark.tsx,apps/web/src/features/ui-kit/brand-logo.tsx,apps/web/src/features/ui-kit/brand.css,apps/web/src/features/ui-kit/brand.test.tsx,apps/web/src/features/ui-kit/brand.css.test.ts,apps/web/src/app/(ui-kit)/ui-kit/brand/page.tsx">
+        <description>UI displays the brand through vector components in features/ui-kit: BrandMark renders the mark as inline SVG in two variants, "tile" (rounded accent square with the light page-and-bracket cut-out, identical geometry to scholium-favicon.svg) and "glyph" (the lockup form: accent-filled page with four light text lines, last one short, plus the accent closing bracket and a thin margin-note strip between them, as in scholium-logo-light.jpeg); BrandLogo renders the lockup (glyph + lowercase "scholium" wordmark in Source Serif 4 semibold, ink colour, optical spacing so the cap height of the wordmark aligns with the page block); all colours come from CSS custom properties (--accent, --ink, --bg, --margin-note) so dark mode automatically matches scholium-logo-dark.jpeg (lighter blue page, light wordmark); props for size (sm 20px, md 28px, lg 48px mark height), a "markOnly" option, and an accessible name "Scholium" (role img with aria-label, decorative SVG parts aria-hidden); minimum size and clear-space (half the mark height) enforced by the CSS; a /ui-kit/brand showcase page shows every variant and size on light and dark surfaces; tests cover variants, accessibility attributes and that no hex literal appears in the components</description>
+      </feature>
+    </category>
+    <category name="Brand Surfaces">
+      <feature index="3" depends_on="2" shape="core"
+               touches_files="apps/web/src/components/nav/global-nav.tsx,apps/web/src/components/nav/nav.css,apps/web/src/components/nav/global-nav.test.tsx">
+        <description>UI displays the brand lockup in the global navigation: the desktop header replaces the plain "scholium" text link with BrandLogo (size sm, linking to "/", accessible name "Scholium home"), keeping the header height and the search field alignment; the mobile header or bottom bar shows BrandMark tile at 24px where the wordmark does not fit; the logo has a visible focus ring (2px accent) and no layout shift on load; tests assert the logo link, its accessible name and that the old text-only wordmark is gone</description>
+      </feature>
+      <feature index="4" depends_on="2" shape="core"
+               touches_files="apps/web/src/app/(web-auth)/layout.tsx,apps/web/src/app/(web-auth)/web-auth.css"
+               creates="apps/web/src/app/not-found.tsx,apps/web/src/app/error.tsx,apps/web/src/app/branded-pages.test.tsx">
+        <description>UI displays branded entry and fallback screens: the sign-in, onboarding and recovery layout shows the BrandLogo lockup (size lg) above the card with a one-line tagline "Signed, open preprints and peer review", centred on the paper background in light and dark; a root not-found page shows BrandMark glyph, "We couldn't find that page." and links to Home and Search; a root error boundary shows BrandMark glyph, "Something went wrong on our side." with Try again and Home actions and the error digest in monospace for support; copy follows the brand voice (plain, no hype); tests render each screen and assert logo, headings and actions</description>
+      </feature>
+      <feature index="5" depends_on="1" shape="core"
+               creates="apps/web/src/app/opengraph-image.tsx,apps/web/src/app/twitter-image.tsx,apps/web/src/app/(paper-page)/p/[id]/opengraph-image.tsx,apps/web/src/features/ui-kit/brand-card.tsx,apps/web/src/features/ui-kit/brand-card.test.tsx">
+        <description>System generates branded social share images with next/og ImageResponse at 1200x630 (served at /opengraph-image and /p/[id]/opengraph-image with HTTP 200 and content-type image/png): the site card shows the glyph mark and "scholium" wordmark on the paper background (#FBFAF7) with the tagline; the per-paper card (/p/[id]) shows the paper title in the serif face (clamped to three lines), first three author names, the sch: id in monospace, the listed status word, and the small lockup in a corner; both use the brand palette only, fall back to the site card when the paper cannot be loaded or is not publicly listed (never leaking unlisted titles), and are covered by tests of the card component's layout props</description>
+      </feature>
+      <feature index="6" depends_on="" shape="core"
+               touches_files="apps/api/src/app/modules/notifications/emailer.py"
+               creates="apps/api/src/app/modules/notifications/email_template.py,apps/api/src/app/modules/notifications/tests/test_email_template.py">
+        <description>System sends a branded notification email: build_email produces a multipart message with the existing plain-text body plus an HTML alternative using a table-based template (max width 600px, paper background #FBFAF7, white card, header with an inline-SVG-free lockup made of a 32px PNG mark referenced from the web origin's /brand/icon-192.png with alt "Scholium" and the "scholium" wordmark as serif text, accent #2F4BA0 call-to-action button for the notification link, ink #1B1D22 body text, footer explaining why the email was sent and how to change notification settings); all user-supplied text is HTML-escaped; tests assert both parts exist, links and escaping are correct and the plain-text body is unchanged</description>
+      </feature>
+      <feature index="7" depends_on="1,2" shape="core"
+               touches_files="docs/design.md">
+        <description>System documents the brand guide in docs/design.md §2, which displays the delivered assets (each file in docs/brand and where it is used in the app), the construction of the mark (page block, text lines, bracket, margin-note strip), light and dark lockups, minimum sizes (mark 16px, lockup 20px tall), clear space (half the mark height), colour usage (accent, paper, ink, dark-mode equivalents from §3), wordmark typography (Source Serif 4 semibold, always lowercase), and do/don't rules (no recolouring, no stretching, no effects, never put the tile on a busy background); keep the existing clearance note</description>
+      </feature>
+    </category>
+  </features_to_add>
+  <integration_points>
+    Root layout metadata, viewport and manifest (apps/web/src/app/layout.tsx, manifest.ts) and the App Router icon conventions (icon.svg, favicon.ico, apple-icon.png, opengraph-image.tsx)
+    New BrandMark / BrandLogo components exported from apps/web/src/features/ui-kit/index.ts and used by the global nav, the (web-auth) layout and the root not-found / error pages
+    Notification emails rendered by apps/api/src/app/modules/notifications/emailer.py gain an HTML alternative
+    docs/design.md §2 Brand becomes the written brand guide
+  </integration_points>
+  <constraints>
+    The delivered files in docs/brand are the source of truth and are not modified
+    Components read colours from the existing CSS custom properties in apps/web/src/styles/tokens.css; no new hex literals in components (only static image generation, manifest and email HTML may embed the brand hex values)
+    Existing design tokens, fonts and layout of pages not named here stay unchanged
+    All existing tests (npm test) and Playwright journeys (npm run test:e2e) stay green; update a test only where it asserted the old text-only wordmark or the old icon
+    No new runtime dependencies beyond what Next 15 already ships (next/og); image conversion is done once at implementation time and the resulting files are committed
+    Social cards never reveal titles of unlisted, held or tombstoned versions
+  </constraints>
+  <success_criteria>
+    Browser tab, bookmarks and home-screen installs show the delivered Scholium icon in light and dark contexts
+    The global nav, auth screens, not-found and error pages show the logo lockup that matches docs/brand in light and dark mode
+    Sharing a paper link shows a branded card with its title, authors and sch: id
+    Notification emails arrive with a branded HTML body and an unchanged plain-text body
+    npm test and npm run test:e2e stay green
+  </success_criteria>
+</project_specification>
