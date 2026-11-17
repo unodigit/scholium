@@ -77,9 +77,12 @@ points at ``GET /v1/auth/orcid/mock/authorize`` (below), a small HTML page that
 looks like ORCID's consent screen and redirects to the same web
 ``/onboarding/orcid`` page with a ``mock-<orcid>`` code and the state it was
 given.  That exercises the real return path -- a whole-page navigation away
-from the app and back -- without an ORCID client registration.  Mock mode is
-refused in production by :meth:`app.settings.Settings.validate_for_environment`,
-and the mock page itself answers ``404`` unless it is on.
+from the app and back -- without an ORCID client registration.  Each page
+render *generates a fresh, checksum-valid iD* and offers it in an editable
+field, so several newcomers on one node can each link an account (and a tester
+can type in a specific iD instead).  Mock mode is refused in production by
+:meth:`app.settings.Settings.validate_for_environment`, and the mock page
+itself answers ``404`` unless it is on.
 
 Failures of ``/start``:
 
@@ -110,6 +113,7 @@ from app.security import Principal, get_current_principal
 from app.settings import settings
 
 from app.modules.ledger.origin import node_signing_key
+from .ids import generate_mock_orcid_id, is_valid_orcid_id
 from .nullifier import OrcidAlreadyLinked
 from .state import InvalidState, consume_state, mark_state_consumed, sign_state, verify_state
 from .service import exchange_code, issue_orcid_credential
@@ -176,7 +180,9 @@ CALLBACK_PATH = "/v1/auth/orcid/callback"
 #: ``ORCID_MOCK`` is on (dev/tests) so the full-page return path still runs.
 MOCK_AUTHORIZE_PATH = "/v1/auth/orcid/mock/authorize"
 
-#: The ORCID iD the mock consent screen offers, and the one a mock code names.
+#: A known-valid ORCID iD, kept as the documented example in this module and
+#: as a fixture for callers.  The mock consent screen no longer issues it by
+#: default: every authorization gets a freshly generated, also valid iD.
 MOCK_ORCID_ID = "0000-0002-1825-0097"
 
 #: Problem ``type`` of the ``403`` returned when the caller is not the DID the
@@ -429,8 +435,14 @@ def _mock_consent_page(
     client_id: str,
     scope: str,
     response_type: str,
+    orcid: str,
 ) -> str:
-    """The fake ORCID consent screen, as one self-contained HTML document."""
+    """The fake ORCID consent screen, as one self-contained HTML document.
+
+    ``orcid`` is a freshly generated, checksum-valid iD offered in an editable
+    field.  The tester may accept it or type another valid iD before
+    authorizing; the submitted value becomes the ``mock-<orcid>`` code.
+    """
     escape = html.escape
     fields = "".join(
         f'<input type="hidden" name="{name}" value="{escape(value, quote=True)}">'
@@ -480,10 +492,17 @@ def _mock_consent_page(
   }}
   h1 {{ margin: 0 0 8px; font-size: 24px; line-height: 30px; letter-spacing: -0.01em; }}
   p {{ margin: 0 0 16px; color: var(--ink-2); }}
-  .iD {{
-    margin: 0 0 24px; padding: 12px 16px; border: 1px solid var(--rule); border-radius: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px;
+  .field-label {{
+    display: block; margin: 0 0 6px; font-size: 13px; font-weight: 600;
+    letter-spacing: 0.01em; color: var(--ink);
   }}
+  .iD {{
+    display: block; width: 100%; margin: 0 0 8px; padding: 12px 16px;
+    border: 1px solid var(--rule); border-radius: 8px; background: transparent;
+    color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 16px; line-height: 24px; min-height: 48px;
+  }}
+  .iD:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
   .actions {{ display: flex; gap: 12px; flex-wrap: wrap; }}
   button {{
     min-height: 44px; padding: 10px 20px; border-radius: 999px; border: 1px solid transparent;
@@ -504,9 +523,23 @@ def _mock_consent_page(
   <h1>Scholium wants to sign you in</h1>
   <p>This is a stand-in for ORCID's consent screen. No real ORCID account is
      used and nothing leaves this machine.</p>
-  <p class="iD">{escape(MOCK_ORCID_ID)}</p>
   <form method="get" action="{escape(MOCK_AUTHORIZE_PATH, quote=True)}">
     {fields}
+    <label class="field-label" for="mock-orcid">ORCID iD</label>
+    <input
+      class="iD"
+      id="mock-orcid"
+      name="orcid"
+      type="text"
+      value="{escape(orcid, quote=True)}"
+      autocomplete="off"
+      autocapitalize="none"
+      spellcheck="false"
+      required
+      aria-describedby="mock-orcid-hint"
+    >
+    <p class="note" id="mock-orcid-hint">Generated for this sign-in, so every
+       newcomer gets a different iD. Accept it, or type another valid ORCID iD.</p>
     <div class="actions">
       <button class="approve" type="submit" name="decision" value="approve">Authorize</button>
       <button class="deny" type="submit" name="decision" value="deny">Deny</button>
@@ -528,6 +561,7 @@ def mock_authorize(
     redirect_uri: str = Query(..., description="the web app page to send the browser back to"),
     state: str = Query(..., description="the signed state /start issued"),
     decision: Optional[str] = Query(default=None),
+    orcid: Optional[str] = Query(default=None, description="the iD to authorize"),
     client_id: str = Query(default=""),
     scope: str = Query(default=ORCID_AUTH_SCOPE),
     response_type: str = Query(default="code"),
@@ -535,10 +569,13 @@ def mock_authorize(
     """Show a fake ORCID consent screen, or complete it.
 
     The browser reaches this page from ``/start`` as a whole-page navigation
-    (no bearer token, exactly like ORCID).  ``decision=approve`` redirects to
-    ``redirect_uri`` with ``code=mock-<orcid>`` and the original ``state``;
-    ``decision=deny`` redirects with ``error=access_denied``; without a
-    decision the consent page is rendered and nothing is issued.
+    (no bearer token, exactly like ORCID).  Without a decision the consent page
+    is rendered with a freshly generated valid iD prefilled in an editable
+    field, and nothing is issued.  ``decision=approve`` redirects to
+    ``redirect_uri`` with ``code=mock-<orcid>`` and the original ``state`` --
+    the submitted (or, when none was submitted, a freshly generated) iD, which
+    must pass its ISO 7064 checksum.  ``decision=deny`` redirects with
+    ``error=access_denied``.
 
     Only available with ``ORCID_MOCK`` on -- production configuration refuses
     that setting, and this route answers ``404`` otherwise -- and only ever
@@ -566,7 +603,16 @@ def mock_authorize(
         )
         return RedirectResponse(target, status_code=302)
     if decision == "approve":
-        target = _with_query(redirect_uri, code=f"mock-{MOCK_ORCID_ID}", state=state)
+        chosen = (orcid or "").strip().upper() or generate_mock_orcid_id()
+        if not is_valid_orcid_id(chosen):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The ORCID iD must look like 0000-0002-1825-0097 and pass its "
+                    "ISO 7064 check character."
+                ),
+            )
+        target = _with_query(redirect_uri, code=f"mock-{chosen}", state=state)
         return RedirectResponse(target, status_code=302)
 
     response = HTMLResponse(
@@ -576,6 +622,7 @@ def mock_authorize(
             client_id=client_id,
             scope=scope,
             response_type=response_type,
+            orcid=(orcid or "").strip().upper() or generate_mock_orcid_id(),
         )
     )
     # A one-time state and code: never keep this page in a shared cache.

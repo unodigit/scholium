@@ -18,9 +18,11 @@ from ``JWT_SECRET`` -- an address can therefore never be read back out of a
 token, and a token minted for one DID or one address cannot be replayed for
 another.  The HMAC covers the encoded payload, so no field can be edited.
 
-Links are absolute when ``NEXT_PUBLIC_API_URL`` is set (the default in every
-deployment) and relative otherwise, which keeps unit tests and CLI use free of
-a configured host.
+Links point at the *web app's* ``/verify-email`` page on the public web origin
+(the first usable ``WEB_ORIGINS`` entry), with the DID and token in the query
+string.  The page reads them, POSTs the token to
+``POST /v1/profiles/{did}/verify-email`` and shows the outcome: an emailed link
+to the API route itself could never work, because that route only accepts POST.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode, urlsplit
 
 from app.settings import settings
 
@@ -40,6 +42,7 @@ __all__ = [
     "DEFAULT_VERIFICATION_TTL",
     "EMAIL_VERIFICATION_KIND",
     "TOKEN_VERSION",
+    "VERIFY_EMAIL_PATH",
     "build_verification_link",
     "email_fingerprint",
     "issue_verification_token",
@@ -57,6 +60,9 @@ DEFAULT_VERIFICATION_TTL = timedelta(hours=24)
 EMAIL_VERIFICATION_KIND = "email.verify"
 
 TOKEN_VERSION = "v1"
+
+#: Path of the web app page a verification link points at.
+VERIFY_EMAIL_PATH = "/verify-email"
 
 _TOKEN_PREFIX = b"scholium:profile-email-verification:"
 _FINGERPRINT_PREFIX = b"scholium:profile-email-fingerprint:"
@@ -178,14 +184,32 @@ def verify_verification_token(
     return hmac.compare_digest(fingerprint, email_fingerprint(did, email))
 
 
+def _web_origin() -> str:
+    """Return the browser origin a verification link should point at.
+
+    ``WEB_ORIGINS`` is the same list CORS uses, so its first usable entry is
+    the origin the UI is served from.  ``*`` and blank entries are skipped.
+    When no browser origin is configured the result is empty, yielding a
+    relative link: the API's own ``NEXT_PUBLIC_API_URL`` must never be used
+    here, because following that host is exactly the bug this link fixes.
+    """
+    for origin in settings.web_origins:
+        candidate = origin.strip().rstrip("/")
+        parts = urlsplit(candidate)
+        if parts.scheme in ("http", "https") and parts.netloc:
+            return candidate
+    return ""
+
+
 def build_verification_link(did: str, token: str) -> str:
     """Return the URL a verification email points at.
 
-    The path is the API route itself (``POST /v1/profiles/{did}/verify-email``)
-    with the token in the query string, so the link works without a UI build.
-    The DID's colons are legal in a path segment and are left alone; the token
-    is percent-encoded.
+    The link opens the web app's ``/verify-email`` page, carrying the DID and
+    the signed token as query parameters.  The page then POSTs the token to
+    ``POST /v1/profiles/{did}/verify-email`` on the API and shows the result;
+    pointing the email directly at that API route never worked, because a
+    browser following a link sends GET.
     """
-    path = f"/v1/profiles/{quote(did, safe=':')}/verify-email"
-    base = (settings.NEXT_PUBLIC_API_URL or "").strip().rstrip("/")
-    return f"{base}{path}?{urlencode({'token': token})}"
+    base = _web_origin()
+    query = urlencode({"did": did, "token": token})
+    return f"{base}{VERIFY_EMAIL_PATH}?{query}"

@@ -210,6 +210,44 @@ describe("useOnboarding", () => {
       expect(result.current.orcid.linked).toBe(false);
       expect(result.current.error).toBeNull();
     });
+
+    it("shows why the last attempt failed instead of only 'Continue at ORCID'", async () => {
+      const { services, storage } = makeServices();
+      seed(storage, {
+        orcidStartedAt: "2026-11-15T00:00:00Z",
+        orcidError: "This ORCID iD is already linked to an active DID.",
+      });
+
+      const { result } = await renderOnboarding(services);
+
+      expect(result.current.orcid.started).toBe(true);
+      expect(result.current.orcid.linked).toBe(false);
+      expect(result.current.orcid.error).toBe(
+        "This ORCID iD is already linked to an active DID.",
+      );
+    });
+
+    it("clears the remembered failure when a new attempt starts", async () => {
+      const { services, storage } = makeServices({
+        client: {
+          get: vi.fn(async () => ORCID_START_BODY),
+          put: vi.fn(async () => undefined),
+        } as unknown as OnboardingServices["client"],
+      });
+      seed(storage, {
+        orcidStartedAt: "2026-11-15T00:00:00Z",
+        orcidError: "This ORCID iD is already linked to an active DID.",
+      });
+      const { result } = await renderOnboarding(services);
+
+      await act(async () => {
+        await result.current.linkOrcid();
+      });
+
+      expect(result.current.orcid.error).toBeNull();
+      const stored = JSON.parse(storage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}");
+      expect(stored.orcidError).toBeNull();
+    });
   });
 
   describe("pick categories", () => {
@@ -492,6 +530,23 @@ describe("useOrcidReturn (the /onboarding/orcid page)", () => {
     expect(stored.orcidLinkedAt).toEqual(expect.any(String));
   });
 
+  it("clears a remembered failure once the link succeeds", async () => {
+    const { services, storage } = makeReturn("?code=c&state=s");
+    storage.setItem(
+      ONBOARDING_STORAGE_KEY,
+      JSON.stringify({
+        orcidStartedAt: "2026-11-15T00:00:00Z",
+        orcidError: "This ORCID iD is already linked to an active DID.",
+      }),
+    );
+
+    await settled(services);
+
+    const stored = JSON.parse(storage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}");
+    expect(stored.orcidLinkedAt).toEqual(expect.any(String));
+    expect(stored.orcidError).toBeNull();
+  });
+
   it("takes the one-time code and state out of the address bar", async () => {
     const { services, clearSearch } = makeReturn("?code=c&state=s");
 
@@ -527,8 +582,11 @@ describe("useOrcidReturn (the /onboarding/orcid page)", () => {
     expect(result.current.error).toBe(detail);
     expect(result.current.sessionExpired).toBe(false);
     expect(result.current.orcid).toBeNull();
-    // Nothing was linked, so the checklist must not claim it was.
-    expect(storage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+    // Nothing was linked, so the checklist must not claim it was — but it must
+    // remember the explanation so /onboarding can show it with a retry.
+    const stored = JSON.parse(storage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}");
+    expect(stored.orcidLinkedAt).toBeNull();
+    expect(stored.orcidError).toBe(detail);
   });
 
   it("asks a signed-out visitor to sign in again (401)", async () => {
@@ -541,7 +599,9 @@ describe("useOrcidReturn (the /onboarding/orcid page)", () => {
     expect(result.current.status).toBe("failed");
     expect(result.current.error).toBe(ONBOARDING_SESSION_EXPIRED_MESSAGE);
     expect(result.current.sessionExpired).toBe(true);
-    expect(storage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+    const stored = JSON.parse(storage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}");
+    expect(stored.orcidLinkedAt).toBeNull();
+    expect(stored.orcidError).toBe(ONBOARDING_SESSION_EXPIRED_MESSAGE);
   });
 
   it("shows a conflict's detail (the iD is already linked)", async () => {

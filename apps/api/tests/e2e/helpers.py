@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from fastapi.testclient import TestClient
 from nacl.signing import SigningKey
@@ -50,12 +50,14 @@ def assert_problem(response: Any, status: int) -> dict:
     return body
 
 
-def verification_link_for(did: str) -> str:
+def verification_web_link_for(did: str) -> str:
     """The path and query of the latest verification link emailed to ``did``.
 
     Without ``SMTP_URL`` the node keeps outgoing mail in an in-process outbox,
     which stands in for the user's inbox here.  The link is returned the way a
-    mail client would follow it: as a request target, host dropped.
+    mail client would follow it: as a request target, host dropped.  The email
+    points at the *web app's* ``/verify-email`` page, carrying ``did`` and
+    ``token``.
     """
     mails = [m for m in get_outbox() if m.get("did") == did and m.get("kind") == EMAIL_VERIFICATION_KIND]
     assert mails, f"no verification email was sent to {did}"
@@ -63,6 +65,25 @@ def verification_link_for(did: str) -> str:
     assert match, f"no link in the verification email: {mails[-1]['body']!r}"
     link = urlparse(match.group(1))
     return f"{link.path}?{link.query}"
+
+
+def verification_link_for(did: str) -> str:
+    """The API request that redeems the latest verification link emailed to ``did``.
+
+    The browser opens :func:`verification_web_link_for` first; that page then
+    POSTs the token it finds there to ``/v1/profiles/{did}/verify-email``.  The
+    journey tests cannot render the web app, so this returns that POST target
+    (the token still travels as a query parameter, which the API accepts) and a
+    test's ``client.post(...)`` stands in for the page.
+    """
+    emailed = urlparse(verification_web_link_for(did))
+    params = parse_qs(emailed.query)
+    assert emailed.path == "/verify-email", emailed.path
+    linked_did = params["did"][0]
+    return (
+        f"/v1/profiles/{quote(linked_did, safe=':')}/verify-email?"
+        f"{urlencode({'token': params['token'][0]})}"
+    )
 
 
 def sign_text(seed: SigningKey, text: str) -> str:

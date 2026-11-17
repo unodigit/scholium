@@ -69,6 +69,9 @@ export const ORCID_STARTING = "Opening ORCID…";
 export const ORCID_STARTED_NOTE =
   "You've started linking. Finish signing in at ORCID, then come back here.";
 
+/** Link ORCID step after a failed attempt: start over with a fresh authorize URL. */
+export const ORCID_RETRY_ACTION = "Try again";
+
 /** Link ORCID step, done. */
 export const ORCID_LINKED_NOTE = "Your ORCID iD is linked to this account.";
 

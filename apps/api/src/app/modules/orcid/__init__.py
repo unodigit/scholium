@@ -32,6 +32,12 @@ the ``router`` exported here under ``/v1``; nothing else needs wiring.
 
 from __future__ import annotations
 
+from .ids import (
+    format_orcid_id,
+    generate_mock_orcid_id,
+    is_valid_orcid_id,
+    orcid_check_character,
+)
 from .models import Credential, Nullifier, ensure_tables as ensure_credential_tables
 from .nullifier import (
     NULLIFIER_DOMAIN,
@@ -133,11 +139,15 @@ __all__ = [
     "credential_nullifier",
     "ensure_credential_tables",
     "exchange_code",
+    "format_orcid_id",
+    "generate_mock_orcid_id",
     "has_orcid_credential",
+    "is_valid_orcid_id",
     "issue_orcid_credential",
     "mock_authorize_endpoint",
     "normalise_orcid",
     "orcid_base_url",
+    "orcid_check_character",
     "promote_if_eligible",
     "promotion_eligible",
     "public_web_origin",

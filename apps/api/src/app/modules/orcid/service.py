@@ -60,7 +60,10 @@ def exchange_code(code: str, *, redirect_uri: Optional[str] = None) -> str:
     """Return the ORCID iD an authorization ``code`` resolves to.
 
     With ``ORCID_MOCK=1`` (the default) only ``mock-<orcid>`` codes are
-    accepted and the iD is taken from the code.  Otherwise the code is
+    accepted and the iD is taken from the code.  The mock consent page only
+    issues checksum-valid iDs (and refuses to approve a typed one that is
+    not); this exchange then accepts the spellings an iD is commonly written
+    in, leaving canonicalisation to the nullifier.  Otherwise the code is
     exchanged with ORCID's token endpoint.
     """
     if not isinstance(code, str) or not code.strip():

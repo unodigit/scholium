@@ -38,6 +38,7 @@ from .schemas import (
     ProfileOut,
     PublicProfileOut,
     PublicReviewOut,
+    VerificationEmailResendOut,
     VerifyEmailIn,
 )
 from .service import (
@@ -58,6 +59,7 @@ from .service import (
 from .verification import (
     DEFAULT_VERIFICATION_TTL,
     EMAIL_VERIFICATION_KIND,
+    VERIFY_EMAIL_PATH,
     build_verification_link,
     email_fingerprint,
     issue_verification_token,
@@ -77,6 +79,8 @@ from .views import (
 __all__ = [
     "DEFAULT_VERIFICATION_TTL",
     "EMAIL_VERIFICATION_KIND",
+    "VERIFY_EMAIL_PATH",
+    "VerificationEmailResendOut",
     "ERASURE_RECORD_TYPE",
     "ORCID_PATTERN",
     "EmailVerification",

@@ -123,6 +123,13 @@ class EmailVerificationOut(BaseModel):
     email_verified: bool = True
 
 
+class VerificationEmailResendOut(BaseModel):
+    """The answer to ``POST /v1/profiles/{did}/verify-email/resend``."""
+
+    did: str
+    sent: bool = True
+
+
 class PublicReviewOut(BaseModel):
     """One revealed review the DID signed, for public credit.
 

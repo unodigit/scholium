@@ -66,6 +66,7 @@ import {
   ORCID_RETURN_SIGNIN_ACTION,
   ORCID_RETURN_WORKING_NOTE,
   ORCID_RETURN_WORKING_TITLE,
+  ORCID_RETRY_ACTION,
   ORCID_STARTING,
   ORCID_START_ACTION,
   ORCID_STARTED_NOTE,
@@ -335,6 +336,20 @@ function OrcidBody({ onboarding }: { onboarding: ReturnType<typeof useOnboarding
     <>
       {orcid.linked ? (
         <p className="wa-note">{ORCID_LINKED_NOTE}</p>
+      ) : orcid.error ? (
+        <>
+          <p className="wa-note wa-error" role="alert">
+            {orcid.error}
+          </p>
+          <button
+            type="button"
+            className="wa-button wa-button--small"
+            onClick={() => void linkOrcid()}
+            disabled={orcid.starting}
+          >
+            {orcid.starting ? ORCID_STARTING : ORCID_RETRY_ACTION}
+          </button>
+        </>
       ) : orcid.started ? (
         <>
           <p className="wa-note">{ORCID_STARTED_NOTE}</p>

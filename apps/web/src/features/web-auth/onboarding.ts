@@ -110,6 +110,8 @@ export interface PersistedOnboarding {
   orcidStartedAt: string | null;
   /** UTC instant a linked ORCID iD was last observed, if ever. */
   orcidLinkedAt: string | null;
+  /** Why the last ORCID attempt failed, in plain language; `null` when none. */
+  orcidError: string | null;
   /** Categories picked (and saved), in the order they were picked. */
   categories: string[];
   /** UTC instant guardians were saved from this browser, if ever. */
@@ -124,6 +126,7 @@ export function emptyPersistedOnboarding(): PersistedOnboarding {
     profileSavedAt: null,
     orcidStartedAt: null,
     orcidLinkedAt: null,
+    orcidError: null,
     categories: [],
     guardiansSavedAt: null,
     guardians: [],
@@ -171,6 +174,10 @@ export function loadPersistedOnboarding(
       typeof parsed.profileSavedAt === "string" ? parsed.profileSavedAt : null,
     orcidStartedAt: typeof parsed.orcidStartedAt === "string" ? parsed.orcidStartedAt : null,
     orcidLinkedAt: typeof parsed.orcidLinkedAt === "string" ? parsed.orcidLinkedAt : null,
+    orcidError:
+      typeof parsed.orcidError === "string" && parsed.orcidError.trim() !== ""
+        ? parsed.orcidError
+        : null,
     categories: categories ?? base.categories,
     guardians: guardians ?? base.guardians,
     guardiansSavedAt: typeof parsed.guardiansSavedAt === "string" ? parsed.guardiansSavedAt : null,

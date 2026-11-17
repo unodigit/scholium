@@ -123,15 +123,32 @@ describe("persisted onboarding progress", () => {
     expect(next.categories).toEqual(["cs.AI", "cs.LG"]);
   });
 
+  it("remembers why a link attempt failed so the checklist can explain it", () => {
+    const storage = new MemoryTokenStorage();
+
+    updatePersistedOnboarding(storage, {
+      orcidStartedAt: "2026-11-15T00:00:00Z",
+      orcidError: "This ORCID iD is already linked to an active DID.",
+    });
+
+    expect(loadPersistedOnboarding(storage).orcidError).toBe(
+      "This ORCID iD is already linked to an active DID.",
+    );
+  });
+
   it("reads junk as nothing done", () => {
     const storage = new MemoryTokenStorage();
     storage.setItem(ONBOARDING_STORAGE_KEY, "{not json");
     expect(loadPersistedOnboarding(storage)).toEqual(emptyPersistedOnboarding());
 
-    storage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({ categories: "nope", orcidLinkedAt: 7 }));
+    storage.setItem(
+      ONBOARDING_STORAGE_KEY,
+      JSON.stringify({ categories: "nope", orcidLinkedAt: 7, orcidError: 3 }),
+    );
     const loaded = loadPersistedOnboarding(storage);
     expect(loaded.categories).toEqual([]);
     expect(loaded.orcidLinkedAt).toBeNull();
+    expect(loaded.orcidError).toBeNull();
   });
 });
 

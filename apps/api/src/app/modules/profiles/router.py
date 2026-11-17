@@ -26,6 +26,10 @@ The module loader mounts this router under ``/v1``:
   DID (a ``403`` otherwise, like the PUT); one that is sent and unusable is a
   ``401``.  A missing, forged, expired or address-changed token is ``400``
   problem details, and a DID with no readable profile is ``404``.
+* ``POST /v1/profiles/{did}/verify-email/resend`` (feature 178) emails the
+  owner a fresh link for the address already saved.  It is the expired-link
+  screen's resend option and is owner-only: a DID is public, so an
+  unauthenticated resend would let anyone flood an address.
 * ``PUT /v1/profiles/{did}`` also emails a fresh verification link to the saved
   address (feature 178); a save with a different address clears an earlier
   verification.
@@ -56,13 +60,21 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.security import Principal, get_current_principal
 
 from .crypto import ProfileDecryptionError
-from .schemas import EmailVerificationOut, ProfileIn, ProfileOut, PublicProfileOut, VerifyEmailIn
+from .schemas import (
+    EmailVerificationOut,
+    ProfileIn,
+    ProfileOut,
+    PublicProfileOut,
+    VerificationEmailResendOut,
+    VerifyEmailIn,
+)
 from .service import (
     InvalidEmailVerificationToken,
     ProfileData,
     ProfileNotFound,
     erase_profile,
     mark_email_verified,
+    read_profile,
     save_profile,
     send_verification_email,
 )
@@ -190,6 +202,33 @@ def verify_email(
     # The answer reflects personal state (whether this DID's address was proven).
     response.headers["Cache-Control"] = "no-store"
     return EmailVerificationOut(did=did, email_verified=True)
+
+
+@router.post("/{did}/verify-email/resend", response_model=VerificationEmailResendOut, status_code=202)
+def resend_verification_email(
+    did: str,
+    response: Response,
+    _owner: Principal = Depends(require_owner),
+) -> VerificationEmailResendOut:
+    """Email the owner a fresh verification link for the address already saved.
+
+    The expired-link screen offers this.  Only the owner may ask: an iD is
+    public, so an unauthenticated resend would let anyone flood an address.
+    """
+    profile = read_profile(did)
+    if profile is None:
+        raise HTTPException(
+            status_code=404,
+            detail="There is no profile to verify for this DID.",
+        )
+    if send_verification_email(did, profile.email) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="The verification email could not be sent right now.",
+        )
+    # The answer reflects personal state (whether this DID's address was written to).
+    response.headers["Cache-Control"] = "no-store"
+    return VerificationEmailResendOut(did=did, sent=True)
 
 
 @router.delete("/{did}", status_code=202)

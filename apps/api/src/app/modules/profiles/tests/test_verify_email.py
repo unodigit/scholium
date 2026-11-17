@@ -18,11 +18,12 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 import pytest
 
 from app.modules.notifications import clear_outbox, get_outbox
+from app.settings import settings
 from app.modules.profiles import (
     DEFAULT_VERIFICATION_TTL,
     EMAIL_VERIFICATION_KIND,
@@ -101,8 +102,47 @@ def test_put_emails_a_verification_link_to_the_saved_address(client, did, auth):
     assert email["kind"] == EMAIL_VERIFICATION_KIND
 
     link = _last_link()
-    assert f"/v1/profiles/{did}/verify-email" in link
     assert "token=" in link
+
+
+def test_the_link_points_at_the_web_app_not_the_api(client, did, auth, monkeypatch):
+    """Following the emailed link must reach a page that can POST the token.
+
+    The API's ``POST /v1/profiles/{did}/verify-email`` only accepts POST, so a
+    link to it can never verify anything from a mail client.
+    """
+    monkeypatch.setattr(
+        settings, "WEB_ORIGINS", " https://scholium.example.org/ , https://other.example"
+    )
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    parts = urlsplit(_last_link())
+
+    assert (parts.scheme, parts.netloc) == ("https", "scholium.example.org")
+    assert parts.path == "/verify-email"
+    params = parse_qs(parts.query)
+    assert params["did"] == [did]
+    assert params["token"] == [_last_token()]
+    assert "/v1/profiles/" not in _last_link()
+
+
+def test_the_link_host_is_never_the_api_host(client, did, auth, monkeypatch):
+    """The API's own origin must not leak into a link a browser follows."""
+    monkeypatch.setattr(settings, "WEB_ORIGINS", "http://localhost:3000")
+    monkeypatch.setattr(settings, "NEXT_PUBLIC_API_URL", "http://localhost:8200")
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    assert urlparse(_last_link()).netloc == "localhost:3000"
+
+
+def test_without_a_web_origin_the_link_stays_relative(client, did, auth, monkeypatch):
+    monkeypatch.setattr(settings, "WEB_ORIGINS", "")
+    monkeypatch.setattr(settings, "NEXT_PUBLIC_API_URL", "http://localhost:8200")
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    link = _last_link()
+    assert link.startswith("/verify-email?")
+    assert "localhost:8200" not in link
 
 
 def test_the_emailed_link_carries_no_plaintext_address(client, did, auth):
@@ -121,6 +161,49 @@ def test_every_save_emails_a_fresh_link(client, did, auth):
     second = _last_token()
 
     assert first != second
+
+
+# --- asking for a fresh link (the expiry screen's resend option) --------------
+
+
+def test_the_owner_can_ask_for_a_fresh_verification_link(client, did, auth):
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    first = _last_token()
+
+    response = client.post(
+        f"/v1/profiles/{did}/verify-email/resend",
+        headers=auth(did),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {"did": did, "sent": True}
+    assert response.headers["cache-control"] == "no-store"
+    second = _last_token()
+    assert second != first
+    assert _verify(client, did, second).status_code == 200
+
+
+def test_resending_requires_the_owner(client, did, auth):
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    stranger = f"did:key:z6Mk{uuid.uuid4().hex}"
+
+    anonymous = client.post(f"/v1/profiles/{did}/verify-email/resend")
+    foreign = client.post(
+        f"/v1/profiles/{did}/verify-email/resend",
+        headers=auth(stranger),
+    )
+
+    assert anonymous.status_code == 401
+    assert foreign.status_code == 403
+
+
+def test_resending_for_a_did_with_no_profile_is_404(client, did, auth):
+    response = client.post(
+        f"/v1/profiles/{did}/verify-email/resend",
+        headers=auth(did),
+    )
+
+    assert response.status_code == 404
 
 
 # --- redeeming the link -----------------------------------------------------

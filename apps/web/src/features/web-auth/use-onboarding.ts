@@ -106,6 +106,12 @@ export interface OnboardingOrcidState {
   linked: boolean;
   /** The authorize URL is being fetched. */
   starting: boolean;
+  /**
+   * Why the last attempt failed, in plain language; `null` when it has not
+   * failed. A remembered failure takes precedence over "in progress" so the
+   * page can show it with a retry instead of "Continue at ORCID".
+   */
+  error: string | null;
 }
 
 /** The profile step's state. */
@@ -225,6 +231,7 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
     started: false,
     linked: false,
     starting: false,
+    error: null,
   }));
   const [categories, setCategories] = useState<OnboardingCategoriesState>(() => ({
     choices: ONBOARDING_CATEGORY_CHOICES,
@@ -313,6 +320,9 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
         started: next.orcidStartedAt !== null,
         linked: next.orcidLinkedAt !== null,
         starting: false,
+        // A failure remembered by /onboarding/orcid is shown on the checklist
+        // until a new attempt starts, so the user sees why nothing was linked.
+        error: next.orcidError,
       });
       setPasskeyReady(keyReady);
       setDid(accountDid);
@@ -383,8 +393,17 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
     setOrcid((current) => ({ ...current, starting: true }));
     try {
       const start = await startOrcidLink(servicesRef.current.client);
-      applyPersisted({ orcidStartedAt: new Date().toISOString() });
-      setOrcid((current) => ({ ...current, started: true, starting: false }));
+      // A new attempt supersedes any failure the last one left behind.
+      applyPersisted({
+        orcidStartedAt: new Date().toISOString(),
+        orcidError: null,
+      });
+      setOrcid((current) => ({
+        ...current,
+        started: true,
+        starting: false,
+        error: null,
+      }));
       // Full-page navigation: ORCID is another origin.
       servicesRef.current.openExternalUrl(start.authorizeUrl);
     } catch (failure) {
@@ -632,9 +651,6 @@ export function useOrcidReturn(options: UseOrcidReturnOptions = {}): UseOrcidRet
         } else {
           try {
             const linked = await completeOrcidLink(services.client, returned);
-            updatePersistedOnboarding(services.storage, {
-              orcidLinkedAt: new Date().toISOString(),
-            });
             next = { status: "linked", orcid: linked.orcid, error: null, sessionExpired: false };
           } catch (failure) {
             next = failedReturn(
@@ -643,6 +659,17 @@ export function useOrcidReturn(options: UseOrcidReturnOptions = {}): UseOrcidRet
             );
           }
         }
+
+        // Remember the outcome on this device. Success completes the step and
+        // clears any earlier failure; a failure keeps its explanation so the
+        // checklist can show it with a retry instead of claiming "in progress".
+        updatePersistedOnboarding(
+          services.storage,
+          next.status === "linked"
+            ? { orcidLinkedAt: new Date().toISOString(), orcidError: null }
+            : { orcidError: next.error ?? ORCID_RETURN_MISSING_MESSAGE },
+        );
+
         if (mountedRef.current) {
           setResult(next);
         }
