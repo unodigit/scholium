@@ -5,7 +5,8 @@
   "scripts": {
     "test": "cd apps/api && uv run --all-packages pytest && cd ../.. && npm run test --workspace apps/web",
     "test:e2e": "npm run test:e2e --workspace apps/web",
-    "test:slow": "cd apps/api && uv run --all-packages pytest -m slow"
+    "test:slow": "cd apps/api && uv run --all-packages pytest -m slow",
+    "infra:check": "bash scripts/infra-check.sh"
   },
   "workspaces": [
     "apps/web"

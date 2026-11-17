@@ -1,0 +1,178 @@
+#cloud-config
+#
+# Cloud-init for a Scholium host VM (rendered by infra/modules/host-vm).
+#
+# It installs podman and podman-compose, formats and mounts the attached
+# Hetzner volume at ${data_root}, checks the repository out onto that volume,
+# writes the compose stack's .env from the values the calling environment
+# passes in, and runs the same compose.yaml used for local development as the
+# systemd unit scholium-stack.service. When a Cloudflare Tunnel token is
+# supplied it also installs cloudflared and runs the connector under systemd.
+#
+# Every value interpolated here comes from the module's inputs; the shell
+# variables inside the embedded scripts are escaped so templatefile leaves
+# them alone.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - openssh-client
+  - podman
+  - podman-compose
+
+write_files:
+  - path: /etc/scholium/stack.env
+    owner: root:root
+    permissions: '0600'
+    content: |
+      ${indent(6, stack_env)}
+
+  - path: /etc/sysctl.d/99-scholium.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Containers on podman's bridge network need IP forwarding for their
+      # outbound traffic (SMTP, hosted AI providers, the object store).
+      net.ipv4.ip_forward = 1
+
+  - path: /etc/scholium/git-key
+    owner: root:root
+    permissions: '0600'
+    content: |
+      ${indent(6, git_key)}
+
+  - path: /usr/local/bin/scholium-deploy
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      #
+      # ExecStartPre for scholium-stack.service. Waits for the Hetzner volume,
+      # mounts it, updates the checkout, and installs the compose .env.
+      set -euo pipefail
+
+      APP_DIR="${app_dir}"
+      DATA_ROOT="${data_root}"
+      REPO_URL="${repository_url}"
+      REPO_REF="${repository_ref}"
+      STACK_ENV=/etc/scholium/stack.env
+      VOLUME_LABEL=scholium-data
+
+      if [ -s /etc/scholium/git-key ]; then
+        export GIT_SSH_COMMAND="ssh -i /etc/scholium/git-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+      fi
+
+      mkdir -p "$${DATA_ROOT}" "$${APP_DIR}"
+
+      # The volume is created by the same apply that creates this server, so it
+      # can finish attaching after cloud-init starts. Wait for its device.
+      device=""
+      for _attempt in $(seq 1 90); do
+        device=$(ls -1 /dev/disk/by-id/scsi-0HC_Volume_* 2>/dev/null | head -n 1 || true)
+        if [ -n "$${device}" ]; then
+          break
+        fi
+        sleep 2
+      done
+
+      if [ -z "$${device}" ]; then
+        echo "scholium-deploy: no Hetzner volume attached (looked under /dev/disk/by-id)" >&2
+        exit 1
+      fi
+
+      if ! blkid "$${device}" >/dev/null 2>&1; then
+        mkfs.ext4 -F -L "$${VOLUME_LABEL}" "$${device}"
+      fi
+
+      if ! grep -qs " $${DATA_ROOT} " /etc/fstab; then
+        printf '%s %s ext4 defaults,nofail 0 2\n' "$${device}" "$${DATA_ROOT}" >> /etc/fstab
+      fi
+
+      mountpoint -q "$${DATA_ROOT}" || mount "$${DATA_ROOT}"
+
+      if [ -d "$${APP_DIR}/.git" ]; then
+        git -C "$${APP_DIR}" fetch --depth 1 origin "$${REPO_REF}"
+        git -C "$${APP_DIR}" checkout --force --detach FETCH_HEAD
+      else
+        rm -rf "$${APP_DIR}"
+        git clone --depth 1 --branch "$${REPO_REF}" "$${REPO_URL}" "$${APP_DIR}"
+      fi
+
+      # compose reads its variables from the project directory's .env file.
+      install -m 0600 "$${STACK_ENV}" "$${APP_DIR}/.env"
+      echo "scholium-deploy: $${REPO_URL} at $${REPO_REF} is ready in $${APP_DIR}"
+
+  - path: /etc/systemd/system/scholium-stack.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Scholium application stack (podman compose)
+      Documentation=${repository_url}
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=${app_dir}
+      Environment=HOME=/root
+      Environment=COMPOSE_PROJECT_NAME=scholium-${environment_name}
+      ExecStartPre=/usr/local/bin/scholium-deploy
+      ExecStart=/usr/bin/podman-compose -f ${app_dir}/compose.yaml up -d --remove-orphans --build
+      ExecReload=/usr/bin/podman-compose -f ${app_dir}/compose.yaml up -d --remove-orphans --build
+      ExecStop=/usr/bin/podman-compose -f ${app_dir}/compose.yaml down
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/cloudflared/tunnel.env
+    owner: root:root
+    permissions: '0600'
+    content: |
+      TUNNEL_TOKEN=${tunnel_token}
+
+  - path: /etc/systemd/system/cloudflared.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Cloudflare Tunnel connector for the Scholium API
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/cloudflared/tunnel.env
+      ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+      Restart=on-failure
+      RestartSec=5s
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - |
+    set -euo pipefail
+    install -d -m 0755 ${data_root} ${app_dir}
+    sysctl --system >/dev/null
+    systemctl daemon-reload
+    systemctl enable scholium-stack.service
+    systemctl start scholium-stack.service
+  - |
+    set -euo pipefail
+    token=$(sed -n 's/^TUNNEL_TOKEN=//p' /etc/cloudflared/tunnel.env | head -n 1)
+    if [ -n "$${token}" ]; then
+      install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+      curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
+      echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" > /etc/apt/sources.list.d/cloudflared.list
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y cloudflared
+      systemctl daemon-reload
+      systemctl enable --now cloudflared.service
+    fi
