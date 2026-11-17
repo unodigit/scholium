@@ -6,18 +6,19 @@
  * (`apps/api/src/app/modules/endorsements/`):
  *
  * - `GET /v1/me/endorsements` — the signed-in viewer's own *active*
- *   endorsements, each with its category. An endorsement there grants the
- *   right to *submit* in that category; it is a convenience source for the
- *   per-category quick actions, never a licence to endorse. Only a viewer at
- *   {@link ENDORSE_MIN_TIER} or above is offered any endorse action at all.
+ *   endorsements, each with its category. They are the categories the viewer
+ *   may endorse in: an endorser vouches only where they are themself
+ *   endorsed. Only a viewer at {@link ENDORSE_MIN_TIER} or above is offered
+ *   any endorse action at all, and only one at
+ *   {@link ENDORSE_ANY_CATEGORY_TIER} may go beyond their own categories.
  * - `POST /v1/records` — the standard ingest pipeline for a client-signed
  *   `endorsement` record (`{endorsee, category}`). The API is the gate: it
- *   accepts the record only from an author at
- *   {@link ENDORSE_MIN_TIER} or above, so a tier-3 viewer may endorse in
- *   *any* category ({@link EndorseOffer.anyCategory}) and a refused record is
- *   reported with the API's own words rather than silently swallowed. The
- *   profile mirrors that tier rule so the action is never offered to a
- *   viewer the API would refuse.
+ *   accepts the record only from an author at {@link ENDORSE_MIN_TIER} or
+ *   above, and below {@link ENDORSE_ANY_CATEGORY_TIER} only in a category the
+ *   endorser is themself endorsed in (403 `category-not-endorsed` otherwise).
+ *   A refused record is reported with the API's own words rather than
+ *   silently swallowed. The profile mirrors both rules, so an action is never
+ *   offered that the API would refuse.
  *
  * {@link endorseResearcher} signs with `web-auth`'s `signRecord` — the
  * passkey prompt *is* the confirmation — and posts the signed envelope.
@@ -47,6 +48,13 @@ export const RECORDS_ENDPOINT = "/records";
  * API). At or above it the API places no limit on the category.
  */
 export const ENDORSE_MIN_TIER = 3;
+
+/**
+ * The tier that may endorse in *any* category (`Tier.MODERATOR` in the API).
+ * Below it an endorser may only endorse in a category they hold an active
+ * endorsement in.
+ */
+export const ENDORSE_ANY_CATEGORY_TIER = 4;
 
 /** The DID shape the endorsement record's schema accepts. */
 const ENDORSEE_DID_PATTERN = /^did:[a-z0-9]+:.+$/;
@@ -201,15 +209,15 @@ export async function loadViewerEndorsements(
 /** The endorse actions the profile puts in front of the viewer. */
 export interface EndorseOffer {
   /**
-   * One action per category the viewer may submit in — a shortcut, offered
-   * only alongside {@link anyCategory}; it never widens what the API grants.
+   * The categories the viewer is themself endorsed in — the ones an endorser
+   * below {@link ENDORSE_ANY_CATEGORY_TIER} may endorse in — one quick action
+   * each, and the whole of the dropdown for such a viewer.
    */
   readonly categories: readonly string[];
   /**
-   * The API accepts an endorsement record from a tier-3 author in *any*
-   * category, so such a viewer gets a category choice instead of a list.
-   * An unknown tier is offered the same choice; the API decides. A known
-   * tier below {@link ENDORSE_MIN_TIER} gets no offer at all.
+   * The viewer may endorse in *any* category (tier 4), so the dropdown lists
+   * the whole taxonomy. Never true for a tier-3 or unknown-tier viewer: for
+   * them the API refuses a category they are not endorsed in.
    */
   readonly anyCategory: boolean;
 }
@@ -219,25 +227,67 @@ export const NO_ENDORSE_OFFER: EndorseOffer = { categories: [], anyCategory: fal
 
 /**
  * Which endorse actions `viewer` gets, from the API's rules: a viewer at
- * {@link ENDORSE_MIN_TIER} or above (or one whose tier is unknown) may
- * endorse, with their endorsed categories offered as quick actions and a
- * category picker beside them. Everyone below that tier gets nothing — the
- * API would refuse every record they posted.
+ * {@link ENDORSE_MIN_TIER} or above (or one whose tier is unknown) may endorse
+ * in the categories they are themself endorsed in; only one at
+ * {@link ENDORSE_ANY_CATEGORY_TIER} may endorse in any. Everyone below the
+ * endorser tier gets nothing — the API would refuse every record they posted.
+ * A tier-3 viewer with no endorsement of their own gets nothing either: there
+ * is no category the API would accept.
  */
 export function endorseOffer(
   viewerTier: number | null,
   endorsements: readonly ViewerEndorsement[],
 ): EndorseOffer {
-  // The API accepts an endorsement record only from an author at
-  // ENDORSE_MIN_TIER or above, in any category (`handle_endorsement`). An
-  // endorsement the viewer holds grants the right to *submit* in its
-  // category, never the right to endorse, so it cannot make up for a tier
-  // the API refuses.
-  const anyCategory = viewerTier === null || viewerTier >= ENDORSE_MIN_TIER;
-  if (!anyCategory) return NO_ENDORSE_OFFER;
+  if (viewerTier !== null && viewerTier < ENDORSE_MIN_TIER) return NO_ENDORSE_OFFER;
 
   const categories = [...new Set(endorsements.map((row) => row.category))].sort();
+  // An unknown tier is never assumed to be a moderator: the dropdown stays
+  // within the viewer's own categories and the API decides the rest.
+  const anyCategory = viewerTier !== null && viewerTier >= ENDORSE_ANY_CATEGORY_TIER;
   return { categories, anyCategory };
+}
+
+/** One category in the dropdown: its id and its plain-language name. */
+export interface EndorseChoice {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** One labelled group of dropdown categories. */
+export interface EndorseChoiceGroup {
+  readonly label: string;
+  readonly categories: readonly EndorseChoice[];
+}
+
+/**
+ * What the Endorse dropdown lists: the whole `taxonomy` for a viewer who may
+ * endorse in any category, else only the categories in the offer — never one
+ * the viewer is not endorsed in. A category already endorsed (`used`) is left
+ * out, and so is a group left empty. An endorsed category the taxonomy does
+ * not name is still listed, under "Other", by its id.
+ */
+export function endorseChoices(
+  offer: EndorseOffer,
+  taxonomy: readonly EndorseChoiceGroup[],
+  used: readonly string[],
+): EndorseChoiceGroup[] {
+  const allowed = offer.anyCategory ? null : new Set(offer.categories);
+  const groups = taxonomy.map((group) => ({
+    label: group.label,
+    categories: group.categories.filter(
+      (category) => !used.includes(category.id) && (allowed === null || allowed.has(category.id)),
+    ),
+  }));
+
+  if (allowed !== null) {
+    const named = new Set(taxonomy.flatMap((group) => group.categories.map((category) => category.id)));
+    const other = [...allowed]
+      .filter((id) => !named.has(id) && !used.includes(id))
+      .map((id) => ({ id, name: id }));
+    groups.push({ label: "Other", categories: other });
+  }
+
+  return groups.filter((group) => group.categories.length > 0);
 }
 
 /** `Endorse in cs.AI` — the action, named after the category. */

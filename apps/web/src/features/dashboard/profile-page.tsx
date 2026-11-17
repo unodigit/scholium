@@ -3,17 +3,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
+import { formatDate, parseInstant } from "../feed/feed";
 
+import { CopyDid } from "./copy-did";
 import { EndorseSection } from "./endorse-button";
 import { FollowToggle } from "./follow-toggle";
+import { MemberPapersCard, type LoadMemberPapers } from "./member-papers";
 import {
   PROFILE_TITLE,
   describeProfileError,
   loadProfile as fetchProfile,
+  orcidUrl,
+  profileDisplayName,
+  profileShortDid,
+  tierLabel,
   type ProfileData,
+  type SignedReview,
 } from "./profile";
-import type { EndorseResult } from "./endorse";
-import "./dashboard-page.css";
+import { viewerFromAccessToken, type EndorseResult } from "./endorse";
+import "./profile-page.css";
 
 /** Loads a profile for one DID; replaceable in tests. */
 export type LoadProfile = (did: string) => Promise<ProfileData>;
@@ -43,6 +51,8 @@ export interface ProfilePageProps {
   loadFollowing?: () => Promise<readonly string[]>;
   /** Pin the sign-in state. */
   signedIn?: boolean;
+  /** Replace the read of the member's papers, for tests. */
+  loadPapers?: LoadMemberPapers;
 }
 
 type ProfileState =
@@ -130,7 +140,7 @@ export function ProfilePage(props: ProfilePageProps = {}) {
 
   return (
     <div className="pp-page">
-      <ProfileHeader did={resolvedDid} />
+      {state.status !== "ready" ? <PlainHeader did={resolvedDid} /> : null}
 
       {state.status === "loading" ? (
         <p className="pp-loading" role="status">
@@ -155,6 +165,7 @@ export function ProfilePage(props: ProfilePageProps = {}) {
           follow={props.follow}
           unfollow={props.unfollow}
           loadFollowing={props.loadFollowing}
+          loadPapers={props.loadPapers}
           signedIn={props.signedIn}
           onEndorsed={refresh}
         />
@@ -167,17 +178,39 @@ export function ProfilePage(props: ProfilePageProps = {}) {
 export const UserProfilePage = ProfilePage;
 export const PublicProfilePage = ProfilePage;
 
-function ProfileHeader({ did }: { did: string }) {
+/**
+ * What the page shows before there is a profile to show (still loading, or
+ * the read failed): the member's short DID, which is all that is known.
+ */
+function PlainHeader({ did }: { did: string }) {
   return (
-    <header className="pp-header">
-      <p className="pp-kicker mono-id">scholium / u / {did}</p>
-      <h1 className="pp-title">{PROFILE_TITLE}</h1>
-      <p className="pp-lede">
-        A member&rsquo;s public profile: name, affiliation, ORCID, trust tier
-        and the reviews they chose to sign with their name.
-      </p>
+    <header className="pp-hero">
+      <h1 className={did === "" ? "pp-name" : "pp-name pp-name--pseudonym"}>
+        {did === "" ? PROFILE_TITLE : profileShortDid(did)}
+      </h1>
     </header>
   );
+}
+
+/**
+ * The DID of the person looking at the page, from the token store and live
+ * across sign-in and sign-out; `null` when signed out or when the token does
+ * not name one. The first render matches the server's signed-out HTML.
+ */
+function useViewerDid(): string | null {
+  const [did, setDid] = useState<string | null>(null);
+  useEffect(() => {
+    const read = (): void => setDid(viewerFromAccessToken(tokenStore.get()?.accessToken).did);
+    read();
+    return tokenStore.subscribe(read);
+  }, []);
+  return did;
+}
+
+/** The first letter of a name, for the monogram; `#` for a pseudonymous member. */
+function monogramOf(profile: ProfileData): string {
+  const first = Array.from(profile.name ?? "")[0];
+  return first === undefined ? "#" : first.toUpperCase();
 }
 
 function ProfileView({
@@ -186,6 +219,7 @@ function ProfileView({
   follow,
   unfollow,
   loadFollowing,
+  loadPapers,
   signedIn,
   onEndorsed,
 }: {
@@ -196,87 +230,118 @@ function ProfileView({
   follow?: (subject: string) => Promise<void>;
   unfollow?: (subject: string) => Promise<void>;
   loadFollowing?: () => Promise<readonly string[]>;
+  /** Passed through to the Papers card, for tests. */
+  loadPapers?: LoadMemberPapers;
   /** Pin the Follow toggle's sign-in state. */
   signedIn?: boolean;
   /** Called after an accepted endorsement, so the tier shown is refreshed. */
   onEndorsed?: () => void;
 }) {
+  const viewerDid = useViewerDid();
+  // Following or endorsing oneself means nothing, so neither is offered.
+  const isOwnProfile = viewerDid !== null && viewerDid === profile.did;
+
   return (
-    <div className="pp-grid">
-      <section className="pp-card" aria-labelledby="pp-identity-heading">
-        <h2 className="pp-card-heading" id="pp-identity-heading">
-          Identity
-        </h2>
-        <dl className="pp-facts">
-          <div className="pp-fact">
-            <dt className="meta">DID</dt>
-            <dd className="pp-did mono-id">{profile.did}</dd>
+    <>
+      <header className="pp-hero">
+        <div className="pp-hero-main">
+          <span className="pp-monogram" aria-hidden="true">
+            {monogramOf(profile)}
+          </span>
+          <div className="pp-hero-text">
+            <h1 className={profile.name === null ? "pp-name pp-name--pseudonym" : "pp-name"}>
+              {profileDisplayName(profile)}
+            </h1>
+            {profile.affiliation ? <p className="pp-affiliation">{profile.affiliation}</p> : null}
+
+            <ul className="pp-chips" role="list">
+              {profile.orcid ? (
+                <li>
+                  <a className="pp-chip pp-chip--orcid" href={orcidUrl(profile.orcid)}>
+                    <span aria-hidden="true">✓</span> ORCID{" "}
+                    <span className="mono-id">{profile.orcid}</span>
+                  </a>
+                </li>
+              ) : null}
+              <li>
+                <span className="pp-chip">{tierLabel(profile.tier)}</span>
+              </li>
+            </ul>
+
+            <p className="pp-did">
+              <span className="pp-did-label">DID</span>
+              <code className="pp-did-value mono-id" title={profile.did}>
+                {profileShortDid(profile.did)}
+              </code>
+              <CopyDid did={profile.did} />
+            </p>
+
+            {profile.erased ? (
+              <p className="pp-note">This profile has been erased.</p>
+            ) : null}
           </div>
-          <div className="pp-fact">
-            <dt className="meta">Name</dt>
-            <dd>{profile.name ?? "—"}</dd>
-          </div>
-          <div className="pp-fact">
-            <dt className="meta">Affiliation</dt>
-            <dd>{profile.affiliation ?? "—"}</dd>
-          </div>
-          <div className="pp-fact">
-            <dt className="meta">ORCID</dt>
-            <dd>{profile.orcid ?? "—"}</dd>
-          </div>
-          <div className="pp-fact">
-            <dt className="meta">Tier</dt>
-            <dd>{profile.tier}</dd>
-          </div>
-          {profile.erased ? (
-            <div className="pp-fact">
-              <dt className="meta">Status</dt>
-              <dd>This profile has been erased.</dd>
-            </div>
-          ) : null}
-        </dl>
+        </div>
 
         {/* Follow this person, so their new work reaches the Following feed
             and their name appears on /me's Follows card. */}
-        <FollowToggle
-          category={profile.did}
-          label={profile.name ?? "this member"}
-          follow={follow}
-          unfollow={unfollow}
-          loadFollowing={loadFollowing}
-          signedIn={signedIn}
-        />
-
-        {/* ID-5: endorse this researcher, offered from the viewer's own
-            standing (see ./endorse-button). Hidden for everyone else. */}
-        <EndorseSection did={profile.did} endorse={endorse} onEndorsed={onEndorsed} />
-      </section>
-
-      <section className="pp-card" aria-labelledby="pp-reviews-heading">
-        <h2 className="pp-card-heading" id="pp-reviews-heading">
-          Signed reviews
-        </h2>
-        {profile.reviews.length > 0 ? (
-          <ul className="pp-reviews">
-            {profile.reviews.map((review) => (
-              <li className="pp-review" key={review.review_cid}>
-                <p className="pp-review-id mono-id">{review.review_cid}</p>
-                {review.version_cid ? (
-                  <p className="pp-review-version mono-id">{review.version_cid}</p>
-                ) : null}
-                {review.recommendation ? (
-                  <p className="pp-review-rec">{review.recommendation}</p>
-                ) : null}
-                {review.confidence !== null ? (
-                  <p className="pp-review-confidence">Confidence: {review.confidence}</p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="pp-empty">No signed reviews yet.</p>
+        {isOwnProfile ? null : (
+          <div className="pp-hero-actions">
+            <FollowToggle
+              category={profile.did}
+              label={profile.name ?? "this member"}
+              follow={follow}
+              unfollow={unfollow}
+              loadFollowing={loadFollowing}
+              signedIn={signedIn}
+            />
+          </div>
         )}
-      </section>
-    </div>
+      </header>
+
+      <div className="pp-grid">
+        {/* ID-5: the endorsements this person holds, and — for a viewer who
+            may — the actions to endorse them (see ./endorse-button). Both are
+            hidden when there is nothing to show; the actions never appear on
+            the viewer's own profile. */}
+        <EndorseSection did={profile.did} endorse={endorse} onEndorsed={onEndorsed} />
+
+        <MemberPapersCard did={profile.did} loadPapers={loadPapers} />
+
+        <section className="pp-card" aria-labelledby="pp-reviews-heading">
+          <h2 className="pp-card-heading" id="pp-reviews-heading">
+            Signed reviews
+          </h2>
+          {profile.reviews.length > 0 ? (
+            <ul className="pp-reviews" role="list">
+              {profile.reviews.map((review) => (
+                <ReviewRow review={review} key={review.review_cid} />
+              ))}
+            </ul>
+          ) : (
+            <p className="pp-empty">No signed reviews yet.</p>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}
+
+function ReviewRow({ review }: { review: SignedReview }) {
+  const revealed = parseInstant(review.revealed_at);
+  return (
+    <li className="pp-review">
+      {review.recommendation ? (
+        <p className="pp-review-rec">{review.recommendation.replace(/_/g, " ")}</p>
+      ) : null}
+      <p className="pp-review-meta">
+        {review.confidence !== null ? <span>Confidence {review.confidence}</span> : null}
+        {revealed !== null && review.revealed_at !== null ? (
+          <time dateTime={review.revealed_at}>{formatDate(revealed)}</time>
+        ) : null}
+      </p>
+      <p className="pp-review-id mono-id" title={review.review_cid}>
+        {review.review_cid}
+      </p>
+    </li>
   );
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 
 import {
   CategoryPage,
@@ -21,7 +22,40 @@ interface CategoryRouteProps {
   params: Promise<{ category: string }>;
 }
 
-/** The page title names the category and its human label (`cs.AI · Artificial Intelligence`). */
+/**
+ * The category's first page, read once per request: the title and the page
+ * must reach the same verdict on whether the category exists, and Next runs
+ * `generateMetadata` and the page separately. A failed read is a message, not
+ * a throw — the page shows it and the title simply cannot tell.
+ */
+const loadFirstPage = cache(
+  async (category: string): Promise<{ page?: FeedPageData; error?: string }> => {
+    try {
+      return { page: await loadFeedPage(categoryFeedState(category)) };
+    } catch (error) {
+      return { error: describeFeedError(error, "latest") };
+    }
+  },
+);
+
+/**
+ * A code the node's taxonomy does not name and that no listed paper is filed
+ * under is not a category: it is a mistyped or invented URL. Unknown only
+ * when the listing was read and came back empty; an unreadable listing says
+ * nothing either way.
+ */
+function isInventedCategory(category: string, page: FeedPageData | undefined): boolean {
+  return (
+    page !== undefined && page.items.length === 0 && categoryLabel(category) === null
+  );
+}
+
+/**
+ * The page title names the category and its human label (`cs.AI · Artificial
+ * Intelligence`). An invented category answers 404 here too, so its tab is
+ * titled by the not-found page ("Not found · Scholium") rather than naming a
+ * category that does not exist.
+ */
 export async function generateMetadata({
   params,
 }: CategoryRouteProps): Promise<Metadata> {
@@ -33,6 +67,11 @@ export async function generateMetadata({
     };
   }
   const label = categoryLabel(category);
+  // A category the taxonomy names exists whether or not it has papers yet, so
+  // only an unnamed one needs the listing read to be told apart.
+  if (label === null && isInventedCategory(category, (await loadFirstPage(category)).page)) {
+    notFound();
+  }
   return {
     title: `${label === null ? category : `${category} · ${label}`}`,
     description: categoryDescription(category),
@@ -68,26 +107,13 @@ export default async function CategoryRoutePage({ params }: CategoryRouteProps) 
     );
   }
 
-  let initialPage: FeedPageData | undefined;
-  let initialError: string | undefined;
+  const { page: initialPage, error: initialError } = await loadFirstPage(category);
 
-  try {
-    initialPage = await loadFeedPage(categoryFeedState(category));
-  } catch (error) {
-    initialError = describeFeedError(error, "latest");
-  }
-
-  // A code the node's taxonomy does not name and that no listed paper is
-  // filed under is not a category: it is a mistyped or invented URL. Answer
-  // with the app's not-found page rather than an empty category and an Atom
-  // link that can never carry anything. A category that has papers still
-  // renders even when the launch taxonomy does not name it, and a category
-  // the taxonomy knows keeps its honest empty state.
-  if (
-    initialPage !== undefined &&
-    initialPage.items.length === 0 &&
-    categoryLabel(category) === null
-  ) {
+  // Answer an invented category with the app's not-found page rather than an
+  // empty category and an Atom link that can never carry anything. A category
+  // that has papers still renders even when the launch taxonomy does not name
+  // it, and a category the taxonomy knows keeps its honest empty state.
+  if (isInventedCategory(category, initialPage)) {
     notFound();
   }
 

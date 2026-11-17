@@ -23,6 +23,7 @@ from app.modules.endorsements import (
     ENDORSER_MIN_TIER,
     Endorsement,
     account_tier,
+    save_endorsement,
 )
 from app.modules.identity.models import Account, ensure_account_table
 from app.security import issue_access_token
@@ -45,6 +46,20 @@ def _make_account(did: str, tier: int) -> None:
     with db.SessionLocal() as session:
         session.add(Account(did=did, tier=tier, created_at=_utcnow()))
         session.commit()
+
+
+def _give_standing(did: str, *categories: str) -> None:
+    """Endorse ``did`` in each category, as a third party: the endorser's own standing.
+
+    An endorser may only endorse in a category they are themself endorsed in.
+    """
+    for category in categories:
+        save_endorsement(
+            record_cid=f"cid-{uuid.uuid4().hex}",
+            endorser_did=did_key_from_signing_key(SigningKey.generate()),
+            endorsee_did=did,
+            category=category,
+        )
 
 
 def _tier_of(did: str) -> int | None:
@@ -111,6 +126,7 @@ def test_module_registers_the_type_at_tier_3():
 def test_tier_3_endorser_is_accepted_and_grants_author(client):
     endorser = Author(tier=3)
     _make_account(endorser.did, tier=3)
+    _give_standing(endorser.did, "cs.AI")
     endorsee = did_key_from_signing_key(SigningKey.generate())
     record = endorser.record(_body(endorsee=endorsee, expiry="2030-01-02T03:04:05Z"))
 
@@ -133,6 +149,7 @@ def test_tier_3_endorser_is_accepted_and_grants_author(client):
 def test_a_missing_expiry_is_stored_as_null(client):
     endorser = Author(tier=3)
     _make_account(endorser.did, tier=3)
+    _give_standing(endorser.did, "cs.LG")
     endorsee = did_key_from_signing_key(SigningKey.generate())
     unmounted = _body(endorsee=endorsee, category="cs.LG")
     unmounted.pop("statement")
@@ -162,6 +179,7 @@ def test_a_tier_4_moderator_may_endorse(client):
 def test_an_existing_higher_tier_is_not_demoted(client):
     endorser = Author(tier=3)
     _make_account(endorser.did, tier=3)
+    _give_standing(endorser.did, "cs.AI")
     endorsee = did_key_from_signing_key(SigningKey.generate())
     _make_account(endorsee, tier=4)
     record = endorser.record(_body(endorsee=endorsee))

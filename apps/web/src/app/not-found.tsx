@@ -1,9 +1,18 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { createElement } from "react";
 
 import { BrandMark } from "../features/ui-kit/brand-mark";
 
 import "./(web-auth)/web-auth.css";
+
+/**
+ * The 404's own tab title. Without it the page fell back to the layout's
+ * default and read just "Scholium"; the layout's template adds " · Scholium".
+ */
+export const metadata: Metadata = {
+  title: "Not found",
+};
 
 /**
  * Root 404 — shown for any URL the app does not know.

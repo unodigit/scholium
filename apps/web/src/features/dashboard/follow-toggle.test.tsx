@@ -287,3 +287,31 @@ describe("FollowToggle: failures and double clicks", () => {
     expect(pressed(button())).toBe("true");
   });
 });
+
+describe("FollowToggle: the label says what is true", () => {
+  it("reads 'Following' when on, not '✓ Follow' (journey 14)", async () => {
+    render(<FollowToggle category="cs.AI" signedIn initialFollowing={true} />);
+
+    const label = button().textContent ?? "";
+    expect(label).toMatch(/\bFollowing\b/);
+    expect(label).toContain("✓");
+  });
+
+  it("reads 'Follow' when off, and 'Following' once the reader follows", async () => {
+    render(
+      <FollowToggle
+        category="cs.AI"
+        signedIn
+        initialFollowing={false}
+        follow={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(button().textContent).toMatch(/\bFollow\b/);
+    expect(button().textContent).not.toMatch(/Following/);
+
+    fireEvent.click(button());
+    await waitFor(() => expect(button().textContent).toMatch(/Following/));
+  });
+
+});

@@ -28,7 +28,7 @@ from scholium_record_core import did_key_from_signing_key, sign_record
 
 from app import db
 from app.modules import ledger
-from app.modules.endorsements import ENDORSEMENT_TYPE, Endorsement
+from app.modules.endorsements import ENDORSEMENT_TYPE, Endorsement, save_endorsement
 from app.modules.identity.models import Account, ensure_account_table
 from app.modules.profiles import ProfileData, erase_profile, save_profile
 from app.security import issue_access_token
@@ -50,10 +50,15 @@ def _new_did() -> str:
     return did_key_from_signing_key(SigningKey.generate())
 
 
+#: The categories a test reviewer is endorsed in: an endorser may only endorse
+#: in a category they are themself endorsed in (see ``test_endorser_category``).
+STANDING = ("cs.AI", "cs.LG", "cs.CL")
+
+
 class Reviewer:
     """A tier-3 account that signs and posts endorsement records."""
 
-    def __init__(self, name: str | None = None) -> None:
+    def __init__(self, name: str | None = None, standing: tuple[str, ...] = STANDING) -> None:
         self.seed = SigningKey.generate()
         self.did = did_key_from_signing_key(self.seed)
         self.headers = {"Authorization": f"Bearer {issue_access_token(self.did, 3)}"}
@@ -61,6 +66,13 @@ class Reviewer:
         with db.SessionLocal() as session:
             session.add(Account(did=self.did, tier=3, created_at=_utcnow()))
             session.commit()
+        for category in standing:
+            save_endorsement(
+                record_cid=f"cid-{uuid.uuid4().hex}",
+                endorser_did=_new_did(),
+                endorsee_did=self.did,
+                category=category,
+            )
         if name is not None:
             save_profile(
                 self.did,

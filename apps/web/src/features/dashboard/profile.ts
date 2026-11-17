@@ -12,6 +12,14 @@
  */
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+import {
+  DEFAULT_FEED_STATE,
+  FEED_ENDPOINT,
+  feedQuery,
+  parseFeedPage,
+  shortDid,
+  type FeedItem,
+} from "../feed/feed";
 
 /** The `/u` route prefix (docs/design.md §4: Profile). */
 export const PROFILE_PATH = "/u";
@@ -52,6 +60,32 @@ export const PROFILE_ENDPOINT = "/profiles";
 
 /** Human-facing label for the page and its links. */
 export const PROFILE_TITLE = "Profile";
+
+/**
+ * What a profile is called on screen and in the tab: the member's name, else
+ * the short pseudonymous DID (`z6MkpT…vktH`). A member who shared no name, or
+ * whose profile was erased, is still a person the page can name.
+ */
+export function profileDisplayName(profile: Pick<ProfileData, "did" | "name">): string {
+  return profile.name ?? shortDid(profile.did);
+}
+
+/** The short pseudonymous form of a DID, the way the feed names an author. */
+export const profileShortDid = shortDid;
+
+/** The trust tiers' plain names (`Tier` in the API). */
+const TIER_LABELS = ["Reader", "Member", "Author", "Reviewer", "Moderator"] as const;
+
+/** `Tier 3 · Reviewer`: the tier as a number and a word, never a colour. */
+export function tierLabel(tier: number): string {
+  const name = TIER_LABELS[tier];
+  return name === undefined ? `Tier ${tier}` : `Tier ${tier} · ${name}`;
+}
+
+/** The public ORCID record of an iD. */
+export function orcidUrl(orcid: string): string {
+  return `https://orcid.org/${encodeURIComponent(orcid)}`;
+}
 
 /** Alias for callers that name the page after the viewer. */
 export const USER_TITLE = "Profile";
@@ -267,3 +301,50 @@ export const describeUserProfileError = describeProfileError;
 export const parseProfilePage = parseProfile;
 export const parsePublicProfile = parseProfile;
 export const parseUserProfile = parseProfile;
+
+/* -------------------------------------------------------------------------- */
+/* A member's papers                                                          */
+/* -------------------------------------------------------------------------- */
+
+/** How many pages of the catalog the Papers card reads before it stops. */
+export const MEMBER_PAPERS_MAX_PAGES = 10;
+
+/** The papers a member is an author of, found in the newest listed ones. */
+export interface MemberPapers {
+  readonly papers: readonly FeedItem[];
+  /**
+   * The search stopped at {@link MEMBER_PAPERS_MAX_PAGES} pages with more
+   * listed papers unread, so older papers may be missing.
+   */
+  readonly truncated: boolean;
+}
+
+/**
+ * The papers `did` is an author of, newest first.
+ *
+ * `GET /v1/papers` has no author filter yet, so this reads the newest listed
+ * papers page by page and keeps the ones whose byline names the DID. It stops
+ * after {@link MEMBER_PAPERS_MAX_PAGES} pages and says so (`truncated`) rather
+ * than present a partial list as the whole. Public: no token is sent.
+ */
+export async function loadMemberPapers(
+  did: string,
+  client: Pick<ApiClient, "get"> = api,
+): Promise<MemberPapers> {
+  const papers: FeedItem[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < MEMBER_PAPERS_MAX_PAGES; page += 1) {
+    const payload: unknown = await client.get<unknown>(FEED_ENDPOINT, {
+      query: feedQuery(DEFAULT_FEED_STATE, cursor),
+      auth: false,
+      cache: "no-store",
+    });
+    const data = parseFeedPage(payload);
+    papers.push(...data.items.filter((item) => item.authors.some((author) => author.did === did)));
+    cursor = data.nextCursor;
+    if (cursor === null) {
+      return { papers, truncated: false };
+    }
+  }
+  return { papers, truncated: true };
+}

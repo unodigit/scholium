@@ -12,6 +12,7 @@ import {
   describeEndorseError,
   endorseActionLabel,
   endorsedActionLabel,
+  endorseChoices,
   endorseOffer,
   endorseResearcher,
   categoriesEndorsedBy,
@@ -129,17 +130,30 @@ describe("endorseOffer: which categories the viewer may endorse in", () => {
       ]),
     );
     expect(offer.categories).toEqual(["cs.AI", "cs.MA"]);
-    // A viewer who may endorse may pick any category as well as the shortcuts.
-    expect(offer.anyCategory).toBe(true);
+    // Regression (journey 14: okafor's dropdown offered every category): a
+    // reviewer endorses only where they are themself endorsed, so there is no
+    // "any category" for tier 3.
+    expect(offer.anyCategory).toBe(false);
   });
 
-  it("lets a tier-3 viewer endorse in any category (the API's rule for endorsers)", () => {
-    expect(endorseOffer(3, []).anyCategory).toBe(true);
+  it("offers a tier-3 viewer with no endorsement of their own nothing at all", () => {
+    // The API refuses (403 category-not-endorsed) an endorsement in a category
+    // the endorser holds no endorsement in, so there is nothing to offer.
+    expect(endorseOffer(3, [])).toEqual(NO_ENDORSE_OFFER);
+  });
+
+  it("lets a tier-4 viewer endorse in any category", () => {
     expect(endorseOffer(4, []).anyCategory).toBe(true);
+    expect(endorseOffer(4, parseViewerEndorsements([{ record_cid: "b", category: "cs.AI" }])).categories).toEqual([
+      "cs.AI",
+    ]);
   });
 
-  it("lets an unknown tier through to the API, which decides", () => {
-    expect(endorseOffer(null, []).anyCategory).toBe(true);
+  it("offers an unknown tier only the categories the viewer is endorsed in; the API decides the rest", () => {
+    expect(endorseOffer(null, []).anyCategory).toBe(false);
+    expect(endorseOffer(null, parseViewerEndorsements([{ record_cid: "b", category: "cs.AI" }])).categories).toEqual([
+      "cs.AI",
+    ]);
   });
 
   it("offers a viewer below the endorser tier nothing at all", () => {
@@ -156,6 +170,46 @@ describe("endorseOffer: which categories the viewer may endorse in", () => {
       { record_cid: "bafyrei1", category: "cs.AI" },
     ]);
     expect(endorseOffer(2, endorsed)).toEqual(NO_ENDORSE_OFFER);
+  });
+});
+
+describe("endorseChoices: what the Endorse dropdown lists", () => {
+  const taxonomy = [
+    {
+      label: "Computer science",
+      categories: [
+        { id: "cs.AI", name: "Artificial intelligence" },
+        { id: "cs.LG", name: "Machine learning" },
+        { id: "cs.MA", name: "Multiagent systems" },
+      ],
+    },
+    { label: "Statistics", categories: [{ id: "stat.ML", name: "Machine learning" }] },
+  ];
+  const ids = (groups: ReturnType<typeof endorseChoices>) =>
+    groups.flatMap((group) => group.categories.map((category) => category.id));
+
+  it("lists only the categories a tier-3 viewer is endorsed in", () => {
+    const offer = { categories: ["cs.AI", "cs.MA"], anyCategory: false };
+    expect(ids(endorseChoices(offer, taxonomy, []))).toEqual(["cs.AI", "cs.MA"]);
+  });
+
+  it("lists every category for a tier-4 viewer", () => {
+    const offer = { categories: [], anyCategory: true };
+    expect(ids(endorseChoices(offer, taxonomy, []))).toEqual(["cs.AI", "cs.LG", "cs.MA", "stat.ML"]);
+  });
+
+  it("leaves out a category already endorsed, and a group left empty", () => {
+    const offer = { categories: ["cs.AI", "stat.ML"], anyCategory: false };
+    const groups = endorseChoices(offer, taxonomy, ["stat.ML"]);
+    expect(ids(groups)).toEqual(["cs.AI"]);
+    expect(groups.map((group) => group.label)).toEqual(["Computer science"]);
+  });
+
+  it("still lists a category the taxonomy does not name, under its own id", () => {
+    const offer = { categories: ["xx.NEW"], anyCategory: false };
+    expect(endorseChoices(offer, taxonomy, [])).toEqual([
+      { label: "Other", categories: [{ id: "xx.NEW", name: "xx.NEW" }] },
+    ]);
   });
 });
 

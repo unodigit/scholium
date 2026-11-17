@@ -79,7 +79,9 @@ __all__ = [
     "DuplicateEndorsement",
     "ENDORSEMENT_TYPE",
     "ENDORSER_MIN_TIER",
+    "EndorserNotEndorsed",
     "InsufficientEndorserTier",
+    "MODERATOR_TIER",
     "PublicEndorsement",
     "account_tier",
     "active_endorsements",
@@ -99,7 +101,13 @@ ENDORSER_MIN_TIER = int(Tier.REVIEWER)
 #: The tier an accepted endorsement grants its endorsee (tier 2 Author).
 AUTHOR_TIER = int(Tier.AUTHOR)
 
+#: The tier that may endorse in any category (tier 4 Moderator).
+MODERATOR_TIER = int(Tier.MODERATOR)
+
 INSUFFICIENT_TIER_TYPE = "urn:scholium:problem:insufficient-tier"
+
+#: Same problem type the submission pipeline uses for "not endorsed in this category".
+CATEGORY_NOT_ENDORSED_TYPE = "urn:scholium:problem:category-not-endorsed"
 
 DUPLICATE_ENDORSEMENT_TYPE = "urn:scholium:problem:duplicate-endorsement"
 
@@ -138,6 +146,41 @@ class InsufficientEndorserTier(ProblemException):
         self.author = author
         self.required_tier = required
         self.caller_tier = tier
+
+
+class EndorserNotEndorsed(ProblemException):
+    """403: the endorser holds no active endorsement in the category.
+
+    An endorsement vouches that someone may submit in a category, so only an
+    endorser who may submit there themself can give one.  A moderator (tier 4)
+    is the exception: moderation is not tied to a category.  Like
+    :class:`InsufficientEndorserTier`, this reads the record's *author*.
+    """
+
+    def __init__(self, author: object, category: str) -> None:
+        shown = author if isinstance(author, str) else repr(author)
+        detail = (
+            f"The endorser {shown} is not endorsed in {category}, so cannot "
+            f"endorse anyone in it. An endorser may only endorse in categories "
+            f"they are themself endorsed in ({_describe(MODERATOR_TIER)} may "
+            f"endorse in any)."
+        )
+        super().__init__(
+            403,
+            detail,
+            type=CATEGORY_NOT_ENDORSED_TYPE,
+            category=category,
+            errors=[
+                {
+                    "loc": ["body", "category"],
+                    "msg": f"The endorser is not endorsed in category {category!r}.",
+                    "type": "endorser_not_endorsed_in_category",
+                    "input": category,
+                }
+            ],
+        )
+        self.author = author
+        self.category = category
 
 
 class DuplicateEndorsement(ProblemException):
@@ -274,6 +317,9 @@ def handle_endorsement(record: Mapping[str, Any]) -> str:
     so this only adds what the generic pipeline cannot know:
 
     * the endorser -- the record's author -- must hold tier 3 or higher;
+    * below tier 4 the endorser must themself hold an active endorsement in
+      the category (:class:`EndorserNotEndorsed`, 403); a moderator may
+      endorse in any category;
     * ``expiry``, when present, must be an ISO 8601 string (the shipped JSON
       Schema permits any string, so the format is checked here);
     * the endorser must not already have an active endorsement of this
@@ -282,6 +328,7 @@ def handle_endorsement(record: Mapping[str, Any]) -> str:
       endorsee tier 2.
 
     Raises :class:`InsufficientEndorserTier` (403),
+    :class:`EndorserNotEndorsed` (403),
     :class:`DuplicateEndorsement` (409) or
     :class:`~app.modules.ingest.errors.InvalidRecord` (422); each escapes
     ``POST /v1/records`` as an RFC 9457 problem document, and because the
@@ -296,6 +343,11 @@ def handle_endorsement(record: Mapping[str, Any]) -> str:
     endorsee = _required_text(body, "endorsee")
     category = _required_text(body, "category")
     expires_at = normalise_expiry(body.get("expiry"))
+
+    # An endorser vouches in a category they may submit in themself; only a
+    # moderator is not tied to one.
+    if tier < MODERATOR_TIER and not can_submit(author, category):
+        raise EndorserNotEndorsed(author, category)
 
     record_cid = record.get("id")
     if not isinstance(record_cid, str) or not record_cid:

@@ -118,7 +118,9 @@ class DemoPaper:
 
 PEOPLE: tuple[Person, ...] = (
     Person("priya", "Priya Nair", "Scholium moderation team", MODERATOR),
-    Person("okafor", "Dr. Tunde Okafor", "Harbour University", REVIEWER),
+    # An endorser may only endorse in categories they are themself endorsed in, and a
+    # moderator may endorse in any: so Priya vouches for the categories Okafor endorses in.
+    Person("okafor", "Dr. Tunde Okafor", "Harbour University", REVIEWER, "priya", ("cs.AI", "cs.LG", "cs.MA")),
     # Both review the first two papers, which between them are filed in these three categories.
     Person("solheim", "Dr. Ingrid Solheim", "Nordlys Foundation", REVIEWER, "okafor", ("cs.AI", "cs.LG", "cs.MA")),
     Person("keller", "Dr. Jonas Keller", "Alpine Research Trust", REVIEWER, "okafor", ("cs.AI", "cs.LG", "cs.MA")),

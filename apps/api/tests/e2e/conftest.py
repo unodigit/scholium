@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from nacl.signing import SigningKey
+from scholium_record_core import did_key_from_signing_key
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -27,6 +28,7 @@ from app.main import create_app
 from app.modules import ledger, moderation
 from app.modules.admin.cli import main as admin_cli
 from app.modules.ai_review.background import ensure_subscribed as ensure_ai_review
+from app.modules.endorsements import save_endorsement
 from app.modules.notifications import clear_outbox
 from app.settings import settings
 
@@ -105,4 +107,12 @@ def reviewer(client) -> Actor:
     assert admin_cli(["set-tier", actor.did, "reviewer"]) == 0
     actor.refresh()
     assert actor.tier == 3
+    # A reviewer may only endorse in a category they are themself endorsed in, so
+    # give this one standing in cs.AI, as an imported endorsement would.
+    save_endorsement(
+        record_cid=f"standing-{actor.did}",
+        endorser_did=did_key_from_signing_key(SigningKey.generate()),
+        endorsee_did=actor.did,
+        category="cs.AI",
+    )
     return actor

@@ -56,7 +56,7 @@ from app.security import decode_access_token
 from app.settings import settings
 
 from ..service import set_tier
-from .cast import LICENCE, PAPERS, PEOPLE, RUBRIC, DemoPaper, DemoReview, people_by_slug
+from .cast import LICENCE, PAPERS, PEOPLE, RUBRIC, TIER_FOR_ROLE, DemoPaper, DemoReview, Person, people_by_slug
 from .keys import DemoAccount, DemoKeys
 from .manuscript import build_pdf
 
@@ -445,23 +445,37 @@ class _Seeder:
         """Reviewers endorse the authors, which is what grants tier 2 and the right to submit.
 
         The cast has endorsements for its reviewers as well: tier 3 alone does not
-        let anyone start a paper, an endorsement in the category does.
+        let anyone start a paper, an endorsement in the category does.  The same goes
+        for endorsing: a reviewer may only endorse in categories they are themself
+        endorsed in, so the moderator endorses the reviewer who endorses the others.
         """
-        made = 0
-        # Authors first, then the reviewers: a record is dated by how many came
-        # before it, and the authors' endorsements are the ones an earlier run
-        # may already have sent -- they must keep their dates, so their ids.
+        # A record is dated by how many came before it, and the authors'
+        # endorsements are the ones an earlier run may already have sent -- they
+        # must keep their dates, so their ids.  So the dating order is: authors,
+        # then the reviewers a reviewer endorsed, then the moderator's
+        # endorsements of the reviewers.
         endorsed = [p for p in PEOPLE if p.endorsed_by is not None]
-        for person in sorted(endorsed, key=lambda p: p.role != "author"):
+
+        def by_moderator(person: Person) -> bool:
+            return self.actors[person.endorsed_by].tier >= TIER_FOR_ROLE["moderator"]
+
+        dated = sorted(endorsed, key=lambda p: (by_moderator(p), p.role != "author"))
+        first_second, made = {}, 0
+        for person in dated:
+            first_second[person.slug] = made
+            made += len(person.endorsed_in)
+
+        # An endorser may only endorse in categories they are themself endorsed in
+        # (a moderator in any), so the moderator's endorsements are sent first.
+        for person in sorted(dated, key=lambda p: not by_moderator(p)):
             endorser, endorsee = self.actors[person.endorsed_by], self.actors[person.slug]
             for step, category in enumerate(person.endorsed_in):
                 record = endorser.record(
                     "endorsement",
                     {"endorsee": endorsee.did, "category": category, "statement": "Demo endorsement."},
-                    _stamp(self.anchor, days_ago=_ENDORSEMENT_DAYS_AGO, seconds=made + step),
+                    _stamp(self.anchor, days_ago=_ENDORSEMENT_DAYS_AGO, seconds=first_second[person.slug] + step),
                 )
                 endorser.submit(record, f"{endorser.account.name}'s endorsement of {person.name} in {category}")
-            made += len(person.endorsed_in)
             endorsee.refresh()  # the new tier is in the next token
             if endorsee.tier < 2:
                 raise SeedError(f"{person.name} is still tier {endorsee.tier} after being endorsed")

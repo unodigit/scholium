@@ -1,0 +1,473 @@
+/* ==========================================================================
+   A member's public profile (/u/{did}) — docs/design.md §3, §4 and §9.
+
+   A header card (name, affiliation, ORCID badge, tier, short DID with copy)
+   followed by cards for endorsements, papers and signed reviews. Cards are the
+   design's surface: a 1 px `--rule` border, the 10 px card radius and no drop
+   shadow. Every colour, size and duration is a token from
+   `src/styles/tokens.css`, so light, dark and a forced `data-theme` re-theme
+   the page with no extra classes. Rules are prefixed `pp-` (public profile).
+
+   Nothing here rests on colour alone: the ORCID badge carries a ✓ and the
+   word, the tier is a number and a word, a link keeps its underline, and the
+   copy button swaps its icon and says "Copied". Motion is a 150 ms fade and a
+   press (`:active`) nudge on a button; both stop under reduced motion.
+   ========================================================================== */
+
+.pp-page {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 6);
+  min-inline-size: 0;
+}
+
+.pp-loading {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- The header card ------------------------------------------------------ */
+
+.pp-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 6);
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+}
+
+.pp-hero-main {
+  display: flex;
+  flex: 1 1 24rem;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 4);
+  min-inline-size: 0;
+}
+
+.pp-hero-text {
+  min-inline-size: 0;
+}
+
+.pp-hero-actions {
+  flex: none;
+}
+
+/* A monogram, not a photo: the node holds no avatar, and a letter in the
+   accent tint marks "a person" without implying a likeness. */
+.pp-monogram {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: calc(var(--space-unit) * 14);
+  block-size: calc(var(--space-unit) * 14);
+  border-radius: var(--corner-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--family-serif);
+  font-size: 1.5rem;
+  font-weight: var(--weight-title);
+  line-height: 1;
+  user-select: none;
+}
+
+/* The title role, with the tracking tuned for its size (large type is set
+   tighter than body). `balance` keeps a long name from leaving one word alone. */
+.pp-name {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-title);
+  font-weight: var(--weight-title);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-title);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+/* No name shared: the short DID is the name, set as an identifier. */
+.pp-name--pseudonym {
+  font-family: var(--family-mono);
+  font-size: 1.375rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.pp-affiliation {
+  margin: calc(var(--space-unit) * 1) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.pp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * 3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 1);
+  min-block-size: calc(var(--space-unit) * 6);
+  padding-block: calc(var(--space-unit) * 0.5);
+  padding-inline: calc(var(--space-unit) * 2.5);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  text-decoration-line: none;
+  white-space: nowrap;
+}
+
+/* A linked ORCID iD is a verified fact (design.md: `--verified`). The text
+   stays --ink so it keeps its contrast on the tint. */
+.pp-chip--orcid {
+  border-color: var(--verified);
+  background: var(--verified-soft);
+}
+
+a.pp-chip {
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+a.pp-chip:hover {
+  background: var(--accent-soft);
+}
+
+a.pp-chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pp-chip--mono {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
+.pp-did {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: calc(var(--space-unit) * 3) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pp-did-value {
+  padding-inline: calc(var(--space-unit) * 2);
+  border-radius: var(--corner-control);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.pp-note {
+  margin: calc(var(--space-unit) * 3) 0 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- Copy DID ------------------------------------------------------------- */
+
+.pp-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.pp-copy-button,
+.pp-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-unit) * 1.5);
+  min-block-size: calc(var(--space-unit) * 6);
+  min-inline-size: calc(var(--space-unit) * 6);
+  padding-block: calc(var(--space-unit) * 0.5);
+  padding-inline: calc(var(--space-unit) * 2.5);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-decel),
+    transform var(--duration-fast) var(--ease-decel);
+}
+
+.pp-copy-button:hover,
+.pp-button:hover {
+  background: var(--accent-soft);
+}
+
+/* Feedback on pointer-down, not on release. */
+.pp-copy-button:active,
+.pp-button:active {
+  transform: scale(0.97);
+}
+
+.pp-copy-button:focus-visible,
+.pp-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The outcome is the icon and the word beside it; the tint only backs them. */
+.pp-copy-button[data-copied] {
+  border-color: var(--verified);
+  background: var(--verified-soft);
+}
+
+.pp-copy-button[data-failed] {
+  border-color: var(--critical);
+  background: var(--critical-soft);
+}
+
+.pp-copy-icon {
+  flex: none;
+}
+
+.pp-copy-tip {
+  min-inline-size: 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* ---- The cards ------------------------------------------------------------ */
+
+/* One full-width column: each card is a short list, and a stack reads as one
+   page where a multi-column grid left a lone card half-empty. */
+.pp-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space-unit) * 6);
+}
+
+/* The endorsements section (./endorse-button) renders its own `.endorse-section`
+   blocks straight into the grid; they take the card's surface here and drop the
+   top rule they use when stacked inside another card. */
+.pp-card,
+.pp-grid > .endorse-section {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(var(--space-unit) * 4);
+  min-inline-size: 0;
+  margin: 0;
+  padding: calc(var(--space-unit) * 6);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+}
+
+.pp-card-heading,
+.pp-grid > .endorse-section > .endorse-heading {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.pp-empty,
+.pp-muted {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.pp-inline-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+}
+
+/* ---- Papers and signed reviews -------------------------------------------- */
+
+.pp-papers,
+.pp-reviews {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-paper,
+.pp-review {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  min-inline-size: 0;
+  padding-block: calc(var(--space-unit) * 3);
+  border-block-start: 1px solid var(--rule);
+}
+
+.pp-paper:first-child,
+.pp-review:first-child {
+  padding-block-start: 0;
+  border-block-start: 0;
+}
+
+/* A link keeps its underline: it never rests on colour alone. */
+.pp-paper-title {
+  color: var(--accent);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+  text-decoration-line: underline;
+  text-underline-offset: 0.2em;
+}
+
+.pp-paper-title:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pp-paper-meta,
+.pp-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pp-paper-status {
+  text-transform: capitalize;
+}
+
+.pp-papers-note {
+  margin-block-start: calc(var(--space-unit) * 3);
+  font-size: var(--type-meta);
+}
+
+.pp-review-rec {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+  text-transform: capitalize;
+}
+
+.pp-review-id {
+  margin: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---- A failed load -------------------------------------------------------- */
+
+.pp-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+  padding: calc(var(--space-unit) * 6);
+  background: var(--critical-soft);
+  border: 1px solid var(--critical);
+  border-radius: var(--corner-card);
+}
+
+.pp-notice-title {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.pp-notice-text {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/* ---- Small screens, touch, motion, contrast ------------------------------- */
+
+@media (max-width: 40rem) {
+  .pp-hero,
+  .pp-card,
+  .pp-grid > .endorse-section,
+  .pp-notice {
+    padding: calc(var(--space-unit) * 4);
+  }
+
+  .pp-monogram {
+    inline-size: calc(var(--space-unit) * 10);
+    block-size: calc(var(--space-unit) * 10);
+    font-size: 1.125rem;
+  }
+}
+
+@media (pointer: coarse) {
+  .pp-copy-button,
+  .pp-button {
+    min-block-size: 44px;
+    min-inline-size: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-copy-button,
+  .pp-button,
+  a.pp-chip {
+    transition: none;
+  }
+
+  .pp-copy-button:active,
+  .pp-button:active {
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .pp-hero,
+  .pp-card,
+  .pp-grid > .endorse-section,
+  .pp-chip,
+  .pp-copy-button,
+  .pp-button {
+    border-color: CanvasText;
+  }
+}

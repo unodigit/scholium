@@ -413,8 +413,9 @@ test.describe("the roles", () => {
     await signInAs(page, authenticator, ENDORSER);
     await visit(page, `/u/${encodeURIComponent(newcomerDid)}`);
 
-    const profile = page.locator(".pp-fact").filter({ hasText: /^Tier/ }).locator("dd");
-    await expect(profile).toHaveText("0");
+    // The tier sits in the profile header as "Tier 0 · Reader".
+    const profile = page.locator(".pp-chips .pp-chip").filter({ hasText: /^Tier \d/ });
+    await expect(profile).toHaveText("Tier 0 · Reader");
 
     const section = page.getByRole("region", { name: "Endorse" });
     await expect(section).toBeVisible();
@@ -434,7 +435,7 @@ test.describe("the roles", () => {
     ).toBeVisible();
     // The page reads the profile back, and the tier the endorsement granted
     // is what it shows.
-    await expect(profile).toHaveText("2");
+    await expect(profile).toHaveText("Tier 2 · Author");
   });
 
   test("an author issues a correction notice and the banner appears", async ({

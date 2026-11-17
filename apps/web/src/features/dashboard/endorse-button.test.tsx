@@ -149,6 +149,7 @@ describe("ProfilePage: the Endorse action (bug: no UI to endorse a researcher)",
       />,
     );
 
+    expect(screen.getByText("Tier 1 · Member")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Endorse in cs.AI" }));
 
     // The done state replaces the action…
@@ -157,13 +158,11 @@ describe("ProfilePage: the Endorse action (bug: no UI to endorse a researcher)",
     ).toBeInstanceOf(HTMLElement);
     expect(endorse).toHaveBeenCalledExactlyOnceWith(NEWCOMER, "cs.AI");
 
-    // …and the page reads the profile back, so the Tier fact shows the grant.
-    // (The route handed the page its initial profile, so this one call is the
-    // post-endorsement refresh.)
+    // …and the page reads the profile back, so the tier in the header shows
+    // the grant. (The route handed the page its initial profile, so this one
+    // call is the post-endorsement refresh.)
     await waitFor(() => expect(loadProfile).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(screen.getByText(/^Tier$/).parentElement?.textContent).toContain("2"),
-    );
+    await waitFor(() => expect(screen.getByText("Tier 2 · Author")).toBeTruthy());
   });
 
   it("hides the Endorse action from a signed-out reader", async () => {
@@ -296,16 +295,56 @@ describe("EndorseSection", () => {
   });
 });
 
-describe("EndorseSection: a tier-3 viewer may endorse in any category", () => {
-  const reviewer: ViewerIdentity = { signedIn: true, did: "did:key:z6MkOkafor", tier: 3 };
+/** The viewer's own endorsement in `category`, as `GET /v1/me/endorsements` lists it. */
+function standingIn(category: string, viewer: string = "did:key:z6MkOkafor"): ViewerEndorsement {
+  return {
+    recordCid: `bafyreiStanding${category.replace(/\W/g, "")}`,
+    endorserDid: "did:key:z6MkPriya",
+    endorseeDid: viewer,
+    category,
+    expiresAt: null,
+  };
+}
 
-  it("offers a category choice instead of nothing", async () => {
+describe("EndorseSection: an endorser may only endorse in categories they are endorsed in", () => {
+  const reviewer: ViewerIdentity = { signedIn: true, did: "did:key:z6MkOkafor", tier: 3 };
+  const moderator: ViewerIdentity = { signedIn: true, did: "did:key:z6MkPriya", tier: 4 };
+
+  it("lists in the dropdown only the categories a tier-3 viewer is endorsed in (journey 14)", async () => {
+    // Reproduce: okafor (tier 3, endorsed in cs.AI and cs.MA) opened a profile
+    // and the Endorse dropdown offered every category in the taxonomy.
     render(
       <EndorseSection
         did={NEWCOMER}
         viewer={reviewer}
-        loadEndorsements={() => Promise.resolve([])}
+        loadEndorsements={() => Promise.resolve([standingIn("cs.AI"), standingIn("cs.MA")])}
       />,
+    );
+
+    const picker = await screen.findByLabelText("Category");
+    const options = within(picker)
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("value"));
+    expect(options).toEqual(["", "cs.AI", "cs.MA"]);
+    expect(within(picker).getByRole("option", { name: "Artificial intelligence (cs.AI)" })).toBeTruthy();
+    expect(within(picker).queryByRole("option", { name: "Machine learning (cs.LG)" })).toBeNull();
+    expect(within(picker).queryByRole("option", { name: /stat\.ML/ })).toBeNull();
+  });
+
+  it("offers a tier-3 viewer who is endorsed nowhere nothing to endorse in", async () => {
+    render(
+      <EndorseSection did={NEWCOMER} viewer={reviewer} loadEndorsements={() => Promise.resolve([])} />,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.queryByLabelText("Category")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Endorse" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Endorse/ })).toBeNull();
+  });
+
+  it("lists every category for a tier-4 viewer", async () => {
+    render(
+      <EndorseSection did={NEWCOMER} viewer={moderator} loadEndorsements={() => Promise.resolve([])} />,
     );
 
     const select = await screen.findByLabelText("Category");
@@ -314,19 +353,40 @@ describe("EndorseSection: a tier-3 viewer may endorse in any category", () => {
 
     // The taxonomy the submit wizard uses, grouped as arXiv groups them.
     expect(screen.getByRole("group", { name: "Computer science" })).toBeTruthy();
-    expect(
-      screen.getByRole("option", { name: "Artificial intelligence (cs.AI)" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Artificial intelligence (cs.AI)" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Machine learning (cs.LG)" })).toBeTruthy();
   });
 
   it("endorses in the chosen category on submit", async () => {
+    const endorse = vi
+      .fn()
+      .mockResolvedValue({ recordCid: "bafyreiPick", category: "cs.MA", state: "accepted" });
+    render(
+      <EndorseSection
+        did={NEWCOMER}
+        viewer={reviewer}
+        loadEndorsements={() => Promise.resolve([standingIn("cs.AI"), standingIn("cs.MA")])}
+        endorse={endorse}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText("Category"), {
+      target: { value: "cs.MA" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Endorse" }));
+
+    expect(await screen.findByRole("button", { name: "✓ Endorsed in cs.MA" })).toBeTruthy();
+    expect(endorse).toHaveBeenCalledExactlyOnceWith(NEWCOMER, "cs.MA");
+  });
+
+  it("lets a tier-4 viewer endorse in a category they hold no endorsement in", async () => {
     const endorse = vi
       .fn()
       .mockResolvedValue({ recordCid: "bafyreiPick", category: "stat.ML", state: "accepted" });
     render(
       <EndorseSection
         did={NEWCOMER}
-        viewer={reviewer}
+        viewer={moderator}
         loadEndorsements={() => Promise.resolve([])}
         endorse={endorse}
       />,
@@ -347,7 +407,7 @@ describe("EndorseSection: a tier-3 viewer may endorse in any category", () => {
       <EndorseSection
         did={NEWCOMER}
         viewer={reviewer}
-        loadEndorsements={() => Promise.resolve([])}
+        loadEndorsements={() => Promise.resolve([standingIn("cs.AI")])}
         endorse={endorse}
       />,
     );
@@ -453,16 +513,15 @@ describe("ProfilePage: the Endorse button remembers an endorsement (bug: duplica
     expect(screen.queryByRole("button", { name: "Endorse in cs.AI" })).toBeNull();
 
     // The picker no longer offers cs.AI, and still offers the rest.
-    const picker = screen.getByLabelText("Category");
-    expect(
-      within(picker).queryByRole("option", { name: "Artificial intelligence (cs.AI)" }),
-    ).toBeNull();
-    expect(within(picker).getByRole("option", { name: "Machine learning (cs.LG)" })).toBeTruthy();
+    const picker = screen.queryByLabelText("Category");
+    // okafor is endorsed in cs.AI only, and that is used: nothing is left to pick.
+    expect(picker).toBeNull();
   });
 
   it("does not hold another reviewer's endorsement against the viewer", async () => {
     tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 3 }) });
-    stubEndorsementApi({ held: () => [heldRow()] }); // endorsed by okafor, not by mei
+    // endorsed by okafor, not by mei; mei is endorsed in cs.AI herself
+    stubEndorsementApi({ mine: endorsedInCsAi(), held: () => [heldRow()] });
 
     render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
 
@@ -572,7 +631,7 @@ describe("EndorseSection: reading what is already endorsed", () => {
       <EndorseSection
         did={NEWCOMER}
         viewer={reviewer}
-        loadEndorsements={() => Promise.resolve([])}
+        loadEndorsements={() => Promise.resolve([standingIn("cs.AI", OKAFOR)])}
         loadProfileEndorsements={() => Promise.reject(new Error("offline"))}
       />,
     );
@@ -588,7 +647,7 @@ describe("EndorseSection: reading what is already endorsed", () => {
       <EndorseSection
         did={NEWCOMER}
         viewer={reviewer}
-        loadEndorsements={() => Promise.resolve([])}
+        loadEndorsements={() => Promise.resolve([standingIn("cs.AI", OKAFOR)])}
         loadProfileEndorsements={() => new Promise((resolve) => (finish = resolve))}
       />,
     );
@@ -610,7 +669,7 @@ describe("EndorseSection: reading what is already endorsed", () => {
       <EndorseSection
         did={NEWCOMER}
         viewer={{ signedIn: true, did: null, tier: 3 }}
-        loadEndorsements={() => Promise.resolve([])}
+        loadEndorsements={() => Promise.resolve([standingIn("cs.AI", OKAFOR)])}
         loadProfileEndorsements={() => Promise.resolve([])}
         endorse={endorse}
       />,

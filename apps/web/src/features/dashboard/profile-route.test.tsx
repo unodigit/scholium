@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import ProfileRoutePage from "../../app/(dashboard)/u/[did]/page";
+import ProfileRoutePage, { generateMetadata } from "../../app/(dashboard)/u/[did]/page";
 
 /**
  * `/u/{did}` is server-rendered. A profile link carries a `did:key:…` whose
@@ -14,6 +14,8 @@ import ProfileRoutePage from "../../app/(dashboard)/u/[did]/page";
 
 const DID = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
 const ENCODED_DID = encodeURIComponent(DID);
+/** The pseudonymous short form the page shows in place of the full DID. */
+const SHORT_DID = "z6MkpT…vktH";
 
 function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -80,7 +82,9 @@ describe("/u/{did} route (server render)", () => {
     expect(html).toContain("Ada Lovelace");
     expect(html).toContain("Analytical Engine Institute");
     expect(html).toContain("0000-0002-1825-0097");
-    expect(html).toContain(`>${DID}<`);
+    // The header shows the short DID (the full one is what Copy puts on the clipboard).
+    expect(html).toContain(`>${SHORT_DID}<`);
+    expect(html).not.toContain(`>${DID}<`);
     expect(html).not.toContain(ENCODED_DID);
     expect(html).not.toContain("—");
     expect(html).not.toContain(">0<");
@@ -107,6 +111,43 @@ describe("/u/{did} route (server render)", () => {
     );
 
     expect(html).toContain("Ada Lovelace");
-    expect(html).toContain(`>${DID}<`);
+    expect(html).toContain(`>${SHORT_DID}<`);
+  });
+
+  it("opens with the member's name as the page heading, not the DID", async () => {
+    stubProfileApi();
+
+    const html = renderToStaticMarkup(await ProfileRoutePage({ params: params(ENCODED_DID) }));
+
+    expect(html).toMatch(/<h1[^>]*>Ada Lovelace<\/h1>/);
+    expect(html).not.toContain(">Profile<");
+    expect(html).not.toContain("scholium / u /");
+  });
+});
+
+describe("/u/{did} metadata", () => {
+  it("titles the page with the member's name ('{name} · Scholium' once the layout adds its suffix)", async () => {
+    stubProfileApi();
+
+    const metadata = await generateMetadata({ params: params(ENCODED_DID) });
+
+    expect(metadata.title).toBe("Ada Lovelace");
+  });
+
+  it("titles a member with no name by their short pseudonymous DID", async () => {
+    stubProfileApi();
+    const other = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+
+    const metadata = await generateMetadata({ params: params(encodeURIComponent(other)) });
+
+    expect(metadata.title).toBe("z6Mkha…2doK");
+  });
+
+  it("falls back to the short DID when the profile cannot be read", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+
+    const metadata = await generateMetadata({ params: params(ENCODED_DID) });
+
+    expect(metadata.title).toBe(SHORT_DID);
   });
 });

@@ -256,8 +256,11 @@ test.describe("reading", () => {
 
     await visit(page, `/u/${first.did}`);
 
-    await expect(page.getByText("Mei Zhang", { exact: true })).toBeVisible();
-    await expect(page.getByText(first.did, { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Mei Zhang" })).toBeVisible();
+    // The header shows the short DID (the full one is what "Copy DID" copies).
+    const id = first.did.split(":").pop() ?? "";
+    await expect(page.getByText(`${id.slice(0, 6)}…${id.slice(-4)}`, { exact: true })).toBeVisible();
+    await expect(page).toHaveTitle("Mei Zhang · Scholium");
   });
 });
 

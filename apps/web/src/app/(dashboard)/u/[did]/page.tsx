@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 
 import { ProfilePage } from "../../../../features/dashboard/profile-page";
 import {
   decodeProfileDid,
   describeProfileError,
   loadProfile,
+  profileDisplayName,
+  profileShortDid,
   type ProfileData,
 } from "../../../../features/dashboard/profile";
 
@@ -22,14 +25,37 @@ interface ProfileRouteProps {
   params: Promise<{ did: string }>;
 }
 
+/**
+ * One read of the profile per request, shared by the title and the page: Next
+ * runs `generateMetadata` and the page separately, and both want the member's
+ * name. A failed read is a message, not a throw — the page shows it, and the
+ * title falls back to the short DID.
+ */
+const readProfile = cache(
+  async (did: string): Promise<{ profile?: ProfileData; error?: string }> => {
+    try {
+      return { profile: await loadProfile(did) };
+    } catch (error) {
+      return { error: describeProfileError(error) };
+    }
+  },
+);
+
+/**
+ * The tab is titled with who the page is about — "{name} · Scholium" once the
+ * layout adds its suffix — or, for a member with no name (or an erased or
+ * unreachable profile), their short pseudonymous DID.
+ */
 export async function generateMetadata({
   params,
 }: ProfileRouteProps): Promise<Metadata> {
   const { did } = await params;
   const decodedDid = decodeProfileDid(did);
+  const { profile } = await readProfile(decodedDid);
+  const title = profile ? profileDisplayName(profile) : profileShortDid(decodedDid);
   return {
-    title: "Profile",
-    description: `A member's public profile: name, affiliation, ORCID, trust tier and signed reviews (${decodedDid}).`,
+    title,
+    description: `${title}'s public profile: affiliation, ORCID, trust tier, endorsements, papers and signed reviews.`,
   };
 }
 
@@ -44,14 +70,7 @@ export default async function ProfileRoutePage({
   // encodes it again exactly once for `GET /v1/profiles/{did}`.
   const decodedDid = decodeProfileDid(did);
 
-  let initialProfile: ProfileData | undefined;
-  let initialError: string | undefined;
-
-  try {
-    initialProfile = await loadProfile(decodedDid);
-  } catch (error) {
-    initialError = describeProfileError(error);
-  }
+  const { profile: initialProfile, error: initialError } = await readProfile(decodedDid);
 
   return (
     <ProfilePage

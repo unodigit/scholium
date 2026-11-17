@@ -10,7 +10,7 @@
  *
  * Endorse                                        ← what the viewer may do
  * [ ✓ Endorsed in cs.AI ] [ Endorse in cs.MA ]   ← the viewer's categories
- * Category [ Choose a category ▾ ] [ Endorse ]   ← tier 3 may pick any
+ * Category [ Choose a category ▾ ] [ Endorse ]   ← the same categories; tier 4 any
  * ```
  *
  * **What the person holds** is the public list from
@@ -27,17 +27,18 @@
  * briefly clickable. If the list cannot be read the actions are offered as the
  * tier grants them and the API's `409` for a duplicate has the last word.
  *
- * What is offered comes from the API, never a guess: only a viewer at the
- * API's endorser tier (or one whose tier the token does not name, whom the
+ * What is offered comes from the API's rules, never a guess: only a viewer at
+ * the API's endorser tier (or one whose tier the token does not name, whom the
  * API decides for) is offered anything, because the API refuses an
  * endorsement record from every lower tier (`ENDORSER_MIN_TIER` in
- * `apps/api/src/app/modules/endorsements/`). Such a viewer may endorse in any
- * category, and their own active endorsements — submission rights, not
- * endorsement rights — are offered as quick actions beside the category
- * picker (`GET /v1/me/endorsements`, see `./endorse`). A viewer below the
- * tier an endorsement would grant sees nothing: the action is hidden rather
- * than offered and refused. The API stays the gate for every record — a
- * refusal is shown in its own words, never swallowed.
+ * `apps/api/src/app/modules/endorsements/`). Such a viewer may endorse only in
+ * the categories they are themself endorsed in (`GET /v1/me/endorsements`,
+ * see `./endorse`), which are offered as quick actions and make up the whole
+ * of the category picker; a tier-4 viewer may endorse in any category, so the
+ * picker lists the whole taxonomy. A viewer with no category to endorse in
+ * sees nothing: the action is hidden rather than offered and refused. The API
+ * stays the gate for every record — a refusal is shown in its own words,
+ * never swallowed.
  *
  * Acting signs an `endorsement` record with this device's key (the passkey
  * prompt is the confirmation) and posts it; the ✓ state then replaces the
@@ -60,6 +61,7 @@ import {
   categoriesEndorsedBy,
   describeEndorseError,
   endorseActionLabel,
+  endorseChoices,
   endorseResearcher,
   endorsedActionLabel,
   endorseOffer,
@@ -69,6 +71,7 @@ import {
   loadProfileEndorsements as loadHeldEndorsements,
   loadViewerEndorsements,
   viewerFromAccessToken,
+  type EndorseOffer,
   type EndorseResult,
   type ProfileEndorsement,
   type ViewerEndorsement,
@@ -100,7 +103,11 @@ export interface EndorseSectionProps {
   readonly loadProfileEndorsements?: (did: string) => Promise<readonly ProfileEndorsement[]>;
   /** Replace the sign-and-post call, for tests. */
   readonly endorse?: (endorseeDid: string, category: string) => Promise<EndorseResult>;
-  /** The categories the picker offers; the submit wizard's taxonomy by default. */
+  /**
+   * The taxonomy the picker draws from; the submit wizard's by default. A
+   * viewer who may not endorse in every category sees only the part of it
+   * they are endorsed in.
+   */
   readonly pickerCategories?: readonly { readonly label: string; readonly categories: readonly EndorseCategoryOption[] }[];
   /** Called once an endorsement is accepted, so the page can refresh the tier. */
   readonly onEndorsed?: () => void;
@@ -250,8 +257,7 @@ export function EndorseSection({
       {mayEndorse ? (
         <EndorseActions
           pickerId={pickerId}
-          offeredCategories={offer.categories}
-          anyCategory={offer.anyCategory}
+          offer={offer}
           used={used}
           pending={pending}
           error={error}
@@ -308,8 +314,7 @@ function EndorsementList({
 /** The actions: one per category the viewer may endorse in, and the picker. */
 function EndorseActions({
   pickerId,
-  offeredCategories,
-  anyCategory,
+  offer,
   used,
   pending,
   error,
@@ -318,8 +323,7 @@ function EndorseActions({
   onEndorse,
 }: {
   readonly pickerId: string;
-  readonly offeredCategories: readonly string[];
-  readonly anyCategory: boolean;
+  readonly offer: EndorseOffer;
   /** Categories already endorsed: before this visit, or during it. */
   readonly used: readonly string[];
   readonly pending: string | null;
@@ -330,16 +334,12 @@ function EndorseActions({
 }) {
   // The category actions: one per offered category, plus any already
   // endorsed (a picked category joins the list in its done state).
-  const listed = [...new Set([...offeredCategories, ...used])].sort();
+  const listed = [...new Set([...offer.categories, ...used])].sort();
 
-  // The picker offers only what is not yet endorsed; a group left with
-  // nothing is dropped rather than shown empty.
-  const choices = pickerCategories
-    .map((group) => ({
-      label: group.label,
-      categories: group.categories.filter((category) => !used.includes(category.id)),
-    }))
-    .filter((group) => group.categories.length > 0);
+  // The picker offers only what the viewer may endorse in and has not yet
+  // endorsed: their own categories, or the whole taxonomy for a tier-4 viewer.
+  // A group left with nothing is dropped rather than shown empty.
+  const choices = endorseChoices(offer, pickerCategories, used);
 
   return (
     <section className="endorse-section" aria-labelledby={`${pickerId}-heading`}>
@@ -371,7 +371,7 @@ function EndorseActions({
         </ul>
       ) : null}
 
-      {anyCategory ? (
+      {choices.length > 0 ? (
         <form
           className="endorse-picker"
           onSubmit={(event) => {
@@ -405,7 +405,9 @@ function EndorseActions({
               <optgroup key={group.label} label={group.label}>
                 {group.categories.map((category) => (
                   <option key={category.id} value={category.id}>
-                    {`${category.name} (${category.id})`}
+                    {category.name === category.id
+                      ? category.id
+                      : `${category.name} (${category.id})`}
                   </option>
                 ))}
               </optgroup>

@@ -7,6 +7,9 @@ cid and the signature, and then calls :func:`handle_endorsement`, which
 
 * refuses the record with ``403`` problem details unless the endorser -- the
   record's author -- holds trust tier 3 (Reviewer) or higher;
+* refuses it with ``403`` again unless the endorser is themself endorsed in
+  the category (an active endorsement of their own), or is a moderator
+  (tier 4), who may endorse in any category;
 * refuses it with ``409`` when that endorser already has an active
   endorsement of the same endorsee in the same category;
 * saves the endorsement to the ``endorsements`` table, keyed by the record's
@@ -50,6 +53,7 @@ from .service import (
     ENDORSEMENT_TYPE,
     ENDORSER_MIN_TIER,
     DuplicateEndorsement,
+    EndorserNotEndorsed,
     InsufficientEndorserTier,
     PublicEndorsement,
     account_tier,
@@ -74,6 +78,7 @@ __all__ = [
     "ENDORSER_MIN_TIER",
     "Endorsement",
     "EndorsementOut",
+    "EndorserNotEndorsed",
     "InsufficientEndorserTier",
     "ProfileEndorsementOut",
     "PublicEndorsement",

@@ -7,10 +7,11 @@
  * cs.AI                         [ + Follow ]   Atom feed
  * ```
  *
- * One button with a constant label and `aria-pressed`: `+ Follow` when the
- * reader does not follow the category, `✓ Follow` when they do. The mark is
- * decorative; the pressed state is what assistive tech reads, and the fill and
- * mark carry it for everyone else, so it never rests on colour alone.
+ * One button with a constant accessible name and `aria-pressed`: `+ Follow`
+ * when the reader does not follow the category, `✓ Following` when they do.
+ * The mark is decorative and the visible word says what is true; the pressed
+ * state is what assistive tech reads, and the word, fill and mark carry it for
+ * everyone else, so it never rests on colour alone.
  *
  * It renders a sign-in link first and upgrades to the button on mount when the
  * token store holds a session. That keeps the server HTML and the first client
@@ -182,7 +183,8 @@ export function FollowToggle({
         aria-busy={pending}
         onClick={toggle}
       >
-        <span aria-hidden="true">{pressed ? "✓" : "+"}</span> Follow
+        <span aria-hidden="true">{pressed ? "✓" : "+"}</span>{" "}
+        {pressed ? "Following" : "Follow"}
       </button>
       {error !== null ? (
         <p className="db-follow-error meta" role="alert">
