@@ -2,16 +2,23 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AnonymityNotice } from "./anonymity-notice";
 import type { ReviewCommitResult } from "./commit";
+import { parseConflictReport } from "./conflict";
+import { ConflictCheck } from "./conflict-check";
+import { SIGN_WITH_NAME_LABEL } from "./identity";
 import { reviewHref } from "./links";
 import { parseMyReviews, type LoadMyReviews } from "./my-reviews";
 import { PBKDF2_MIN_ITERATIONS } from "./passphrase-box";
+import type { UpdateReview } from "./reveal";
 import {
   COMMIT_LABEL,
   ReviewForm,
   SEALED_ELSEWHERE_HEADLINE,
   SEALED_ELSEWHERE_TEXT,
+  UPDATE_LABEL,
 } from "./review-form";
+import { ReviewSessionProvider } from "./review-session";
 import {
   buildReviewKeyFile,
   decryptReviewKeyFile,
@@ -109,6 +116,29 @@ function completeDraft(): ReviewDraft {
   );
 }
 
+/** A conflict check that came back clear on every row. */
+function clearConflictReport() {
+  return parseConflictReport({
+    paper: PAPER,
+    clear: true,
+    checks: [
+      { id: "not_author", label: "Not an author", status: "pass", passed: true },
+      {
+        id: "no_recent_coauthorship",
+        label: "No recent co-authorship",
+        status: "pass",
+        passed: true,
+      },
+      {
+        id: "different_institution",
+        label: "Different institution",
+        status: "pass",
+        passed: true,
+      },
+    ],
+  });
+}
+
 function renderForm(extra: Record<string, unknown> = {}) {
   return render(
     <ReviewForm
@@ -195,7 +225,7 @@ describe("a sealed review by this reviewer that this browser cannot reveal", () 
     expect(screen.queryByRole("heading", { name: SEALED_ELSEWHERE_HEADLINE })).toBeNull();
   });
 
-  it("is not shown, and the API not asked, when this browser has the sealed review", async () => {
+  it("keeps the sealed card when this browser has the sealed review and the API agrees", async () => {
     saveSealedReview(SEALED);
     const loadOwnReviews = dashboard(mine());
 
@@ -203,7 +233,9 @@ describe("a sealed review by this reviewer that this browser cannot reveal", () 
 
     expect(await screen.findByRole("heading", { name: "Your review is sealed" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: SEALED_ELSEWHERE_HEADLINE })).toBeNull();
-    expect(loadOwnReviews).not.toHaveBeenCalled();
+    // The server is now asked even when a local copy exists: only the API can
+    // say whether that copy was revealed elsewhere since it was stored.
+    await waitFor(() => expect(loadOwnReviews).toHaveBeenCalled());
   });
 
   it("is not asked for when nobody is signed in", async () => {
@@ -334,7 +366,7 @@ describe("a revealed review by this reviewer that this browser does not hold", (
     expect(loadOwnReview).toHaveBeenCalledWith(PAPER, "bafycommitted");
   });
 
-  it("offers an update against the newest version, and the key import it needs", async () => {
+  it("offers an update against the newest version without asking for the key first", async () => {
     renderForm({
       loadOwnReviews: dashboard(revealedMine()),
       loadOwnReview: listing({ version: 1, formalCid: "bafyformal1" }),
@@ -347,11 +379,11 @@ describe("a revealed review by this reviewer that this browser does not hold", (
     expect(link.getAttribute("href")).toBe(
       `${reviewHref(PAPER)}?prev=bafyformal1`,
     );
-    // The update is signed with the per-paper review key; a browser that does
-    // not hold it must import the file from the browser that committed.
+    // The update derives the review key when it signs; only a reveal needs a
+    // key file, so the card must not tell the reviewer to import one.
     expect(
-      await screen.findByRole("button", { name: IMPORT_REVIEW_KEY_LABEL }),
-    ).toBeTruthy();
+      screen.queryByRole("button", { name: IMPORT_REVIEW_KEY_LABEL }),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: COMMIT_LABEL })).toBeNull();
   });
 
@@ -368,6 +400,161 @@ describe("a revealed review by this reviewer that this browser does not hold", (
     await screen.findByText(/Review of v2/);
 
     expect(screen.queryByRole("link", { name: /Update for v/ })).toBeNull();
+  });
+
+  it("lets the server's revealed status win over a stale sealed copy on this device", async () => {
+    // The reviewer imported the sealed review after it had been revealed
+    // elsewhere (or a reveal in another tab left the copy behind). The local
+    // entry is now stale: it must not put the page back into the sealed state.
+    saveSealedReview(SEALED);
+
+    renderForm({
+      loadOwnReviews: dashboard(revealedMine()),
+      loadOwnReview: listing({ version: 1, formalCid: "bafyformal1" }),
+      latestVersion: 2,
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "You already reviewed this paper" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Your review is sealed" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reveal review" })).toBeNull();
+    // The stale entry is forgotten, so a reload cannot fall back into it.
+    expect(loadSealedReview(PAPER)).toBeNull();
+  });
+
+  it("opens the update form after a key was imported for an already-revealed review", async () => {
+    // Import-after-reveal leaves the sealed copy on the device; the update page
+    // must not treat it as something still waiting to be revealed.
+    saveSealedReview(SEALED);
+    const update = vi.fn<UpdateReview>(async () => ({
+      revealCid: "bafyreveal2",
+      reviewCid: "bafycommitted",
+      body: {},
+      record: {
+        v: 1,
+        type: "review.formal",
+        id: "bafyreveal2",
+        author: "did:key:z6Mkreview",
+        created: "2026-12-01T00:00:00Z",
+        prev: "bafyformal",
+        body: {},
+        proofs: [],
+        sig: "sig",
+      },
+    }));
+
+    renderForm({ prev: "bafyformal", update, initialDraft: completeDraft() });
+
+    expect(screen.queryByRole("heading", { name: "Your review is sealed" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: UPDATE_LABEL }));
+
+    await screen.findByRole("heading", { name: "Your review is updated" });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no identity choice beside the revealed card, where no form uses it", async () => {
+    render(
+      <ReviewSessionProvider>
+        <AnonymityNotice />
+        <ReviewForm
+          paperId={PAPER}
+          versionCid="bafyversion"
+          signedIn
+          loadOwnReviews={dashboard(revealedMine())}
+          loadOwnReview={listing()}
+          latestVersion={2}
+        />
+      </ReviewSessionProvider>,
+    );
+
+    await screen.findByRole("heading", { name: "You already reviewed this paper" });
+    expect(screen.queryByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeNull();
+  });
+
+  it("words the clear conflict check for a reviewer who already has a review", async () => {
+    const report = clearConflictReport();
+
+    render(
+      <ReviewSessionProvider>
+        <ConflictCheck paperId={PAPER} initial={report} signedIn />
+        <ReviewForm
+          paperId={PAPER}
+          versionCid="bafyversion"
+          signedIn
+          loadOwnReviews={dashboard(revealedMine())}
+          loadOwnReview={listing()}
+          latestVersion={2}
+        />
+      </ReviewSessionProvider>,
+    );
+
+    await screen.findByRole("heading", { name: "You already reviewed this paper" });
+    expect(
+      screen.getByText("No conflicts found. You already reviewed this paper."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/You can review this paper/)).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// Beside the sealed cards: no form, so no identity choice and no invitation
+// --------------------------------------------------------------------------- //
+
+describe("the page beside a sealed review card", () => {
+  /** The notice, the conflict check and the form, sharing one session as the page does. */
+  function renderPage(extra: Record<string, unknown> = {}) {
+    return render(
+      <ReviewSessionProvider>
+        <AnonymityNotice />
+        <ConflictCheck paperId={PAPER} initial={clearConflictReport()} signedIn />
+        <ReviewForm paperId={PAPER} versionCid="bafyversion" signedIn {...extra} />
+      </ReviewSessionProvider>,
+    );
+  }
+
+  it("offers the identity choice only while the Commit form is there", async () => {
+    // The API answers late, so the Commit form is on the page first.
+    renderPage({ loadOwnReviews: dashboard() });
+    expect(screen.getByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeTruthy();
+
+    // With no review of this reviewer's, the form stays and so does the choice.
+    await waitFor(() => expect(screen.getByRole("button", { name: COMMIT_LABEL })).toBeTruthy());
+    expect(screen.getByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeTruthy();
+    expect(screen.getByText("No conflicts found. You can review this paper.")).toBeTruthy();
+  });
+
+  it("drops the identity choice and the invitation beside the sealed-elsewhere card", async () => {
+    renderPage({ loadOwnReviews: dashboard(mine()) });
+
+    await screen.findByRole("heading", { name: SEALED_ELSEWHERE_HEADLINE });
+
+    // No form here will seal that choice into a commit, and a second review
+    // cannot be committed, so the page neither offers one nor invites one.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeNull(),
+    );
+    expect(screen.queryByRole("button", { name: COMMIT_LABEL })).toBeNull();
+    expect(
+      screen.getByText("No conflicts found. You already reviewed this paper."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/You can review this paper/)).toBeNull();
+  });
+
+  it("drops the identity choice and the invitation beside the sealed card of this device", async () => {
+    saveSealedReview(SEALED);
+
+    renderPage({ loadOwnReviews: dashboard(mine()) });
+
+    await screen.findByRole("heading", { name: "Your review is sealed" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeNull(),
+    );
+    expect(
+      screen.getByText("No conflicts found. You already reviewed this paper."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/You can review this paper/)).toBeNull();
   });
 });
 

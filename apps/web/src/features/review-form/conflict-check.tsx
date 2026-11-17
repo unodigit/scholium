@@ -29,6 +29,7 @@ import {
   type LoadConflictCheck,
 } from "./conflict";
 import { reviewSignInHref } from "./links";
+import { useReviewSession } from "./review-session";
 import "./review-form.css";
 
 export interface ConflictCheckProps {
@@ -84,6 +85,10 @@ export function ConflictCheck({
   const signInHref = signInHrefOverride ?? conflictSignInHref(paperId);
   const uid = useId();
   const titleId = `${uid}-title`;
+  // The form beside this panel knows whether the reviewer already has a review;
+  // a clear check then says so instead of inviting a second review.
+  const session = useReviewSession();
+  const reviewed = session !== null && session.ownReviewState !== null;
 
   const [view, setView] = useState<View>(() =>
     initialView(signedIn, initial, initialError),
@@ -184,15 +189,24 @@ export function ConflictCheck({
         </div>
       ) : null}
 
-      {view.kind === "ready" ? <ConflictRows report={view.report} /> : null}
+      {view.kind === "ready" ? (
+        <ConflictRows report={view.report} reviewed={reviewed} />
+      ) : null}
     </section>
   );
 }
 
-function ConflictRows({ report }: { report: ConflictReport }) {
+function ConflictRows({
+  report,
+  reviewed,
+}: {
+  report: ConflictReport;
+  /** The reviewer already has a review of this paper. */
+  reviewed: boolean;
+}) {
   return (
     <>
-      <p className="rf-coi-summary">{describeConflictSummary(report)}</p>
+      <p className="rf-coi-summary">{describeConflictSummary(report, reviewed)}</p>
       <ul className="rf-coi-list" aria-label="Conflict checks">
         {report.checks.map((check) => {
           const spec = CONFLICT_STATUS_SPECS[check.status];

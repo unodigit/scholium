@@ -41,6 +41,9 @@ export function AnonymityNotice() {
   const session = useReviewSession();
   const signed = session?.signed === true;
   const locked = session?.locked === true;
+  // The choice belongs to a form that will seal it into the commit. A sealed
+  // or revealed card replaces the form, so there is nothing for it to reach.
+  const formActive = session?.formActive === true;
 
   const headline = signed ? SIGNED_HEADLINE : ANONYMITY_HEADLINE;
   const detail = !signed
@@ -62,7 +65,7 @@ export function AnonymityNotice() {
       >
         <strong className="rf-anonymity-headline">{headline}</strong> {detail}
       </p>
-      {session !== null && !locked ? (
+      {session !== null && formActive && !locked ? (
         <button
           type="button"
           className="rf-button rf-button--quiet rf-identity-toggle"

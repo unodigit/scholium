@@ -185,8 +185,17 @@ export async function loadConflictCheck(
   );
 }
 
-/** One sentence summarising the three checks, for the panel's lede. */
-export function describeConflictSummary(report: ConflictReport): string {
+/**
+ * One sentence summarising the three checks, for the panel's lede.
+ *
+ * @param reviewed The reviewer already has a review of this paper (sealed or
+ *   revealed). The clear result must not invite another one, since the API
+ *   takes one review from each reviewer (REV-3).
+ */
+export function describeConflictSummary(
+  report: ConflictReport,
+  reviewed = false,
+): string {
   const conflicts = report.checks.filter((check) => check.status === "fail");
   const unknown = report.checks.filter((check) => check.status === "unknown");
 
@@ -200,7 +209,9 @@ export function describeConflictSummary(report: ConflictReport): string {
       ? "One check could not be completed. Add the missing profile detail, then check again."
       : `${unknown.length} checks could not be completed. Add the missing profile details, then check again.`;
   }
-  return "No conflicts found. You can review this paper.";
+  return reviewed
+    ? "No conflicts found. You already reviewed this paper."
+    : "No conflicts found. You can review this paper.";
 }
 
 /** Why the checks could not be loaded, in one sentence for the reviewer. */

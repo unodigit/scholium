@@ -37,6 +37,9 @@ import type { Citation } from "./citation";
 /** Where the form is: still editable, waiting on the passkey, or sealed. */
 export type FormPhase = "editing" | "signing" | "sealed";
 
+/** Whether the reviewer already has a review of this paper. */
+export type OwnReviewState = "sealed" | "revealed" | null;
+
 /** What the form does with a citation. */
 export type CiteHandler = (citation: Citation) => void;
 
@@ -56,6 +59,22 @@ export interface ReviewSession {
   readonly attachForm: (handler: CiteHandler) => () => void;
   /** The form reports where it is. */
   readonly setPhase: (phase: FormPhase) => void;
+  /**
+   * A form that would use the identity choice is on the page. A sealed or
+   * revealed card has no form, so the choice is not offered there. It starts
+   * true because the server's first HTML always carries the form; the form
+   * says otherwise once a card replaces it.
+   */
+  readonly formActive: boolean;
+  /** The form reports whether it is showing an editable form. */
+  readonly setFormActive: (active: boolean) => void;
+  /**
+   * The reviewer's own review of this paper, as the server (or this device)
+   * reports it. Decides how the conflict check is worded.
+   */
+  readonly ownReviewState: OwnReviewState;
+  /** The form reports the review state it found. */
+  readonly setOwnReviewState: (state: OwnReviewState) => void;
 }
 
 const SessionContext = createContext<ReviewSession | null>(null);
@@ -74,6 +93,19 @@ export function ReviewSessionProvider({
   const [signed, setSignedState] = useState(initialSigned);
   const [phase, setPhaseState] = useState<FormPhase>("editing");
   const [attached, setAttached] = useState(false);
+  // The page's first paint has the form (and the server's HTML cannot know
+  // otherwise), so the choice starts offered; a card replaces it once a form
+  // reports that it is not there.
+  const [formActive, setFormActiveState] = useState(true);
+  const [ownReviewState, setOwnReviewStateState] = useState<OwnReviewState>(null);
+
+  const setFormActive = useCallback((active: boolean) => {
+    setFormActiveState(active);
+  }, []);
+
+  const setOwnReviewState = useCallback((state: OwnReviewState) => {
+    setOwnReviewStateState(state);
+  }, []);
 
   // Read by callbacks that must not change identity, or go stale, with state.
   const phaseRef = useRef<FormPhase>("editing");
@@ -116,8 +148,24 @@ export function ReviewSessionProvider({
       cite,
       attachForm,
       setPhase,
+      formActive,
+      setFormActive,
+      ownReviewState,
+      setOwnReviewState,
     }),
-    [signed, setSigned, phase, attached, cite, attachForm, setPhase],
+    [
+      signed,
+      setSigned,
+      phase,
+      attached,
+      cite,
+      attachForm,
+      setPhase,
+      formActive,
+      setFormActive,
+      ownReviewState,
+      setOwnReviewState,
+    ],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

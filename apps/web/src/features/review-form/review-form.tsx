@@ -179,10 +179,6 @@ export const OWN_REVIEW_TEXT =
 export const OWN_REVIEW_REPORT_SEALED_TEXT =
   "Your written report is sealed until two reviews are committed on this version, or 21 days after the first.";
 
-/** Said when updating needs the review key, which this browser does not hold. */
-export const OWN_REVIEW_KEY_NOTE =
-  "Updating the review is signed with the review key, which is kept only in the browser you committed from. Import your review key file to continue here.";
-
 /**
  * Said under the button so the reviewer knows what committing does. (A reviewer
  * who chose to sign with their name is told so as well: `COMMIT_NOTE_SIGNED`.)
@@ -279,7 +275,16 @@ function ReviewFormBody({
   const uid = useId();
   const signedIn = useSignedIn(signedInOverride);
   const signInHref = signInHrefOverride ?? reviewSignInHref(paperId);
-  const { signed, attachForm, setPhase: reportPhase } = session;
+  const {
+    signed,
+    attachForm,
+    setPhase: reportPhase,
+    setFormActive: reportFormActive,
+    setOwnReviewState: reportOwnReviewState,
+  } = session;
+  // An update page (`?prev=…`) is only reached from a revealed review, so its
+  // state is known before this browser's storage is consulted.
+  const isUpdate = typeof prev === "string" && prev.trim() !== "";
 
   const [draft, setDraft] = useState<ReviewDraft>(
     () => initialDraft ?? emptyDraft(),
@@ -296,7 +301,7 @@ function ReviewFormBody({
   const [error, setError] = useState<CommitFailure | null>(null);
 
   // Whether this browser's own storage has been asked for a sealed review yet:
-  // the API is asked only after, and only if, it had none.
+  // the API is asked only after that read has answered.
   const [localChecked, setLocalChecked] = useState(false);
 
   // Cite in review: the box a quote goes into, and the last quote placed.
@@ -348,28 +353,28 @@ function ReviewFormBody({
   // mount so the server's blank form and the browser's first render agree.
   useEffect(() => {
     if (sealed !== null || paperId.trim() === "") return;
-    const stored = loadSealedReview(paperId);
     setLocalChecked(true);
+    // An update page is only reached from a revealed review. A sealed copy
+    // left on the device is from before the reveal and cannot be opened again.
+    if (isUpdate) return;
+    const stored = loadSealedReview(paperId);
     if (stored === null) return;
     setSealed(stored);
     setPhase("sealed");
-  }, [paperId, sealed]);
+  }, [paperId, sealed, isUpdate]);
 
   // This browser holds nothing to reveal a review with, but the API may say
   // the signed-in reviewer has one sealed: a fresh browser, or another device.
   // A commit would be refused (one review per reviewer and paper), so the form
-  // gives way to a card that says so. Asked only once this browser has been
-  // found empty; a form with no paper, one that updates a review and one with
-  // nobody signed in have nothing to ask.
-  const isUpdate = typeof prev === "string" && prev.trim() !== "";
+  // gives way to a card that says so. Asked once this browser's storage has
+  // been read, even when it held a sealed copy: the server's answer decides
+  // whether that copy is still sealed, so a reveal elsewhere cannot leave the
+  // page stuck on a sealed card whose Reveal is refused. A form with no paper,
+  // one that updates a review and one with nobody signed in have nothing to ask.
   const mayAskApi =
     loadOwnReviews !== undefined || (signedIn && tokenStore.isAuthenticated);
   const own = useMyReviews(
-    mayAskApi &&
-      localChecked &&
-      sealed === null &&
-      !isUpdate &&
-      paperId.trim() !== "",
+    mayAskApi && localChecked && !isUpdate && paperId.trim() !== "",
     paperId,
     loadOwnReviews,
   );
@@ -377,6 +382,42 @@ function ReviewFormBody({
     own.status === "ready" ? ownReviewOf(own.reviews, paperId) : null;
   const sealedElsewhere = ownReview !== null && ownReview.sealed;
   const revealedElsewhere = ownReview !== null && ownReview.revealed;
+
+  // The API is authoritative. A review the server reports revealed can never
+  // be opened again, so an imported or stored sealed copy is stale: forget it
+  // rather than letting it put the page back into the sealed/Reveal state.
+  useEffect(() => {
+    if (!revealedElsewhere || phase === "signing") return;
+    forgetSealedReview(paperId);
+    setSealed(null);
+    setPhase("editing");
+  }, [revealedElsewhere, paperId, phase]);
+
+  // The editable form is the page's one surface that uses the identity choice
+  // and can cite; a card in its place must not offer either.
+  const sealedCard =
+    phase === "sealed" && sealed !== null && !revealedElsewhere;
+  const revealedCard =
+    revealedElsewhere && ownReview !== null && phase !== "signing";
+  const sealedElsewhereCard = sealedElsewhere && phase === "editing";
+  const formActive =
+    updated === null && !sealedCard && !revealedCard && !sealedElsewhereCard;
+  // How the conflict check should word its clear result. An update page is
+  // reached from a review the server already revealed.
+  const ownReviewState = revealedElsewhere || isUpdate
+    ? "revealed"
+    : sealedElsewhere || sealed !== null
+      ? "sealed"
+      : null;
+
+  useEffect(() => {
+    reportFormActive(formActive);
+  }, [formActive, reportFormActive]);
+  useEffect(() => () => reportFormActive(true), [reportFormActive]);
+  useEffect(() => {
+    reportOwnReviewState(ownReviewState);
+  }, [ownReviewState, reportOwnReviewState]);
+  useEffect(() => () => reportOwnReviewState(null), [reportOwnReviewState]);
 
   // When updating a revealed review, prefill the form with its current rubric.
   useEffect(() => {
@@ -443,7 +484,7 @@ function ReviewFormBody({
   const progress = progressOf(draft);
   const complete = isComplete(problems);
 
-  if (phase === "sealed" && sealed !== null) {
+  if (sealedCard && sealed !== null) {
     return (
       <SealedNotice
         sealed={sealed}
@@ -460,8 +501,9 @@ function ReviewFormBody({
     );
   }
 
-  // Only while the form is at rest: a commit being signed is not interrupted.
-  if (revealedElsewhere && ownReview !== null && phase === "editing") {
+  // The server's revealed status outranks anything left on this device. Only a
+  // commit being signed is not interrupted.
+  if (revealedCard && ownReview !== null) {
     // The reviewer already has a review of this paper and the API has it
     // revealed: a blank Commit form is a dead end (one review per paper), so
     // what they wrote is shown read-only instead.
@@ -476,7 +518,7 @@ function ReviewFormBody({
     );
   }
 
-  if (sealedElsewhere && phase === "editing") {
+  if (sealedElsewhereCard) {
     return (
       <SealedElsewhereNotice
         paperId={paperId}
@@ -1299,31 +1341,32 @@ export function SealedElsewhereNotice({
  * public listing supplies what it now says (the latest update's scores and
  * report) and the `review.formal` cid an update names. Committing again is
  * refused (one review per paper), so the card shows the review read-only and
- * offers the only action left: update it against the newest version. That
- * update is signed with the per-paper review key, so a browser without it is
- * offered the key import.
+ * offers the only action left: update it against the newest version.
+ *
+ * The update derives the review key when it signs — from the copy this browser
+ * already holds, or through a passkey — so the card never tells the reviewer to
+ * import a key file. Only the sealed card, whose Reveal cannot derive a key
+ * that was never kept here, offers the import.
  */
 export function RevealedElsewhereNotice({
   review,
   paperId,
   latestVersion = null,
-  keyFile,
   loadOwnReview = loadOwnReviewListing,
 }: {
   review: MyReview;
   paperId: string;
   /** The paper's newest listed version, for the update link. */
   latestVersion?: number | null;
-  /** Replace what reads the encrypted review key file, for tests. */
+  /**
+   * Accepted for callers that inject key-file seams. The card no longer reads
+   * or imports a key: the update derives it when it signs.
+   */
   keyFile?: KeyFileSeams;
   /** Replace the read of the public listing, for tests. */
   loadOwnReview?: LoadOwnReview;
 }) {
   const [detail, setDetail] = useState<OwnReviewListing | null>(null);
-  // Whether this browser holds the review key an update needs. Read after
-  // mount: it is kept in IndexedDB, and there is nothing to say until it
-  // answers.
-  const [keyPresent, setKeyPresent] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (paperId.trim() === "") return;
@@ -1340,17 +1383,6 @@ export function RevealedElsewhereNotice({
       cancelled = true;
     };
   }, [paperId, review.reviewCid, loadOwnReview]);
-
-  useEffect(() => {
-    if (paperId.trim() === "") return;
-    let cancelled = false;
-    void loadReviewKey(paperId).then((key) => {
-      if (!cancelled) setKeyPresent(key !== null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [paperId]);
 
   const scores = updatedScores(detail?.scores ?? review.scores);
   const recommendation = updatedRecommendation(
@@ -1373,7 +1405,6 @@ export function RevealedElsewhereNotice({
     version !== null &&
     latestVersion !== null &&
     version < latestVersion;
-  const keyNeeded = canUpdate && keyPresent === false;
 
   return (
     <section
@@ -1423,17 +1454,6 @@ export function RevealedElsewhereNotice({
             {`Update for v${latestVersion}`}
           </a>
         </p>
-      ) : null}
-
-      {keyNeeded ? (
-        <>
-          <p className="rf-sealed-text">{OWN_REVIEW_KEY_NOTE}</p>
-          <ImportReviewKey
-            paperId={paperId}
-            seams={keyFile}
-            onImported={() => setKeyPresent(true)}
-          />
-        </>
       ) : null}
 
       {detail?.reviewCid !== null && detail?.reviewCid !== undefined ? (

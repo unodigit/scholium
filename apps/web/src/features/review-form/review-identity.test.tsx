@@ -453,6 +453,11 @@ describe("updating a review", () => {
     fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
     await screen.findByRole("alert");
 
-    expect(signButton()).toBeTruthy();
+    // The form leaves "signing" in the same render that shows the alert, but the
+    // page's session learns it through an effect one tick later; wait for it
+    // rather than reading the notice in between.
+    expect(
+      await screen.findByRole("button", { name: SIGN_WITH_NAME_LABEL }),
+    ).toBeTruthy();
   });
 });
