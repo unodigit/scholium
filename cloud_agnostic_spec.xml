@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cloud-agnostic architecture (2026-11-17). Decisions taken with the user:
+  - Database: dual dialect. SQLite stays the default (npm test and the claw-forge gate need no containers);
+    PostgreSQL 16 is a first-class target, covered by an opt-in Postgres test lane run under podman.
+  - Jobs: Postgres-backed queue (the existing jobs table), FOR UPDATE SKIP LOCKED, separate worker process.
+  - Objects: one ObjectStore interface with a filesystem driver (today's behaviour) and an S3-API driver
+    (MinIO locally; AWS S3, Cloudflare R2, GCS-interop, etc. in the cloud).
+  - Sandbox: the code sandbox sits behind a runner interface (docker | podman | remote | none).
+  - Delivery: Containerfiles + compose.yaml run with podman-compose locally; OpenTofu modules describe the cloud.
+  Aligns the code with docs/tech_architect.md sections 6, 14 and 15 (PostgreSQL, S3-compatible store, queue, IaC).
+-->
+<project_specification mode="brownfield">
+  <project_name>Scholium — Cloud-agnostic architecture</project_name>
+  <addition_summary>
+    Make Scholium deployable on any cloud by removing every assumption that the API runs as one process on one machine
+    with a local SQLite file and a local content directory. The API gains PostgreSQL support next to SQLite, stores
+    content and in-flight uploads through an S3-compatible object-store interface, runs background jobs in a separate
+    worker process that any number of replicas can share, and reaches the code sandbox through a runner interface.
+    Containerfiles and a podman-compose stack (PostgreSQL, MinIO, Mailpit, api, worker, web, sandbox runner) mimic the
+    cloud locally, and OpenTofu modules describe a real deployment without tying application code to any provider.
+  </addition_summary>
+
+  <existing_context>
+    <stack>Python 3.12 / FastAPI / SQLAlchemy 2.0 / SQLite (apps/api, uv workspace) + Next.js 15 App Router / TypeScript / Tailwind (apps/web, npm workspace)</stack>
+    <test_baseline>measured 2026-11-17 on main: API 4828 passed, 1 skipped (uv run --all-packages pytest, 156 s); web vitest suite unmeasured, run npm test --workspace apps/web before relying on it</test_baseline>
+    <conventions>Modules under apps/api/src/app/modules/&lt;name&gt; discovered by module_loader.py with colocated tests/ folders; settings read from env vars in app/settings.py; pytest with xdist (-n 4) and per-worker temp state from apps/api/conftest.py; web tests with vitest; npm (never pnpm/yarn), no deps in the root package.json</conventions>
+  </existing_context>
+
+  <layout>
+    <zone root="apps/api" profile="uv-workspace">
+      <seam tier="discovery">apps/api/src/app/module_loader.py</seam>
+    </zone>
+    <zone root="apps/web" profile="pnpm-single-app">
+      <root template="apps/web/src/app/({plugin})/**" optional="true"/>
+    </zone>
+  </layout>
+
+  <features_to_add>
+    <category name="Database portability">
+      <feature index="1" shape="core" depends_on=""
+               touches_files="apps/api/src/app/db.py,apps/api/src/app/settings.py,apps/api/pyproject.toml,apps/api/uv.lock"
+               creates="apps/api/tests/test_db_dialects.py">
+        <description>Database layer accepts PostgreSQL URLs next to SQLite: postgres:// and postgresql:// URLs are normalised to the postgresql+psycopg driver (psycopg[binary] becomes a runtime dependency), PostgreSQL engines use pool_pre_ping with pool size and overflow read from DB_POOL_SIZE and DB_MAX_OVERFLOW, create_all on PostgreSQL holds a pg_advisory_lock so replicas starting together never race on CREATE TABLE, and create_app on an unchanged sqlite:/// URL creates the same tables with the same engine options as today</description>
+      </feature>
+      <feature index="2" shape="core" depends_on="1"
+               touches_files="apps/api/src/app/modules/ledger/models.py,apps/api/src/app/modules/ledger/triggers.py,apps/api/src/app/modules/ledger/service.py,apps/api/src/app/modules/ledger/tests/test_append_only.py">
+        <description>Database rejects every UPDATE and DELETE on event_log on PostgreSQL through PL/pgSQL append-only triggers raising the same append-only error message as the SQLite triggers, seq is a never-reused identity column, and appends serialise on the log head (row lock or advisory lock) so two concurrent writers can never fork the hash chain, while the SQLite triggers and their tests stay unchanged</description>
+      </feature>
+      <feature index="3" shape="core" depends_on="1"
+               touches_files="apps/api/src/app/modules/search/index.py,apps/api/src/app/modules/search/query.py,apps/api/src/app/modules/search/tests/test_search_index.py">
+        <description>System indexes papers for full-text search on PostgreSQL: supported() returns true for both dialects, the index is a table with a weighted tsvector over title, authors, abstract and body behind a GIN index kept current by sync_version and removal, and search queries return the same result shape and ranking order (title matches first) as the SQLite FTS5 index</description>
+      </feature>
+      <feature index="4" shape="core" depends_on="1"
+               touches_files="apps/api/src/app/modules/content/refs.py,apps/api/src/app/modules/content/tests/test_content_ref_index.py">
+        <description>System upserts content references with the PostgreSQL dialect's insert ... on conflict on PostgreSQL and the SQLite dialect's on SQLite, and returns identical reference counts on both</description>
+      </feature>
+      <feature index="5" shape="core" depends_on="1"
+               touches_files="apps/api/conftest.py,package.json"
+               creates="deploy/compose/compose.test.yaml,scripts/test-pg.sh">
+        <description>System runs the whole API suite against PostgreSQL with npm run test:pg: the script starts a pgvector/pgvector:pg16 container from deploy/compose/compose.test.yaml with podman-compose (docker compose as fallback), waits for it to be healthy, and runs pytest with TEST_DATABASE_URL set (when TEST_DATABASE_URL is already exported, as in CI, it skips the container and uses that database); with TEST_DATABASE_URL set the root conftest creates one database per xdist worker (scholium_test_gw0, ...) and drops it at the end, and with it unset every worker stays on its own SQLite file exactly as today</description>
+      </feature>
+    </category>
+
+    <category name="Object storage">
+      <feature index="6" shape="core" depends_on=""
+               touches_files="apps/api/src/app/settings.py,apps/api/pyproject.toml,apps/api/uv.lock"
+               creates="apps/api/src/app/storage/__init__.py,apps/api/src/app/storage/base.py,apps/api/src/app/storage/filesystem.py,apps/api/src/app/storage/s3.py,apps/api/src/app/storage/tests/__init__.py,apps/api/src/app/storage/tests/test_filesystem.py,apps/api/src/app/storage/tests/test_s3.py">
+        <description>System stores objects through one ObjectStore interface (put_stream, open for streaming reads with an optional byte range, size, exists, delete, list by prefix) chosen by STORAGE_BACKEND: fs (the default) writes to CONTENT_DIR with today's atomic temp-file, fsync and rename, s3 writes to S3_BUCKET at S3_ENDPOINT_URL through boto3 with multipart upload for large streams (S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_FORCE_PATH_STYLE), both drivers pass one shared contract test suite (s3 against moto), and validate_for_environment in production rejects an s3 backend missing its bucket or credentials</description>
+      </feature>
+      <feature index="7" shape="core" depends_on="6"
+               touches_files="apps/api/src/app/modules/content/store.py,apps/api/src/app/modules/content/router.py,apps/api/src/app/modules/content/__init__.py,apps/api/src/app/modules/content/tests/test_content_store.py">
+        <description>System stores content blobs through the ObjectStore keyed by CID: write_bytes, write_stream, open_blob and exists keep their signatures, new delete_blob, blob_size and a local_copy(cid) context manager hand callers a temporary real file when they need one, the download route streams from the store and returns 206 for Range requests with unchanged headers, blob_path survives only as a filesystem-backend helper, and with STORAGE_BACKEND=fs existing CONTENT_DIR data stays readable byte-for-byte</description>
+      </feature>
+      <feature index="8" shape="core" depends_on="7"
+               touches_files="apps/api/src/app/modules/moderation/tombstones.py,apps/api/src/app/modules/ai_review/bundle_files.py,apps/api/src/app/modules/ai_review/sandbox.py,apps/api/src/app/modules/uploads/reaper.py">
+        <description>System reaches stored blobs only through the content store API in tombstoning, bundle extraction, the sandbox and the upload reaper: tombstones and the reaper delete blobs with delete_blob, bundle extraction and the sandbox read through local_copy, no caller of content.blob_path remains, and each flow returns the same results on the fs and s3 backends</description>
+      </feature>
+      <feature index="9" shape="core" depends_on="7"
+               touches_files="apps/api/src/app/modules/uploads/store.py,apps/api/src/app/modules/uploads/router.py,apps/api/src/app/modules/uploads/finalize.py,apps/api/src/app/modules/uploads/reaper.py">
+        <description>System stages in-flight tus uploads in the ObjectStore instead of CONTENT_DIR/.uploads: each PATCH chunk persists as its own part object under uploads/{id}/ before Upload-Offset advances, finalisation streams the parts in order into the content store while computing the CID, discard and the reaper delete every part of an abandoned upload, and tus clients see the same 204 responses, offsets and quota errors as today</description>
+      </feature>
+    </category>
+
+    <category name="Background jobs">
+      <feature index="10" shape="core" depends_on=""
+               touches_files="apps/api/src/app/jobs.py,apps/api/src/app/main.py,apps/api/src/app/settings.py,apps/api/tests/test_jobs.py">
+        <description>Background job claims are safe for many runners: a claim takes a lease (locked_until and worker_id columns added in place on existing databases) using SELECT ... FOR UPDATE SKIP LOCKED on PostgreSQL and the existing conditional UPDATE on SQLite, any runner re-queues a running job whose lease expired, and JOBS_MODE selects eager (the default when JOBS_EAGER is unset or 1), thread (today's in-process worker) or external (the API only writes queued jobs to the jobs table)</description>
+      </feature>
+      <feature index="11" shape="core" depends_on="10"
+               touches_files="apps/api/src/app/jobs.py"
+               creates="apps/api/src/app/worker.py,apps/api/tests/test_worker.py">
+        <description>Background worker runs as its own process with python -m app.worker: it loads the modules so every handler registers, drains due jobs, finishes the job in hand on SIGTERM or SIGINT before exiting with status 0; its schedule registry creates periodic jobs (the upload reaper hourly, the follow digest daily) with a per-period dedupe key that yields exactly one queued job per period however many workers run</description>
+      </feature>
+    </category>
+
+    <category name="Sandbox">
+      <feature index="12" shape="core" depends_on=""
+               touches_files="apps/api/src/app/modules/ai_review/sandbox.py,apps/api/src/app/modules/ai_review/reproducibility.py,apps/api/src/app/modules/ai_review/background.py,apps/api/src/app/settings.py">
+        <description>System runs the reproducibility sandbox through a runner chosen by SANDBOX_BACKEND: docker (the default) and podman share the same container limits (no network, read-only root, one CPU, 2048 MB, 256 pids, no capabilities, 10-minute ceiling) through their CLIs, remote sends the bundle CID and limits to SANDBOX_URL with a bearer SANDBOX_TOKEN and maps the reply to SandboxRun, none always returns not_run, an unreachable runner returns not_run with reason sandbox_unreachable instead of raising, and production validation rejects remote without a URL or a token of at least 32 characters</description>
+      </feature>
+      <feature index="13" shape="core" depends_on="12"
+               creates="apps/api/src/app/sandbox_service/__init__.py,apps/api/src/app/sandbox_service/__main__.py,apps/api/src/app/sandbox_service/app.py,apps/api/src/app/sandbox_service/tests/__init__.py,apps/api/src/app/sandbox_service/tests/test_service.py">
+        <description>Service runs the sandbox on its own with python -m app.sandbox_service: POST /runs returns 401 without the shared bearer token (constant-time compare), fetches the bundle from the configured ObjectStore and returns 422 when its bytes do not hash to the CID, otherwise returns 202 with a run id and runs the bundle with the local docker or podman runner, and GET /runs/{id} returns status and log lines in the shape the remote runner expects</description>
+      </feature>
+    </category>
+
+    <category name="Containers and local stack">
+      <feature index="14" shape="core" depends_on=""
+               touches_files="apps/web/next.config.js,apps/web/next.config.test.ts"
+               creates="deploy/containers/api.Containerfile,deploy/containers/web.Containerfile,.containerignore">
+        <description>System builds OCI images with podman build or docker build: api.Containerfile installs the uv workspace into a python:3.12-slim image that runs as a non-root user and serves python -m app by default (the same image runs app.worker and app.sandbox_service by command), and web.Containerfile builds Next.js with output standalone and NEXT_PUBLIC_API_URL as a build argument and runs node server.js as a non-root user, while next.config.js still emits the same CSP headers</description>
+      </feature>
+      <feature index="15" shape="core" depends_on="6,14"
+               touches_files="package.json,apps/api/src/app/main.py,apps/api/tests/test_healthz.py,.env.example"
+               creates="compose.yaml,deploy/compose/minio-init.sh">
+        <description>System starts a cloud-like local stack with npm run stack:up (plus stack:down, stack:logs and stack:reset): compose.yaml runs under podman-compose and docker compose with PostgreSQL 16 plus pgvector, MinIO with its bucket created by an init container, Mailpit for SMTP, the api with JOBS_MODE=external and STORAGE_BACKEND=s3, a worker, the web app, and the sandbox runner under an opt-in sandbox profile, each with a healthcheck and named volumes, configured from new .env.example entries; the API adds GET /readyz that returns 200 when the database and the object store answer and 503 naming the failing dependency otherwise, while /healthz stays a liveness check</description>
+      </feature>
+      <feature index="16" shape="core" depends_on="7,11,15"
+               touches_files="package.json"
+               creates="apps/api/src/app/smoke.py,scripts/stack-smoke.sh">
+        <description>System verifies the running stack with npm run stack:smoke: the script waits for /readyz to return 200, checks the web home page returns 200, and runs python -m app.smoke inside the api container, which writes and reads back a blob through the S3 store, creates a system.ping job and waits for the separate worker to mark it done, and exits non-zero with an error message naming the first failed step</description>
+      </feature>
+    </category>
+
+    <category name="Infrastructure as code">
+      <feature index="17" shape="core" depends_on=""
+               creates="infra/modules/edge-cloudflare/main.tf,infra/modules/edge-cloudflare/variables.tf,infra/modules/edge-cloudflare/outputs.tf,infra/modules/object-store-r2/main.tf,infra/modules/object-store-r2/variables.tf,infra/modules/object-store-r2/outputs.tf,infra/modules/object-store-s3/main.tf,infra/modules/object-store-s3/variables.tf,infra/modules/object-store-s3/outputs.tf,infra/README.md">
+        <description>System describes provider pieces as OpenTofu modules behind one contract: object-store-s3 (AWS) and object-store-r2 (Cloudflare) each create a bucket and scoped credentials and output s3_endpoint_url, s3_region, s3_bucket, s3_access_key_id and s3_secret_access_key (sensitive) matching the app's S3_* settings, edge-cloudflare creates DNS records, a Cloudflare Tunnel to the API origin and a WAF rate-limit ruleset, and every provider version is pinned</description>
+      </feature>
+      <feature index="18" shape="core" depends_on="17"
+               touches_files="package.json"
+               creates="infra/modules/host-vm/main.tf,infra/modules/host-vm/variables.tf,infra/modules/host-vm/outputs.tf,infra/modules/host-vm/cloud-init.yaml,infra/envs/staging/main.tf,infra/envs/staging/variables.tf,infra/envs/staging/backend.tf,scripts/infra-check.sh">
+        <description>System provisions a staging environment from infra/envs/staging: the host-vm module creates a Hetzner Cloud server and volume whose cloud-init installs podman and runs the same compose stack as local development under systemd, the staging env combines host-vm, one object-store module and edge-cloudflare through variables so swapping the object-store provider changes one module block, state is stored in an S3-compatible backend with OpenTofu state encryption enabled, and npm run infra:check runs tofu fmt -check, tofu init -backend=false and tofu validate for every env without credentials and returns a non-zero exit status on any failure</description>
+      </feature>
+    </category>
+
+    <category name="Operations">
+      <feature index="21" shape="core" depends_on=""
+               touches_files="apps/api/src/app/settings.py"
+               creates="apps/api/tests/test_node_key_env.py">
+        <description>System accepts the node signing key from the NODE_KEY environment variable as well as from NODE_KEY_PATH: when NODE_KEY holds a key in the same format as the key file, settings writes it to a file readable only by the process owner (mode 0600) in a private runtime directory and points NODE_KEY_PATH at it so every existing reader keeps working, NODE_KEY never appears in logs or error messages, and production validation rejects a NODE_KEY that does not decode to a valid Ed25519 key</description>
+      </feature>
+      <feature index="22" shape="core" depends_on="2,7"
+               creates="apps/api/src/app/migrate_backend.py,apps/api/tests/test_migrate_backend.py">
+        <description>System copies an existing node to new backends with python -m app.migrate_backend --from-db URL --to-db URL --from-storage fs --to-storage s3: it refuses a non-empty target database, copies every table in dependency order (event_log in seq order with raw bytes unchanged), copies every blob after checking its bytes hash to its CID, then re-verifies the whole hash chain and every blob on the target, and exits non-zero with an error message naming the first mismatched seq or CID; --dry-run reports counts without writing</description>
+      </feature>
+      <feature index="23" shape="core" depends_on="5,14,18"
+               creates=".github/workflows/ci.yml">
+        <description>System runs continuous integration on every push and pull request through .github/workflows/ci.yml: one job runs npm test, one runs npm run test:pg against a postgres service container (pgvector/pgvector:pg16) with TEST_DATABASE_URL exported, one builds the api and web images from deploy/containers, and one runs npm run infra:check, and any failing job marks the workflow failed</description>
+      </feature>
+    </category>
+
+    <category name="Postgres verification">
+      <feature index="19" shape="integration" depends_on="2,3,4,5,8,9,11"
+               touches_files="apps/api/src/app/**,apps/api/packages/**">
+        <description>System passes the whole API test suite on PostgreSQL via npm run test:pg as well as on SQLite via npm test (both return exit status 0), with every dialect difference the Postgres run exposes (raw SQL, boolean literals, timezone handling, case-sensitive LIKE, ordering ties, integer overflow, transaction isolation) fixed in application code rather than skipped or marked as expected failures</description>
+      </feature>
+    </category>
+
+    <category name="Documentation">
+      <feature index="20" shape="integration" depends_on="13,16,19,21,22,23"
+               touches_files="docs/tech_architect.md,CLAUDE.md"
+               creates="docs/deploy.md">
+        <description>System documents running and deploying Scholium: docs/deploy.md shows every environment variable grouped by backend, the local podman stack and its npm scripts, the Postgres test lane, the worker and sandbox processes, moving an existing node with app.migrate_backend, and an OpenTofu walkthrough for staging; docs/tech_architect.md sections 14 and 15 describe the backend interfaces and the deploy/ and infra/ directories; CLAUDE.md Build and Test lists test:pg, stack:up, stack:smoke and infra:check as opt-in commands outside npm test</description>
+      </feature>
+    </category>
+  </features_to_add>
+
+  <integration_points>
+    app/settings.py gains the backend selectors (DB_POOL_*, STORAGE_BACKEND, S3_*, JOBS_MODE, SANDBOX_*) read like every other setting, each added by the feature that uses it
+    app/db.py builds SQLite or PostgreSQL engines from DATABASE_URL
+    New package app/storage/ (ObjectStore interface, filesystem and s3 drivers) used by modules/content/store.py and modules/uploads/store.py
+    app/jobs.py keeps register/enqueue/run_pending; new entrypoint app/worker.py runs the claim loop and the periodic schedule
+    modules/ai_review/sandbox.py selects a runner; new entrypoint app/sandbox_service/ serves the remote runner
+    app/main.py adds GET /readyz and honours JOBS_MODE in the lifespan
+    New top-level compose.yaml, .env.example, deploy/ (Containerfiles, compose test file) and infra/ (OpenTofu)
+    Root package.json gains scripts only: test:pg, stack:up, stack:down, stack:logs, stack:reset, stack:smoke, infra:check
+  </integration_points>
+
+  <constraints>
+    <constraint>npm test must keep passing with no containers, no network and no cloud credentials: SQLite, STORAGE_BACKEND=fs, eager jobs and the existing sandbox behaviour stay the defaults, and podman-dependent checks (test:pg, stack:smoke, infra:check) are opt-in scripts outside npm test</constraint>
+    <constraint>All existing tests must stay green; change a test only where an API it exercises is deliberately replaced (blob_path), and replace it with an equivalent test of the new API</constraint>
+    <constraint>Application code under apps/ must not import any cloud-provider SDK other than boto3 used purely as an S3 API client; no Cloudflare-, AWS- or Hetzner-specific code or config outside infra/</constraint>
+    <constraint>The ledger's append-only and hash-chain guarantees, CID verification of stored and served bytes, the review escrow and every security header must behave identically on both database dialects and both storage backends</constraint>
+    <constraint>With STORAGE_BACKEND=fs the on-disk layout of CONTENT_DIR must stay readable by the new code so existing local data keeps working; no data migration step may be required for a SQLite + fs install</constraint>
+    <constraint>Container and compose files must work with rootless podman 4.9 and podman-compose, and with docker compose; images run as non-root users</constraint>
+    <constraint>Never add dependencies to the root package.json (scripts only); add API dependencies in apps/api/pyproject.toml and web dependencies with npm install --workspace apps/web; use npm, never pnpm or yarn</constraint>
+    <constraint>No secret values are committed: .env.example and OpenTofu variables carry placeholders only, and secret OpenTofu outputs are marked sensitive</constraint>
+  </constraints>
+
+  <success_criteria>
+    npm test is green with no containers running
+    npm run test:pg is green against PostgreSQL 16 under podman
+    npm run stack:up followed by npm run stack:smoke passes on a machine with podman and podman-compose
+    npm run infra:check passes with no cloud credentials
+    No provider-specific code exists under apps/
+  </success_criteria>
+</project_specification>
