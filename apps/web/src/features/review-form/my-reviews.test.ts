@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   loadMyReviews,
+  loadOwnReviewListing,
+  ownReviewOf,
   paperKey,
   parseMyReviews,
   sealedReviewOf,
@@ -32,8 +34,46 @@ const ROW = {
 describe("parseMyReviews", () => {
   it("reads the dashboard's my_reviews", () => {
     expect(parseMyReviews({ my_reviews: [ROW] })).toEqual([
-      { reviewCid: "bafycommit", paper: "sch:6sel-2dio-orm6", versionCid: "bafyv1", sealed: true },
+      {
+        reviewCid: "bafycommit",
+        paper: "sch:6sel-2dio-orm6",
+        versionCid: "bafyv1",
+        sealed: true,
+        revealed: false,
+        version: 1,
+        recommendation: null,
+        confidence: null,
+        scores: null,
+        revealedAt: null,
+      },
     ]);
+  });
+
+  it("reads a revealed review's content, so the form can show it read-only", () => {
+    const [review] = parseMyReviews({
+      my_reviews: [
+        {
+          ...ROW,
+          state: "revealed",
+          sealed: false,
+          revealed: true,
+          recommendation: "minor_revisions",
+          confidence: 3,
+          scores: { soundness: { score: 4, justification: "Sound." } },
+          revealedAt: "2027-03-02T05:00:00",
+        },
+      ],
+    });
+
+    expect(review).toMatchObject({
+      sealed: false,
+      revealed: true,
+      version: 1,
+      recommendation: "minor_revisions",
+      confidence: 3,
+      scores: { soundness: { score: 4, justification: "Sound." } },
+      revealedAt: "2027-03-02T05:00:00",
+    });
   });
 
   it("tells a revealed review from a sealed one", () => {
@@ -113,8 +153,14 @@ describe("sealedReviewOf", () => {
     paper: "sch:k3f9-q2xz-7mwd",
     versionCid: "v1",
     sealed: true,
+    revealed: false,
+    version: 1,
+    recommendation: null,
+    confidence: null,
+    scores: null,
+    revealedAt: null,
   };
-  const revealed: MyReview = { ...sealed, reviewCid: "b", sealed: false };
+  const revealed: MyReview = { ...sealed, reviewCid: "b", sealed: false, revealed: true };
   const other: MyReview = { ...sealed, reviewCid: "c", paper: "sch:6sel-2dio-orm6" };
 
   it("finds the sealed review of the paper, however either is spelled", () => {
@@ -130,5 +176,82 @@ describe("sealedReviewOf", () => {
   it("finds nothing for a blank paper id, or a review that names no paper", () => {
     expect(sealedReviewOf([sealed], "  ")).toBeNull();
     expect(sealedReviewOf([{ ...sealed, paper: null }], "sch:k3f9-q2xz-7mwd")).toBeNull();
+  });
+});
+
+describe("ownReviewOf", () => {
+  const base: MyReview = {
+    reviewCid: "a",
+    paper: "sch:k3f9-q2xz-7mwd",
+    versionCid: "v1",
+    sealed: false,
+    revealed: true,
+    version: 1,
+    recommendation: "sound_as_is",
+    confidence: "high",
+    scores: null,
+    revealedAt: "2027-03-02T05:00:00",
+  };
+
+  it("finds a revealed review of the paper, so the form never shows a blank Commit form", () => {
+    expect(ownReviewOf([base], "k3f9-q2xz-7mwd")).toBe(base);
+    expect(ownReviewOf([base], "sch:k3f9-q2xz-7mwd/v3")).toBe(base);
+  });
+
+  it("returns the sealed one too, and ignores another paper's review", () => {
+    const sealed = { ...base, reviewCid: "b", sealed: true, revealed: false };
+    expect(ownReviewOf([sealed], "sch:k3f9-q2xz-7mwd")).toBe(sealed);
+    expect(ownReviewOf([{ ...base, paper: "sch:6sel-2dio-orm6" }], "k3f9-q2xz-7mwd")).toBeNull();
+  });
+});
+
+describe("loadOwnReviewListing", () => {
+  it("reads the reviewer's latest review from the public listing", async () => {
+    const get = vi.fn(async () => ({
+      version: 2,
+      gate_open: true,
+      reviews: [
+        {
+          review_cid: "bafycommit",
+          reveal_cid: "bafyformal2",
+          version: 2,
+          recommendation: "minor_revisions",
+          confidence: "high",
+          scores: { soundness: { score: 4, justification: "Still sound." } },
+          report: "The revised report.",
+          revealed_at: "2027-04-01T00:00:00",
+        },
+      ],
+    }));
+
+    const detail = await loadOwnReviewListing(
+      "sch:6sel-2dio-orm6",
+      "bafycommit",
+      undefined,
+      { get },
+    );
+
+    expect(get).toHaveBeenCalledWith("/papers/sch%3A6sel-2dio-orm6/reviews", {
+      auth: false,
+      cache: "no-store",
+      signal: undefined,
+    });
+    expect(detail).toMatchObject({
+      reviewCid: "bafycommit",
+      formalCid: "bafyformal2",
+      version: 2,
+      recommendation: "minor_revisions",
+      scores: { soundness: { score: 4, justification: "Still sound." } },
+      report: "The revised report.",
+      gateOpen: true,
+    });
+  });
+
+  it("answers null when the listing does not carry the review", async () => {
+    const get = vi.fn(async () => ({ reviews: [{ review_cid: "someone-else" }] }));
+
+    await expect(
+      loadOwnReviewListing("sch:6sel-2dio-orm6", "bafycommit", undefined, { get }),
+    ).resolves.toBeNull();
   });
 });

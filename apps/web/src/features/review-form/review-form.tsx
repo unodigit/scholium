@@ -70,8 +70,15 @@ import {
   SEALED_SIGNED_NOTE,
   STYLOMETRY_TIP,
 } from "./identity";
-import { reviewSignInHref } from "./links";
-import { sealedReviewOf, type LoadMyReviews } from "./my-reviews";
+import { reviewHref, reviewSignInHref } from "./links";
+import {
+  loadOwnReviewListing,
+  ownReviewOf,
+  type LoadMyReviews,
+  type LoadOwnReview,
+  type MyReview,
+  type OwnReviewListing,
+} from "./my-reviews";
 import {
   REVEAL_GATE_CLOSED_NOTE,
   REVEAL_LABEL,
@@ -159,6 +166,24 @@ export const SEALED_ELSEWHERE_IMPORT_TEXT =
   "Import the review key file you downloaded in that browser to reveal your review from here.";
 
 /**
+ * The card a reviewer sees, in place of the blank form, when the API holds a
+ * revealed review of theirs for this paper (from any browser).
+ */
+export const OWN_REVIEW_HEADLINE = "You already reviewed this paper";
+
+/** What it says: the review below is theirs, and a second one is impossible. */
+export const OWN_REVIEW_TEXT =
+  "Your revealed review is shown below, read-only. A paper takes one review from each reviewer, so a second review cannot be committed here.";
+
+/** Said when the revealed review's written report is still sealed (REV-4). */
+export const OWN_REVIEW_REPORT_SEALED_TEXT =
+  "Your written report is sealed until two reviews are committed on this version, or 21 days after the first.";
+
+/** Said when updating needs the review key, which this browser does not hold. */
+export const OWN_REVIEW_KEY_NOTE =
+  "Updating the review is signed with the review key, which is kept only in the browser you committed from. Import your review key file to continue here.";
+
+/**
  * Said under the button so the reviewer knows what committing does. (A reviewer
  * who chose to sign with their name is told so as well: `COMMIT_NOTE_SIGNED`.)
  */
@@ -187,6 +212,8 @@ export interface ReviewFormProps {
   commit?: CommitReview;
   /** The earlier `review.formal` this review revises, when updating (REV-5). */
   prev?: string;
+  /** The paper's newest listed version, for "Update for v{latest}". */
+  latestVersion?: number | null;
   /** Replace the update flow (derive key, sign and send), for tests. */
   update?: UpdateReview;
   /** Replace the update flow (alias), for tests. */
@@ -197,6 +224,8 @@ export interface ReviewFormProps {
   loadGate?: LoadRevealGate;
   /** Replace the read of the reviewer's own reviews (the dashboard), for tests. */
   loadOwnReviews?: LoadMyReviews;
+  /** Replace the read of the reviewer's own review from the public listing. */
+  loadOwnReview?: LoadOwnReview;
   /** Replace what writes and reads the encrypted review key file, for tests. */
   keyFile?: KeyFileSeams;
 }
@@ -237,11 +266,13 @@ function ReviewFormBody({
   signInHref: signInHrefOverride,
   commit: commitOverride,
   prev,
+  latestVersion,
   update: updateOverride,
   revise: reviseOverride,
   reveal: revealOverride,
   loadGate,
   loadOwnReviews,
+  loadOwnReview,
   keyFile,
   session,
 }: ReviewFormProps & { session: ReviewSession }) {
@@ -342,8 +373,10 @@ function ReviewFormBody({
     paperId,
     loadOwnReviews,
   );
-  const sealedElsewhere =
-    own.status === "ready" && sealedReviewOf(own.reviews, paperId) !== null;
+  const ownReview =
+    own.status === "ready" ? ownReviewOf(own.reviews, paperId) : null;
+  const sealedElsewhere = ownReview !== null && ownReview.sealed;
+  const revealedElsewhere = ownReview !== null && ownReview.revealed;
 
   // When updating a revealed review, prefill the form with its current rubric.
   useEffect(() => {
@@ -428,10 +461,26 @@ function ReviewFormBody({
   }
 
   // Only while the form is at rest: a commit being signed is not interrupted.
+  if (revealedElsewhere && ownReview !== null && phase === "editing") {
+    // The reviewer already has a review of this paper and the API has it
+    // revealed: a blank Commit form is a dead end (one review per paper), so
+    // what they wrote is shown read-only instead.
+    return (
+      <RevealedElsewhereNotice
+        review={ownReview}
+        paperId={paperId}
+        latestVersion={latestVersion ?? null}
+        keyFile={keyFile}
+        loadOwnReview={loadOwnReview}
+      />
+    );
+  }
+
   if (sealedElsewhere && phase === "editing") {
     return (
       <SealedElsewhereNotice
         paperId={paperId}
+        version={ownReview?.version ?? null}
         keyFile={keyFile}
         onImported={(imported) => {
           setSealed(imported);
@@ -518,7 +567,13 @@ function ReviewFormBody({
   // A successful update becomes a read-only confirmation of what is now public,
   // so the same update cannot be submitted twice.
   if (updated !== null) {
-    return <UpdateConfirmed result={updated} />;
+    return (
+      <UpdateConfirmed
+        result={updated}
+        paperId={paperId}
+        loadGate={loadGate}
+      />
+    );
   }
 
   return (
@@ -827,9 +882,24 @@ function updatedReportUnsealDate(result: UpdateReviewResult): string | null {
  *
  * The copy must not overstate publication: the scores and recommendation are
  * public now, but the written report stays sealed until the version's gate
- * opens (REV-4).
+ * opens (REV-4). The gate is read *after* the update is posted, so an update
+ * that was the second review counted on the version says the report is public
+ * rather than promising a wait that has already ended.
  */
-export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
+export function UpdateConfirmed({
+  result,
+  paperId,
+  loadGate = loadRevealGate,
+  gate: givenGate,
+}: {
+  result: UpdateReviewResult;
+  /** The paper whose gate is read; without it the state is unknown. */
+  paperId?: string;
+  /** Replace the gate read, for tests. */
+  loadGate?: LoadRevealGate;
+  /** A gate state already read, for tests or a host. */
+  gate?: RevealGate | null;
+}) {
   const body = result.body;
   const scores = updatedScores(body.scores);
   const report =
@@ -837,6 +907,32 @@ export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
       ? body.report.trim()
       : null;
   const unsealDate = updatedReportUnsealDate(result);
+
+  const [readGate, setReadGate] = useState<RevealGate | null>(null);
+  useEffect(() => {
+    if (givenGate !== undefined) return;
+    if (paperId === undefined || paperId.trim() === "") return;
+    let cancelled = false;
+    const target = typeof body.target === "string" ? body.target : "";
+    loadGate(paperId).then(
+      (answer) => {
+        if (!cancelled) {
+          setReadGate(gateApplies(answer, target) ? answer : null);
+        }
+      },
+      () => {
+        if (!cancelled) setReadGate(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [givenGate, paperId, loadGate, body.target]);
+
+  const gate = givenGate !== undefined ? givenGate : readGate;
+  // Only a positive read says the report is public: an unread gate keeps the
+  // design's promise instead of inventing a state.
+  const reportPublic = gate !== null && gate.open;
 
   return (
     <section
@@ -849,9 +945,13 @@ export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
       <p className="rf-sealed-text">
         Your scores and recommendation are public now.
         {report !== null
-          ? ` Your written report unseals once 2 reviews are committed on this version, or ${
-              unsealDate !== null ? `on ${unsealDate}` : "21 days after the first commit"
-            }.`
+          ? reportPublic
+            ? " Your written report is public now."
+            : ` Your written report unseals once 2 reviews are committed on this version, or ${
+                unsealDate !== null
+                  ? `on ${unsealDate}`
+                  : "21 days after the first commit"
+              }.`
           : ""}
       </p>
       <p className="rf-updated__recommendation">
@@ -1161,10 +1261,13 @@ function sealedGateText(
  */
 export function SealedElsewhereNotice({
   paperId,
+  version = null,
   keyFile,
   onImported,
 }: {
   paperId: string;
+  /** The version the sealed review targets, when the dashboard names it. */
+  version?: number | null;
   /** Replace what reads the encrypted review key file, for tests. */
   keyFile?: KeyFileSeams;
   /** Called when the review key file is imported. */
@@ -1178,9 +1281,164 @@ export function SealedElsewhereNotice({
       data-state="sealed-elsewhere"
     >
       <h2 className="rf-form-title">{SEALED_ELSEWHERE_HEADLINE}</h2>
+      {version !== null ? (
+        <p className="rf-sealed-meta">{`Review of v${version} · Sealed`}</p>
+      ) : null}
       <p className="rf-sealed-text">{SEALED_ELSEWHERE_TEXT}</p>
       <p className="rf-sealed-text">{SEALED_ELSEWHERE_IMPORT_TEXT}</p>
       <ImportReviewKey paperId={paperId} seams={keyFile} onImported={onImported} />
+    </section>
+  );
+}
+
+/**
+ * What a reviewer sees, in place of the blank Commit form, when the API holds
+ * a *revealed* review of theirs for this paper.
+ *
+ * The dashboard says the review is theirs and whether it is revealed; the
+ * public listing supplies what it now says (the latest update's scores and
+ * report) and the `review.formal` cid an update names. Committing again is
+ * refused (one review per paper), so the card shows the review read-only and
+ * offers the only action left: update it against the newest version. That
+ * update is signed with the per-paper review key, so a browser without it is
+ * offered the key import.
+ */
+export function RevealedElsewhereNotice({
+  review,
+  paperId,
+  latestVersion = null,
+  keyFile,
+  loadOwnReview = loadOwnReviewListing,
+}: {
+  review: MyReview;
+  paperId: string;
+  /** The paper's newest listed version, for the update link. */
+  latestVersion?: number | null;
+  /** Replace what reads the encrypted review key file, for tests. */
+  keyFile?: KeyFileSeams;
+  /** Replace the read of the public listing, for tests. */
+  loadOwnReview?: LoadOwnReview;
+}) {
+  const [detail, setDetail] = useState<OwnReviewListing | null>(null);
+  // Whether this browser holds the review key an update needs. Read after
+  // mount: it is kept in IndexedDB, and there is nothing to say until it
+  // answers.
+  const [keyPresent, setKeyPresent] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (paperId.trim() === "") return;
+    let cancelled = false;
+    loadOwnReview(paperId, review.reviewCid).then(
+      (answer) => {
+        if (!cancelled) setDetail(answer);
+      },
+      () => {
+        if (!cancelled) setDetail(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [paperId, review.reviewCid, loadOwnReview]);
+
+  useEffect(() => {
+    if (paperId.trim() === "") return;
+    let cancelled = false;
+    void loadReviewKey(paperId).then((key) => {
+      if (!cancelled) setKeyPresent(key !== null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [paperId]);
+
+  const scores = updatedScores(detail?.scores ?? review.scores);
+  const recommendation = updatedRecommendation(
+    detail?.recommendation ?? review.recommendation,
+  );
+  const version = detail?.version ?? review.version;
+  const revealedAt = detail?.revealedAt ?? review.revealedAt;
+  const formalCid = detail?.formalCid ?? null;
+
+  const meta: string[] = [];
+  if (version !== null) meta.push(`Review of v${version}`);
+  meta.push(
+    revealedAt !== null ? `Revealed ${formatRevealDate(revealedAt)}` : "Revealed",
+  );
+
+  // An update's `prev` names the reviewer's newest `review.formal`; only the
+  // listing serves that cid, so the link waits for it.
+  const canUpdate =
+    formalCid !== null &&
+    version !== null &&
+    latestVersion !== null &&
+    version < latestVersion;
+  const keyNeeded = canUpdate && keyPresent === false;
+
+  return (
+    <section
+      className="rf-sealed rf-own-review"
+      role="status"
+      aria-live="polite"
+      data-state="revealed-elsewhere"
+    >
+      <h2 className="rf-form-title">{OWN_REVIEW_HEADLINE}</h2>
+      <p className="rf-sealed-text">{OWN_REVIEW_TEXT}</p>
+      {meta.length > 0 ? <p className="rf-sealed-meta">{meta.join(" · ")}</p> : null}
+      <p className="rf-updated__recommendation">{recommendation}</p>
+
+      {scores.length > 0 ? (
+        <dl className="rf-updated__rubric">
+          {scores.map((row) => (
+            <div className="rf-updated__row" key={row.id}>
+              <dt className="rf-updated__label">{row.label}</dt>
+              <dd className="rf-updated__reading">
+                {row.score} of {SCORE_MAX}
+              </dd>
+              {row.justification !== null ? (
+                <dd className="rf-updated__justification">{row.justification}</dd>
+              ) : null}
+            </div>
+          ))}
+        </dl>
+      ) : null}
+
+      {detail?.report !== null && detail?.report !== undefined ? (
+        <section className="rf-updated__report">
+          <h3 className="rf-updated__report-title">Written report</h3>
+          <ReportMarkdown source={detail.report} className="rf-updated__report-body" />
+        </section>
+      ) : detail !== null ? (
+        <p className="rf-sealed-text">
+          {detail.gateOpen ? "No written report." : OWN_REVIEW_REPORT_SEALED_TEXT}
+        </p>
+      ) : null}
+
+      {canUpdate && formalCid !== null && latestVersion !== null ? (
+        <p className="pr-update">
+          <a
+            className="pr-link"
+            href={`${reviewHref(paperId)}?prev=${encodeURIComponent(formalCid)}`}
+          >
+            {`Update for v${latestVersion}`}
+          </a>
+        </p>
+      ) : null}
+
+      {keyNeeded ? (
+        <>
+          <p className="rf-sealed-text">{OWN_REVIEW_KEY_NOTE}</p>
+          <ImportReviewKey
+            paperId={paperId}
+            seams={keyFile}
+            onImported={() => setKeyPresent(true)}
+          />
+        </>
+      ) : null}
+
+      {detail?.reviewCid !== null && detail?.reviewCid !== undefined ? (
+        <p className="rf-sealed-id mono-id">Review {detail.reviewCid}</p>
+      ) : null}
     </section>
   );
 }

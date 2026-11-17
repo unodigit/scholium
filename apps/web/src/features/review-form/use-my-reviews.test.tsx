@@ -14,6 +14,12 @@ const REVIEW: MyReview = {
   paper: "sch:6sel-2dio-orm6",
   versionCid: "bafyv1",
   sealed: true,
+  revealed: false,
+  version: 1,
+  recommendation: null,
+  confidence: null,
+  scores: null,
+  revealedAt: null,
 };
 
 describe("useMyReviews", () => {

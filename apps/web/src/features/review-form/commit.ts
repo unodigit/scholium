@@ -57,6 +57,13 @@ export const REVIEW_COMMIT_TYPE = "review.commit";
 /** Days until a sealed review is revealed if no second review arrives. */
 export const REVEAL_WINDOW_DAYS = 21;
 
+/** The problem type the API uses for a second review by the same person. */
+export const REVIEW_ALREADY_COMMITTED_TYPE =
+  "urn:scholium:problem:review-already-committed";
+
+/** What the form says when the API refuses a second review by the reviewer. */
+export const ALREADY_REVIEWED_TEXT = "You already reviewed this paper.";
+
 /** The heading after a successful commit (docs/design.md §5.5). */
 export const SEALED_HEADLINE = "Your review is sealed";
 
@@ -453,6 +460,16 @@ export function describeCommitError(error: unknown): CommitFailure {
       );
     }
     if (error.status === 409) {
+      // The problem type is the reliable signal; the API's sentence is read as
+      // well, so a node that predates the type still gets plain words.
+      if (
+        error.type === REVIEW_ALREADY_COMMITTED_TYPE ||
+        /one review per paper/i.test(error.detail)
+      ) {
+        // The API's detail names the target record; a reviewer needs neither
+        // the cid nor a second telling of the rule.
+        return failure(`${ALREADY_REVIEWED_TEXT} ${sent}`);
+      }
       return failure(
         error.detail
           ? `${error.detail} ${sent}`

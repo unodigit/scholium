@@ -99,7 +99,7 @@ describe("loadPaperPageData", () => {
         `discussion ${SHORT_ID}`,
         `manifest ${SHORT_ID} v2`,
         `reading ${SHORT_ID} v2`,
-        `reviews ${SHORT_ID}`,
+        `reviews ${SHORT_ID}/v2`,
         `versions ${SHORT_ID}`,
       ].sort(),
     );

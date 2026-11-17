@@ -1010,3 +1010,61 @@ describe("reporting a revealed review", () => {
     expect(flagged(fetchMock)).toEqual(["bafy-formal-1"]);
   });
 });
+
+describe("the listing follows the version being viewed", () => {
+  it("ignores a server read of another version and loads the version in the URL", async () => {
+    // The paper page's server read used to ask for the newest version; the tab
+    // is handed the version id, so a stale initial must not win.
+    const stale = parseReviews({
+      paper: PAPER,
+      version: 2,
+      gate_open: true,
+      reviews: [review({ review_cid: "bafyrei-v2", version: 2 })],
+    });
+    const fresh = parseReviews({
+      paper: PAPER,
+      version: 1,
+      gate_open: true,
+      reviews: [review({ review_cid: "bafyrei-v1", version: 1 })],
+    });
+    const load = vi.fn(async () => fresh);
+
+    render(
+      <ReviewsTab paperId={`${PAPER}/v1`} initial={stale} load={load} />,
+    );
+
+    expect(await screen.findByText(/Version 1/)).toBeTruthy();
+    expect(screen.queryByText(/Version 2/)).toBeNull();
+    expect(load).toHaveBeenCalledWith(`${PAPER}/v1`, expect.anything());
+  });
+
+  it("counts the reviews committed on this version apart from the earlier ones it carries", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: true,
+        reviews: [
+          review({
+            review_cid: "bafyrei-v2",
+            version: 2,
+            committed_at: "2027-03-02T04:00:00",
+            revealed_at: "2027-04-01T00:00:00",
+          }),
+          review({
+            review_cid: "bafyrei-v1",
+            version: 1,
+            committed_at: "2027-02-01T00:00:00",
+            revealed_at: "2027-02-02T00:00:00",
+          }),
+        ],
+      }),
+    );
+
+    const line = document.querySelector(".pr-summary-line") as HTMLElement;
+    expect(line.textContent).toContain("Version 2");
+    expect(line.textContent).toContain("1 review committed on this version");
+    expect(line.textContent).toContain("1 earlier-version review");
+    expect(line.textContent).not.toContain("2 reviews");
+  });
+});

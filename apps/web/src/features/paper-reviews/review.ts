@@ -780,11 +780,24 @@ function reviewOf(value: unknown, index: number): Review {
   };
 }
 
+/** How many of `reviews` are committed on `version` (not carried from earlier). */
+function committedCount(reviews: readonly Review[], version: number | null): number {
+  if (version === null) return reviews.length;
+  return reviews.filter(
+    (review) => review.version === null || review.version === version,
+  ).length;
+}
+
 /**
  * Parse a `GET /papers/{id}/reviews` payload. Never throws.
  *
  * A payload that is not an object (or is missing `reviews`) reads as a paper
  * with no reviews, not as a failure: a half-built node is a calm empty state.
+ *
+ * `count` is the number of reviews committed on the listed version. A later
+ * version's listing also carries revealed reviews of earlier versions, which
+ * are shown but are not commits on this one (and do not count toward its
+ * gate), so they never inflate the count the header and the margin use.
  */
 export function parseReviews(raw: unknown): ReviewsData {
   const root = Array.isArray(raw) ? { reviews: raw } : (recordOf(raw) ?? {});
@@ -807,7 +820,7 @@ export function parseReviews(raw: unknown): ReviewsData {
     version,
     gateOpen,
     reviews,
-    count: firstNumber(root.count) ?? reviews.length,
+    count: firstNumber(root.count) ?? committedCount(reviews, version),
   };
 }
 

@@ -136,9 +136,8 @@ class ReviewAlreadyCommitted(ProblemException, ValueError):
     def __init__(self, paper_cid: object, review_cid: object = None) -> None:
         self.paper_cid = paper_cid
         self.review_cid = review_cid
-        shown = _clip(paper_cid if isinstance(paper_cid, str) else repr(paper_cid))
         message = (
-            f"This reviewer has already committed a review of paper {shown!r}; "
+            "This paper already has a review from you; "
             "a person may commit one review per paper."
         )
         super().__init__(

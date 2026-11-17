@@ -396,6 +396,23 @@ describe("describeCommitError", () => {
     expect(failure.message).toBe("Already reviewed. Nothing was sent.");
   });
 
+  it("maps the one-review-per-paper refusal to plain words, without its record id", () => {
+    // The API carries the cid as a public extension member, but the sentence a
+    // reviewer reads must never print it.
+    const failure = describeCommitError(
+      new ApiError(409, {
+        type: "urn:scholium:problem:review-already-committed",
+        detail:
+          "This reviewer has already committed a review of paper 'bafyreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; a person may commit one review per paper.",
+      }),
+    );
+
+    expect(failure.message).toBe(
+      "You already reviewed this paper. Nothing was sent.",
+    );
+    expect(failure.message).not.toContain("bafyrei");
+  });
+
   it("passes the API's refusal for an author through", () => {
     const failure = describeCommitError(
       new ApiError(403, { detail: "Only tier-3 non-authors may review." }),

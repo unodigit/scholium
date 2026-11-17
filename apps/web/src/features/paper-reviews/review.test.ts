@@ -128,6 +128,30 @@ describe("parseReviews", () => {
     expect(data.reviews[0].label).toBe("Reviewer A");
   });
 
+  it("counts the reviews committed on the listed version, not the earlier ones it carries", () => {
+    const data = parseReviews({
+      version: 2,
+      reviews: [
+        { review_cid: "a", version: 2 },
+        { review_cid: "b", version: 1 },
+        { review_cid: "c" },
+      ],
+    });
+
+    // The carried review of v1 is shown but is not a commit on v2; one that
+    // names no version is counted, as it is on this version as far as the
+    // listing says.
+    expect(data.count).toBe(2);
+  });
+
+  it("counts every review for a listing that names no version", () => {
+    const data = parseReviews({
+      reviews: [{ review_cid: "a", version: 1 }, { review_cid: "b", version: 2 }],
+    });
+
+    expect(data.count).toBe(2);
+  });
+
   it("closes the gate when the server says so, even if a report slips through", () => {
     const data = parseReviews({
       gate_open: false,

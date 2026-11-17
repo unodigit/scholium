@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewCommitResult } from "./commit";
+import { reviewHref } from "./links";
 import { parseMyReviews, type LoadMyReviews } from "./my-reviews";
 import { PBKDF2_MIN_ITERATIONS } from "./passphrase-box";
 import {
@@ -95,6 +96,7 @@ function mine(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     state: "sealed",
     sealed: true,
     revealed: false,
+    version: 1,
     version_cid: "bafyversion",
     ...overrides,
   };
@@ -150,6 +152,7 @@ describe("a sealed review by this reviewer that this browser cannot reveal", () 
 
     const card = await screen.findByRole("heading", { name: SEALED_ELSEWHERE_HEADLINE });
     expect(card).toBeTruthy();
+    expect(screen.getByText("Review of v1 · Sealed")).toBeTruthy();
     expect(screen.getByText(SEALED_ELSEWHERE_TEXT)).toBeTruthy();
     expect(screen.getByRole("button", { name: IMPORT_REVIEW_KEY_LABEL })).toBeTruthy();
     // A commit would be refused (409), so there is nothing to commit with.
@@ -167,10 +170,10 @@ describe("a sealed review by this reviewer that this browser cannot reveal", () 
     expect(await screen.findByRole("heading", { name: SEALED_ELSEWHERE_HEADLINE })).toBeTruthy();
   });
 
-  it("keeps the Commit form when the reviewer has no sealed review of this paper", async () => {
+  it("keeps the Commit form when the reviewer has no review of this paper", async () => {
     const loadOwnReviews = dashboard(
       mine({ shortId: OTHER_PAPER }),
-      mine({ state: "revealed", sealed: false, revealed: true }),
+      mine({ shortId: OTHER_PAPER, state: "revealed", sealed: false, revealed: true }),
     );
 
     renderForm({ loadOwnReviews });
@@ -269,6 +272,102 @@ describe("a sealed review by this reviewer that this browser cannot reveal", () 
     expect(alert.textContent).toMatch(/different paper/);
     expect(loadSealedReview(OTHER_PAPER)).toBeNull();
     expect(await loadReviewKey(OTHER_PAPER)).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// A revealed review the API knows of and this browser cannot act on
+// --------------------------------------------------------------------------- //
+
+describe("a revealed review by this reviewer that this browser does not hold", () => {
+  function revealedMine(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return mine({
+      state: "revealed",
+      sealed: false,
+      revealed: true,
+      version: 1,
+      version_cid: "bafyv1",
+      recommendation: "minor_revisions",
+      confidence: 3,
+      scores: { soundness: { score: 3, justification: "Sound enough." } },
+      revealedAt: "2026-12-01T00:00:00",
+      ...overrides,
+    });
+  }
+
+  function listing(overrides: Record<string, unknown> = {}) {
+    return vi.fn(async () => ({
+      reviewCid: "bafycommitted",
+      formalCid: "bafyformal2",
+      version: 2,
+      recommendation: "minor_revisions",
+      confidence: "high",
+      scores: { soundness: { score: 4, justification: "Still sound." } },
+      report: "The updated report.",
+      revealedAt: "2026-12-02T00:00:00",
+      gateOpen: true,
+      ...overrides,
+    }));
+  }
+
+  it("shows the revealed review read-only, never a blank Commit form", async () => {
+    const loadOwnReview = listing();
+
+    renderForm({
+      loadOwnReviews: dashboard(revealedMine()),
+      loadOwnReview,
+      latestVersion: 2,
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "You already reviewed this paper" }),
+    ).toBeTruthy();
+    // No dead-end Commit form: a second review would be refused.
+    expect(screen.queryByRole("button", { name: COMMIT_LABEL })).toBeNull();
+    expect(screen.queryByRole("form", { name: "Your review" })).toBeNull();
+    // What the reviewer wrote, as the listing now serves it (the listing read
+    // resolves after the dashboard one, so wait for its content).
+    expect(await screen.findByText("4 of 5")).toBeTruthy();
+    expect(await screen.findByText("The updated report.")).toBeTruthy();
+    expect(await screen.findByText(/Review of v2/)).toBeTruthy();
+    expect(screen.getByText("Minor revisions")).toBeTruthy();
+    expect(loadOwnReview).toHaveBeenCalledWith(PAPER, "bafycommitted");
+  });
+
+  it("offers an update against the newest version, and the key import it needs", async () => {
+    renderForm({
+      loadOwnReviews: dashboard(revealedMine()),
+      loadOwnReview: listing({ version: 1, formalCid: "bafyformal1" }),
+      latestVersion: 2,
+    });
+
+    await screen.findByRole("heading", { name: "You already reviewed this paper" });
+
+    const link = await screen.findByRole("link", { name: "Update for v2" });
+    expect(link.getAttribute("href")).toBe(
+      `${reviewHref(PAPER)}?prev=bafyformal1`,
+    );
+    // The update is signed with the per-paper review key; a browser that does
+    // not hold it must import the file from the browser that committed.
+    expect(
+      await screen.findByRole("button", { name: IMPORT_REVIEW_KEY_LABEL }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: COMMIT_LABEL })).toBeNull();
+  });
+
+  it("does not offer an update when the reviewer already stands on the newest version", async () => {
+    renderForm({
+      loadOwnReviews: dashboard(revealedMine()),
+      loadOwnReview: listing({ version: 2 }),
+      latestVersion: 2,
+    });
+
+    await screen.findByRole("heading", { name: "You already reviewed this paper" });
+    // Wait for the listing's version, so "no update link" is a real answer
+    // and not just the state before the listing read resolves.
+    await screen.findByText(/Review of v2/);
+
+    expect(screen.queryByRole("link", { name: /Update for v/ })).toBeNull();
   });
 });
 

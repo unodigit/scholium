@@ -90,6 +90,7 @@ export function ReviewPage(props: ReviewPageProps) {
               signInHref={props.signInHref}
               commit={props.commit}
               prev={props.prev}
+              latestVersion={paper.version}
             />
           </div>
         </div>

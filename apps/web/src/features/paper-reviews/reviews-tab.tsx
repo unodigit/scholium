@@ -71,6 +71,7 @@ import {
 import {
   classifyReviewsError,
   loadReviews,
+  splitTarget,
   type LoadReviews,
   type ReviewsFailure,
 } from "./reviews-api";
@@ -138,7 +139,21 @@ export function ReviewsTab({
   load,
   loadOwnReviews,
 }: ReviewsTabProps) {
-  const [view, setView] = useState<View>(() => initialView(initial, initialError));
+  // The version the id names (`sch:…/v1`), or `null` for "the newest listed".
+  const expectedVersion = splitTarget(paperId).version;
+  // An `initial` read for a different version is not an answer about this one.
+  // The paper page's server read asks the API for the paper, which resolves to
+  // the newest listed version; the tab is handed the version id, so a read of
+  // v2 must not stand in for v1.
+  const initialApplies =
+    initial !== undefined &&
+    (expectedVersion === null ||
+      initial.version === null ||
+      initial.version === expectedVersion);
+
+  const [view, setView] = useState<View>(() =>
+    initialView(initialApplies ? initial : undefined, initialError),
+  );
   const [attempt, setAttempt] = useState(0);
 
   // A host may swap `paperId` (an SPA navigating between papers) without
@@ -146,7 +161,7 @@ export function ReviewsTab({
   const [sourceKey, setSourceKey] = useState(paperId);
   if (sourceKey !== paperId) {
     setSourceKey(paperId);
-    setView(initialView(initial, initialError));
+    setView(initialView(initialApplies ? initial : undefined, initialError));
     setAttempt(0);
   }
 
@@ -156,11 +171,12 @@ export function ReviewsTab({
     loadRef.current = load ?? loadReviews;
   }, [load]);
 
-  // The server already asked: with an answer, or with a failure the reader is
-  // looking at. Either way only a retry asks again, so an error the server
-  // reported is not replaced by a spinner the moment the page hydrates.
+  // The server already asked: with an answer about this version, or with a
+  // failure the reader is looking at. Either way only a retry asks again, so an
+  // error the server reported is not replaced by a spinner the moment the page
+  // hydrates. A read of another version is ignored and fetched again below.
   const serverAnswered =
-    initial !== undefined || (initialError !== undefined && initialError !== "");
+    initialApplies || (initialError !== undefined && initialError !== "");
 
   useEffect(() => {
     if (attempt === 0 && serverAnswered) return;
@@ -366,6 +382,10 @@ function ReviewsView({
   // How many reviews this version has, and how many of the listed ones are
   // still sealed. A carried review of an earlier version is not a commit here.
   const commits = committedOnVersion(reviews, data.version);
+  // The reviews of an earlier version a later listing carries are shown, but
+  // they are not commits on the version being listed and must never inflate
+  // its count.
+  const carried = reviews.length - commits;
   const sealed = reviews.filter((review) => !isRevealed(review)).length;
   const gateDate = reportGateDate(reviews, data.version);
   const earlierRevealed = reviews.filter(
@@ -412,7 +432,11 @@ function ReviewsView({
       <div className="pr-margin">
         <p className="pr-summary-line">
           {data.version !== null ? `Version ${data.version} · ` : ""}
-          {reviews.length} {reviews.length === 1 ? "review" : "reviews"}
+          {commits} {commits === 1 ? "review" : "reviews"}
+          {data.version !== null ? " committed on this version" : ""}
+          {carried > 0
+            ? ` · ${carried} earlier-version review${carried === 1 ? "" : "s"}`
+            : ""}
           {!data.gateOpen && sealed > 0 ? " · reports sealed" : ""}
         </p>
 

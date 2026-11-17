@@ -16,7 +16,7 @@ import {
   UPDATE_LABEL,
   ReviewForm,
 } from "./review-form";
-import type { UpdateReview, UpdateReviewResult } from "./reveal";
+import type { LoadRevealGate, UpdateReview, UpdateReviewResult } from "./reveal";
 import {
   RUBRIC_DIMENSIONS,
   emptyDraft,
@@ -496,6 +496,35 @@ describe("ReviewForm update", () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/now published on the paper/)).toBeNull();
+  });
+
+  it("says the report is public now when this update opened the gate", async () => {
+    // The gate read is taken after the update is posted, so it reflects the
+    // new state: this update was the second review counted on the version.
+    const loadGate: LoadRevealGate = vi.fn(async () => ({
+      open: true,
+      versionCid: "bafyversion",
+      committed: 2,
+    }));
+    const update = vi.fn<UpdateReview>(async () => updatedReview());
+
+    render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        prev="bafyformal"
+        update={update}
+        loadGate={loadGate}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+    await screen.findByRole("heading", { name: "Your review is updated" });
+
+    expect(screen.getByText(/Your written report is public now/)).toBeTruthy();
+    expect(screen.queryByText(/unseals once 2 reviews/)).toBeNull();
+    expect(loadGate).toHaveBeenCalledWith("sch:6sel-2dio-orm6");
   });
 
   it("renders the confirmed report as Markdown, not with its asterisks", async () => {

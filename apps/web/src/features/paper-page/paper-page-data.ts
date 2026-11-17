@@ -146,7 +146,10 @@ export async function loadPaperPageData(
       (error) => describeMetaError(error, "files"),
     ),
     part(
-      () => loaders.reviews(shortId),
+      // The version on screen, not the paper: a `/v1` URL must list v1's
+      // reviews, not the newest listed version's (which also carries earlier
+      // ones and has a gate of its own).
+      () => loaders.reviews(`${shortId}/v${version}`),
       (error) => classifyReviewsError(error).message,
       // A paper with no reviews answers 404 here. That is the calm
       // "no reviews yet" state, not a failure (docs/design.md §1, principle 7).

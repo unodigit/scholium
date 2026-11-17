@@ -219,6 +219,30 @@ def test_second_commit_by_the_same_reviewer_is_a_conflict():
     assert second.status_code == 409, second.text
 
 
+def test_the_one_review_per_paper_refusal_names_no_record_id():
+    """The 409 is read by the reviewer, so its detail must be human.
+
+    The cid of the review's target is still served as the ``paper_cid``
+    extension member (a public record), but the ``detail`` sentence the review
+    form shows must not print a raw record id at the reviewer.
+    """
+    reviewer = Reviewer()
+    paper = Paper()
+
+    assert reviewer.post_commit(paper).status_code == 201
+    second = reviewer.post_commit(paper)
+
+    assert second.status_code == 409, second.text
+    body = second.json()
+    detail = body["detail"]
+    assert body["type"] == "urn:scholium:problem:review-already-committed"
+    assert paper.paper_cid not in detail
+    assert paper.version_cid not in detail
+    assert "one review per paper" in detail
+    # The extension member still names the public record for a client.
+    assert body["paper_cid"] == paper.paper_cid
+
+
 def test_another_reviewer_may_still_commit_on_the_same_paper():
     paper = Paper()
     first, second = Reviewer(), Reviewer()
