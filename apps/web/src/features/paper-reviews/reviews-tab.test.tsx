@@ -19,6 +19,15 @@ import { emptyReviews, parseReviews, type ReviewsData } from "./review";
 
 const PAPER = "sch:k3f9-q2xz-7mwd";
 
+/** What the reader's own clock calls the day an instant fell on. */
+function localDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 function review(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     review_cid: "bafyrei-a",
@@ -57,15 +66,30 @@ afterEach(() => {
 
 describe("a review card", () => {
   it("shows the reviewer label, recommendation and date", () => {
-    renderTab(
+    const { container } = renderTab(
       dataOf(review({ report: "The paper is careful and the code runs." })),
     );
 
     expect(screen.getByRole("heading", { name: "Reviewer A" })).toBeTruthy();
     expect(screen.getByText("Minor revisions")).toBeTruthy();
     expect(screen.getByText(/Anonymous reviewer/)).toBeTruthy();
-    expect(screen.getByText(/Reviewed 2 Mar 2027/)).toBeTruthy();
+    // The date is a <time> element, so read the line's whole text.
+    expect(container.querySelector(".pr-card__meta")?.textContent).toContain(
+      "Reviewed 2 Mar 2027",
+    );
     expect(screen.getByText(/Confidence: High/)).toBeTruthy();
+  });
+
+  it("shows the review's date in the reader's zone, not the UTC date", () => {
+    // 00:45 on 18 Nov in AEDT: a UTC formatter says 17 Nov (bug_spec_verify6).
+    const committedAt = "2026-11-17T13:45:00Z";
+    const { container } = renderTab(dataOf(review({ committed_at: committedAt })));
+
+    const meta = container.querySelector(".pr-card__meta");
+    expect(meta?.textContent).toContain(`Reviewed ${localDate(committedAt)}`);
+    if (localDate(committedAt) !== "17 Nov 2026") {
+      expect(meta?.textContent).not.toContain("Reviewed 17 Nov 2026");
+    }
   });
 
   it("shows rubric dots and the text equivalent of every score", () => {
@@ -170,7 +194,9 @@ describe("a review card", () => {
     expect(details).not.toBeNull();
     expect(within(details as HTMLElement).getByText(/Earlier revisions/)).toBeTruthy();
     expect(within(details as HTMLElement).getByText("Minor revisions")).toBeTruthy();
-    expect(within(details as HTMLElement).getByText(/v1 · 2 Mar 2027/)).toBeTruthy();
+    expect(
+      (details as HTMLElement).querySelector(".pr-history__meta")?.textContent,
+    ).toContain("v1 · 2 Mar 2027");
   });
 
   it("does not label a revealed review of an earlier version as sealed", () => {
@@ -235,7 +261,9 @@ describe("a review card", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Author reply" })).toBeTruthy();
-    expect(screen.getByText(/Mei Zhang · v2 · 5 Mar 2027/)).toBeTruthy();
+    expect(container.querySelector(".pr-reply__meta")?.textContent).toContain(
+      "Mei Zhang · v2 · 5 Mar 2027",
+    );
     expect(screen.getByText("Section 3.2 names the baseline.")).toBeTruthy();
     expect(screen.getByText("Table 4 now reports the seeds.")).toBeTruthy();
 
@@ -615,7 +643,9 @@ describe("author responses, as GET /papers/{id}/reviews serves them", () => {
     expect(screen.getAllByText("Section 3.2 names the baseline.")).toHaveLength(1);
     expect(screen.getAllByText("Table 4 now reports the seeds.")).toHaveLength(1);
     // The signer is a DID, which is not a name: the byline says "The authors".
-    expect(screen.getByText("The authors · 5 Mar 2027")).toBeTruthy();
+    expect(container.querySelector(".pr-reply__meta")?.textContent).toContain(
+      "The authors · 5 Mar 2027",
+    );
     for (const dumped of ["Response cid", "Responsecid", "Cid", "Id", "Review cid"]) {
       expect(screen.queryByText(dumped)).toBeNull();
     }

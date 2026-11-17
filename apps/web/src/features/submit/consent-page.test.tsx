@@ -163,6 +163,27 @@ describe("ConsentPage — reviewing the version", () => {
     expect(record.getAttribute("href")).toMatch(new RegExp(`/v1/records/${VERSION_CID}$`));
   });
 
+  it("writes the version's signing date in the reader's zone", async () => {
+    // 00:45 on 18 Nov in AEDT is still 17 Nov in UTC; the co-author was named
+    // on the version on the 18th (bug_spec_verify6).
+    const created = "2026-11-17T13:45:00Z";
+    const when = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(created));
+    renderPage(B, WAITING, {
+      loadVersion: vi.fn().mockResolvedValue(loadedVersion({ created })),
+    });
+    await acceptButton();
+
+    const article = screen.getByRole("article");
+    expect(article.textContent).toContain(`on ${when}`);
+    if (when !== "17 Nov 2026") {
+      expect(article.textContent).not.toContain("on 17 Nov 2026");
+    }
+  });
+
   it("lists each author with their roles and status, and marks which one is you", async () => {
     renderPage(B);
     await acceptButton();

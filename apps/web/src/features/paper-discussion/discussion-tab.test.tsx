@@ -20,6 +20,15 @@ const ALICE = "did:key:z6MkaliceAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const BOB = "did:key:z6MkbobBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 const ME = "did:key:z6MkmeMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
 
+/** What the reader's own clock calls the day an instant fell on. */
+function localDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 function post(cid: string, overrides: Partial<DiscussionPost> = {}): DiscussionPost {
   return {
     cid,
@@ -186,6 +195,22 @@ describe("DiscussionTab: what a post shows", () => {
     const time = card("loud").querySelector("time");
     expect(time?.getAttribute("datetime")).toBe("2026-01-05T00:00:00Z");
     expect(time?.getAttribute("title")).toBe("5 Jan 2026 00:00 UTC");
+  });
+
+  it("shows a post's time in the reader's zone, with the UTC instant on hover", () => {
+    // 00:45 on 18 Nov in AEDT is still 17 Nov in UTC: the post was written on
+    // the reader's 18th and must say so (bug_spec_verify6).
+    const createdAt = "2026-11-17T13:45:00Z";
+    renderTab({}, {
+      paper: SHORT,
+      paperCid: "bafyrei-genesis",
+      threads: [post("near-midnight", { createdAt })],
+    });
+
+    const time = document.querySelector('li[data-post="near-midnight"] time');
+    expect(time?.textContent).toBe(localDate(createdAt));
+    expect(time?.getAttribute("datetime")).toBe(createdAt);
+    expect(time?.getAttribute("title")).toBe("17 Nov 2026 13:45 UTC");
   });
 
   it("does not print 'No helpful marks yet' under every post", () => {

@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 
 import { ApiError, NetworkError, api } from "../../lib/api";
+import { formatDate } from "../ui-kit/format-date";
 import { PdfView } from "../paper-page/pdf-view";
 import { loadPdfjsWithSession } from "../paper-page/reading";
 import { ConsentTracker } from "./consent-tracker";
@@ -31,7 +32,6 @@ import {
   consentTrackerEntries,
   describeConsentError,
   fileUrl,
-  formatSigned,
   parseVersionParam,
   recordUrl,
   submitConsent,
@@ -117,7 +117,7 @@ function VersionCard({ version, names }: { version: ConsentVersion; names: Profi
   // no name to show.
   const submitterName = submitter?.name ?? names[version.submittedBy] ?? null;
   const submittedBy = submitterName ?? (version.submittedBy === "" ? null : shortDid(version.submittedBy));
-  const when = formatSigned(version.created);
+  const when = formatDate(version.created);
 
   return (
     <article className="cp-version" aria-labelledby="cp-version-title">

@@ -32,11 +32,10 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
+import { LocalDate } from "../ui-kit/format-date";
 import { ComposeForm } from "./compose-form";
 import {
   describeActionError,
-  formatDate,
-  formatDateTime,
   helpfulLabel,
   postAuthorLabel,
   profilePath,
@@ -172,13 +171,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
             </p>
           )}
           {post.createdAt !== null ? (
-            <time
-              className="pd-post__time"
-              dateTime={post.createdAt}
-              title={formatDateTime(post.createdAt)}
-            >
-              {formatDate(post.createdAt)}
-            </time>
+            <LocalDate className="pd-post__time" value={post.createdAt} />
           ) : null}
         </header>
 

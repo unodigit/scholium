@@ -14,6 +14,7 @@ import PaperNotFoundBoundary from "../../app/(paper-page)/p/[id]/not-found";
 import type { ConsentReport } from "../submit/consents";
 import { announceAppealFiled } from "./appeal-dialog";
 import { PaperAccess, PaperAccessView } from "./paper-access";
+import { bannerWithAppeal } from "./paper-access-view";
 import {
   ALICE,
   BARE_ID,
@@ -662,6 +663,35 @@ describe("an appeal filed while the page is open", () => {
     });
 
     expect(banner.textContent).toContain("You can appeal once.");
+  });
+});
+
+describe("the appeal banner's dates", () => {
+  it("writes them in the reader's zone, not the UTC date", () => {
+    // 00:45 on 18 Nov in AEDT is still 17 Nov in UTC: the author filed the
+    // appeal on their 18th and the banner must say so (bug_spec_verify6).
+    const entries = [versionEntry(), decisionEntry("hold", 10)];
+    const decision = latestDecision(entries);
+    const banner = unlistedBanner("held", decision);
+    const filedAt = "2026-11-17T13:45:00Z";
+    const shown = bannerWithAppeal(banner, decision, {
+      appealCid: "bafyrei-appeal-11",
+      decisionCid: decision?.decisionCid ?? "",
+      filedAt,
+      outcome: null,
+      verdictCid: null,
+      decidedAt: null,
+    });
+
+    const when = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(new Date(filedAt));
+    expect(shown.detail).toContain(`Appeal filed on ${when} — awaiting panel.`);
+    if (when !== "17 November 2026") {
+      expect(shown.detail).not.toContain("17 November 2026");
+    }
   });
 });
 

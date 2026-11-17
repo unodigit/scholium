@@ -40,7 +40,7 @@
  * seam is injectable for tests.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   ReviewCardActions,
@@ -51,10 +51,10 @@ import {
 import { ReportMarkdown } from "../review-form/report-markdown";
 import { SCORE_MAX } from "../review-form/rubric";
 import { EmptyState, Icon, type IconName } from "../ui-kit";
+import { LocalDate, formatDate } from "../ui-kit/format-date";
 import { tokenStore } from "../../lib/api";
 import {
   dimensionMedians,
-  formatReviewDate,
   isRevealed,
   medianText,
   recommendationTone,
@@ -354,14 +354,29 @@ function earlierRevisions(review: Review): readonly ReviewRevision[] {
   return history.length > 1 ? history.slice(0, -1) : [];
 }
 
+/** A meta line's parts, with the product's ` · ` between them. */
+function separated(parts: readonly ReactNode[]): ReactNode {
+  return parts.map((part, index) => (
+    <Fragment key={index}>
+      {index === 0 ? null : " · "}
+      {part}
+    </Fragment>
+  ));
+}
+
 /** `v1 · 2 Mar 2027` — how one earlier revision is labelled. */
-function revisionMeta(revision: ReviewRevision): string {
-  const parts: string[] = [
-    revision.version !== null ? `v${revision.version}` : "Earlier version",
-  ];
-  const date = formatReviewDate(revision.revealedAt);
-  if (date !== null) parts.push(date);
-  return parts.join(" · ");
+function RevisionMeta({ revision }: { revision: ReviewRevision }) {
+  return (
+    <>
+      {revision.version !== null ? `v${revision.version}` : "Earlier version"}
+      {formatDate(revision.revealedAt) !== null ? (
+        <>
+          {" · "}
+          <LocalDate value={revision.revealedAt} />
+        </>
+      ) : null}
+    </>
+  );
 }
 
 /** The loaded panel: the summary bar, the gate note, and the review cards. */
@@ -563,7 +578,6 @@ function ReviewCard({
 }) {
   const headingId = `pr-review-${review.key.replace(/[^a-z0-9]+/gi, "-").slice(-48)}`;
   const tone = recommendationTone(review.recommendation);
-  const date = formatReviewDate(review.committedAt);
   const earlier = isEarlierRevealed(review, latestVersion);
   const revealed = isRevealed(review);
   const revisions = earlierRevisions(review);
@@ -580,8 +594,14 @@ function ReviewCard({
   const [reportOpen, setReportOpen] = useState(false);
   const [reported, setReported] = useState<ReportReason | null>(null);
 
-  const meta: string[] = ["Anonymous reviewer"];
-  if (date !== null) meta.push(`Reviewed ${date}`);
+  const meta: ReactNode[] = ["Anonymous reviewer"];
+  if (review.committedAt !== null && formatDate(review.committedAt) !== null) {
+    meta.push(
+      <>
+        Reviewed <LocalDate value={review.committedAt} />
+      </>,
+    );
+  }
   if (review.confidenceLabel !== null) meta.push(`Confidence: ${review.confidenceLabel}`);
   // A review of an earlier version is listed beside the latest's: say which.
   if (earlier) meta.push(`Review of v${review.version}`);
@@ -592,7 +612,7 @@ function ReviewCard({
         <h4 className="pr-card__label" id={headingId}>
           {review.label}
         </h4>
-        <p className="pr-card__meta">{meta.join(" · ")}</p>
+        <p className="pr-card__meta">{separated(meta)}</p>
         {revised ? (
           <p className="pr-card__flag">
             <span className="pr-revised">Revised</span>
@@ -626,7 +646,9 @@ function ReviewCard({
           <ol className="pr-history__list">
             {revisions.map((revision) => (
               <li className="pr-history__item" key={revision.key}>
-                <p className="pr-history__meta">{revisionMeta(revision)}</p>
+                <p className="pr-history__meta">
+                  <RevisionMeta revision={revision} />
+                </p>
                 <p className="pr-history__recommendation">
                   {revision.recommendationLabel}
                 </p>
@@ -766,14 +788,15 @@ function RubricRow({ score }: { score: ReviewScore }) {
 
 /** An author's reply, point by point where the endpoint gives dimensions. */
 function ReplyBlock({ reply }: { reply: AuthorReply }) {
-  const meta = [reply.author ?? "The authors"];
+  const meta: ReactNode[] = [reply.author ?? "The authors"];
   if (reply.version !== null) meta.push(`v${reply.version}`);
-  const date = formatReviewDate(reply.createdAt);
-  if (date !== null) meta.push(date);
+  if (formatDate(reply.createdAt) !== null) {
+    meta.push(<LocalDate value={reply.createdAt} />);
+  }
 
   return (
     <div className="pr-reply">
-      <p className="pr-reply__meta">{meta.join(" · ")}</p>
+      <p className="pr-reply__meta">{separated(meta)}</p>
       {reply.text !== null ? <p className="pr-reply__text">{reply.text}</p> : null}
       {reply.items.length > 0 ? (
         <dl className="pr-reply__items">

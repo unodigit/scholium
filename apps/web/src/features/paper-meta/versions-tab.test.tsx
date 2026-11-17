@@ -35,6 +35,15 @@ const TIMELINE: VersionsData = {
 
 afterEach(cleanup);
 
+/** What the reader's own clock calls the day an instant fell on. */
+function localDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 describe("VersionsTab", () => {
   it("shows the timeline oldest first, with change notes and anchor status", () => {
     render(<VersionsTab paperId={SHORT} initial={TIMELINE} />);
@@ -52,6 +61,27 @@ describe("VersionsTab", () => {
     // The row says *why* it is pending, in the same words as the Proof tab.
     expect(rows[1].textContent).toContain("Anchoring is not enabled on this node yet");
     expect(rows[1].textContent).toContain("1 Feb 2026");
+  });
+
+  it("shows a version's listing date in the reader's zone, with the instant on hover", () => {
+    // 00:45 on 18 Nov in AEDT is still 17 Nov in UTC: a reader east of UTC
+    // must see the day they acted, not the server's day (bug_spec_verify6).
+    const listedAt = "2026-11-17T13:45:00Z";
+    render(
+      <VersionsTab
+        paperId={SHORT}
+        initial={{
+          ...TIMELINE,
+          versions: [{ ...TIMELINE.versions[1], n: 1, listedAt }],
+        }}
+      />,
+    );
+
+    const time = screen.getByText(localDate(listedAt)).closest("time");
+    expect(time).not.toBeNull();
+    expect(time?.getAttribute("datetime")).toBe(listedAt);
+    // The full UTC instant is still available on hover.
+    expect(time?.getAttribute("title")).toBe("17 Nov 2026 13:45 UTC");
   });
 
   it("links each version to the paper page's version URL", () => {

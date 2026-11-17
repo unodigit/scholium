@@ -36,11 +36,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
+import { LocalDate } from "../ui-kit/format-date";
 import {
   anchorSpec,
   changeNoteText,
   describeMetaError,
-  formatDate,
   loadVersions,
   versionPath,
   type LoadVersions,
@@ -221,9 +221,7 @@ function Timeline({ data, paperId, currentVersion, versionHref, compareHref }: T
                   ) : null}
                 </p>
                 {version.listedAt !== null ? (
-                  <time className="pm-version__date" dateTime={version.listedAt}>
-                    {formatDate(version.listedAt)}
-                  </time>
+                  <LocalDate className="pm-version__date" value={version.listedAt} />
                 ) : null}
               </div>
 

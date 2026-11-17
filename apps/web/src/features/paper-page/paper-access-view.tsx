@@ -11,7 +11,8 @@
 
 import { policyHref } from "../policies-page";
 import { DecisionBanner, Icon, RecordLink } from "../ui-kit";
-import { appealStatus, type FiledAppeal } from "./appeal-dialog";
+import { formatDate } from "../ui-kit/format-date";
+import type { FiledAppeal } from "./appeal-dialog";
 import type {
   ModerationFact,
   TombstoneFacts,
@@ -83,6 +84,44 @@ export function PaperTombstoneView({ facts }: PaperTombstoneViewProps) {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * How a panel's outcome reads after "the panel" in the author's banner. The
+ * vocabulary is `appeal.decision`'s schema enum. Kept in step with
+ * `appeal-dialog.appealStatus`, whose UTC wording is the record's, not the
+ * reader's.
+ */
+const OUTCOME_PHRASES: Readonly<Record<string, string>> = {
+  upheld: "upheld the decision",
+  overturned: "overturned the decision",
+  modified: "modified the decision",
+  remanded: "sent the decision back to the moderators",
+  granted: "granted the appeal",
+  grant: "granted the appeal",
+  denied: "denied the appeal",
+  deny: "denied the appeal",
+  allowed: "allowed the appeal",
+  dismissed: "dismissed the appeal",
+};
+
+/**
+ * The banner sentence for a filed appeal, with its dates in the reader's own
+ * zone (`18 November 2026`, the long month the paper page's moderation copy
+ * uses). A reader east of UTC who filed at 00:45 must not be told they filed
+ * the previous day (bug_spec_verify6).
+ */
+function appealDetail(appeal: FiledAppeal): string {
+  const filed = formatDate(appeal.filedAt, { month: "long" });
+  const opened = filed === null ? "Appeal filed" : `Appeal filed on ${filed}`;
+  if (appeal.outcome === null) {
+    return `${opened} — awaiting panel.`;
+  }
+  const decided = formatDate(appeal.decidedAt, { month: "long" });
+  const phrase =
+    OUTCOME_PHRASES[appeal.outcome] ??
+    `recorded the outcome “${appeal.outcome}”`;
+  return `${opened} — the panel ${phrase}${decided === null ? "" : ` on ${decided}`}.`;
+}
+
+/**
  * The banner, with what the author's appeal says (design.md §8).
  *
  * A refusal banner invites an appeal only until one is filed: afterwards it
@@ -107,11 +146,11 @@ export function bannerWithAppeal(
     const reason = decision.reason?.trim().replace(/[.!?…]+$/, "") ?? "";
     return {
       ...banner,
-      detail: `${reason === "" ? "" : `${reason}. `}${appealStatus(appeal)}`,
+      detail: `${reason === "" ? "" : `${reason}. `}${appealDetail(appeal)}`,
     };
   }
   if (decision.action === "release") {
-    return { ...banner, detail: `${banner.detail} ${appealStatus(appeal)}` };
+    return { ...banner, detail: `${banner.detail} ${appealDetail(appeal)}` };
   }
   return banner;
 }
