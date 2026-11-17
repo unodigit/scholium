@@ -22,3 +22,38 @@ os.environ.setdefault("AI_PROVIDER", "fake")
 # The shared app would otherwise throttle the whole suite; the throttle has its own tests.
 os.environ["RATE_LIMIT_ENABLED"] = "0"
 os.environ.pop("SCHOLIUM_ENV", None)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _ledger_subscribers_restored():
+    """Give every test the ledger subscribers it started with, and put them back.
+
+    Plugins subscribe to the ledger once, when they are imported (the flags
+    plugin's flag sync, for one). Some tests clear or replace subscribers to
+    isolate what they observe; without this, whichever test an xdist worker ran
+    earlier decides whether a later test in another module still has, say, the
+    subscriber that settles flags when a moderation decision lands.
+    """
+    try:
+        from app.modules.ledger import service as ledger_service
+    except Exception:  # pragma: no cover - a test path that never imports app
+        yield
+        return
+    with ledger_service._subscribers_lock:
+        saved = {kind: list(bucket) for kind, bucket in ledger_service._subscribers.items()}
+    yield
+    with ledger_service._subscribers_lock:
+        # A plugin first imported during the test subscribed at import time and
+        # will never subscribe again: keep those. Drop what tests registered.
+        for kind, bucket in ledger_service._subscribers.items():
+            for callback in bucket:
+                module = getattr(callback, "__module__", "") or ""
+                is_test_code = ".tests." in module or module.rsplit(".", 1)[-1].startswith("test_")
+                kept = saved.setdefault(kind, [])
+                if not is_test_code and callback not in kept:
+                    kept.append(callback)
+        ledger_service._subscribers.clear()
+        ledger_service._subscribers.update({kind: list(bucket) for kind, bucket in saved.items() if bucket})
