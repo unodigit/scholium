@@ -137,15 +137,60 @@ def citation_key(record: ListedPaper) -> str:
     return f"{stem}-v{int(record.version.n)}"
 
 
+_HONORIFICS = {
+    "dr",
+    "prof",
+    "professor",
+    "mr",
+    "mrs",
+    "ms",
+    "mx",
+    "miss",
+    "sir",
+    "dame",
+    "rev",
+    "reverend",
+    "hon",
+    "honourable",
+    "honorable",
+    "lord",
+    "lady",
+    "capt",
+    "captain",
+    "col",
+    "colonel",
+    "gen",
+    "general",
+    "maj",
+    "major",
+    "sgt",
+    "sergeant",
+    "lt",
+    "lieutenant",
+}
+
+
+def _strip_honorifics(name: str) -> str:
+    """Drop leading honorific prefixes (``Dr.``, ``Prof.``, ...) from ``name``."""
+    words = name.split()
+    while words and words[0].lower().rstrip(".") in _HONORIFICS:
+        words.pop(0)
+    return " ".join(words)
+
+
 def _family_first(name: str) -> str:
     """A profile display name as ``Family, Given``.
 
     The last whitespace-separated word is read as the family name and the rest
     as given names, the convention a profile's single free-text name field
     carries ("Ada Lovelace" becomes "Lovelace, Ada").  A name that already
-    holds a comma, or a single word, is left exactly as saved.
+    holds a comma, or a single word, is left exactly as saved.  Honorific
+    prefixes (``Dr.``, ``Prof.``, ...) are stripped first, so "Dr. Jonas
+    Keller" becomes "Keller, Jonas".
     """
-    text = _plain(name)
+    text = _strip_honorifics(_plain(name))
+    if not text:
+        text = _plain(name)
     if "," in text:
         return text
     words = text.split()

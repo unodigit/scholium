@@ -413,7 +413,6 @@ function NoticePanel({
   paperId,
   paperCid,
   versionCid,
-  version,
   sign,
   submit,
   signInHref,
@@ -583,8 +582,8 @@ function NoticePanel({
         </div>
         <p id={ledeId} className="ppg-dialog-lede">
           A notice is signed into the public record and shown on every version
-          of <span className="ppg-notice-id">{paperId}</span>, including v
-          {version}. Say what happened and why readers should know.
+          of <span className="ppg-notice-id">{paperId}</span>. Say what happened
+          and why readers should know.
         </p>
 
         {issued !== null ? (

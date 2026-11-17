@@ -39,6 +39,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -284,6 +285,62 @@ def _ordered(counts: dict[str, int]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
+_BARE_ID_PATTERN = re.compile(
+    r"^[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}$", re.IGNORECASE
+)
+
+
+def _short_id_for_query(query: str) -> Optional[str]:
+    """A canonical ``sch:`` short id when ``query`` is an id (bare or prefixed).
+
+    Returns ``None`` when ``query`` is not id-shaped or its checksum is bad, so
+    an ordinary search is unaffected.
+    """
+    from scholium_record_core import parse_short_id
+
+    candidate = query.strip()
+    candidates: list[str] = []
+    if _BARE_ID_PATTERN.fullmatch(candidate):
+        candidates.append("sch:" + candidate)
+    candidates.append(candidate)
+    for value in candidates:
+        try:
+            return parse_short_id(value)
+        except ValueError:
+            continue
+    return None
+
+
+def _priority_rows(short_id: str) -> list[Any]:
+    """The listed versions of the paper named by ``short_id``, as FTS-like rows."""
+    from app.modules import submissions
+
+    submissions.ensure_tables()
+    paper = submissions.get_paper_by_short_id(short_id)
+    if paper is None:
+        return []
+    rows: list[Any] = []
+    for version in submissions.versions_for_paper(paper.paper_cid):
+        if getattr(version, "state", None) != LISTED:
+            continue
+        rows.append(
+            SimpleNamespace(
+                version_cid=version.version_cid,
+                paper_cid=version.paper_cid,
+                n=version.n,
+                title=version.title,
+                abstract=version.abstract,
+                listed_at=version.listed_at,
+                manifest_cid=version.manifest_cid,
+                short_id=paper.short_id,
+                categories=paper.categories,
+                status=paper.status,
+                rank=-1000.0,
+            )
+        )
+    return rows
+
+
 def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult:
     """The ranked listed versions matching ``query``, with facets.
 
@@ -294,15 +351,27 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
     criteria = SearchQuery(**filters)
     words = tokenize(query)
     match = _match_expression(words)
-    if match is None:
-        return SearchResult(query=query, total=0, hits=[], facets=FacetCounts())
 
     ensure_tables()
     if not ensure_table():
         return SearchResult(query=query, total=0, hits=[], facets=FacetCounts())
 
     code_cache: dict[str, bool] = {}
-    matched = [row for row in _ranked_rows(match) if _passes(row, criteria, code_cache)]
+    priority: list[Any] = []
+    short_id = _short_id_for_query(query)
+    if short_id is not None:
+        priority = _priority_rows(short_id)
+
+    fts_rows: list[Any] = []
+    if match is not None:
+        fts_rows = _ranked_rows(match)
+
+    priority_ids = {row.version_cid for row in priority}
+    rest = [row for row in fts_rows if row.version_cid not in priority_ids]
+
+    matched_priority = [row for row in priority if _passes(row, criteria, code_cache)]
+    matched_rest = [row for row in rest if _passes(row, criteria, code_cache)]
+    matched = matched_priority + matched_rest
     facets = _facets(matched)
 
     hits: list[SearchHit] = []
@@ -321,7 +390,7 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
                 status=row.status,
                 listed_at=_listed_at(row.listed_at),
                 has_code=code_cache[row.version_cid],
-                score=round(-float(row.rank), 6),
+                score=round(-float(getattr(row, "rank", 0.0)), 6),
             )
         )
     return SearchResult(query=query, total=len(matched), hits=hits, facets=facets)
