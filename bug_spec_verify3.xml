@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Verify sweep 3 (claw-forge-verify, 2026-11-17, main @ ee63c8d): real-browser journeys after the
+  bug_spec_verify2.xml round and the branding_spec.xml features.
+  Evidence: .claw-forge/journeys/*.md and .claw-forge/journeys/screenshots/<journey>/s3-*.png (gitignored, local).
+  Decision recorded here: an updated review's written report on a newer version stays sealed until that
+  version's own REV-4 gate opens (2 reviews committed on it, or 21 days); rubric scores are public either way.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/moderation/**,apps/api/src/app/modules/discussion/**,apps/api/src/app/modules/flags/**,apps/api/src/app/modules/notifications/**,apps/web/src/features/paper-discussion/**,apps/web/src/features/mod-console/**,apps/web/src/features/paper-page/report-paper.tsx,apps/web/src/features/paper-page/report-paper.test.tsx">
+    <title>A post a moderator hides stays public; outcomes are not told to reporters or authors; paper flags cannot be dismissed</title>
+    <symptoms>
+      priya decides "Hide the post" on a flagged reply, gets "Decision published" and /mod shows no waiting flags, but the reply still shows in full on the paper's Discussion tab (signed out and as the reporter) and on /discussion/{id}; the tab count still includes it; GET /v1/papers/{id}/threads still returns its text with no hidden marker
+      The reporter's notification reads only "Flag decision - Your flag was decided." plus a reason code, with no outcome, no item and no Open link
+      The post author gets "A moderator made a decision on your paper." for a hidden post, and its Open goes to /p/{post cid} ("Paper unavailable")
+      A flag on a paper offers no Dismiss: the moderator must choose "List the paper", which tells the authors "A moderator listed your paper." for a paper already listed
+      The review decision page names the anonymous reviewer by raw DID ("Author did:key:...") instead of the reviewer label
+      The paper report panel asks "Why are you reporting the post by this paper?" with post-style reasons; Report is offered on the viewer's own posts
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 (screenshots/07-flag-and-dispute/s3-13-hide-decision-result.png, s3-22-reporter-sees-post.png, s3-23-hidden-placeholder-signed-out.png, s3-21-reporter-notifications.png, s3-03b-paper-report-panel.png)
+      Journey 05 (screenshots/05-follow-search-notify/s3-06-me-sam.png, s3-07-open-post-hidden-notification.png)
+    </reproduction_steps>
+    <expected>A hide decision takes effect everywhere the record is read: thread and annotation listings return the hidden item as a placeholder (id, author pseudonym, hidden_at, decision reason) without its body, the Discussion tab shows "Hidden by moderation: {reason}" in its place, counts exclude it, and replies under it keep their place; a reversed decision (appeal) restores it. Every moderation decision notifies the reporter(s) with the outcome in words ("The post you reported was hidden" / "... was reviewed and kept" / "The paper you reported was kept listed"), naming the item and linking to it, and notifies the record's author with type-correct wording and a working link (the post in its thread, the review on the reviews tab, the paper page). Paper flags get a Dismiss action that closes the flags without a new listing decision or author notification. The review decision page shows "Reviewer A" (the public label), never the reviewer key DID. The paper report panel uses paper wording and paper reasons (misconduct, plagiarism, duplicated figures, spam, off-topic, other); Report is not offered on the viewer's own records</expected>
+    <actual>Hide has no visible effect; outcomes are vague or wrong; paper flags cannot be dismissed</actual>
+    <constraints>
+      <constraint>Hidden records stay in the signed event log and still verify; only their public read surfaces withhold the body</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/web/src/features/ui-kit/brand-mark.tsx,apps/web/src/features/ui-kit/brand-logo.tsx,apps/web/src/features/ui-kit/brand.css,apps/web/src/features/ui-kit/brand.test.tsx,apps/web/src/features/ui-kit/brand.css.test.ts,docs/design.md">
+    <title>The logo component does not match the delivered logo files</title>
+    <symptoms>
+      Compared with docs/brand/scholium-logo-light.jpeg and scholium-logo-dark.jpeg, BrandLogo's glyph has a narrow rounded pill instead of a near-square sharp page block, a bracket shorter than the page block instead of taller, a hairline instead of a wide margin-note strip, and a small wordmark set far from the mark (gap about 0.75x the mark height vs about 0.3x)
+      Text-line count conflicts: the reference lockup has 5 lines (last short), design.md says 4, the favicon has 3
+    </symptoms>
+    <reproduction_steps>
+      Open any page in light and dark mode and compare the nav and sign-in lockups with the JPEGs (screenshots/16-branding/s3-02-nav-lockup-light-zoom.png, s3-03-nav-lockup-dark-zoom.png, screenshots/03-new-member-onboarding/s3-01-signin.png)
+    </reproduction_steps>
+    <expected>The glyph is redrawn to the reference lockup's proportions measured from scholium-logo-light.jpeg: a near-square page block with square corners (width:height about 0.9:1) holding five light text lines with rounded ends, the last about half length; a closing bracket to its right whose height is about 1.35x the page block, vertically centred on it, stroke about 0.1x the block width; a margin-note strip in --margin-note between page and bracket about 0.25x the block width; the wordmark's x-height spans about 0.5x the block height with its baseline aligned to the block's bottom and a gap of about 0.3x the block height; the tile variant stays exactly the delivered favicon (three lines); dark mode keeps matching scholium-logo-dark.jpeg; a visual regression test compares a rendered snapshot of the SVG geometry (proportions asserted numerically); design.md §2 states the glyph has five lines and the favicon tile three</expected>
+    <actual>Visibly different mark and spacing</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-reviews/**,apps/web/src/features/review-form/**">
+    <title>Review listing copy contradicts the cards, Markdown reports render raw, and the reviews page is a narrow column</title>
+    <symptoms>
+      On a newer version's listing the gate text says "1 review has been committed on this version so far. The review is revealed ... once one more independent review is committed" while that review's updated rubric and recommendation are already shown (by design the updated written report stays sealed until this version's gate opens; only the wording is wrong)
+      The form says "Markdown is allowed" but "**Summary:**" appears literally in revealed reports
+      After updating, the review form still offers "Sign with my name instead"
+      The reviews page content is a narrow (about 375px) column on a 1440px desktop
+    </symptoms>
+    <reproduction_steps>
+      Journeys 12 and 13 (screenshots/13-new-version-and-review-update/s3-14-anon-after-update.png, s3-15-updated-report-sealed.png, s3-10-anon-reviews-v2.png; screenshots/12-review-commit-reveal/s3-12-both-reports.png)
+    </reproduction_steps>
+    <expected>The gate text distinguishes rubric from report: e.g. "Scores are public. Written reports on this version unseal once 2 reviews are committed on it, or on {date}." and says nothing contradicting cards that show scores; a card for an update whose report is sealed says "Updated report sealed until ..."; reports render a safe Markdown subset (paragraphs, emphasis, lists, links with rel=nofollow noopener, code) with no raw HTML; after a successful update the identity option is not offered; the reviews page uses the reading layout width from design.md (content column up to 72ch with the margin panel on wide screens)</expected>
+    <actual>Contradictory copy, raw Markdown, cramped layout</actual>
+    <constraints>
+      <constraint>REV-4 sealing is unchanged: an updated report on a newer version stays sealed until that version's gate opens</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="4" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-page/paper-access.tsx,apps/web/src/features/paper-page/paper-access-view.tsx,apps/web/src/features/paper-page/paper-access.test.tsx,apps/web/src/features/paper-page/paper-page-data.ts,apps/web/src/features/paper-page/paper-page-data.test.ts,apps/web/src/features/submit/status-tracker.tsx,apps/web/src/features/submit/consent-tracker.tsx,apps/web/src/features/submit/consent-tracker.test.tsx,apps/web/src/features/submit/status-tracker.test.tsx">
+    <title>The status tracker on the paper page shows co-authors as DIDs and offers no consent action</title>
+    <symptoms>
+      On the paper page (not the submit page) the Status tracker's co-author list shows only DIDs (e.g. "did:key:z6MkuBss...AvEnHa" on a held paper, both DIDs on /p/{id}/v2)
+      The v2 paper page has no "Sign your consent" action for an author who still owes consent, though the submit-page tracker has one
+    </symptoms>
+    <reproduction_steps>
+      Journeys 11 and 13 (screenshots/11-moderation-hold-and-appeal/s3-06-held-stepper.png, screenshots/13-new-version-and-review-update/s3-05-v2-paper-tracker.png)
+    </reproduction_steps>
+    <expected>The paper page builds its tracker entries the same way the submit page does: profile names resolved via GET /v1/profiles/{did} (DID secondary), the viewer marked "(you)", and a "Sign your consent" link to /consent/{version} when the signed-in viewer owes consent on that version</expected>
+    <actual>DIDs only, no consent action</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/web/src/features/submit/submit-wizard.tsx,apps/web/src/features/submit/submit-wizard.test.tsx,apps/web/src/features/submit/sign-step.tsx,apps/web/src/features/submit/sign-step.test.tsx,apps/web/src/features/submit/details-step.tsx,apps/web/src/features/submit/details-step.test.tsx,apps/web/src/features/submit/submit.css">
+    <title>Submit page after signing still says "Draft saved"; Sign summary is unlabelled; category warning is off-screen</title>
+    <symptoms>
+      After signing, the page header still says "Draft saved" and "You are signing version 1"
+      The Sign summary is unlabelled plain lines and shows the licence as the id "CC-BY-4.0"
+      The "not endorsed in cs.CR" banner appears at the top of the page, off-screen while the author is picking categories
+    </symptoms>
+    <reproduction_steps>
+      Journey 10 as ana (screenshots/10-publish/s3-07-sign-summary.png, s3-08-after-sign.png)
+    </reproduction_steps>
+    <expected>After signing, the header reads "Submitted - version 1" (no draft status) and the signing sentence is gone; the Sign summary is a labelled definition list (Title, Abstract, Categories, Licence with its full name e.g. "Creative Commons Attribution 4.0", Authors with roles, Files with sizes); the endorsement warning renders inline next to the category picker (and is announced via aria-live)</expected>
+    <actual>Stale header, unlabelled summary, misplaced warning</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/profile-page.tsx,apps/web/src/features/dashboard/profile-page.test.tsx,apps/web/src/features/dashboard/profile.ts,apps/web/src/features/dashboard/profile-route.test.tsx,apps/web/src/features/dashboard/follow-toggle.tsx,apps/web/src/features/dashboard/follow-toggle.test.tsx,apps/web/src/features/dashboard/follow-toggle.css,apps/web/src/features/dashboard/endorse-button.tsx,apps/web/src/features/dashboard/endorse-button.test.tsx,apps/web/src/features/dashboard/endorse.ts,apps/web/src/app/(dashboard)/u/**,apps/web/src/app/(feed)/c/**,apps/web/src/app/not-found.tsx,apps/api/src/app/modules/endorsements/**">
+    <title>Profile page is unstyled with a generic title; Follow and Endorse are offered on one's own profile; endorsers may endorse in any category; 404 titles</title>
+    <symptoms>
+      Profile pages are titled "Profile · Scholium" with no name, open with the full DID and are laid out as an unstyled list
+      The follow toggle's following state reads "✓ Follow" rather than "Following"; one's own profile offers "+ Follow"
+      okafor's Endorse dropdown offers every category, not only categories he is endorsed in
+      /nope is titled just "Scholium"; /c/xx.FAKE (a 404) is titled "xx.FAKE · Scholium"
+    </symptoms>
+    <reproduction_steps>
+      Journey 14 (screenshots/14-endorse-newcomer/s3-09-endorsed.png); open /nope and /c/xx.FAKE
+    </reproduction_steps>
+    <expected>/u/{did} is titled "{name} · Scholium" (pseudonymous short DID when no name), uses a styled profile header (name, affiliation, ORCID badge, tier, short DID with copy) followed by cards for endorsements, papers and signed reviews per design.md; the toggle reads "Following" when on; Follow and Endorse are hidden on the viewer's own profile; the Endorse dropdown offers only categories the endorser is themself endorsed in (tier 4 any), and the API refuses an endorsement in a category the endorser is not endorsed in (403 with a clear problem); not-found pages are titled "Not found · Scholium"</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/guardian-approval.tsx,apps/web/src/features/dashboard/security-page.tsx,apps/web/src/features/dashboard/security-page.test.tsx,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/web-auth/recover-form.tsx,apps/web/src/features/web-auth/recover-messages.ts,apps/web/src/features/web-auth/recover-messages.test.ts,apps/web/src/features/web-auth/verify-email-form.tsx,apps/web/src/features/web-auth/verify-email.ts,apps/web/src/features/web-auth/verify-email.test.ts,apps/api/src/app/modules/admin/**"
+       creates="apps/web/src/features/dashboard/guardian-approval.test.tsx">
+    <title>Recovery: guardians can act again after approving, the requester is not told what happens next; minor wording and a stale seeded notification</title>
+    <symptoms>
+      After approving (even at 3 of 3) guardians still see working Approve and Decline buttons, which touch with no gap
+      At 3 of 3 the requester page gives the close time but not that the new passkey takes over then or what to do meanwhile; open recovery requests are not in /me "Needs your attention" for guardians
+      Every guardian on /me/security carries a confusing "(also on this device)" note
+      /verify-email names the account by DID rather than name
+      sam's /me keeps an unread seeded "Consent request" for a version he already signed
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 (screenshots/06-key-recovery/s3-10-keller-after.png); journey 11 (sam's /me)
+    </reproduction_steps>
+    <expected>A guardian who has answered sees their answer ("You approved on {date}") and no actions; the requester page at threshold says "Approved by 3 of 5 guardians. Your new passkey takes over on {date, local time}; until then your old key still works and any guardian or you can cancel." and the request appears for guardians in Needs your attention until answered; the security page drops the device note and shows name plus short DID; /verify-email shows the profile name; seed-demo marks consent-request notifications read for consents it signs</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="low"
+       touches_files="apps/web/src/app/site-metadata.ts,apps/web/src/app/layout-metadata.test.ts,apps/web/next.config.js,apps/web/next.config.test.ts,.env.example"
+       creates="apps/web/src/app/(paper-page)/p/[id]/twitter-image.tsx">
+    <title>Share-image URLs fall back to localhost:3000 in a deployment, and paper pages use the generic card for twitter:image</title>
+    <symptoms>
+      og:image and twitter:image point at http://localhost:3000 because NEXT_PUBLIC_SITE_URL is unset (default in apps/web/src/app/site-metadata.ts), so link previews cannot load the image on any other host
+      Paper pages use the generic site card for twitter:image instead of the per-paper card
+    </symptoms>
+    <reproduction_steps>
+      Build with NEXT_PUBLIC_API_URL set but no NEXT_PUBLIC_SITE_URL; view source of /p/{id} (journey 16)
+    </reproduction_steps>
+    <expected>A production build (NODE_ENV=production and SCHOLIUM_ENV=production) fails with a clear message when NEXT_PUBLIC_SITE_URL is unset or loopback; other builds warn once; .env.example documents it; paper pages serve the per-paper card for twitter:image too (same unlisted/held/tombstone protection as the Open Graph card)</expected>
+    <actual>Broken previews outside localhost:3000; generic Twitter card</actual>
+  </bug>
+
+</bug_spec>
