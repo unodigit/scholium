@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Verify sweep 2 (claw-forge-verify, 2026-11-17, main @ 5691b37): real-browser journeys after the
+  bug_spec_verify1.xml round. Evidence: .claw-forge/journeys/*.md and
+  .claw-forge/journeys/screenshots/<journey>/s2-*.png (gitignored, local).
+  App under test: API :8200 (seed-demo, ORCID/arXiv mocks, fake AI), web prod build :3200.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/moderation/**,apps/api/src/app/modules/flags/**,apps/web/src/features/mod-console/**,apps/web/src/app/(mod-console)/**">
+    <title>Moderators cannot decide flags on discussion posts or reviews: the API refuses every non-paper decision with 422</title>
+    <symptoms>
+      On /mod/{postCid} (opened from a discussion-post flag) "Sign decision" with Hide or Dismiss fails: POST /v1/moderation/decisions returns 422 "The decision targets 'bafyrei...', which is not a paper version this node holds."; a review flag gives the same 422; flags stay "Waiting for a moderator" and the reporter never gets an outcome (MOD-2 flag, decision, appeal is still broken for non-paper records)
+      The moderation item page lists authors, reporters and appellants as raw DIDs although their profile names are known
+    </symptoms>
+    <reproduction_steps>
+      As a member report a discussion post; as priya open /mod, Flags, Decide on it, choose Hide (or Dismiss), Sign decision: 422 (journey 07, screenshots/07-flag-and-dispute/s2-11-hide-decision-422.png, s2-12-dismiss-decision.png, s2-14-review-dismiss-422.png)
+    </reproduction_steps>
+    <expected>The moderation decision API accepts decisions whose target is any flaggable record the node holds (discussion post, annotation, revealed review, paper version) with actions valid for that type: dismiss (closes the flags, no content change) for every type, hide for posts/annotations/reviews (the record stays in the signed log but its body is withheld from public reads with a "hidden by moderation" placeholder and the reason, reversible on appeal), and the existing list/hold/reject/tombstone for paper versions; deciding resolves every open flag on that target, notifies each reporter and the record's author with the outcome, and is appealable like paper decisions; actions invalid for a type get 422 with a clear message. The mod console sends the right action for the record type and shows the outcome after signing; authors, reporters and appellants show as profile names (DID as secondary text) wherever a name exists</expected>
+    <actual>422 on every non-paper decision; DIDs everywhere</actual>
+    <constraints>
+      <constraint>Decisions remain signed records in the event log; paper-version decision behaviour and its tests are unchanged</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="high"
+       touches_files="apps/web/src/features/paper-page/report-paper.tsx,apps/web/src/features/paper-page/paper-header.tsx,apps/web/src/features/paper-page/paper-actions.css,apps/web/src/features/paper-page/paper-access-view.tsx,apps/web/src/features/paper-page/paper-access.tsx,apps/web/src/features/paper-page/paper-access.test.tsx,apps/web/src/features/paper-page/paper-route.tsx,apps/web/src/features/paper-page/paper-route.test.tsx,apps/web/src/app/(paper-page)/p/**"
+       creates="apps/web/src/features/paper-page/report-paper.test.tsx,apps/web/src/features/paper-page/paper-header.test.tsx">
+    <title>Report on the paper header always sends signed-in members to /signin; held paper page shows a misleading stepper and title</title>
+    <symptoms>
+      The paper header's Report button always navigates to /signin, even for a signed-in member, so nobody can report a paper; signed out it also drops ?next= (ReportPaper reads the token store once at render instead of following the session)
+      "+ Follow" and "Report" touch with no gap in the paper header
+      On a held paper the author's stepper shows "Moderation Done / Listed In progress"; the held paper's browser title reads "Paper unavailable" while the paper renders for its author
+    </symptoms>
+    <reproduction_steps>
+      Sign in as any member, open /p/{id}, click Report: lands on /signin (journey 07, screenshots/07-flag-and-dispute/s2-03-header-report-signed-in.png, s2-01-signed-out-header-report.png)
+      As the author of a held paper open it (screenshots/11-moderation-hold-and-appeal/s2-06-sam-paper-held.png)
+    </reproduction_steps>
+    <expected>Report follows the live session (the same session hook the rest of the header uses): signed in it opens the report panel and posts the flag; signed out it goes to /signin?next={current path and hash}; header actions have consistent spacing per design.md; a held paper's stepper shows Moderation as "Held" (attention state) with Listed upcoming, and the document title is the paper title whenever the paper renders</expected>
+    <actual>Paper reports impossible; misleading held state</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="high"
+       touches_files="apps/web/src/features/paper-reviews/**,apps/api/src/app/modules/reviews/**">
+    <title>Author responses render as raw field dumps in triplicate; written reports missing from the latest-version listing; review flags target the sealed commit</title>
+    <symptoms>
+      On /reviews/{id} (and the v1 listing and inside "Earlier revisions") each author response renders three times, two of them as bare field dumps ("Response cid / Responsecid / Cid / Id / Review cid" with CIDs) before the real text; GET /v1/papers/{id}/reviews returns the same response under responses, response and replies
+      On the v2 listing both revealed v1 review cards say "No written report." although the reports show on /reviews/{id}/v1, and a reviewer's updated report appears nowhere publicly; report_cid is null for every review in the listing
+      The gate text above the v2 listing says "No review has been committed on this version yet" / "1 review has been committed ... revealed once one more..." while revealed reviews are shown in full right below; the page header says "the scores and their medians are public either way" while sealed cards say "The rubric is sealed with the review"
+      Report on a review card files the flag against the sealed review.commit record, so /mod labels it "SEALED REVIEW" with no excerpt although the review is public
+      The report panel for a review asks "Why are you reporting the post by Reviewer A?"
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 on sch:asxp-nk4e-m4uy: author posts v2 with responses, okafor updates his review; open /reviews/asxp-nk4e-m4uy anonymously (screenshots/13-new-version-and-review-update/s2-10-anon-reviews-v2.png, s2-11-author-replies-raw.png, s2-15-after-update.png, s2-16-anon-reviews-after-update.png)
+      Journey 07: report a revealed review, open /mod
+    </reproduction_steps>
+    <expected>The reviews listing API returns each author response once (one canonical field) and the tab renders it once as a formatted reply (author name, date, per-item text) under the review it answers; every revealed review in every listing carries its written report (report content or report_cid resolvable through /v1/content) and the card shows it; updated reviews show their latest report publicly with earlier ones under "Earlier revisions"; the gate text describes reviews targeting the listed version and states plainly when earlier-version reviews shown below are already revealed; header copy agrees with the sealed-card copy; Report on a revealed review targets the revealed review record so /mod can show its excerpt; the report panel says "review by Reviewer A" for reviews</expected>
+    <actual>Raw dumps, missing reports, contradictory copy, flags on the sealed record</actual>
+    <constraints>
+      <constraint>REV-4 anonymity and the commit-reveal gate are unchanged; nothing sealed may be shown</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="4" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/submissions/__init__.py,apps/api/src/app/modules/submissions/limits.py,apps/api/src/app/modules/submissions/errors.py,apps/web/src/features/submit/**,apps/web/src/app/(submit)/**"
+       creates="apps/api/src/app/modules/submissions/eligibility.py,apps/api/src/app/modules/submissions/tests/test_eligibility_endpoint.py">
+    <title>The weekly submission limit is still only reported at the last step; co-authors show as DIDs across submit and consent</title>
+    <symptoms>
+      Signed in as an author who already submitted this week, /submit says nothing on open or after reload; the limit is reported only after uploading and completing all five steps (apps/web/src/features/submit/eligibility.ts notes the API has no endpoint for the weekly window, so the up-front check never knows about it)
+      A co-author added by DID shows only the DID (twice) on the Sign summary and tracker; the consent page shows "signed by did:key:..." and lists every author as a DID; the new-version tracker shows "You" plus a DID
+      After signing, the disabled "Sign and submit" button stays visible above the tracker
+    </symptoms>
+    <reproduction_steps>
+      Fresh seed-demo; sign in as mei; open /submit (journey 10, screenshots/10-publish/s2-02-mei-submit-reload.png, s2-26-mei-weekly-limit-at-sign.png)
+      As ana submit with rafael as co-author by DID (screenshots/10-publish/s2-11-sign-summary.png, s2-13-tracker-stepper.png, s2-14-consent-page.png)
+    </reproduction_steps>
+    <expected>The API exposes GET /v1/submissions/eligibility (authenticated) returning the caller's tier, whether they may submit now, the weekly quota used/allowed and the next allowed time (from the same limits code that enforces it), and their endorsed categories; /submit calls it on open and blocks the wizard before any upload with a plain-language explanation and the next allowed date in the viewer's locale; every place in submit/consent that shows a person resolves their profile name through the public profile API (GET /v1/profiles/{did}), showing the DID only as secondary text or when no name exists; once a version is signed the wizard's action bar is replaced by the tracker</expected>
+    <actual>Late refusal; DIDs instead of names</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="medium"
+       touches_files="apps/web/src/features/dashboard/**,apps/web/src/app/(dashboard)/**,apps/web/src/components/nav/**,apps/api/src/app/modules/notifications/**">
+    <title>Profiles still lack Follow; /me follow links 404; bell count stale after mark-read; duplicate notifications; DIDs on the security page</title>
+    <symptoms>
+      /u/{did} has no Follow control signed in or out (the previous fix edited public-profile-page.tsx, but the /u/[did] route renders profile-page.tsx)
+      In /me Follows a followed paper shows as "sch:z7im-izv3-lom6" and links to /c/sch%3Az7im-izv3-lom6 (404)
+      "Mark as read" updates the card but the bell count stays until reload
+      rafael's /me lists three identical unread "Consent request" notifications for one version; each notification repeats its label ("Open / consent request / Mark as read / consent request")
+      Guardians and recovery requests on /me/security show raw DIDs where profile names exist
+      The header search box is empty on /search?q=...
+    </symptoms>
+    <reproduction_steps>
+      Open /u/{lena's did} signed in and out (journeys 05, 14: screenshots/05-follow-search-notify/s2-05-author-profile-no-follow.png, screenshots/14-endorse-newcomer/s2-12-anon-profile.png)
+      Follow a paper, open /me Follows, click it (screenshots/05-follow-search-notify/s2-07-follow-paper-link.png)
+      As mei mark a notification read (screenshots/05-follow-search-notify/s2-11-mei-marked-read.png)
+    </reproduction_steps>
+    <expected>The /u/{did} page renders the Follow/Following toggle for that person (and nothing renders a dead public-profile variant); /me Follows shows papers by title linking to /p/{id}, people by name linking to /u/{did}, categories linking to /c/{code}; marking read (single or all) updates the bell count immediately (shared notifications state or an event the nav listens to); the API does not create a second unread notification of the same kind for the same recipient and subject while one is unread (consent requests are created once per co-author per version); notification items render their label once with accessible action names; /me/security shows guardians and requesters by profile name with the DID secondary; the header search box shows the current query on /search</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="medium"
+       touches_files="apps/web/src/features/search-page/**,apps/api/src/app/modules/search/**">
+    <title>Search results still show no author names</title>
+    <symptoms>
+      /search results show only "cs.LG · v1 · date" with no authors, even when the query matched an author name; feed rows show authors
+    </symptoms>
+    <reproduction_steps>
+      Search "Lena Haddad" (journey 02, screenshots/02-search-and-discover/s2-03-author-0.png)
+    </reproduction_steps>
+    <expected>The search API returns each hit's author display names (and DIDs) like the feed listing does, and result rows render them in the same style as feed rows, linking each name to /u/{did}</expected>
+    <actual>No authors on results</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-discussion/**,apps/api/src/app/modules/discussion/**">
+    <title>Discussion posts are credited to DIDs, and members can mark their own posts helpful</title>
+    <symptoms>
+      Posts by a member whose profile name is set ("Sam Rivera") are credited as "did:key:z6MkiHtT...burPH9"
+      A member can mark their own post helpful
+      The signed-out redirect from discussion actions drops the #discussion fragment
+    </symptoms>
+    <reproduction_steps>
+      As sam post in Discussion on a paper (journey 04, screenshots/04-discussion/s2-05-thread-posted.png)
+    </reproduction_steps>
+    <expected>Posts and replies show the author's profile name (linking to /u/{did}, DID secondary or on hover) when one exists; Mark helpful is not offered on the viewer's own posts and the API refuses self-votes with 409; signed-out redirects keep the full path and fragment in next</expected>
+    <actual>DIDs; self-votes allowed</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/profiles/**,apps/api/src/app/modules/orcid/**,apps/web/src/features/web-auth/onboarding-form.tsx,apps/web/src/features/web-auth/onboarding-messages.ts,apps/web/src/features/web-auth/onboarding.ts,apps/web/src/features/web-auth/onboarding.test.ts,apps/web/src/features/web-auth/use-onboarding.ts,apps/web/src/features/web-auth/use-onboarding.test.ts,apps/web/src/app/(web-auth)/onboarding/**"
+       creates="apps/web/src/app/(web-auth)/verify-email/page.tsx,apps/web/src/features/web-auth/verify-email.ts,apps/web/src/features/web-auth/verify-email.test.ts,apps/web/src/features/web-auth/verify-email-form.tsx">
+    <title>Email verification links point at the API (wrong host, POST-only route); the ORCID mock always issues the same iD</title>
+    <symptoms>
+      The "Email verification" notification links to http://localhost:8000/v1/profiles/{did}/verify-email?... - the API host from a default setting (the API here runs on 8200), and a route that only accepts POST, so following the link can never verify the address
+      The mock ORCID page always issues iD 0000-0002-1825-0097, so only the first account on a node can link; later newcomers get "already linked to an active DID" and the setup page then still says "You've started linking... Continue at ORCID"
+    </symptoms>
+    <reproduction_steps>
+      New member sets an email in onboarding, opens the Email verification notification: ERR_CONNECTION_REFUSED (journey 03, screenshots/03-new-member-onboarding/s2-13-notification-open.png)
+      Two new members link ORCID through the mock (journey 14, screenshots/14-endorse-newcomer/s2-03-after-orcid.png, s2-04)
+    </reproduction_steps>
+    <expected>Verification links point at a web page on the web origin (WEB_ORIGINS' first entry, or a WEB_PUBLIC_URL setting) such as /verify-email?did=...&amp;token=..., which shows what is being verified and POSTs the token to the API, then confirms success or explains expiry with a resend option; the mock ORCID authorize page lets the tester accept a generated valid iD (unique per authorization, valid ISO 7064 checksum) or type one, and after a failed link the onboarding page shows the error with a retry instead of "Continue at ORCID"</expected>
+    <actual>Email can never be verified; ORCID mock usable once per node</actual>
+    <constraints>
+      <constraint>ORCID_MOCK stays refused when SCHOLIUM_ENV=production</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
