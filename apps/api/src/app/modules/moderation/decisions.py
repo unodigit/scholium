@@ -155,6 +155,7 @@ __all__ = [
     "MODERATION_DECIDED_KIND",
     "MODERATION_DECISION_KIND",
     "MODERATION_OUTCOME_KIND",
+    "RECORD_DECISION_KIND",
     "DecisionFields",
     "apply_decision",
     "decision_fields",
@@ -173,6 +174,11 @@ DECISION_TYPE = "moderation.decision"
 #: decision.  Reuses the record type string so a decision and its notification
 #: share one stable name.
 MODERATION_DECISION_KIND = DECISION_TYPE
+#: Kind of the notification a *record's* author receives (a post, an annotation
+#: or a review).  It carries the outcome in words and a link to the record's
+#: surface, so a client that does not know this kind renders those fields
+#: verbatim rather than applying paper wording to a post.
+RECORD_DECISION_KIND = "moderation.outcome"
 #: Aliases covering the names other modules use for the same concept.
 MODERATION_DECIDED_KIND = DECISION_TYPE
 MODERATION_OUTCOME_KIND = DECISION_TYPE
@@ -614,6 +620,11 @@ def handle_moderation_decision(record: Mapping[str, Any]) -> str:
         return TOMBSTONED
 
     if resolved is None:
+        # A flag can name the paper itself rather than a version.  Dismissing
+        # it settles the report and changes nothing about the paper, so it is
+        # allowed; every other action needs a version (or a record).
+        if fields.action == DISMISS and submissions.get_paper(fields.target) is not None:
+            return DISMISSED
         raise UnknownDecisionTarget(fields.target)
 
     if kind == VERSION_TARGET:
@@ -760,7 +771,17 @@ def _submitting_author_dids(target: str) -> list[str]:
 
 
 def _notify_submitting_author(fields: DecisionFields, reason_text: str) -> None:
-    '''Notify the submitting author about ``fields``; never raises.'''
+    '''Notify the submitting author about ``fields``; never raises.
+
+    A ``dismiss`` aimed at a version makes no new listing decision -- the flag
+    is settled and nothing about the paper changes -- so it is the one decision
+    that does not tell the authors something happened to their paper.
+    '''
+    if fields.action == DISMISS and (
+        submissions.get_version(fields.target) is not None
+        or submissions.get_paper(fields.target) is not None
+    ):
+        return
     try:
         from app.modules.notifications.service import notify
     except Exception:  # pragma: no cover - notifications is a shipped plugin
@@ -770,16 +791,31 @@ def _notify_submitting_author(fields: DecisionFields, reason_text: str) -> None:
     dids = _submitting_author_dids(fields.target)
     if not dids:
         return
+    from .outcomes import author_summary, item_link, target_kind
+
+    kind = target_kind(fields.target)
+    summary = author_summary(kind, fields.action)
     payload = {
         "decision_cid": fields.decision_cid,
         "target_cid": fields.target,
         "action": fields.action,
         "clause": fields.clause,
         "reason": reason_text,
+        # What happened, in words, and where to open it.  The web inbox reads
+        # these rather than composing a paper sentence for a post or review.
+        "summary": summary,
+        "outcome": summary,
+        "target_kind": kind,
+        "item_kind": kind,
+        "link": item_link(fields.target, kind),
     }
     for did in dids:
         try:
-            notify(did, MODERATION_DECISION_KIND, payload)
+            notify(
+                did,
+                MODERATION_DECISION_KIND if kind == "paper" else RECORD_DECISION_KIND,
+                payload,
+            )
         except Exception:
             logger.exception(
                 "could not notify %s about moderation decision %s",

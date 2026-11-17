@@ -49,6 +49,7 @@ import {
 } from "./version-content";
 import { MOD_PATH, modDetailSignInHref } from "./queue";
 import {
+  REVIEW_FORMAL_TYPE,
   loadModerationItem,
   recordHeading,
   recordKindLabel,
@@ -432,9 +433,19 @@ export function RecordPane({
 
       <dl className="mc-paper-facts">
         <div>
-          <dt>Author</dt>
-          <dd title={record.authorDid === "" ? undefined : record.authorDid}>
-            {record.authorDid === "" ? (
+          <dt>{record.type === REVIEW_FORMAL_TYPE ? "Reviewer" : "Author"}</dt>
+          <dd
+            title={
+              record.authorDid === "" || record.type === REVIEW_FORMAL_TYPE
+                ? undefined
+                : record.authorDid
+            }
+          >
+            {record.type === REVIEW_FORMAL_TYPE ? (
+              // A review is signed by a pseudonymous per-paper key: its public
+              // label, never that key's DID.
+              record.reviewerLabel ?? "Anonymous reviewer"
+            ) : record.authorDid === "" ? (
               "Not listed"
             ) : (
               <PersonName did={record.authorDid} loadName={loadPerson} />

@@ -13,6 +13,7 @@ import { useState } from "react";
 
 import { ReportPanel } from "../paper-discussion";
 import {
+  PAPER_REPORT_REASONS,
   reportPostFlag,
   signInPath,
   type ReportReason,
@@ -135,6 +136,8 @@ export function ReportPaper(props: ReportPaperProps) {
         <div className="pd-panel">
           <ReportPanel
             authorLabel="this paper"
+            legend="Why are you reporting this paper?"
+            reasons={PAPER_REPORT_REASONS}
             signInHref={props.signInHref ?? signInHereHref()}
             onCancel={() => setOpen(false)}
             onReport={file}

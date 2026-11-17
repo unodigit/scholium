@@ -44,6 +44,7 @@ import {
 } from "./decision";
 import { MOD_PATH } from "./queue";
 import {
+  PAPER_GENESIS_TYPE,
   recordKindLabel,
   recordNoun,
   type ModeratedRecord,
@@ -125,6 +126,12 @@ export function RecordDecisionForm({
 
   const busy = phase === "signing" || phase === "submitting";
   const noClauses = clauses.length === 0;
+  // A flag may name the paper itself: dismissing it settles the report, while
+  // there is no version whose content a hide could withdraw.
+  const actions =
+    record.type === PAPER_GENESIS_TYPE
+      ? RECORD_DECISION_ACTIONS.filter((value) => value === "dismiss")
+      : RECORD_DECISION_ACTIONS;
   const selectedClause = clauses.find((item) => item.id === clause) ?? null;
   const outcome = recordOutcome(action, record);
 
@@ -221,7 +228,7 @@ export function RecordDecisionForm({
           }}
         >
           <option value="">Choose an action…</option>
-          {RECORD_DECISION_ACTIONS.map((value) => (
+          {actions.map((value) => (
             <option key={value} value={value}>
               {recordActionLabel(value, record)}
             </option>

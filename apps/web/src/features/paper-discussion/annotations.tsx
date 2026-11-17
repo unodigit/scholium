@@ -719,7 +719,11 @@ export function MarginMarkers(props: MarginMarkersProps) {
       <div className="pd-reading">
         {paragraphs.map((paragraph) => {
           const paragraphAnnotations = groups[paragraph.id] ?? [];
-          const count = paragraphAnnotations.length;
+          // A hidden annotation keeps its place as a placeholder but is not
+          // counted as a visible annotation on the paragraph.
+          const count = paragraphAnnotations.filter(
+            (annotation) => annotation.hidden !== true,
+          ).length;
           const isSelected = selected === paragraph.id;
           return (
             <div key={paragraph.id} className="pd-paragraph-row">
@@ -762,10 +766,23 @@ export function MarginMarkers(props: MarginMarkersProps) {
                         className="pd-annotation"
                         data-annotation-id={annotation.id}
                       >
-                        {annotation.quote ? (
-                          <blockquote className="pd-annotation__quote">{annotation.quote}</blockquote>
-                        ) : null}
-                        {annotation.text ? <p className="pd-annotation__text">{annotation.text}</p> : null}
+                        {annotation.hidden === true ? (
+                          <p className="pd-annotation__text pd-post__text--hidden" data-hidden="true">
+                            {typeof annotation.hidden_reason === "string" &&
+                            annotation.hidden_reason.trim() !== ""
+                              ? `Hidden by moderation: ${annotation.hidden_reason.trim()}`
+                              : "Hidden by moderation."}
+                          </p>
+                        ) : (
+                          <>
+                            {annotation.quote ? (
+                              <blockquote className="pd-annotation__quote">{annotation.quote}</blockquote>
+                            ) : null}
+                            {annotation.text ? (
+                              <p className="pd-annotation__text">{annotation.text}</p>
+                            ) : null}
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>

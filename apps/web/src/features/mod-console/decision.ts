@@ -174,9 +174,10 @@ export function canTombstone(tier: number | null | undefined): boolean {
 export function offeredActions(
   tier: number | null | undefined,
 ): readonly DecisionAction[] {
-  return canTombstone(tier)
-    ? [...DECISION_ACTIONS, TOMBSTONE_ACTION]
-    : DECISION_ACTIONS;
+  // Dismiss settles a flag without moving the paper -- exactly what a flag on
+  // an already-listed paper needs, so it is offered beside the state actions.
+  const actions: DecisionAction[] = [...DECISION_ACTIONS, "dismiss"];
+  return canTombstone(tier) ? [...actions, TOMBSTONE_ACTION] : actions;
 }
 
 // ---------------------------------------------------------------------------

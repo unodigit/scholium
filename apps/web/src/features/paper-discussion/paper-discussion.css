@@ -301,6 +301,19 @@
   white-space: normal;
 }
 
+/* A moderator's ruling takes the post's place: quiet, bordered with the
+   decision's own reason, never the withheld body. */
+.pd-post__text--hidden {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  white-space: normal;
+  margin: calc(var(--space-unit) * 2) 0 0;
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border-inline-start: 2px solid var(--rule);
+  background: var(--surface);
+}
+
 .pd-post__helpful {
   margin: calc(var(--space-unit) * 2) 0 0;
   color: var(--ink-2);

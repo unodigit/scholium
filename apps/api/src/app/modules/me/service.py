@@ -77,7 +77,10 @@ from app import db
 from app.modules import ledger
 from app.modules.flags.service import FLAG_DECIDED_KIND
 from app.modules.ledger.models import EventLog
-from app.modules.moderation.decisions import MODERATION_DECISION_KIND
+from app.modules.moderation.decisions import (
+    MODERATION_DECISION_KIND,
+    RECORD_DECISION_KIND,
+)
 from app.modules.moderation.models import (
     ModerationDecision,
     ensure_tables as ensure_moderation_tables,
@@ -547,7 +550,9 @@ def _moderation_outcomes(
             .filter(
                 Notification.did == did,
                 Notification.read.is_(False),
-                Notification.kind.in_([MODERATION_DECISION_KIND, FLAG_DECIDED_KIND]),
+                Notification.kind.in_(
+                    [MODERATION_DECISION_KIND, RECORD_DECISION_KIND, FLAG_DECIDED_KIND]
+                ),
             )
             .order_by(Notification.id.desc())
             .all()
@@ -577,13 +582,22 @@ def _moderation_outcomes(
 
         if kind == FLAG_DECIDED_KIND:
             status = payload.get("status")
-            summary = "An outcome is recorded for a report you filed"
+            summary = (
+                payload.get("summary")
+                or "An outcome is recorded for a report you filed"
+            )
         else:
             action = payload.get("action")
             status = None
-            summary = f"Moderation decision: {action}" if action else "Moderation decision"
+            # The decision's own words when the notification carries them (a
+            # post hidden, a review kept), else the action's name.
+            summary = payload.get("summary") or (
+                f"Moderation decision: {action}"
+                if action
+                else "Moderation decision"
+            )
         short_id = getattr(paper, "short_id", None)
-        if short_id:
+        if short_id and not payload.get("summary"):
             summary = f"{summary} on {short_id}"
 
         item = _item(

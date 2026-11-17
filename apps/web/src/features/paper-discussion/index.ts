@@ -29,6 +29,7 @@ export {
   DiscussionResponseError,
   FLAGS_ENDPOINT,
   POST_TEXT_MAX,
+  PAPER_REPORT_REASONS,
   PostInputError,
   REPORT_REASONS,
   SELF_HELPFUL_TYPE,

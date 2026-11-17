@@ -60,6 +60,27 @@ afterEach(() => {
 });
 
 describe("Report on the paper header, signed in", () => {
+  it("asks about the paper with paper reasons, not post reasons", async () => {
+    signIn();
+    render(<ReportPaper versionCid={VERSION_CID} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Report" }));
+
+    expect(await screen.findByText("Why are you reporting this paper?")).toBeTruthy();
+    for (const label of [
+      "Research misconduct",
+      "Plagiarism",
+      "Duplicated figures",
+      "Spam or advertising",
+      "Off topic",
+      "Something else",
+    ]) {
+      expect(screen.getByRole("radio", { name: new RegExp(label) })).toBeTruthy();
+    }
+    expect(screen.queryByRole("radio", { name: /Harassment or abuse/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /Misleading or false/ })).toBeNull();
+  });
+
   it("opens the report panel for a member whose session was restored after the page rendered", async () => {
     // The page rendered signed out (the server's HTML, then the first client
     // render), and only afterwards did the refresh cookie restore the session.
@@ -95,7 +116,7 @@ describe("Report on the paper header, signed in", () => {
     signIn();
 
     fireEvent.click(screen.getByRole("button", { name: "Report" }));
-    fireEvent.click(await screen.findByRole("radio", { name: /Misleading or false/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: /Plagiarism/ }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
 
     await waitFor(() => expect(screen.getByText("Reported")).toBeTruthy());
@@ -105,7 +126,7 @@ describe("Report on the paper header, signed in", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
       target: VERSION_CID,
-      reason: "misleading",
+      reason: "plagiarism",
     });
     expect(assign).not.toHaveBeenCalled();
   });

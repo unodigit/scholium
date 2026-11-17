@@ -137,8 +137,9 @@ A fieldset of reasons — **none chosen for the reader** — and **Send report**
 own. A report with no reason is refused in words before anything is sent. Once
 filed the card says "You reported this post as “…”. A moderator will review it,
 and you will be told what was decided." — the reporter is notified when the flag
-is decided (`flags` plugin, `flag.decided`), which is how "the reporter sees the
-outcome" (`docs/design.md` §11) is met without polling.
+is decided (`flags` plugin, `flag.outcome`), with the outcome in words and a
+link to the item, which is how "the reporter sees the outcome"
+(`docs/design.md` §11) is met without polling.
 
 ## Where the data comes from
 

@@ -145,6 +145,14 @@ def test_deciding_a_flag_notifies_the_reporter_once_with_the_decision():
         "reason": "spam",
         "status": flags.DECIDED,
         "decision_cid": decision_cid,
+        # What happened, in words, and where to open it.  This flag names no
+        # record the node holds, so the kind and link fall back to a record.
+        "action": None,
+        "target_kind": "item",
+        "item_kind": "item",
+        "summary": "The record you reported was reviewed.",
+        "outcome": "The record you reported was reviewed.",
+        "link": None,
     }
 
 

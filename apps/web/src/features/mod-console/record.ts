@@ -70,6 +70,12 @@ export interface ModeratedRecord {
   readonly text: string | null;
   /** The quoted paragraph of an annotation, when the anchor carries one. */
   readonly quote: string | null;
+  /**
+   * The public reviewer label of a `review.formal` ("Reviewer A"), when the
+   * reviews listing serves one. A review is signed by a pseudonymous per-paper
+   * key, so this -- never that key's DID -- is how its author is named.
+   */
+  readonly reviewerLabel?: string | null;
   /** The record this one is about (a post's or review's target). */
   readonly targetCid: string | null;
   /** The stored body, kept for the type-specific readers. */
@@ -445,11 +451,61 @@ export async function resolveOwningPaper(
 }
 
 /**
+ * The public reviewer label for a `review.formal`, from the paper's reviews
+ * listing.  ``Reviewer A`` is the only name a review has: the record's author
+ * is a pseudonymous per-paper key, not a person.  Any failure leaves it
+ * unknown, and the console says "Anonymous reviewer" rather than show the key.
+ */
+async function reviewerLabelFor(
+  record: ModeratedRecord,
+  client: RecordClient,
+): Promise<string | null> {
+  const paperId = record.paperCid ?? record.paperShortId;
+  if (paperId === null || paperId === "") {
+    return null;
+  }
+  try {
+    const payload = await client.get<unknown>(
+      `/papers/${encodeURIComponent(paperId)}/reviews`,
+      { auth: false, cache: "no-store" },
+    );
+    if (!isRecord(payload) || !Array.isArray(payload.reviews)) {
+      return null;
+    }
+    for (const item of payload.reviews) {
+      if (!isRecord(item)) {
+        continue;
+      }
+      const labelled = [
+        readText(item.review_cid),
+        readText(item.reviewCid),
+        readText(item.formal_cid),
+        readText(item.id),
+      ];
+      if (!labelled.includes(record.cid)) {
+        continue;
+      }
+      return (
+        readText(item.label) ??
+        readText(item.reviewer_label) ??
+        readText(item.reviewer) ??
+        null
+      );
+    }
+  } catch {
+    // A paper that is not listed (or a node without the route) has no label;
+    // the review is still shown, under its anonymous word.
+  }
+  return null;
+}
+
+/**
  * Read any flaggable record and show it as a moderation item.
  *
  * A `paper.version` is handed to the existing paper reader so the console's
  * title, authors, abstract and PDF pane are unchanged; every other type is
- * read as a record and enriched with its owning paper.
+ * read as a record and enriched with its owning paper.  A review also gains
+ * its public reviewer label.
  */
 export async function loadModerationItem(
   cid: string,
@@ -463,6 +519,12 @@ export async function loadModerationItem(
     return { kind: "paper", paper: parseVersionRecord(payload, cid) };
   }
   const record = await resolveOwningPaper(parseRecord(payload, cid), client);
+  if (record.type === REVIEW_FORMAL_TYPE) {
+    return {
+      kind: "record",
+      record: { ...record, reviewerLabel: await reviewerLabelFor(record, client) },
+    };
+  }
   return { kind: "record", record };
 }
 

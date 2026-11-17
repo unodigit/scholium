@@ -986,6 +986,70 @@ describe("DiscussionTab: server rendering", () => {
   });
 });
 
+describe("DiscussionTab: hidden posts", () => {
+  function hiddenThreads(): DiscussionData {
+    return {
+      paper: SHORT,
+      paperCid: "bafyrei-genesis",
+      threads: [
+        post("hidden", {
+          hidden: true,
+          hiddenReason: "Abusive and off-topic.",
+          hiddenAt: "2026-02-01T10:00:00Z",
+          text: null,
+          replies: [post("under-hidden", { parent: "hidden" })],
+        }),
+        post("visible"),
+      ],
+    };
+  }
+
+  it("shows a placeholder with the reason instead of a hidden post's body", () => {
+    renderTab({}, hiddenThreads());
+
+    expect(screen.getByText("Hidden by moderation: Abusive and off-topic.")).toBeTruthy();
+    expect(screen.queryByText(/Text of hidden/)).toBeNull();
+    // The reply under it keeps its place, so no visible post disappears.
+    expect(within(card("under-hidden")).getByText(/Text of under-hidden/)).toBeTruthy();
+  });
+
+  it("does not count the hidden placeholder in the post count", () => {
+    renderTab({}, hiddenThreads());
+
+    // Two visible posts: the reply and the visible root.
+    expect(screen.getByText("2 posts · most helpful first")).toBeTruthy();
+  });
+
+  it("offers no helpful, reply or report action on a hidden post", () => {
+    renderTab({}, hiddenThreads());
+
+    const scope = within(card("hidden"));
+    expect(scope.queryByRole("button", { name: /Mark helpful/ })).toBeNull();
+    expect(scope.queryByRole("button", { name: /^Reply/ })).toBeNull();
+    expect(scope.queryByRole("button", { name: /^Report/ })).toBeNull();
+  });
+});
+
+describe("DiscussionTab: the viewer's own post", () => {
+  it("does not offer Report on a post the viewer wrote", () => {
+    renderTab({ viewerDid: ME }, {
+      paper: SHORT,
+      paperCid: "bafyrei-genesis",
+      threads: [
+        post("mine", { author: ME }),
+        post("theirs", { author: BOB }),
+      ],
+    });
+
+    expect(
+      within(card("mine")).queryByRole("button", { name: /^Report/ }),
+    ).toBeNull();
+    expect(
+      within(card("theirs")).getByRole("button", { name: /^Report/ }),
+    ).toBeTruthy();
+  });
+});
+
 describe("DiscussionTab: the region", () => {
   it("is a labelled region for the margin panel", () => {
     renderTab();

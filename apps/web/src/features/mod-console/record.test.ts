@@ -258,6 +258,42 @@ describe("loadModerationItem", () => {
 
     expect(item.kind).toBe("record");
   });
+
+  it("gives a review its public reviewer label, never the reviewer key", async () => {
+    const reviewPayload = {
+      type: "review.formal",
+      id: REVIEW_CID,
+      author: "did:key:z6MkReviewerKeyThatMustNotBeShown",
+      created: "2027-05-02T09:30:00Z",
+      body: {
+        target: VERSION_CID,
+        paper: PAPER_CID,
+        report: "The evaluation omits the baseline.",
+      },
+      proofs: [],
+      sig: "a-signature",
+    };
+    const reading: RecordClient = {
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith(REVIEW_CID)) return reviewPayload;
+        if (path.endsWith(VERSION_CID)) return versionPayload();
+        if (path.endsWith(PAPER_CID)) return genesisPayload();
+        if (path.includes("/reviews")) {
+          return {
+            reviews: [{ review_cid: REVIEW_CID, label: "Reviewer A" }],
+          };
+        }
+        throw new Error(`no record at ${path}`);
+      }),
+    } as unknown as RecordClient;
+
+    const item = await loadModerationItem(REVIEW_CID, reading);
+
+    expect(item.kind).toBe("record");
+    if (item.kind === "record") {
+      expect(item.record.reviewerLabel).toBe("Reviewer A");
+    }
+  });
 });
 
 describe("flag target summaries", () => {

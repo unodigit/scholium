@@ -300,3 +300,36 @@ def test_unversioned_read_route_404s_for_an_unknown_or_malformed_paper(client, p
 
     assert response.status_code == 404, response.text
     assert response.headers["content-type"].startswith(PROBLEM_JSON)
+
+
+def test_a_hidden_annotation_is_a_placeholder_without_its_body(client):
+    """A ``hide`` decision withholds an annotation's text and quote, not its id."""
+    from app.modules import moderation
+    from app.modules.annotations.service import annotations_for_version
+
+    author = Signer(tier=1)
+    moderator = Signer(tier=4)
+    paper = publish(author)
+    record = annotation(author, paper.version_ids[1], "p-hidden", "the hidden annotation")
+    ledger.append(record)
+    decision = moderator.sign(
+        "moderation.decision",
+        {
+            "target": record["id"],
+            "action": "hide",
+            "clause": "MOD-01",
+            "reason": "Abusive annotation.",
+        },
+    )
+    ledger.append(decision)
+    moderation.hide_target(record["id"], decision["id"])
+
+    [item] = annotations_for_version(paper.version_ids[1])["p-hidden"]
+
+    assert item["id"] == record["id"]
+    assert item["hidden"] is True
+    assert item["text"] is None
+    assert item["quote"] is None
+    assert item["hidden_reason"] == "Abusive annotation."
+    assert item["hidden_at"] is not None
+

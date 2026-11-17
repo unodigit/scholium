@@ -22,6 +22,7 @@ import {
   describeActionError,
   type ActionFailure,
   type ReportReason,
+  type ReportReasonOption,
 } from "./discussion";
 import { FailureText } from "./notes";
 
@@ -30,6 +31,10 @@ export interface ReportPanelProps {
   subject?: string;
   /** Who wrote the post, for the legend: "Why are you reporting the post by …?" */
   authorLabel: string;
+  /** Complete legend override, for a paper ("Why are you reporting this paper?"). */
+  legend?: string;
+  /** The reasons to offer; the post reasons by default. */
+  reasons?: readonly ReportReasonOption[];
   /** Files the report. Resolve when it is filed; reject to show why not. */
   onReport: (reason: ReportReason) => Promise<void>;
   /** Give the report up without sending it. */
@@ -38,7 +43,15 @@ export interface ReportPanelProps {
   signInHref: string;
 }
 
-export function ReportPanel({ subject = "post", authorLabel, onReport, onCancel, signInHref }: ReportPanelProps) {
+export function ReportPanel({
+  subject = "post",
+  authorLabel,
+  legend,
+  reasons = REPORT_REASONS,
+  onReport,
+  onCancel,
+  signInHref,
+}: ReportPanelProps) {
   const uid = useId();
   const [choice, setChoice] = useState<ReportReason | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,9 +95,9 @@ export function ReportPanel({ subject = "post", authorLabel, onReport, onCancel,
     >
       <fieldset className="pd-report__fieldset" disabled={busy} aria-describedby={missing ? problemId : undefined}>
         <legend className="pd-report__legend">
-          {`Why are you reporting the ${subject} by ${authorLabel}?`}
+          {legend ?? `Why are you reporting the ${subject} by ${authorLabel}?`}
         </legend>
-        {REPORT_REASONS.map((reason) => (
+        {reasons.map((reason) => (
           <div className="pd-reason" key={reason.id}>
             <input
               id={`${uid}-${reason.id}`}
@@ -95,7 +108,7 @@ export function ReportPanel({ subject = "post", authorLabel, onReport, onCancel,
               checked={choice === reason.id}
               aria-describedby={`${uid}-${reason.id}-hint`}
               onChange={() => {
-                setChoice(reason.id);
+                setChoice(reason.id as ReportReason);
                 setMissing(false);
               }}
             />

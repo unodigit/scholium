@@ -55,9 +55,22 @@ describe("the tombstone action", () => {
   });
 
   it("is the last action of the list a tier-4 moderator sees, and absent otherwise", () => {
-    expect(offeredActions(4)).toEqual([...DECISION_ACTIONS, "tombstone"]);
-    expect(offeredActions(3)).toEqual([...DECISION_ACTIONS]);
-    expect(offeredActions(null)).toEqual([...DECISION_ACTIONS]);
+    // Dismiss settles the flag without moving the paper; it comes before the
+    // legal takedown, which only tier 4 may issue.
+    expect(offeredActions(4)).toEqual([...DECISION_ACTIONS, "dismiss", "tombstone"]);
+    expect(offeredActions(3)).toEqual([...DECISION_ACTIONS, "dismiss"]);
+    expect(offeredActions(null)).toEqual([...DECISION_ACTIONS, "dismiss"]);
+  });
+});
+
+describe("dismissing a paper flag", () => {
+  it("is offered to every moderator and reads as settling the flag", () => {
+    expect(offeredActions(null)).toContain("dismiss");
+    expect(actionOptionLabel("dismiss")).toMatch(/dismiss the flag/i);
+    expect(
+      authorPreview(draft({ action: "dismiss", clause: "MOD-01" }), CLAUSES)
+        ?.headline,
+    ).toMatch(/nothing changes/i);
   });
 });
 

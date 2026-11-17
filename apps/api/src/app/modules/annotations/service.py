@@ -210,8 +210,47 @@ def _paragraph_id(anchor: Mapping[str, Any]) -> Optional[str]:
 
 
 def _annotation_entry(entry: Any, anchor: Mapping[str, Any], paragraph_id: str) -> dict[str, Any]:
-    """One annotation in the wire shape served inside a paragraph's group."""
+    """One annotation in the wire shape served inside a paragraph's group.
+
+    A ``hide`` decision withdraws the annotation's body from public reads while
+    the signed record stays in the log.  The listing keeps the annotation in
+    its paragraph group as a placeholder -- id, author, ``hidden_at`` and the
+    decision's reason -- with no text, quote or offset.
+    """
     body = _body(entry)
+    try:
+        from app.modules.moderation.hides import hidden_record
+
+        hidden = hidden_record(entry.record_cid)
+    except Exception:  # pragma: no cover - moderation is a shipped plugin
+        hidden = None
+    if hidden is not None:
+        reason = getattr(hidden, "reason", None)
+        hidden_at = getattr(hidden, "hidden_at", None)
+        decision_cid = getattr(hidden, "decision_cid", None)
+        return {
+            "id": entry.record_cid,
+            "author": entry.author_did,
+            "created": _created(entry),
+            "type": entry.record_type,
+            "target": None,
+            "paragraph_id": paragraph_id,
+            "paragraphId": paragraph_id,
+            "quote": None,
+            "offset": None,
+            "text": None,
+            "textCid": None,
+            "parent": body.get("parent"),
+            "hidden": True,
+            "hidden_at": hidden_at,
+            "hiddenAt": hidden_at,
+            "hidden_reason": reason,
+            "hiddenReason": reason,
+            "reason": reason,
+            "hidden_clause": getattr(hidden, "clause", None),
+            "decision_cid": decision_cid,
+            "decisionCid": decision_cid,
+        }
     return {
         "id": entry.record_cid,
         "author": entry.author_did,

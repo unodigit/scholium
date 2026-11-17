@@ -64,6 +64,8 @@ class HiddenRecord:
     reason: Optional[str] = None
     #: The policy clause that decision cited, when readable.
     clause: Optional[str] = None
+    #: When the decision was signed (ISO 8601), when readable.
+    hidden_at: Optional[str] = None
 
 
 def get_hidden_entry(cid: object) -> Optional[ModerationHidden]:
@@ -107,8 +109,18 @@ def hidden_record(cid: object) -> Optional[HiddenRecord]:
         reason = value if isinstance(value, str) and value.strip() else None
         value = body.get("clause")
         clause = value if isinstance(value, str) and value.strip() else None
+    hidden_at: Optional[str] = None
+    if entry is not None:
+        try:
+            hidden_at = ledger.stored_envelope(entry).created
+        except Exception:  # pragma: no cover - the append-only log should decode
+            hidden_at = None
     return HiddenRecord(
-        cid=row.cid, decision_cid=str(row.decision_cid), reason=reason, clause=clause
+        cid=row.cid,
+        decision_cid=str(row.decision_cid),
+        reason=reason,
+        clause=clause,
+        hidden_at=hidden_at,
     )
 
 

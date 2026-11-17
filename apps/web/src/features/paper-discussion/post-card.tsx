@@ -182,14 +182,20 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
           ) : null}
         </header>
 
-        {post.quote !== null ? (
+        {post.hidden === true ? null : post.quote !== null ? (
           <blockquote className="pd-post__quote">
             <span className="pd-visually-hidden">Annotation on the passage: </span>
             {`“${post.quote}”`}
           </blockquote>
         ) : null}
 
-        {post.text !== null ? (
+        {post.hidden === true ? (
+          <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
+            {post.hiddenReason !== null && post.hiddenReason !== undefined && post.hiddenReason.trim() !== ""
+              ? `Hidden by moderation: ${post.hiddenReason.trim()}`
+              : "Hidden by moderation."}
+          </p>
+        ) : post.text !== null ? (
           <p className="pd-post__text">{post.text}</p>
         ) : (
           <p className="pd-post__text pd-post__text--missing">
@@ -203,7 +209,8 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
           </p>
         ) : null}
 
-        <div className="pd-post__actions" role="group" aria-label={`Actions for the post by ${who}`}>
+        {post.hidden === true ? null : (
+          <div className="pd-post__actions" role="group" aria-label={`Actions for the post by ${who}`}>
           {/* A member cannot mark their own post helpful (the API refuses it
               with 409), so the action is not offered on their own writing. */}
           {isOwn ? null : (
@@ -244,7 +251,8 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
             <span className="pd-visually-hidden">{`to post by ${who}`}</span>
           </button>
 
-          {reportedAs === null ? (
+          {/* A member reports somebody else's record, never their own. */}
+          {isOwn ? null : reportedAs === null ? (
             <button
               type="button"
               className="pd-action pd-action--report"
@@ -276,7 +284,8 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
               Reported
             </span>
           )}
-        </div>
+          </div>
+        )}
 
         {helpfulFailure !== null ? (
           <FailureText failure={helpfulFailure} signInHref={actions.signInHref} />
@@ -308,7 +317,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
           </div>
         ) : null}
 
-        {panel === "report" && reportedAs === null ? (
+        {panel === "report" && reportedAs === null && !isOwn ? (
           <div className="pd-panel" id={reportId}>
             {actions.signedIn ? (
               <ReportPanel

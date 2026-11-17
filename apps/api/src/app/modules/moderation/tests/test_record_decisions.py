@@ -375,7 +375,9 @@ def test_deciding_a_flagged_post_settles_the_flag_and_notifies_reporter_and_auth
     assert reporter_note.payload["decision_cid"] == decision["id"]
     # ...and the record's author hears the decision itself.
     [author_note] = [
-        n for n in _notifications(author_did) if n.kind == moderation.MODERATION_DECISION_KIND
+        n
+        for n in _notifications(author_did)
+        if n.kind == moderation.RECORD_DECISION_KIND
     ]
     assert author_note.payload["target_cid"] == post_record["id"]
     assert author_note.payload["action"] == "hide"
@@ -392,6 +394,124 @@ def test_every_open_flag_on_the_record_is_settled(client, moderator, post_record
     for flag_id in (first["id"], second["id"]):
         settled = flags.get_flag(flag_id)
         assert settled is not None and settled.status == flags.DECIDED
+
+
+def test_the_reporter_hears_the_outcome_in_words_and_where_to_open_it(
+    client, moderator, subscribed, post_record
+):
+    flag = _file_flag(client, post_record["id"])
+    stored = flags.get_flag(flag["id"])
+    assert stored is not None
+    decision = decide_on(moderator, post_record["id"], "hide")
+
+    assert client.post(
+        DECISIONS_URL, json=decision, headers=moderator.headers
+    ).status_code == 201
+
+    [note] = [
+        n for n in _notifications(stored.reporter_did) if n.kind == flags.FLAG_DECIDED_KIND
+    ]
+    assert note.payload["summary"] == "The post you reported was hidden."
+    assert note.payload["outcome"] == "The post you reported was hidden."
+    assert note.payload["target_kind"] == "post"
+    # The item is named and linked to the surface that now shows the
+    # placeholder: the paper's Discussion tab.
+    assert note.payload["target_cid"] == post_record["id"]
+    assert note.payload["link"].startswith("/discussion/")
+
+
+def test_the_post_author_hears_type_correct_words_and_a_working_link(
+    client, moderator, subscribed, post_record
+):
+    decision = decide_on(moderator, post_record["id"], "hide")
+
+    assert client.post(
+        DECISIONS_URL, json=decision, headers=moderator.headers
+    ).status_code == 201
+
+    [note] = [
+        n
+        for n in _notifications(post_record["author"])
+        if n.kind == moderation.RECORD_DECISION_KIND
+    ]
+    assert note.payload["summary"] == "The post you wrote was hidden by moderation."
+    assert note.payload["target_kind"] == "post"
+    assert note.payload["link"].startswith("/discussion/")
+
+
+def test_dismissing_a_paper_flag_tells_the_reporter_but_not_the_author(
+    client, moderator, subscribed
+):
+    submission = Submission(state="listed")
+    reporter = f"did:example:paperflag-{uuid.uuid4().hex}"
+    response = client.post(
+        "/v1/flags",
+        json={"target": submission.version_cid, "reason": "spam"},
+        headers={"Authorization": f"Bearer {issue_access_token(reporter, 1)}"},
+    )
+    assert response.status_code == 201, response.text
+    decision = decide_on(moderator, submission.version_cid, "dismiss")
+
+    assert client.post(
+        DECISIONS_URL, json=decision, headers=moderator.headers
+    ).status_code == 201
+
+    [note] = [
+        n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
+    ]
+    assert note.payload["summary"] == "The paper you reported was reviewed and kept."
+    assert note.payload["link"] == f"/p/{submission.short_id}"
+    # A dismiss makes no new listing decision, so the authors are not told
+    # about a paper that did not change.
+    assert [
+        n
+        for n in _notifications(submission.did)
+        if n.kind == moderation.MODERATION_DECISION_KIND
+    ] == []
+
+
+def test_dismiss_aimed_at_the_paper_itself_settles_its_flags(client, moderator, subscribed):
+    submission = Submission(state="listed")
+    flag = _file_flag(client, submission.paper_cid)
+    decision = decide_on(moderator, submission.paper_cid, "dismiss")
+
+    response = client.post(DECISIONS_URL, json=decision, headers=moderator.headers)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["state"] == "dismissed"
+    settled = flags.get_flag(flag["id"])
+    assert settled is not None and settled.status == flags.DECIDED
+    # The paper did not move, and its author is not told it did.
+    assert submission.state == "listed"
+    assert [
+        n
+        for n in _notifications(submission.did)
+        if n.kind == moderation.MODERATION_DECISION_KIND
+    ] == []
+
+
+def test_a_list_decision_tells_the_reporter_the_paper_was_kept_listed(
+    client, moderator, subscribed
+):
+    submission = Submission(state="moderation")
+    reporter = f"did:example:paperkept-{uuid.uuid4().hex}"
+    response = client.post(
+        "/v1/flags",
+        json={"target": submission.version_cid, "reason": "plagiarism"},
+        headers={"Authorization": f"Bearer {issue_access_token(reporter, 1)}"},
+    )
+    assert response.status_code == 201, response.text
+    decision = decide_on(moderator, submission.version_cid, "list")
+
+    assert client.post(
+        DECISIONS_URL, json=decision, headers=moderator.headers
+    ).status_code == 201
+
+    [note] = [
+        n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
+    ]
+    assert note.payload["summary"] == "The paper you reported was kept listed."
+    assert note.payload["link"] == f"/p/{submission.short_id}"
 
 
 def test_a_record_decision_arriving_through_post_records_is_applied(

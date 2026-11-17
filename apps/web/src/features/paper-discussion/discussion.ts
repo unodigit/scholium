@@ -71,6 +71,15 @@ export interface DiscussionPost {
   readonly quote: string | null;
   /** The node's arrival order, used only to break ties. `null` when unknown. */
   readonly seq: number | null;
+  /**
+   * True when a moderator hid the post: `text` is withheld and the card shows
+   * a "Hidden by moderation" placeholder in its place.
+   */
+  readonly hidden?: boolean;
+  /** The moderator's reason for hiding it, when the node serves one. */
+  readonly hiddenReason?: string | null;
+  /** When the hide decision was signed (ISO 8601), when the node serves it. */
+  readonly hiddenAt?: string | null;
   readonly replies: readonly DiscussionPost[];
 }
 
@@ -170,6 +179,11 @@ function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPos
     target: pickText(raw, "target"),
     quote: readQuote(raw.anchor),
     seq: pickInteger(raw, "seq"),
+    // A moderator's hide is a placeholder: the body is withheld even if a node
+    // mistakenly sends one, and the reason is the card's whole message.
+    hidden: raw.hidden === true || pickTimestamp(raw, "hidden_at", "hiddenAt") !== null,
+    hiddenReason: pickText(raw, "hidden_reason", "hiddenReason", "reason"),
+    hiddenAt: pickTimestamp(raw, "hidden_at", "hiddenAt"),
     replies,
   };
 }
@@ -232,10 +246,12 @@ export function orderThreads(posts: readonly DiscussionPost[]): DiscussionPost[]
     .map((post) => (post.replies.length === 0 ? post : { ...post, replies: orderThreads(post.replies) }));
 }
 
-/** How many posts there are, replies included. */
+/** How many posts there are, replies included; a hidden placeholder is not one. */
 export function countPosts(posts: readonly DiscussionPost[]): number {
   let total = 0;
-  for (const post of posts) total += 1 + countPosts(post.replies);
+  for (const post of posts) {
+    total += (post.hidden === true ? 0 : 1) + countPosts(post.replies);
+  }
   return total;
 }
 
@@ -521,7 +537,14 @@ export async function markPostHelpful(
   return helpful === null ? null : Math.max(0, helpful);
 }
 
-/** Why a post is being reported. The id is what `POST /v1/flags` stores as the reason. */
+/** One reason a member can give for reporting something. */
+export interface ReportReasonOption {
+  readonly id: string;
+  readonly label: string;
+  readonly hint: string;
+}
+
+/** The reasons offered for a discussion post, reply or annotation. */
 export const REPORT_REASONS = [
   { id: "spam", label: "Spam or advertising", hint: "Promotion with no link to this paper." },
   { id: "abuse", label: "Harassment or abuse", hint: "Aimed at a person, not at the work." },
@@ -531,11 +554,32 @@ export const REPORT_REASONS = [
   { id: "other", label: "Something else", hint: "A moderator will read it." },
 ] as const;
 
-export type ReportReason = (typeof REPORT_REASONS)[number]["id"];
+/**
+ * The reasons offered for a paper: the kinds of problem a *work* can have,
+ * not the ones a post can.  A paper report is about the research record.
+ */
+export const PAPER_REPORT_REASONS = [
+  { id: "misconduct", label: "Research misconduct", hint: "Fabricated or falsified results." },
+  { id: "plagiarism", label: "Plagiarism", hint: "Text or ideas taken without credit." },
+  { id: "duplicated-figures", label: "Duplicated figures", hint: "A figure reused as if it were new." },
+  { id: "spam", label: "Spam or advertising", hint: "Not a research paper." },
+  { id: "off-topic", label: "Off topic", hint: "Not a fit for this venue." },
+  { id: "other", label: "Something else", hint: "A moderator will read it." },
+] as const;
+
+export type ReportReason =
+  | (typeof REPORT_REASONS)[number]["id"]
+  | (typeof PAPER_REPORT_REASONS)[number]["id"];
 
 /** The reason with this id, or `null`. */
-export function reportReason(id: string): (typeof REPORT_REASONS)[number] | null {
-  return REPORT_REASONS.find((reason) => reason.id === id) ?? null;
+export function reportReason(
+  id: string,
+): (typeof REPORT_REASONS)[number] | (typeof PAPER_REPORT_REASONS)[number] | null {
+  return (
+    REPORT_REASONS.find((reason) => reason.id === id) ??
+    PAPER_REPORT_REASONS.find((reason) => reason.id === id) ??
+    null
+  );
 }
 
 /** What a filed report answers. */

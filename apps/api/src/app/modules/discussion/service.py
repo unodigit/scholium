@@ -460,6 +460,60 @@ def _sort_key(item: Mapping[str, Any]) -> tuple[int, str, int]:
     return (-helpful, created, seq)
 
 
+def _hidden_document(
+    row: DiscussionPost,
+    entry: Any,
+    hidden: Any,
+    author_name_value: Optional[str] = None,
+) -> dict[str, Any]:
+    """One hidden post as a placeholder: its place, author and ruling -- no body.
+
+    A ``hide`` decision withdraws the post from public reads but keeps it in
+    the thread, so the replies under it keep their place.  The document carries
+    the fields a reader needs to see that something was removed and why
+    (``hidden``, ``hidden_at``, ``hidden_reason``) and none of the record's
+    content: no ``text``, ``textCid`` or ``anchor`` (whose ``quote`` is body).
+    """
+    post_cid = row.post_cid
+    author = row.author_did
+    parent = row.parent_cid
+    reason = getattr(hidden, "reason", None)
+    hidden_at = getattr(hidden, "hidden_at", None)
+    decision_cid = getattr(hidden, "decision_cid", None)
+    return {
+        "id": post_cid,
+        "cid": post_cid,
+        "post_cid": post_cid,
+        "postCid": post_cid,
+        "author": author,
+        "author_did": author,
+        "authorDid": author,
+        "author_name": author_name_value,
+        "authorName": author_name_value,
+        "text": None,
+        "textCid": None,
+        "target": None,
+        "paper": None,
+        "anchor": None,
+        "parent": parent,
+        "parent_cid": parent,
+        "parentCid": parent,
+        "helpful": 0,
+        "created": _created(entry),
+        "seq": getattr(entry, "seq", None),
+        "hidden": True,
+        "hidden_at": hidden_at,
+        "hiddenAt": hidden_at,
+        "hidden_reason": reason,
+        "hiddenReason": reason,
+        "reason": reason,
+        "hidden_clause": getattr(hidden, "clause", None),
+        "decision_cid": decision_cid,
+        "decisionCid": decision_cid,
+        "replies": [],
+    }
+
+
 def _post_document(
     row: DiscussionPost, entry: Any, author_name_value: Optional[str] = None
 ) -> dict[str, Any]:
@@ -559,22 +613,33 @@ def threads_for(ref: PaperRef, *, viewer_did: Optional[str] = None) -> dict[str,
         muted = muted_dids(viewer_did) if viewer_did else set()
         visible = [row for row in rows if row.author_did not in muted]
 
+        # A moderator's hide decision withdraws a post's body from public reads
+        # without removing it from the thread: the read serves a placeholder so
+        # replies keep their place, and the tab's count leaves it out.
+        from app.modules.moderation.hides import hidden_record
+
         documents: dict[str, dict[str, Any]] = {}
         names: dict[str, Optional[str]] = {}
         for row in visible:
             did = row.author_did or ""
             if did not in names:
                 names[did] = author_name(did)
-            documents[row.post_cid] = _post_document(
-                row, entries.get(row.post_cid), names[did]
-            )
+            hidden = hidden_record(row.post_cid)
+            if hidden is not None:
+                documents[row.post_cid] = _hidden_document(
+                    row, entries.get(row.post_cid), hidden, names[did]
+                )
+            else:
+                documents[row.post_cid] = _post_document(
+                    row, entries.get(row.post_cid), names[did]
+                )
 
     threads = _nest(documents)
     return {
         "paper": ref.short_id or ref.paper_cid,
         "paper_cid": ref.paper_cid,
         "paperCid": ref.paper_cid,
-        "count": len(documents),
+        "count": sum(1 for document in documents.values() if not document.get("hidden")),
         "threads": threads,
     }
 

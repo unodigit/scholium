@@ -58,7 +58,12 @@ PENDING = "pending"
 DECIDED = "decided"
 
 #: Kind of the notification the reporter receives once their flag is decided.
-FLAG_DECIDED_KIND = "flag.decided"
+#:
+#: It is named for the *outcome* rather than the old ``flag.decided``: the
+#: notification carries the outcome in words and a link to the item, and a
+#: client that does not know this kind renders those fields verbatim instead
+#: of showing a bare status code.
+FLAG_DECIDED_KIND = "flag.outcome"
 
 
 def create_flag(
@@ -148,19 +153,65 @@ def list_flags(
 # --------------------------------------------------------------------------- #
 
 
+def _decision_action(decision_cid: Optional[str]) -> Optional[str]:
+    """The action of the decision that settled a flag, when the row is readable."""
+    if not isinstance(decision_cid, str) or not decision_cid:
+        return None
+    try:
+        from app.modules.moderation.models import (
+            ModerationDecision,
+            ensure_tables as ensure_moderation_tables,
+        )
+
+        ensure_moderation_tables()
+        with db.SessionLocal() as session:
+            row = session.get(ModerationDecision, decision_cid)
+            return None if row is None else str(row.action)
+    except Exception:  # pragma: no cover - moderation is a shipped plugin
+        logger.exception("could not read decision %s for a flag outcome", decision_cid)
+        return None
+
+
 def flag_decided_payload(flag: Flag) -> dict[str, Any]:
-    """The payload of the ``flag.decided`` notification for ``flag``.
+    """The payload of the ``flag.outcome`` notification for ``flag``.
 
     ``flag_id`` and ``decision_cid`` let the reporter's client open the flag
     (``GET /v1/flags/{flag_id}``) and the public decision record; ``status``,
     ``reason`` and ``target_cid`` say what was decided and about what.
+
+    ``summary`` (also ``outcome``) says what happened in words, naming the kind
+    of item, and ``link`` opens the item -- the paper page, the Discussion tab
+    (where a hidden post's placeholder is), or the reviews tab.  The inbox
+    renders the words instead of a bare status code.
     """
+    action = _decision_action(flag.decision_cid)
+    try:
+        from app.modules.moderation.outcomes import (
+            item_link,
+            reporter_summary,
+            target_kind,
+        )
+
+        kind = target_kind(flag.target_cid)
+        summary = reporter_summary(kind, action)
+        link = item_link(flag.target_cid, kind)
+    except Exception:  # pragma: no cover - moderation is a shipped plugin
+        logger.exception("could not word the outcome of flag %s", flag.id)
+        kind = "item"
+        summary = "The item you reported was reviewed."
+        link = None
     return {
         "flag_id": flag.id,
         "target_cid": flag.target_cid,
         "reason": flag.reason,
         "status": flag.status,
         "decision_cid": flag.decision_cid,
+        "action": action,
+        "target_kind": kind,
+        "item_kind": kind,
+        "summary": summary,
+        "outcome": summary,
+        "link": link,
     }
 
 
