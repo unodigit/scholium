@@ -298,22 +298,33 @@ def reporter_summary(
     return f"{sentence}."
 
 
-def author_summary(kind: str, action: Optional[str]) -> str:
+def author_summary(kind: str, action: Optional[str], *, target: Optional[str] = None) -> str:
     """The author's outcome in words: what happened to what they signed."""
     noun = _KIND_WORDS.get(kind, "record")
     if kind == "paper":
+        title = paper_title(target) if target else None
+        subject = f'"{title}"' if title else None
+        named = f"Your paper {subject}" if subject else "Your paper"
         outcome = {
-            "list": "Your paper was listed.",
-            "hold": "Your paper was put on hold.",
-            "reject": "Your paper was rejected.",
-            "delist": "Your paper was delisted.",
-            "tombstone": "Your paper was removed for legal reasons.",
-            "release": "Your paper was restored.",
-            "dismiss": "The report on your paper was dismissed; nothing changed.",
+            "list": f"{named} was listed.",
+            "hold": f"{named} was put on hold.",
+            "reject": f"{named} was rejected.",
+            "delist": f"{named} was delisted.",
+            "tombstone": f"{named} was removed for legal reasons.",
+            "release": f"{named} was restored.",
+            "dismiss": (f"The report on your paper {subject} was dismissed; nothing changed." if subject
+                       else "The report on your paper was dismissed; nothing changed."),
         }.get(action or "")
-        return outcome or "A moderator made a decision on your paper."
+        return outcome or f"A moderator made a decision on your paper{(' ' + subject) if subject else ''}."
+    title = paper_title(target) if target else None
+    quote = excerpt(target) if target else None
+    subject = f"The {noun} you wrote"
+    if title:
+        subject += f' on "{title}"'
+    if quote:
+        subject += f' ("{quote}")'
     if action == "hide":
-        return f"The {noun} you wrote was hidden by moderation."
+        return f"{subject} was hidden by moderation."
     if action == "dismiss":
-        return f"The {noun} you wrote was reviewed and kept."
+        return f"{subject} was reviewed and kept."
     return f"A moderator made a decision on your {noun}."

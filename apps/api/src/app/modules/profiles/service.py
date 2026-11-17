@@ -318,6 +318,16 @@ def mark_email_verified(
             row.verified_at = verified_at
         session.commit()
 
+    # The verification notification no longer needs attention.
+    try:
+        from app.modules.notifications.service import list_notifications, mark_read
+
+        for notification in list_notifications(did):
+            if getattr(notification, "kind", None) == "email.verify" and not getattr(notification, "read", True):
+                mark_read(did, notification.id)
+    except Exception:
+        pass
+
     return EmailVerification(did=did, email=profile.email, verified_at=verified_at)
 
 

@@ -147,12 +147,22 @@ def consent_payload(
     n: Optional[int] = None,
 ) -> dict[str, Any]:
     """Build the payload for one author's consent request."""
+    title = None
+    try:
+        from app.modules.submissions import get_version
+
+        version = get_version(version_cid)
+        title = getattr(version, "title", None) if version is not None else None
+    except Exception:
+        title = None
     payload: dict[str, Any] = {
         "paper_cid": paper_cid,
         "version_cid": version_cid,
         "n": n,
         "link": build_consent_link(version_cid),
     }
+    if isinstance(title, str) and title.strip():
+        payload["title"] = title.strip()
     email = _author_email(author_did)
     if email is not None:
         payload["email"] = email

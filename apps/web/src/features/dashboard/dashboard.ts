@@ -835,22 +835,43 @@ export function notificationSummary({ kind, payload }: NotificationLike): string
   switch (kind) {
     case "consent.request": {
       const version = readNumber(payload.n);
-      return `A co-author consent is waiting for your signature${
-        version === null ? "" : ` on version ${Math.trunc(version)}`
-      }.`;
+      const title = readText(payload.title);
+      const versionPart = version === null ? "" : ` on version ${Math.trunc(version)}`;
+      if (title) {
+        return `A co-author consent is waiting for your signature on "${title}"${versionPart}.`;
+      }
+      return `A co-author consent is waiting for your signature${versionPart}.`;
     }
-    case "recovery.request":
-      return "A recovery request needs your approval as a guardian.";
+    case "recovery.request": {
+      const requester =
+        readText(payload.account_name) ??
+        readText(payload.name) ??
+        readText(payload.accountName) ??
+        readText(payload.requester_name) ??
+        readText(payload.requesterName);
+      return requester
+        ? `A recovery request from ${requester} needs your approval as a guardian.`
+        : "A recovery request needs your approval as a guardian.";
+    }
     case "recovery.guardians_changed":
       return "Your recovery guardians were changed.";
-    case "moderation.decision":
+    case "moderation.decision": {
+      const summary = readText(payload.summary) ?? readText(payload.outcome);
+      if (summary) {
+        return summary;
+      }
       return (
         MODERATION_ACTION_SUMMARIES[readText(payload.action) ?? ""] ??
         "A moderator made a decision on your paper."
       );
+    }
     case "appeal.panel":
       return "You were drawn for an appeal panel.";
     case "flag.decided": {
+      const summary = readText(payload.summary) ?? readText(payload.outcome);
+      if (summary) {
+        return summary;
+      }
       const status = readText(payload.status);
       return status === null ? "Your flag was decided." : `Your flag was ${status}.`;
     }

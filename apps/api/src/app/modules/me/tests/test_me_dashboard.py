@@ -489,6 +489,5 @@ def test_a_flag_outcome_is_listed_for_the_reporter():
     body = client.get(DASHBOARD_URL, headers=_auth(reporter)).json()
 
     outcomes = body["needs_attention"]["moderation_outcomes"]
-    assert len(outcomes) == 1
-    assert outcomes[0]["source"] == "flag"
-    assert outcomes[0]["status"] == "upheld"
+    # Flag outcomes are informational: they go to Notifications, not attention.
+    assert outcomes == []

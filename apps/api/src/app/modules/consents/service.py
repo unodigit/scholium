@@ -420,6 +420,13 @@ def handle_consent(record: Mapping[str, Any]) -> str:
         author=author,
         decision=decision,
     )
+    # The consent request no longer needs this author's attention.
+    try:
+        from app.modules.notifications.service import mark_read_for_subject
+
+        mark_read_for_subject(author, "consent.request", version_cid)
+    except Exception:
+        pass
     return "accepted"
 
 

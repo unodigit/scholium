@@ -794,7 +794,7 @@ def _notify_submitting_author(fields: DecisionFields, reason_text: str) -> None:
     from .outcomes import author_summary, item_link, target_kind
 
     kind = target_kind(fields.target)
-    summary = author_summary(kind, fields.action)
+    summary = author_summary(kind, fields.action, target=fields.target)
     payload = {
         "decision_cid": fields.decision_cid,
         "target_cid": fields.target,

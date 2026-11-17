@@ -378,10 +378,15 @@ def _consents_to_sign(
             continue
         paper = paper_by_cid.get(version.paper_cid)
         short_id = getattr(paper, "short_id", None) or version.paper_cid
+        title = getattr(version, "title", None)
+        if title:
+            summary = f'Sign your co-author consent for "{title}" (version {version.n})'
+        else:
+            summary = f"Sign your co-author consent for {short_id}"
         items.append(
             _item(
                 "consent_to_sign",
-                f"Sign your co-author consent for {short_id}",
+                summary,
                 paper=paper,
                 version=version,
                 role=row["credit_roles"],
@@ -419,10 +424,15 @@ def _review_invitations(
         version = version_by_cid.get(invitation["version_cid"])
         paper = paper_by_cid.get(version.paper_cid) if version is not None else None
         short_id = getattr(paper, "short_id", None) or invitation["version_cid"]
+        title = getattr(version, "title", None) if version is not None else None
+        if title:
+            summary = f'You are invited to review "{title}".'
+        else:
+            summary = f"You are invited to review {short_id}."
         items.append(
             _item(
                 "review_invitation",
-                f"You are invited to review {short_id}",
+                summary,
                 paper=paper,
                 version=version,
                 invitationId=invitation["id"],
@@ -521,17 +531,27 @@ def _moderation_outcomes(
                 for row in rows
             ]
         for decision in decisions:
+            action = decision["action"]
+            if action not in {"hold", "reject", "delist", "tombstone", "hide"}:
+                continue
             version = version_by_cid.get(decision["target_cid"])
             paper = paper_by_cid.get(version.paper_cid) if version is not None else None
             if paper is None:
                 paper = paper_by_cid.get(decision["target_cid"])
             short_id = getattr(paper, "short_id", None) or decision["target_cid"]
+            title = getattr(version, "title", None) if version is not None else None
+            reason = _decision_reason(decision["decision_cid"])
+            if title and action in {"hold", "reject", "delist"}:
+                verb = {"hold": "put on hold", "reject": "rejected", "delist": "delisted"}[action]
+                summary = f'Your paper "{title}" was {verb}' + (f": {reason}." if reason else ".")
+            else:
+                summary = f"Moderation decision: {action} on {short_id}"
             item = _item(
                 "moderation_outcome",
-                f"Moderation decision: {decision['action']} on {short_id}",
+                summary,
                 paper=paper,
                 version=version,
-                reason=_decision_reason(decision["decision_cid"]),
+                reason=reason,
                 created_at=decision["decided_at"],
                 decisionCid=decision["decision_cid"],
                 decision_cid=decision["decision_cid"],
@@ -568,6 +588,14 @@ def _moderation_outcomes(
         if paper is None and isinstance(target_cid, str):
             paper = paper_by_cid.get(target_cid)
 
+        # Informational outcomes (dismissals, listings, flag outcomes for reporters)
+        # go to Notifications only, not Needs your attention.
+        if kind == FLAG_DECIDED_KIND:
+            continue
+        action = payload.get("action")
+        if action not in {"hold", "reject", "delist", "tombstone", "hide"}:
+            continue
+
         key = (
             f"decision:{decision_cid}"
             if isinstance(decision_cid, str) and decision_cid
@@ -580,40 +608,30 @@ def _moderation_outcomes(
             existing["notified"] = True
             continue
 
-        if kind == FLAG_DECIDED_KIND:
-            status = payload.get("status")
-            summary = (
-                payload.get("summary")
-                or "An outcome is recorded for a report you filed"
-            )
+        title = None
+        if version is not None:
+            title = getattr(version, "title", None)
+        reason = payload.get("reason")
+        if title and action in {"hold", "reject", "delist"}:
+            verb = {"hold": "put on hold", "reject": "rejected", "delist": "delisted"}[action]
+            summary = payload.get("summary") or (f'Your paper "{title}" was {verb}' + (f": {reason}." if reason else "."))
         else:
-            action = payload.get("action")
-            status = None
-            # The decision's own words when the notification carries them (a
-            # post hidden, a review kept), else the action's name.
             summary = payload.get("summary") or (
-                f"Moderation decision: {action}"
-                if action
-                else "Moderation decision"
+                f"Moderation decision: {action}" if action else "Moderation decision"
             )
-        short_id = getattr(paper, "short_id", None)
-        if short_id and not payload.get("summary"):
-            summary = f"{summary} on {short_id}"
 
         item = _item(
             "moderation_outcome",
             summary,
             paper=paper,
             version=version,
-            reason=payload.get("reason"),
+            reason=reason,
             decisionCid=decision_cid,
             decision_cid=decision_cid,
-            action=payload.get("action"),
+            action=action,
             clause=payload.get("clause"),
-            status=status,
-            flagId=payload.get("flag_id"),
             targetCid=target_cid,
-            source="flag" if kind == FLAG_DECIDED_KIND else "notification",
+            source="notification",
             notificationId=notification_id,
         )
         merged[key] = item
@@ -695,6 +713,44 @@ def _my_papers(
     return papers
 
 
+
+def _latest_review_version_cid(review: Any, version_by_cid: Mapping[str, PaperVersion]) -> str:
+    """The version cid of the reviewer's latest review, following update chains."""
+    base_version = version_by_cid.get(review.version_cid)
+    paper_cid = getattr(base_version, "paper_cid", None) if base_version is not None else None
+    best_cid = review.version_cid
+    best_n = getattr(base_version, "n", None) if base_version is not None else None
+    try:
+        from app.modules.reviews.service import formal_entries
+        entries = formal_entries(getattr(review, "review_key", None))
+    except Exception:
+        entries = []
+    for entry in entries or []:
+        body = getattr(entry, "body", None)
+        if not isinstance(body, Mapping):
+            try:
+                body = entry["body"]
+            except Exception:
+                body = None
+        if not isinstance(body, Mapping):
+            continue
+        target = body.get("target") or body.get("versionCid") or body.get("version_cid")
+        if not isinstance(target, str):
+            continue
+        version = version_by_cid.get(target)
+        if version is None:
+            continue
+        if paper_cid is not None and getattr(version, "paper_cid", None) != paper_cid:
+            continue
+        n = getattr(version, "n", None)
+        if not isinstance(n, int):
+            continue
+        if best_n is None or n > best_n:
+            best_n = n
+            best_cid = target
+    return best_cid
+
+
 def _my_reviews(
     my_review_cids: Iterable[str],
     reviews: Mapping[str, Review],
@@ -709,7 +765,8 @@ def _my_reviews(
         if review is None:
             # The escrow knows about a review whose row is missing; nothing to show.
             continue
-        version = version_by_cid.get(review.version_cid)
+        latest_version_cid = _latest_review_version_cid(review, version_by_cid)
+        version = version_by_cid.get(latest_version_cid)
         paper = paper_by_cid.get(version.paper_cid) if version is not None else None
         short_id = getattr(paper, "short_id", None)
         revealed = review.revealed_at is not None
@@ -725,8 +782,8 @@ def _my_reviews(
                 "shortId": short_id,
                 "paperCid": getattr(paper, "paper_cid", None),
                 "version": getattr(version, "n", None),
-                "versionCid": review.version_cid,
-                "version_cid": review.version_cid,
+                "versionCid": latest_version_cid,
+                "version_cid": latest_version_cid,
                 "title": getattr(version, "title", None),
                 "committedAt": _iso(review.committed_at),
                 "revealedAt": _iso(review.revealed_at),

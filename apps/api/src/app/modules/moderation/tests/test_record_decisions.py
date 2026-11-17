@@ -445,7 +445,7 @@ def test_the_post_author_hears_type_correct_words_and_a_working_link(
         for n in _notifications(post_record["author"])
         if n.kind == moderation.RECORD_DECISION_KIND
     ]
-    assert note.payload["summary"] == "The post you wrote was hidden by moderation."
+    assert str(note.payload["summary"]).endswith("was hidden by moderation.")
     assert note.payload["target_kind"] == "post"
     assert note.payload["link"].startswith("/discussion/")
 

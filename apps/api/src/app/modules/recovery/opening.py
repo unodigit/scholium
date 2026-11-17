@@ -244,9 +244,20 @@ def _notify_guardians(
     guardian's notification failing must neither undo it nor stop the others
     being told.
     """
+    account_name = None
+    try:
+        from app.modules.profiles import read_profile
+
+        profile = read_profile(did)
+        if profile is not None:
+            account_name = getattr(profile, "name", None)
+    except Exception:
+        account_name = None
     payload = {
         "request_id": request_id,
         "account_did": did,
+        "account_name": account_name,
+        "name": account_name,
         "orcid": orcid,
         "new_public_key": new_public_key,
         "requested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
