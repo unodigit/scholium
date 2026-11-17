@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Verify sweep 1 (claw-forge-verify, 2026-11-17, main @ 0cbf778): real-browser journeys.
+  Evidence: .claw-forge/journeys/*.md and .claw-forge/journeys/screenshots/<journey>/ (gitignored, local).
+  App under test: API :8200 (seed-demo, ORCID/arXiv mocks, fake AI), web prod build :3200.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/web/src/features/dashboard/dashboard-page.tsx,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard-page.test.tsx,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/dashboard-page.css,apps/web/src/features/dashboard/me.ts,apps/web/src/features/dashboard/me-page.tsx"
+       creates="apps/web/src/features/dashboard/notifications-card.tsx,apps/web/src/features/dashboard/notifications-card.test.tsx">
+    <title>/me dashboard: notifications list always empty, linked ORCID iD hidden, held papers labelled "Contested", no link to own profile</title>
+    <symptoms>
+      The global-nav bell shows an unread count (1 to 4) for members with notifications; clicking it opens /me#notifications, whose Notifications card always says "No notifications yet"
+      GET /v1/me/notifications returns 200 with the unread rows (e.g. 3 for the seeded author mei); the NotificationsCard in dashboard-page.tsx renders a hard-coded empty state and never fetches them
+      After "ORCID iD 0000-0002-1825-0097 linked", /me's Credentials card shows only the did:key, not the ORCID iD (screenshots/03-new-member-onboarding/12-me.png)
+      On /me a held paper's status chip reads "Contested" and nothing shows that an appeal is pending (screenshots/11-moderation-hold-and-appeal/)
+      Neither /me nor the header links to the member's own public profile /u/{did}
+    </symptoms>
+    <reproduction_steps>
+      Seed demo data; sign in as mei; the bell shows 3; click it: /me#notifications says "No notifications yet" (journey 05 step 4, screenshot screenshots/05-follow-search-notify/08-mei-bell-open.png)
+    </reproduction_steps>
+    <expected>The Notifications card on /me loads GET /v1/me/notifications with the viewer's token and lists each notification (kind label, human summary, time ago, unread styling) with its link target (consent request, recovery approval, moderation outcome, review invitation, email verification...), newest first, paginated or capped with "show more"; opening/clicking an item marks it read through the API's existing mark-read endpoint and the bell count drops accordingly; the empty state shows only when the API returns none; errors show a retryable error state. The Credentials card shows the linked ORCID iD (linking to https://orcid.org/{iD}) and when it was linked. My papers shows the moderation state (Held, Appeal pending, Rejected, Listed, Awaiting consent) as its own chip, separate from the computed review status, so a held paper is never labelled "Contested" merely for being held. /me has a "View public profile" link to /u/{did}</expected>
+    <actual>Hard-coded empty state; the bell count can never be cleared from the UI; iD hidden; misleading chip</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="high"
+       touches_files="apps/web/src/features/web-auth/recover-form.tsx,apps/web/src/features/web-auth/recover-messages.ts,apps/web/src/features/web-auth/recover-messages.test.ts,apps/web/src/features/web-auth/recover.ts,apps/web/src/features/web-auth/recover.test.ts,apps/web/src/features/web-auth/use-recover.ts,apps/web/src/features/web-auth/use-recover.test.ts,apps/web/src/app/(web-auth)/recover/**,apps/web/src/features/dashboard/security-page.tsx,apps/web/src/features/dashboard/security.ts,apps/web/src/features/dashboard/security-page.test.tsx,apps/web/src/features/dashboard/security.test.ts,apps/web/src/features/dashboard/security-page.css,apps/api/src/app/modules/recovery/**"
+       creates="apps/web/src/app/(dashboard)/me/recovery/[id]/page.tsx,apps/web/src/features/dashboard/guardian-approval.tsx,apps/web/src/features/dashboard/guardian-approval.test.tsx">
+    <title>Social recovery cannot complete: guardians have no way to approve, progress is lost on reload, guardians are device-local</title>
+    <symptoms>
+      /recover starts a recovery request ("0 of 3 approvals") and the API creates a recovery.request notification for each guardian, but no web page lets a guardian see or approve it: nothing calls POST /v1/recovery/requests/{id}/approvals, so the request stays at 0 of 3 forever (ID-4 is unreachable through the UI)
+      Reloading /recover forgets the request in progress; pressing start again creates a second request id
+      /me/security lists guardians only on the browser that set them ("Saved from this browser"); on another device it says "No guardians are recorded on this device" although the server has them
+    </symptoms>
+    <reproduction_steps>
+      New member sets 5 guardians on /me/security (okafor, solheim, keller, mei, rafael); in a fresh browser identity open /recover and start: 0 of 3; sign in as okafor: /me and the bell offer no approval (journey 06, screenshots/06-key-recovery/04-after-start.png, 05-okafor-me.png)
+      Reload /recover: the request is gone (screenshots/06-key-recovery/07-recover-second-start.png)
+    </reproduction_steps>
+    <expected>A guardian reaches a recovery approval page from the notification (and from a "Recovery requests" section on /me/security or /me) that shows who is asking (pseudonymous DID + profile name if any, request time, new key fingerprint) and lets the guardian sign and post the approval record with their device key (POST /v1/recovery/requests/{id}/approvals), or decline; /recover persists the in-progress request id (and the new device key it is for) in the browser so a reload resumes it and polls its approval count, and offers to finalize/rotate once the threshold is met, ending signed in with the new key and the old key rejected; /me/security lists the guardians recorded on the server (GET from the API) on any device, marking which ones are also cached locally</expected>
+    <actual>Recovery request dead-ends at 0 approvals; reload loses it; guardian list device-local</actual>
+    <constraints>
+      <constraint>The 3-of-5 threshold, rotation and old-key rejection rules in the recovery module stay unchanged; only missing endpoints needed by the UI (e.g. list the guardian's pending requests, read one request, list my guardians) may be added</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="3" shape="core" severity="high"
+       touches_files="apps/web/src/features/mod-console/**,apps/web/src/app/(mod-console)/**">
+    <title>A flag on a discussion post (or review) cannot be decided: the moderation item page only loads paper versions</title>
+    <symptoms>
+      In /mod the Flags section offers "Decide on it" for a flagged discussion post; it opens /mod/{postCid}, which shows "Couldn't load this paper - This record is a discussion.post, not a paper version" with a Try again button and no decision form, so the reporter never gets an outcome (MOD-2 flag -> decision -> appeal is broken for non-paper records)
+      The flag card shows only the flagged CID and the reporter DID, not what was flagged (record type, paper title, excerpt)
+    </symptoms>
+    <reproduction_steps>
+      As a member report a discussion post on sch:ub3c-jiug-zina; as priya open /mod, Flags, Decide on it (journey 07 step 4, screenshots/07-flag-and-dispute/07-mod-item.png)
+    </reproduction_steps>
+    <expected>The moderation item page handles every flaggable record type (discussion post, annotation, review, paper version): for non-paper records it shows the record content (author pseudonym, text, the paper it belongs to with a link) and the flags against it, beside a decision form whose actions fit that record (dismiss flag, hide/tombstone the post with a reason), and posts the same signed moderation decision records the API already accepts; flag cards in /mod show the record type, owning paper title and a short excerpt</expected>
+    <actual>Dead-end error page</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="high"
+       touches_files="apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx,apps/web/src/features/search-page/search-page.css,apps/web/src/features/search-page/search.ts,apps/web/src/features/search-page/search.test.ts,apps/web/src/features/feed/**,apps/web/src/features/dashboard/follow-toggle.tsx,apps/web/src/features/dashboard/follow-toggle.test.tsx,apps/web/src/features/dashboard/saved-searches.ts,apps/web/src/features/dashboard/saved-searches.test.ts"
+       creates="apps/web/src/features/search-page/save-search-button.tsx,apps/web/src/features/search-page/save-search-button.test.tsx">
+    <title>No UI to save a search or follow a category (READ-5); search results omit authors; unknown categories render</title>
+    <symptoms>
+      The search page, paper page, category page /c/{category} and profile /u/{did} have no Save search or Follow control; categories can only be followed during onboarding. A FollowToggle component exists in features/dashboard but no page renders it, and /me's Saved searches and Follows cards can therefore never be filled from the UI
+      Search results omit the author names that the feed shows
+      /c/xx.FAKE renders an empty category page with an Atom link instead of not found
+    </symptoms>
+    <reproduction_steps>
+      Sign in as sam; search "reward"; open a paper; open /c/cs.LG; open an author's /u/{did}: no Save or Follow anywhere (journey 05 steps 1-2, screenshots/05-follow-search-notify/01-search-signed-in.png to 04-author-profile.png)
+    </reproduction_steps>
+    <expected>Signed-in members get a "Save this search" button on /search (stores the query and filters via the saved-searches API, with optional email digest toggle) and a Follow/Following toggle (the existing FollowToggle, which must also send signed-out visitors to /signin?next=current page on click) on the category page header; after reload the state is reflected on the control and /me lists the saved search and follows. Search results show author names like feed rows. An unknown category code returns the app's not-found page (HTTP 404). (Follow on the paper header and on profiles is handled by the paper-header and profile fixes, which reuse FollowToggle.)</expected>
+    <actual>Feature unreachable from the UI</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="high"
+       touches_files="apps/web/src/features/paper-page/paper-page-view.tsx,apps/web/src/features/paper-page/paper-header.tsx,apps/web/src/features/paper-page/paper-actions.tsx,apps/web/src/features/paper-page/paper-actions.css,apps/web/src/features/paper-page/paper-route.test.tsx,apps/web/src/features/paper-page/paper-author-actions.test.tsx,apps/web/src/features/paper-discussion/post-card.tsx,apps/web/src/features/paper-discussion/report-panel.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx"
+       creates="apps/web/src/features/paper-page/report-paper.tsx,apps/web/src/features/paper-page/report-paper.test.tsx,apps/web/src/features/paper-page/paper-header.test.tsx">
+    <title>Readers cannot flag a paper or a review; signed-out readers see live discussion actions (MOD-2, PRD journey 5)</title>
+    <symptoms>
+      The paper page and the Reviews tab have no Flag/Report control (only "Send rating" on reviews); only discussion posts have Report, so PRD journey 5 ("a reader flags duplicated figures") cannot start
+      Signed-out readers see active "Mark helpful / Reply / Report" buttons on discussion posts
+    </symptoms>
+    <reproduction_steps>
+      Sign in as any member and open /p/ub3c-jiug-zina and its Reviews tab: no flag control (journey 07 step 1, screenshots/07-flag-and-dispute/01-paper-signed-in.png)
+      Sign out and open the Discussion tab: action buttons look enabled
+    </reproduction_steps>
+    <expected>A "Report" action in the paper header's actions menu opens the same report panel used for discussion posts (reason category + free text; export it from paper-discussion's index if needed), signs and posts the flag record against the paper version CID, and confirms submission; the paper header also renders a Follow/Following toggle (FollowToggle from features/dashboard) for the paper, and each author name links to /u/{did}; signed-out readers clicking Report, Reply or Mark helpful are sent to /signin?next=current page instead of seeing an enabled action that fails. (Report on review cards is part of the reviews-tab fix.)</expected>
+    <actual>No way to flag papers or reviews</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="high"
+       touches_files="apps/web/src/features/paper-reviews/**,apps/web/src/features/review-form/review-form.tsx,apps/web/src/features/review-form/rubric.ts,apps/web/src/features/review-form/commit.ts,apps/web/src/features/review-form/reveal.ts,apps/web/src/features/review-form/sealed-review.ts,apps/web/src/features/review-form/review-actions.tsx,apps/web/src/features/review-form/review-form.test.tsx,apps/web/src/features/review-form/review-form-reveal.test.tsx,apps/web/src/features/review-form/review-actions.test.tsx,apps/web/src/features/review-form/review-form.css,apps/web/src/features/review-form/review-actions.css,apps/web/src/features/review-form/rubric.test.ts,apps/web/src/features/review-form/reveal.test.ts,apps/web/src/features/review-form/commit.test.ts">
+    <title>Revealed reviews written in the browser show "has not been revealed yet"; history, per-version listing and update feedback are wrong</title>
+    <symptoms>
+      After both reviewers reveal, the Reviews tab and /reviews/{id} show "This review has not been revealed yet." on both cards and none of the per-score justifications, although GET /v1/papers/{id}/reviews returns revealed_at and the justifications (report_cid is null because the review form has no free-text report field); seeded reviews with a report show "Read the report"
+      After a reviewer updates their review for v2, only the new recommendation shows; the previous one ("Minor revisions") appears nowhere although the API returns a history array
+      /reviews/{id}/v1 renders the Version 2 listing
+      The v2 listing marks already-revealed v1 reviews as "reports sealed"
+      Clicking "Update review" saves, but the form stays unchanged with no confirmation; a second click surfaces the raw API message "This review has already been updated; point 'prev' at the reviewer's latest review..."
+      With one sealed review the copy contradicts itself ("The rubric scores are already public" and "The rubric is not available for this review"); after the second commit the sealed card still says it reveals "when a second review is committed"
+    </symptoms>
+    <reproduction_steps>
+      Journey 12: okafor and solheim commit and reveal on sch:rdlb-dvsi-2iad; anonymous Reviews tab (screenshots/12-review-commit-reveal/18-anon-paper-reviews-tab.png, 19-anon-reviews-page.png, 09-sealed-one-commit-public-view.png)
+      Journey 13: author posts v2, okafor updates (screenshots/13-new-version-and-review-update/15-review-updated.png, 17-review-updated.png, 18-anon-reviews-after-update.png, 19-reviews-v1-listing.png)
+    </reproduction_steps>
+    <expected>The review form has an optional free-text written report (markdown, stored as the review's report content exactly like seeded reviews) in addition to the rubric; a revealed review card always shows recommendation, rubric scores with their justifications, and the report when present ("No written report" when absent) - "not revealed yet" only when revealed_at is null; a review with history shows a "Revised" marker and an expandable history listing earlier recommendations per version with dates; /reviews/{id}/vN lists reviews of version N; revealed reviews are never labelled sealed; after a successful update the form switches to a confirmed read-only state showing the new review, and API problems are shown as human messages; sealed-review copy reflects the actual gate state (commits so far, independent reviewers needed, 21-day fallback); every revealed review card has a "Report" action opening the discussion report panel (import it from features/paper-discussion) that signs and posts a flag against the review CID, sending signed-out readers to /signin?next=...</expected>
+    <actual>Revealed reviews look unrevealed; history invisible; wrong version listing; no update feedback</actual>
+    <constraints>
+      <constraint>REV-4 anonymity and the commit-reveal gate are unchanged; nothing sealed may be shown</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="7" shape="core" severity="high"
+       touches_files="apps/web/src/features/submit/new-version.ts,apps/web/src/features/submit/new-version-page.tsx,apps/web/src/features/submit/new-version.css,apps/web/src/features/submit/new-version.test.ts,apps/web/src/features/submit/new-version-page.test.tsx,apps/web/src/features/paper-page/compare.ts,apps/web/src/features/paper-page/compare-view.tsx,apps/web/src/features/paper-page/compare.test.ts,apps/api/src/app/modules/reviews/response.py,apps/api/src/app/modules/submissions/**">
+    <title>New version cannot carry new files or a response to reviewers, so compare always says "Nothing changed" (PUB-6, REV-5)</title>
+    <symptoms>
+      /submit/new-version/{ref} says "The files of version 1 are carried over unchanged" and offers no upload; v2 can only change the change note
+      There is no point-by-point response to reviewers in the flow (PRD journey 2: "Mei responds and posts v2"; REV-5 "Response thread linked to each review item")
+      /p/{id}/compare/v1..v2 always shows "Nothing changed"
+    </symptoms>
+    <reproduction_steps>
+      Journey 13: as the author of a reviewed paper open the new-version flow (screenshots/13-new-version-and-review-update/03-change-note-step.png, 11-compare-v1-v2.png)
+    </reproduction_steps>
+    <expected>The new-version flow lets the author replace or add files (PDF, source, code) using the same tus upload + scan components as /submit, keeping unchanged files by default, and includes a "Response to reviewers" step listing each revealed review of the previous version with a response box per review (posted as the existing author-response records linked to each review); the new version's manifest names the new files; compare shows file-level changes (added/removed/replaced with sizes) plus a text diff of title/abstract/change note; the reviews tab shows the author's response under each review</expected>
+    <actual>v2 identical to v1 except the change note; no responses</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="medium"
+       touches_files="apps/web/src/features/submit/status-tracker.tsx,apps/web/src/features/submit/submit.css,apps/web/src/features/submit/submit-wizard.tsx,apps/web/src/features/submit/submit-wizard.test.tsx,apps/web/src/features/submit/sign-step.tsx,apps/web/src/features/submit/sign-step.test.tsx,apps/web/src/features/submit/limits.ts,apps/web/src/features/submit/limits.test.ts,apps/web/src/features/submit/consent-tracker.tsx,apps/web/src/features/submit/consent-tracker.test.tsx,apps/web/src/features/submit/authors-step.tsx"
+       creates="apps/web/src/features/submit/status-tracker.test.tsx,apps/web/src/features/submit/eligibility.ts,apps/web/src/features/submit/eligibility.test.ts">
+    <title>Submission eligibility is only checked at the last step with internal wording; the status tracker is unstyled and has no consent link</title>
+    <symptoms>
+      The tier-2 weekly limit and the "needs an endorsement in every category" rule are reported only after the whole five-step wizard, at Sign and submit, with internal wording ("paper.genesis" and a raw ISO timestamp)
+      The status tracker renders run-on unstyled text ("Submitted&#10003;", "Co-author consents (0/2)0 of 2 signed", "Moderationtarget 48 h"); the submitter is listed as needing to consent but the tracker gives no link to do it
+      The Sign step says "1 files"; the submitting author appears as a raw DID on the Sign summary and tracker
+    </symptoms>
+    <reproduction_steps>
+      Sign in as mei (already submitted this week) and complete the wizard: refused only at the end (screenshots/10-publish/09-submitted-tracker.png)
+      Submit as an eligible author: tracker (screenshots/10-publish/20-submitted-tracker.png, 21-tracker-scrolled.png)
+    </reproduction_steps>
+    <expected>On opening /submit (and when categories are chosen) the wizard checks eligibility from the API (tier, weekly quota with the next allowed date in the viewer's locale, category endorsements) and explains blockers in plain language before any upload, with a link to how to get endorsed; problems from the API are mapped to human messages, never raw record types or ISO strings; the status tracker is a styled stepper (Submitted, Co-author consents n/m with each author's state, Scan, Moderation with target time, Listed) and, when the viewer still owes a consent, a "Sign your consent" link to /consent/{version}; counts pluralize correctly and people show by profile name with the DID as secondary text</expected>
+    <actual>Late, cryptic refusal; unreadable tracker</actual>
+  </bug>
+
+  <bug index="9" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/orcid/**,apps/web/src/features/web-auth/onboarding-form.tsx,apps/web/src/features/web-auth/onboarding-messages.ts,apps/web/src/features/web-auth/onboarding.ts,apps/web/src/features/web-auth/onboarding.test.ts,apps/web/src/features/web-auth/use-onboarding.ts,apps/web/src/features/web-auth/use-onboarding.test.ts,apps/web/src/app/(web-auth)/onboarding/**,apps/web/src/lib/api/session.ts,apps/web/src/lib/api/session-provider.tsx,apps/web/src/lib/api/session.test.ts,apps/web/src/lib/api/session-provider.test.tsx,apps/web/src/components/nav/session.ts">
+    <title>ORCID mock still sends people to the real sandbox; skipping after the ORCID detour signs the newcomer out; onboarding never asks for a name</title>
+    <symptoms>
+      With ORCID_MOCK=1 "Link your ORCID iD" navigates to https://sandbox.orcid.org/oauth/authorize with an empty client_id, so in dev/e2e nobody can complete linking through the UI
+      A newcomer who returns from the ORCID page and clicks "Skip for now" is signed out: /me redirects to /signin
+      Onboarding never asks for a display name, so new members (and their posts) appear everywhere as a truncated DID
+    </symptoms>
+    <reproduction_steps>
+      new person signs in, onboarding, Link your ORCID iD (screenshots/03-new-member-onboarding/03-orcid-step.png, screenshots/14-endorse-newcomer/02-orcid-link.png)
+      Back, Skip for now, open /me: redirected to /signin (screenshots/14-endorse-newcomer/05-newcomer-me.png)
+    </reproduction_steps>
+    <expected>When ORCID_MOCK is on (never allowed when SCHOLIUM_ENV=production) the authorize URL points at a mock authorize page served by the API that shows a fake ORCID consent screen with a test iD and redirects back to /onboarding/orcid with code and the original state, so the real return path is exercised; the session (refresh cookie + bootstrap) survives leaving the site and returning, whether the person links or skips; onboarding has a profile step for display name (and optional affiliation) saved through the existing erasable-profile API (ID-7), so pages that already show profile names show it instead of the DID</expected>
+    <actual>Linking impossible in dev; session lost after skip; no names</actual>
+  </bug>
+
+  <bug index="10" shape="core" severity="medium"
+       touches_files="apps/web/src/features/dashboard/endorse-button.tsx,apps/web/src/features/dashboard/endorse.ts,apps/web/src/features/dashboard/endorse-button.test.tsx,apps/web/src/features/dashboard/endorse.test.ts,apps/web/src/features/dashboard/public-profile-page.tsx,apps/web/src/features/dashboard/public-profile.ts,apps/web/src/features/dashboard/user-profile-page.tsx,apps/web/src/features/dashboard/user-profile.ts,apps/web/src/features/dashboard/profile-route.test.tsx,apps/api/src/app/modules/endorsements/**,apps/api/src/app/modules/profiles/views.py">
+    <title>Endorsements are not shown on profiles and the Endorse button forgets it was used, allowing duplicates</title>
+    <symptoms>
+      After endorsing a newcomer, reloading their /u/{did} resets the Endorse button to its default and the same reviewer can endorse again
+      Profiles never list the endorsements a person holds (category, endorser, date)
+      Profiles have no Follow control
+    </symptoms>
+    <reproduction_steps>
+      Journey 14: okafor endorses a newcomer in cs.AI, reloads the profile (screenshots/14-endorse-newcomer/)
+    </reproduction_steps>
+    <expected>Public profiles list the person's endorsements per category with endorser (name/pseudonym link) and date; the Endorse button reflects existing endorsements by the viewer (shows "Endorsed in cs.AI" and only offers categories not yet endorsed); the API refuses a duplicate endorsement for the same endorser/endorsee/category with 409; public profiles render a Follow/Following toggle for the person (FollowToggle from features/dashboard)</expected>
+    <actual>No endorsement display; duplicates possible</actual>
+  </bug>
+
+  <bug index="11" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/appeal-dialog.tsx,apps/web/src/features/paper-page/appeal-dialog.test.tsx,apps/web/src/features/paper-page/paper-access-view.tsx,apps/web/src/features/paper-page/paper-access.tsx,apps/web/src/features/paper-page/paper-access.test.tsx">
+    <title>Filed appeals are invisible to the author on the paper page</title>
+    <symptoms>
+      After the author files an appeal on a held paper, the banner still says "You can appeal once." and the paper page does not show that an appeal is pending or its outcome
+    </symptoms>
+    <reproduction_steps>
+      Journey 11: priya holds sch:65a6-24pd-bu6t; sam appeals and reloads the paper (screenshots/11-moderation-hold-and-appeal/10-sam-paper-after-appeal-reload.png)
+    </reproduction_steps>
+    <expected>Once an appeal exists the banner shows "Appeal filed on {date} - awaiting panel" (then the panel outcome) and the appeal button is gone, after reload too</expected>
+    <actual>Stale banner</actual>
+  </bug>
+
+  <bug index="12" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/cite.ts,apps/web/src/features/paper-page/cite.test.ts,apps/web/src/features/paper-page/notice-dialog.tsx,apps/web/src/features/paper-page/notice-dialog.test.tsx,apps/api/src/app/modules/search/**">
+    <title>Small defects: honorifics in citations, bare IDs not found, notice dialog wording</title>
+    <symptoms>
+      BibTeX and RIS cite "Keller, Dr. Jonas" (honorific included)
+      Searching a bare ID without the sch: prefix ("ub3c-jiug-zina") returns 0 results
+      The notice dialog says "shown on every version ... including v2" when v2 is the current version
+    </symptoms>
+    <reproduction_steps>
+      Open a paper's Cite dialog for a paper by "Dr. Jonas Keller"; search "ub3c-jiug-zina" (journeys 02, 10, 15)
+    </reproduction_steps>
+    <expected>Citations strip honorific prefixes (Dr., Prof., etc.) from names; the search API treats a query matching the bare form of a paper id (xxxx-xxxx-xxxx) like the sch: form and returns that paper first; notice dialog copy names only versions other than the current one when it says "including"</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="13" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/admin/**">
+    <title>Demo seed leaves no account able to submit a paper</title>
+    <symptoms>
+      seed-demo gives every tier-2 author (mei, rafael, lena, sam) a paper in the current week, so the weekly limit refuses their next submission, and the tier-3 reviewers have no category endorsements, so they cannot submit either; PRD journey 1 ("Mei publishes") cannot be demonstrated on fresh demo data
+      The seeded moderation-queue paper shows Categories "-" on its moderation page although the queue row says cs.AI
+    </symptoms>
+    <reproduction_steps>
+      Fresh seed-demo; sign in as mei; complete /submit: refused by the weekly limit (journey 10)
+    </reproduction_steps>
+    <expected>seed-demo adds one more tier-2 author (e.g. "Ana Costa", slug ana, written to the keys file like the others) with endorsements in cs.AI and cs.LG and no papers, so fresh demo data can run the publish journey, and gives each seeded reviewer an endorsement in the categories of the papers they reviewed; existing seeded accounts, papers and their slugs stay exactly as they are; seeded papers carry their categories everywhere they are displayed (the moderation item page shows the queue paper's categories)</expected>
+    <actual>No demo account can run the publish journey</actual>
+    <constraints>
+      <constraint>Existing e2e specs that rely on seed-demo (apps/web/tests/e2e) must keep passing; update their expectations only if the seed change requires it</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
