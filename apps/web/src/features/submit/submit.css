@@ -320,6 +320,93 @@
   line-height: var(--leading-meta);
 }
 
+/* The Sign summary is a definition list: every value carries the label the
+   author knows it by, rather than a stack of unlabelled lines. */
+.sw-summary__list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+}
+
+.sw-summary__row {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr);
+  gap: var(--space-unit) calc(var(--space-unit) * 3);
+  align-items: baseline;
+}
+
+.sw-summary__label {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.sw-summary__value {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.sw-summary__title-text {
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+}
+
+.sw-summary__abstract,
+.sw-summary__licence,
+.sw-summary__files {
+  margin: 0;
+}
+
+.sw-summary__categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-unit) calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sw-summary__files-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-unit);
+  margin: var(--space-unit) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sw-summary__files-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-unit) calc(var(--space-unit) * 2);
+}
+
+.sw-summary__file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sw-summary__file-size {
+  flex: none;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 30rem) {
+  .sw-summary__row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
 /* ---- File list ---------------------------------------------------------- */
 
 .sw-files {
@@ -488,6 +575,19 @@
   display: flex;
   flex-wrap: wrap;
   gap: calc(var(--space-unit) * 2);
+}
+
+/* The endorsement problem with the chosen categories, beside the picker. The
+   live region stays in the page (empty when nothing is wrong) so a change as
+   chips are pressed is announced, and it never leaves a gap when empty. */
+.sw-category-warning {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.sw-category-warning:not(:empty) {
+  margin-top: calc(var(--space-unit) * 3);
 }
 
 .sw-chip.sw-chip--choice {

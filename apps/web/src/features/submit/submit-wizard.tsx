@@ -31,7 +31,7 @@ import {
   type EligibilityFacts,
   type FetchEligibility,
 } from "./eligibility";
-import { SignStep } from "./sign-step";
+import { SignStep, type SignStepProps } from "./sign-step";
 import { emptyDetails, type DetailsValues } from "./details";
 import {
   createSubmitDraftStorage,
@@ -69,6 +69,12 @@ export interface SubmitWizardProps {
   checksPollMs?: number;
   /** Replaces the tier / endorsement lookup, for tests and callers with their own client. */
   fetchEligibility?: FetchEligibility;
+  /** Injected signer, for tests and callers with their own client. */
+  signRecord?: SignStepProps["signRecord"];
+  /** Injected record submitter, for tests and callers with their own client. */
+  submitRecord?: SignStepProps["submitRecord"];
+  /** Replaces the consent report request, for tests and callers with their own client. */
+  fetchConsents?: SignStepProps["fetchConsents"];
   /** Persistence for the wizard draft. Tests may inject a store or an IndexedDB factory. */
   draftStorage?: SubmitDraftStorage;
   storage?: SubmitDraftStorage;
@@ -88,6 +94,9 @@ export function SubmitWizard({
   fetchChecks,
   checksPollMs,
   fetchEligibility,
+  signRecord,
+  submitRecord,
+  fetchConsents,
   draftStorage,
   storage,
   draftStorageFactory,
@@ -150,6 +159,19 @@ export function SubmitWizard({
     () => (facts === null ? [] : findBlockers(facts, details.categories)),
     [facts, details.categories],
   );
+  // The category mismatch is about the chips under the author's hand, so while
+  // Details is open it is shown beside the picker (DetailsStep) instead of
+  // above the wizard, where it is off-screen. On the later steps it returns to
+  // the page-level status region, so it is still said before signing.
+  const categoryBlocker = blockers.find((blocker) => blocker.kind === "categories") ?? null;
+  const categoryWarning = categoryBlocker === null ? null : describeBlocker(categoryBlocker, { did: ownDid });
+  const pageBlockers = blockers.filter(
+    (blocker) => blocker.kind !== "categories" || step !== "details",
+  );
+
+  // Signing is the end of the wizard: the header says so instead of offering
+  // the draft state of a paper that no longer is one.
+  const [submitted, setSubmitted] = useState(false);
   // The weekly limit is the one rule that stops the paper existing at all: no
   // upload can make it start sooner, so the wizard waits rather than letting
   // the author fill five steps for a `429` at signing. The other blockers are
@@ -255,8 +277,8 @@ export function SubmitWizard({
     <div className="sw-wizard">
       <header className="sw-header">
         <p className="sw-crumb">Submit</p>
-        <h1 className="sw-title">Submit a paper</h1>
-        {draftStatus === "saved" ? (
+        <h1 className="sw-title">{submitted ? "Submitted - version 1" : "Submit a paper"}</h1>
+        {draftStatus === "saved" && !submitted ? (
           <p className="sw-draft-saved" role="status">
             Draft saved
           </p>
@@ -272,9 +294,9 @@ export function SubmitWizard({
         </p>
       ) : null}
 
-      {/* Always in the page, so a blocker appearing (or clearing) as categories change is announced. */}
+      {/* Always in the page, so a blocker appearing or clearing is announced. */}
       <div className="sw-eligibility" role="status" aria-label="Submission eligibility">
-        {blockers.map((blocker) => {
+        {pageBlockers.map((blocker) => {
           const message = describeBlocker(blocker, { did: ownDid });
           return (
             <div key={blocker.kind} className="sw-eligibility__item" data-blocker={blocker.kind}>
@@ -311,6 +333,7 @@ export function SubmitWizard({
               onChange={setDetails}
               onBack={() => setStep("files")}
               onContinue={() => setStep("authors")}
+              categoryWarning={categoryWarning}
             />
           ) : null}
 
@@ -343,7 +366,13 @@ export function SubmitWizard({
               details={details}
               authors={authors}
               submitterName={facts?.name ?? null}
+              signRecord={signRecord}
+              submitRecord={submitRecord}
+              fetchConsents={fetchConsents}
+              fetchChecks={fetchChecks}
+              checksPollMs={checksPollMs}
               onBack={() => setStep("checks")}
+              onSigned={() => setSubmitted(true)}
             />
           ) : null}
         </>

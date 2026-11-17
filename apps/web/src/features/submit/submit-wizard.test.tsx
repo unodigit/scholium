@@ -413,19 +413,22 @@ describe("SubmitWizard — eligibility is explained before any upload", () => {
     expect(screen.queryByRole("button", { name: "Continue to Details" })).toBeNull();
   });
 
-  it("checks the categories as they are chosen on the Details step", async () => {
+  it("checks the categories as they are chosen, beside the picker rather than above the page", async () => {
     await openDetails({ submitterDid: ME, fetchEligibility: askApi({ endorsedCategories: ["cs.CL"] }) });
     const region = await eligibilityRegion();
     // Nothing is chosen yet, so nothing is wrong yet.
     expect(region.textContent).toBe("");
 
     fireEvent.click(screen.getByRole("button", { name: /^cs\.AI/ }));
-    await vi.waitFor(() => expect(region.textContent).toMatch(/not endorsed in cs\.AI/));
-    expect(region.textContent).toMatch(/cs\.CL/);
+    const categories = screen.getByRole("group", { name: "Categories" });
+    const warning = await within(categories).findByText(/not endorsed in cs\.AI/);
+    expect((warning.closest("[data-blocker='categories']") as HTMLElement).textContent).toMatch(/cs\.CL/);
+    // The warning no longer sits off-screen above the steps.
+    expect(region.textContent).toBe("");
 
     // Choosing it again clears the problem.
     fireEvent.click(screen.getByRole("button", { name: /^cs\.AI/ }));
-    await vi.waitFor(() => expect(region.textContent).toBe(""));
+    await vi.waitFor(() => expect(within(categories).queryByText(/not endorsed in cs\.AI/)).toBeNull());
   });
 
   it("says nothing to someone who can submit", async () => {
@@ -468,5 +471,59 @@ describe("SubmitWizard — eligibility is explained before any upload", () => {
     await vi.waitFor(() => expect(row.querySelector(".sw-summary__author-name")?.textContent).toBe("Mei Chen (you)"));
     expect(row.querySelector(".sw-summary__author-did")?.textContent).toBe("did:key:z6MkhaXg…ta2doK");
     expect(row.textContent).not.toContain(ME);
+  });
+});
+
+describe("SubmitWizard — after signing", () => {
+  it("turns the header into 'Submitted - version 1' without a draft status", async () => {
+    const signRecord = vi.fn().mockImplementation((type: string) =>
+      Promise.resolve({
+        v: 1,
+        type,
+        id: `bafyrei-${type}`,
+        author: ME,
+        created: "2026-11-16T12:00:00Z",
+        prev: null,
+        body: {},
+        proofs: [],
+        sig: "sig",
+      }),
+    );
+    const submitRecord = vi.fn().mockImplementation((record: { id: string }) =>
+      Promise.resolve({ id: record.id, shortId: "sch:abcd-efgh-ijkl" }),
+    );
+    const fetchConsents = vi.fn().mockResolvedValue({
+      paper: "sch:abcd-efgh-ijkl",
+      version: 1,
+      versionCid: "bafyreiversion",
+      state: "awaiting_consent",
+      declinedBy: null,
+      count: 1,
+      waiting: 1,
+      signed: 0,
+      declined: 0,
+      authors: [{ did: ME, position: 1, status: "waiting" }],
+    });
+
+    await openDetails({ submitterDid: ME, signRecord, submitRecord, fetchConsents });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "CRediT roles for You" })).getByRole("button", {
+        name: /^Conceptualization/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Sign" }));
+
+    // The autosave badge is on screen before the paper is signed.
+    await screen.findByText("Draft saved");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+    await screen.findByText("Status", { selector: ".sw-status-tracker__title" });
+
+    expect(screen.getByRole("heading", { level: 1, name: "Submitted - version 1" })).toBeTruthy();
+    expect(screen.queryByText("Draft saved")).toBeNull();
+    expect(screen.queryByText(/You are signing version 1/)).toBeNull();
   });
 });

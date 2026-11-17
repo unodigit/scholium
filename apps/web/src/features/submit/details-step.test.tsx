@@ -6,6 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_LICENCE_ID, LICENCES, MAX_CATEGORIES, emptyDetails, type DetailsValues } from "./details";
 import { DetailsStep, type DetailsStepProps } from "./details-step";
 
+vi.mock("next/link", async () => {
+  const { createElement } = await import("react");
+  return {
+    default: ({ href, children, ...rest }: { href: string; children?: React.ReactNode }) =>
+      createElement("a", { href, ...rest }, children),
+  };
+});
+
 afterEach(cleanup);
 
 /** The step with a real draft behind it, so typing and clicking behave as they do in the wizard. */
@@ -101,6 +109,34 @@ describe("DetailsStep — licence picker", () => {
 });
 
 describe("DetailsStep — categories", () => {
+  it("shows an endorsement warning beside the picker, announced as choices change", () => {
+    render(
+      <Harness
+        categoryWarning={{
+          kind: "categories",
+          title: "You are not endorsed in cs.CR",
+          body: "You can submit only in a category where you hold an endorsement.",
+          help: { href: "/u/me", label: "How to get endorsed" },
+        }}
+      />,
+    );
+
+    // It belongs with the chips the author is choosing, not above the wizard.
+    const categories = screen.getByRole("group", { name: "Categories" });
+    const title = within(categories).getByText("You are not endorsed in cs.CR");
+    const live = title.closest("[aria-live]");
+    expect(live?.getAttribute("aria-live")).toBe("polite");
+    expect(
+      within(categories).getByRole("link", { name: "How to get endorsed" }).getAttribute("href"),
+    ).toBe("/u/me");
+  });
+
+  it("has no warning when every chosen category is endorsed", () => {
+    render(<Harness categoryWarning={null} />);
+    const categories = screen.getByRole("group", { name: "Categories" });
+    expect(categories.querySelector(".sw-eligibility__item")).toBeNull();
+  });
+
   it("starts with none chosen", () => {
     render(<Harness />);
     expect(screen.getByRole("status").textContent).toBe("No categories chosen yet.");

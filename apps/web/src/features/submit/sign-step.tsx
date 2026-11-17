@@ -29,7 +29,7 @@ import {
 } from "./consents";
 import { emptyDetails, type DetailsValues } from "./details";
 import { submissionProblemMessage } from "./eligibility";
-import { pluralize } from "./limits";
+import { formatBytes, pluralize } from "./limits";
 import { withProfileNames, type FetchProfileName } from "./profile-names";
 import { useProfileNames } from "./use-profile-names";
 import { useChecks, DEFAULT_CHECK_POLL_MS } from "./use-checks";
@@ -108,6 +108,23 @@ export interface SignStepProps {
   changeNote?: string;
   seed?: string;
   paperSeed?: string;
+}
+
+/**
+ * Licence ids print by their full name on the summary card. The id is what the
+ * signed record carries, so it is never what the author reads back; an id this
+ * release does not know still prints as itself rather than being guessed at.
+ */
+const LICENCE_FULL_NAMES: Readonly<Record<string, string>> = {
+  "CC-BY-4.0": "Creative Commons Attribution 4.0",
+  "CC-BY-SA-4.0": "Creative Commons Attribution-ShareAlike 4.0",
+  "CC-BY-NC-4.0": "Creative Commons Attribution-NonCommercial 4.0",
+  "CC-BY-NC-ND-4.0": "Creative Commons Attribution-NonCommercial-NoDerivatives 4.0",
+  "CC0-1.0": "CC0 1.0 Universal",
+};
+
+function licenceFullName(id: string): string {
+  return LICENCE_FULL_NAMES[id] ?? id;
 }
 
 function manifestRole(role: SubmitFile["role"]): string {
@@ -276,56 +293,91 @@ export function SignStep(props: SignStepProps): ReactElement {
       <h2 id="sw-sign-title" className="sw-step__title" tabIndex={-1}>
         Sign
       </h2>
-      <p className="sw-step__lede">
-        You are signing version 1 of this paper. This cannot be edited later; you can publish a new version at
-        any time.
-      </p>
+      {phase !== "submitted" ? (
+        <p className="sw-step__lede">
+          You are signing version 1 of this paper. This cannot be edited later; you can publish a new version at
+          any time.
+        </p>
+      ) : null}
 
       <section className="sw-summary" aria-label="Summary card">
         <h3 className="sw-summary__title">Summary</h3>
-        <p className="sw-summary__title-text">{details.title}</p>
-        {details.abstract ? <p className="sw-summary__abstract">{details.abstract}</p> : null}
-        {details.categories.length > 0 ? (
-          <ul className="sw-summary__categories" aria-label="Categories">
-            {details.categories.map((category) => (
-              <li key={category}>{category}</li>
-            ))}
-          </ul>
-        ) : null}
-        <p className="sw-summary__licence">Licence: {details.licence}</p>
-        <ul className="sw-summary__authors" aria-label="Authors">
-          {shownAuthors.map((author) => {
-            const label = authorLabel(author);
-            const did = author.did ?? (author.kind === "did" ? author.identifier : null);
-            // The name slot already shows an unnamed co-author by their DID;
-            // repeating it underneath would print the same identifier twice.
-            const showDid = did !== null && (author.name.trim() !== "" || author.isSubmitter);
-            return (
-              <li key={author.key}>
-                <span className="sw-summary__author-name">
-                  {label}
-                  {author.isSubmitter && label !== "You" ? " (you)" : ""}
-                </span>
-                {author.creditRoles.length > 0 ? (
-                  <span className="sw-summary__author-roles"> — {author.creditRoles.join(", ")}</span>
-                ) : null}
-                {showDid && did !== null ? (
-                  <span className="sw-summary__author-did" title={did}>
-                    {shortDid(did)}
-                  </span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-        <p className="sw-summary__files">{pluralize(files.length, "file")}</p>
-        {files.length > 0 ? (
-          <ul className="sw-summary__files-list" aria-label="Files">
-            {files.map((file) => (
-              <li key={file.id}>{file.path}</li>
-            ))}
-          </ul>
-        ) : null}
+        <dl className="sw-summary__list">
+          <div className="sw-summary__row">
+            <dt className="sw-summary__label">Title</dt>
+            <dd className="sw-summary__value sw-summary__title-text">{details.title || "Untitled"}</dd>
+          </div>
+          <div className="sw-summary__row">
+            <dt className="sw-summary__label">Abstract</dt>
+            <dd className="sw-summary__value sw-summary__abstract">
+              {details.abstract || "No abstract."}
+            </dd>
+          </div>
+          <div className="sw-summary__row">
+            <dt className="sw-summary__label">Categories</dt>
+            <dd className="sw-summary__value">
+              {details.categories.length > 0 ? (
+                <ul className="sw-summary__categories" aria-label="Categories">
+                  {details.categories.map((category) => (
+                    <li key={category}>{category}</li>
+                  ))}
+                </ul>
+              ) : (
+                "None chosen."
+              )}
+            </dd>
+          </div>
+          <div className="sw-summary__row">
+            <dt className="sw-summary__label">Licence</dt>
+            <dd className="sw-summary__value sw-summary__licence">{licenceFullName(details.licence)}</dd>
+          </div>
+          <div className="sw-summary__row">
+            <dt className="sw-summary__label">Authors</dt>
+            <dd className="sw-summary__value">
+              <ul className="sw-summary__authors" aria-label="Authors">
+                {shownAuthors.map((author) => {
+                  const label = authorLabel(author);
+                  const did = author.did ?? (author.kind === "did" ? author.identifier : null);
+                  // The name slot already shows an unnamed co-author by their DID;
+                  // repeating it underneath would print the same identifier twice.
+                  const showDid = did !== null && (author.name.trim() !== "" || author.isSubmitter);
+                  return (
+                    <li key={author.key}>
+                      <span className="sw-summary__author-name">
+                        {label}
+                        {author.isSubmitter && label !== "You" ? " (you)" : ""}
+                      </span>
+                      {author.creditRoles.length > 0 ? (
+                        <span className="sw-summary__author-roles"> — {author.creditRoles.join(", ")}</span>
+                      ) : null}
+                      {showDid && did !== null ? (
+                        <span className="sw-summary__author-did" title={did}>
+                          {shortDid(did)}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </dd>
+          </div>
+          <div className="sw-summary__row">
+            <dt className="sw-summary__label">Files</dt>
+            <dd className="sw-summary__value">
+              <p className="sw-summary__files">{pluralize(files.length, "file")}</p>
+              {files.length > 0 ? (
+                <ul className="sw-summary__files-list" aria-label="Files">
+                  {files.map((file) => (
+                    <li key={file.id}>
+                      <span className="sw-summary__file-name">{file.path}</span>
+                      <span className="sw-summary__file-size">{formatBytes(file.size)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </dd>
+          </div>
+        </dl>
       </section>
 
       {error !== null ? (

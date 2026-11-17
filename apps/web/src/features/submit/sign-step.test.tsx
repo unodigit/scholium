@@ -219,6 +219,46 @@ function problem(status: number, body: Record<string, unknown>): ApiError {
   return new ApiError(status, { status, title: "x", ...body });
 }
 
+describe("SignStep — the summary card is a labelled definition list", () => {
+  it("labels every part of the summary", () => {
+    renderSign();
+    const summary = screen.getByRole("region", { name: "Summary card" });
+    expect(within(summary).getAllByRole("term").map((term) => term.textContent)).toEqual([
+      "Title",
+      "Abstract",
+      "Categories",
+      "Licence",
+      "Authors",
+      "Files",
+    ]);
+  });
+
+  it("prints the licence by its full name, never its record id", () => {
+    renderSign();
+    const summary = screen.getByRole("region", { name: "Summary card" });
+    expect(within(summary).getByText("Creative Commons Attribution 4.0")).toBeTruthy();
+    expect(summary.textContent).not.toContain("CC-BY-4.0");
+  });
+
+  it("shows each author with their CRediT roles", () => {
+    renderSign({
+      authors: [...submitter("Mei Chen"), coauthor()],
+      fetchProfileName: vi.fn(async () => null),
+    });
+    const authors = screen.getByRole("list", { name: "Authors" });
+    const coAuthorRow = within(authors).getAllByRole("listitem")[1];
+    expect(coAuthorRow.textContent).toContain("Software");
+  });
+
+  it("shows each file with its size", () => {
+    renderSign({ files: [FILE("paper")] });
+    const files = screen.getByRole("list", { name: "Files" });
+    const row = within(files).getByRole("listitem");
+    expect(row.textContent).toContain("paper.pdf");
+    expect(row.textContent).toContain("2 B");
+  });
+});
+
 describe("SignStep — the summary card's wording", () => {
   it("counts files with the right noun: '1 file', '2 files'", () => {
     renderSign({ files: [FILE("a")] });
@@ -327,6 +367,16 @@ describe("SignStep — refusals in plain language", () => {
 });
 
 describe("SignStep — the status tracker after submitting", () => {
+  it("drops the 'You are signing version 1' sentence once the paper is signed", async () => {
+    renderSign({ authors: submitter("Mei Chen") });
+    expect(screen.getByText(/You are signing version 1/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+    await screen.findByText("Status", { selector: ".sw-status-tracker__title" });
+
+    expect(screen.queryByText(/You are signing version 1/)).toBeNull();
+  });
+
   it("offers 'Sign your consent' to the submitter, who is still listed as waiting", async () => {
     renderSign({ authors: submitter("Mei Chen") });
     fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));

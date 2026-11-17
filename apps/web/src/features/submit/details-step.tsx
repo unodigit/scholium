@@ -20,6 +20,7 @@
  * Files and forward again keeps what was typed.
  */
 
+import Link from "next/link";
 import { useEffect, useRef, type ReactElement } from "react";
 
 import {
@@ -34,6 +35,7 @@ import {
   toggleCategory,
   type DetailsValues,
 } from "./details";
+import type { BlockerMessage } from "./eligibility";
 import { CheckIcon, InfoIcon } from "./icons";
 import "./submit.css";
 
@@ -49,6 +51,13 @@ export interface DetailsStepProps {
   onContinue?: (values: DetailsValues) => void;
   /** The name of the step Continue leads to, for the button and its hint. */
   nextStepLabel?: string;
+  /**
+   * The endorsement problem with the categories chosen so far, already worded
+   * by the wizard. It is shown beside the picker, where the author is looking,
+   * rather than above the wizard where it would be off-screen; the region is
+   * always in the page so a change as chips are pressed is announced.
+   */
+  categoryWarning?: BlockerMessage | null;
 }
 
 export function DetailsStep({
@@ -57,6 +66,7 @@ export function DetailsStep({
   onBack,
   onContinue,
   nextStepLabel = "Authors",
+  categoryWarning = null,
 }: DetailsStepProps): ReactElement {
   const titleRef = useRef<HTMLInputElement>(null);
 
@@ -175,6 +185,22 @@ export function DetailsStep({
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Always in the page, so a warning appearing or clearing as chips are
+            pressed is announced rather than silently painted in. */}
+        <div className="sw-category-warning" aria-live="polite" aria-atomic="true">
+          {categoryWarning !== null ? (
+            <div className="sw-eligibility__item" data-blocker={categoryWarning.kind}>
+              <p className="sw-eligibility__title">{categoryWarning.title}</p>
+              <p className="sw-eligibility__body">{categoryWarning.body}</p>
+              {categoryWarning.help !== null ? (
+                <Link className="sw-eligibility__help" href={categoryWarning.help.href}>
+                  {categoryWarning.help.label}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <p className="sw-summary" role="status">
