@@ -12,7 +12,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, NetworkError } from "../../lib/api";
-import type { CiteFormatId, LoadCitation } from "./cite";
+import {
+  citationUrl,
+  withCitationUrl,
+  type CiteFormatId,
+  type LoadCitation,
+} from "./cite";
 import { CITE_DIALOG_TITLE, COPIED_FOR_MS, CiteDialog } from "./cite-dialog";
 import { BIBTEX_BODY, RIS_BODY, SHORT_ID } from "./paper-page-fixtures";
 
@@ -26,6 +31,12 @@ import { BIBTEX_BODY, RIS_BODY, SHORT_ID } from "./paper-page-fixtures";
 const HREF = "http://node.test/v1/papers/sch%3A6sel-2dio-orm6/v2/cite?format=bibtex";
 
 const TEXT: Record<CiteFormatId, string> = { bibtex: BIBTEX_BODY, ris: RIS_BODY };
+
+/** What the dialog shows once the canonical web address is added. */
+const CITED: Record<CiteFormatId, string> = {
+  bibtex: withCitationUrl(BIBTEX_BODY, "bibtex", citationUrl(SHORT_ID, 2)),
+  ris: withCitationUrl(RIS_BODY, "ris", citationUrl(SHORT_ID, 2)),
+};
 
 /** A loader that answers at once with each format's text. */
 function answering(): ReturnType<typeof vi.fn<LoadCitation>> {
@@ -74,6 +85,7 @@ afterEach(() => {
   // Markup the tests wrote straight into the body is not React's to clean up.
   document.body.innerHTML = "";
   vi.useRealTimers();
+  vi.restoreAllMocks();
   Reflect.deleteProperty(navigator, "clipboard");
   Reflect.deleteProperty(document, "execCommand");
   document.body.style.overflow = "";
@@ -145,11 +157,12 @@ describe("opening", () => {
     expect(load).toHaveBeenCalledWith(SHORT_ID, 2, "ris");
   });
 
-  it("shows each citation exactly as the node wrote it", async () => {
+  it("shows each citation with its canonical web address, keeping the node's fields", async () => {
     await openReady();
 
-    expect(field("BibTeX").value).toBe(BIBTEX_BODY);
-    expect(field("RIS").value).toBe(RIS_BODY);
+    expect(field("BibTeX").value).toBe(CITED.bibtex);
+    expect(field("RIS").value).toBe(CITED.ris);
+    expect(field("BibTeX").value).toContain("  eprint = {sch:6sel-2dio-orm6/v2},");
     expect(field("BibTeX").readOnly).toBe(true);
     expect(field("RIS").readOnly).toBe(true);
   });
@@ -189,6 +202,8 @@ describe("while the citations load", () => {
     expect(screen.getByText("Loading the RIS…")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Copy BibTeX" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Copy RIS" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Download .bib" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Download .ris" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
@@ -199,7 +214,7 @@ describe("while the citations load", () => {
 
     await act(async () => settle.ris.resolve(RIS_BODY));
 
-    expect(field("RIS").value).toBe(RIS_BODY);
+    expect(field("RIS").value).toBe(CITED.ris);
     expect(screen.getByText("Loading the BibTeX…")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Copy RIS" }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("button", { name: "Copy BibTeX" }) as HTMLButtonElement).disabled).toBe(true);
@@ -246,7 +261,7 @@ describe("copying", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Copied BibTeX" })).toBeTruthy());
     expect(write).toHaveBeenCalledTimes(1);
-    expect(write).toHaveBeenCalledWith(BIBTEX_BODY);
+    expect(write).toHaveBeenCalledWith(CITED.bibtex);
   });
 
   it("puts the RIS on the clipboard exactly as shown", async () => {
@@ -256,7 +271,7 @@ describe("copying", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy RIS" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Copied RIS" })).toBeTruthy());
-    expect(write).toHaveBeenCalledWith(RIS_BODY);
+    expect(write).toHaveBeenCalledWith(CITED.ris);
   });
 
   it("says Copied for the one that was copied, and not for the other", async () => {
@@ -311,7 +326,56 @@ describe("copying", () => {
     expect(alert.textContent).toBe("Couldn’t copy. Select the text above and copy it by hand.");
     expect(screen.queryByRole("button", { name: /^Copied/ })).toBeNull();
     // The text is still there to select by hand.
-    expect(field("BibTeX").value).toBe(BIBTEX_BODY);
+    expect(field("BibTeX").value).toBe(CITED.bibtex);
+  });
+});
+
+describe("downloading", () => {
+  /** Stand in for the object-URL and anchor-click machinery jsdom lacks. */
+  function stubDownloads() {
+    const blobs: Blob[] = [];
+    const revoked: string[] = [];
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn((blob: Blob) => {
+        blobs.push(blob);
+        return `blob:citation-${blobs.length}`;
+      }),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn((url: string) => {
+        revoked.push(url);
+      }),
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    return { blobs, revoked, click };
+  }
+
+  it("offers Download .bib, saving the BibTeX as a plain-text sch-{id}-v{n}.bib file", async () => {
+    const { blobs, revoked, click } = stubDownloads();
+    await openReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "Download .bib" }));
+
+    expect(blobs).toHaveLength(1);
+    expect(blobs[0].type).toBe("text/plain;charset=utf-8");
+    expect(await blobs[0].text()).toBe(CITED.bibtex);
+    const anchor = click.mock.instances[0] as HTMLAnchorElement;
+    expect(anchor.download).toBe("sch-6sel-2dio-orm6-v2.bib");
+    expect(revoked).toEqual(["blob:citation-1"]);
+  });
+
+  it("offers Download .ris, saving the RIS as sch-{id}-v{n}.ris", async () => {
+    const { blobs, click } = stubDownloads();
+    await openReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "Download .ris" }));
+
+    expect(await blobs[0].text()).toBe(CITED.ris);
+    expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe(
+      "sch-6sel-2dio-orm6-v2.ris",
+    );
   });
 });
 
@@ -331,7 +395,7 @@ describe("when a citation cannot be loaded", () => {
     expect(alert.textContent).toContain(
       "Couldn’t reach the server to load the RIS. Check your connection and try again.",
     );
-    expect(field("BibTeX").value).toBe(BIBTEX_BODY);
+    expect(field("BibTeX").value).toBe(CITED.bibtex);
     expect(screen.queryByRole("textbox", { name: "RIS" })).toBeNull();
     expect((screen.getByRole("button", { name: "Copy RIS" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -374,7 +438,7 @@ describe("when a citation cannot be loaded", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Try again loading the RIS" }));
 
-    await waitFor(() => expect(field("RIS").value).toBe(RIS_BODY));
+    await waitFor(() => expect(field("RIS").value).toBe(CITED.ris));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(load).toHaveBeenCalledTimes(3);
     expect(load).toHaveBeenLastCalledWith(SHORT_ID, 2, "ris");

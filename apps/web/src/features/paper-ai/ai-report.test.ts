@@ -129,15 +129,24 @@ describe("parseAiReport", () => {
 
     expect(report.agents.map((group) => group.agent)).toEqual([...AGENT_ORDER]);
     // The payload led with integrity; the display still leads with methodology.
-    expect(report.agents[0]).toMatchObject({ agent: "methodology", findings: [] });
+    // Reproducibility's finding was co-reported by methodology, so its panel
+    // shows that finding too rather than contradicting "Also reported by".
+    expect(report.agents[0]).toMatchObject({ agent: "methodology" });
+    expect(report.agents[0].findings).toHaveLength(1);
     expect(report.agents[2].findings).toHaveLength(2); // reproducibility
     expect(report.agents[3].findings).toHaveLength(1); // integrity
+    // Four cards across the panels, but three distinct findings: the merged
+    // one is shown in both panels that reported it, not counted twice.
     expect(findingCount(report)).toBe(3);
   });
 
   it("reads a finding's id from any of the endpoint's spellings", () => {
     const report = parseAiReport(apiPayload());
-    const ids = report.agents.flatMap((group) => group.findings.map((finding) => finding.id));
+    const ids = [
+      ...new Set(
+        report.agents.flatMap((group) => group.findings.map((finding) => finding.id)),
+      ),
+    ];
 
     expect(ids.sort()).toEqual(["1", "2", "3"]);
   });
@@ -190,7 +199,11 @@ describe("parseAiReport", () => {
     const report = parseAiReport(apiPayload());
     const findings = report.agents.flatMap((group) => group.findings);
 
-    const merged = findings.find((finding) => finding.id === "1")!;
+    // The primary agent's own panel lists the other panel that co-reported it.
+    const reproduction = report.agents.find(
+      (group) => group.agent === "reproducibility",
+    )!;
+    const merged = reproduction.findings.find((finding) => finding.id === "1")!;
     expect(merged.alsoReportedBy).toEqual(["methodology"]);
     expect(merged.agentsDisagree).toBe(true);
     expect(merged.needsHumanCheck).toBe(false);
@@ -238,6 +251,69 @@ describe("parseAiReport", () => {
       "literature",
     ]);
     expect(report.agents[0].findings[0].claim).toBe("B");
+  });
+});
+
+describe("co-reported findings", () => {
+  /**
+   * A report where the meta-reviewer merged a reproducibility finding into the
+   * literature and integrity agents' sets, but those panels list no findings of
+   * their own — the contradiction the bug reported. `novelty` is named as a
+   * co-reporter but has no panel at all.
+   */
+  function coReportedPayload(): Record<string, unknown> {
+    return {
+      agents: [
+        { agent: "methodology", findings: [] },
+        { agent: "literature", findings: [] },
+        {
+          agent: "reproducibility",
+          findings: [
+            {
+              finding_id: "r1",
+              claim: "The released code cannot reach the stated accuracy.",
+              severity: "major",
+              evidence: { log_line: "step 4: KeyError 'weights'" },
+              also_reported_by: ["literature", "integrity", "novelty"],
+            },
+          ],
+        },
+        { agent: "integrity", findings: [] },
+      ],
+    };
+  }
+
+  function findingsByAgent(report: ReturnType<typeof parseAiReport>) {
+    return Object.fromEntries(
+      report.agents.map((group) => [group.agent, group.findings]),
+    );
+  }
+
+  it("shows a finding in every panel that co-reported it", () => {
+    const byAgent = findingsByAgent(parseAiReport(coReportedPayload()));
+
+    expect(byAgent.methodology).toHaveLength(0);
+    expect(byAgent.reproducibility.map((finding) => finding.id)).toEqual(["r1"]);
+    // The panels that used to say "No findings" now show the merged finding.
+    expect(byAgent.literature.map((finding) => finding.id)).toEqual(["r1"]);
+    expect(byAgent.integrity.map((finding) => finding.id)).toEqual(["r1"]);
+  });
+
+  it("lists only the agents whose panel shows the same finding, never itself or a panel-less name", () => {
+    const byAgent = findingsByAgent(parseAiReport(coReportedPayload()));
+
+    expect(byAgent.reproducibility[0].alsoReportedBy).toEqual(["literature", "integrity"]);
+    // A copy in Literature's panel lists the others who reported it, not itself,
+    // and not "novelty", which has no panel to show it in.
+    expect(byAgent.literature[0].alsoReportedBy).toEqual(["reproducibility", "integrity"]);
+    expect(byAgent.integrity[0].alsoReportedBy).toEqual(["reproducibility", "literature"]);
+  });
+
+  it("makes each copy name the panel it sits in, so the card belongs where it is shown", () => {
+    const byAgent = findingsByAgent(parseAiReport(coReportedPayload()));
+
+    expect(byAgent.literature[0].agent).toBe("literature");
+    expect(byAgent.integrity[0].agent).toBe("integrity");
   });
 });
 

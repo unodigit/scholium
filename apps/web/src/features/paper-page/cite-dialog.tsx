@@ -13,7 +13,9 @@
  * Both entries are read from `GET /v1/papers/{id}/cite?format=bibtex|ris` when
  * the dialog opens (`cite.ts`), one request each, so a paper that was retracted
  * since the page was rendered is cited with its retraction note. What the node
- * says is what is shown and what is copied: nothing here edits a citation.
+ * says is what is shown and copied, plus the version's canonical web address
+ * (`withCitationUrl`), which the endpoint does not carry. Each entry can be
+ * copied or saved as a plain-text file (`.bib` or `.ris`).
  *
  * **Without JavaScript it is still a link.** The server's HTML (and the first
  * client render, so hydration matches) is a plain link to the BibTeX that
@@ -38,8 +40,11 @@ import { copyText } from "../ui-kit/clipboard";
 import { Icon } from "../ui-kit/icons";
 import {
   CITE_FORMATS,
+  citationFilename,
+  citationUrl,
   describeCiteError,
   loadCitation,
+  withCitationUrl,
   type CiteFormat,
   type LoadCitation,
 } from "./cite";
@@ -237,6 +242,28 @@ type Entry =
 
 type Copying = "idle" | "copied" | "refused";
 
+/**
+ * Save the citation as a plain-text file, named `filename`.
+ *
+ * The citation comes from an API on another origin, where a plain `<a
+ * download>` is ignored; a Blob built in the page is same-origin, so the
+ * browser saves it under the name the reader expects. The object URL is
+ * revoked once the anchor has been followed.
+ */
+function downloadCitation(filename: string, text: string): void {
+  const url = URL.createObjectURL(
+    new Blob([text], { type: "text/plain;charset=utf-8" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 interface CiteEntryProps {
   readonly format: CiteFormat;
   readonly paperId: string;
@@ -271,7 +298,14 @@ function CiteEntry({ format, paperId, version, load }: CiteEntryProps) {
     void (async () => {
       try {
         const text = await load(paperId, version, format.id);
-        if (current) setEntry({ phase: "ready", text });
+        if (current) {
+          // What is shown, copied and downloaded names where the version
+          // lives; the node's own words are otherwise left untouched.
+          setEntry({
+            phase: "ready",
+            text: withCitationUrl(text, format.id, citationUrl(paperId, version)),
+          });
+        }
       } catch (error) {
         if (current) {
           setEntry({ phase: "failed", message: describeCiteError(error, format.label) });
@@ -306,26 +340,44 @@ function CiteEntry({ format, paperId, version, load }: CiteEntryProps) {
         <h3 id={headingId} className="ppg-cite-entry-title">
           {format.label}
         </h3>
-        <button
-          type="button"
-          className="ppg-cite-copy"
-          // The visible word is "Copy"; the name starts with it and adds which
-          // one, because two buttons both named "Copy" cannot be told apart.
-          aria-label={`${copying === "copied" ? "Copied" : "Copy"} ${format.label}`}
-          disabled={!ready}
-          onClick={() => {
-            if (entry.phase === "ready") void copy(entry.text);
-          }}
-        >
-          {copying === "copied" ? (
-            <>
-              <Icon name="check" className="ppg-cite-icon" />
-              Copied
-            </>
-          ) : (
-            "Copy"
-          )}
-        </button>
+        <div className="ppg-appeal-buttons">
+          <button
+            type="button"
+            className="ppg-cite-copy"
+            // The visible word is "Copy"; the name starts with it and adds which
+            // one, because two buttons both named "Copy" cannot be told apart.
+            aria-label={`${copying === "copied" ? "Copied" : "Copy"} ${format.label}`}
+            disabled={!ready}
+            onClick={() => {
+              if (entry.phase === "ready") void copy(entry.text);
+            }}
+          >
+            {copying === "copied" ? (
+              <>
+                <Icon name="check" className="ppg-cite-icon" />
+                Copied
+              </>
+            ) : (
+              "Copy"
+            )}
+          </button>
+          <button
+            type="button"
+            className="ppg-cite-copy"
+            disabled={!ready}
+            title={`Download the ${format.label} as .${format.extension}`}
+            onClick={() => {
+              if (entry.phase === "ready") {
+                downloadCitation(
+                  citationFilename(paperId, version, format.id),
+                  entry.text,
+                );
+              }
+            }}
+          >
+            Download .{format.extension}
+          </button>
+        </div>
       </div>
 
       {entry.phase === "ready" ? (

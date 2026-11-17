@@ -12,12 +12,14 @@ vi.mock("next/navigation", () => ({
 import { tokenStore } from "../../lib/api";
 import PaperNotFoundBoundary from "../../app/(paper-page)/p/[id]/not-found";
 import type { ConsentReport } from "../submit/consents";
+import { announceAppealFiled } from "./appeal-dialog";
 import { PaperAccess, PaperAccessView } from "./paper-access";
 import {
   ALICE,
   BARE_ID,
   CHECKS_BODY,
   GENESIS_CID,
+  GENESIS_SHORT_ID,
   MANIFEST_RECORD_BODY,
   TEXT_BODY,
   VERSION_CID,
@@ -615,6 +617,51 @@ describe("the author's view of the paper", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^PDF/ }));
     expect(await screen.findByText(/no PDF/i)).toBeTruthy();
+  });
+});
+
+describe("an appeal filed while the page is open", () => {
+  function filedAppeal() {
+    return {
+      appealCid: "bafyrei-appeal-record",
+      decisionCid: "bafyrei-decision-10",
+      filedAt: "2027-03-05T10:00:00Z",
+      outcome: null,
+      verdictCid: null,
+      decidedAt: null,
+    };
+  }
+
+  it("updates the banner immediately, to the state a reload would show", async () => {
+    stubApi({ checks: () => json(CHECKS_BODY) });
+    render(<PaperAccessView view={heldView()} />);
+
+    const word = await screen.findByText("Held from listing");
+    const banner = word.closest('[role="status"]') as HTMLElement;
+    expect(banner.textContent).toContain("You can appeal once.");
+
+    act(() => {
+      announceAppealFiled(GENESIS_SHORT_ID, filedAppeal());
+    });
+
+    expect(banner.textContent).toContain(
+      "Appeal filed on 5 March 2027 — awaiting panel.",
+    );
+    expect(banner.textContent).not.toContain("You can appeal once.");
+  });
+
+  it("ignores an appeal filed on another paper", async () => {
+    stubApi({ checks: () => json(CHECKS_BODY) });
+    render(<PaperAccessView view={heldView()} />);
+
+    const word = await screen.findByText("Held from listing");
+    const banner = word.closest('[role="status"]') as HTMLElement;
+
+    act(() => {
+      announceAppealFiled("sch:another-paper-xx", filedAppeal());
+    });
+
+    expect(banner.textContent).toContain("You can appeal once.");
   });
 });
 

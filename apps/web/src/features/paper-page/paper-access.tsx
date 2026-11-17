@@ -39,13 +39,21 @@ import { trackerFromReport } from "../submit/consents";
 import { withProfileNames } from "../submit/profile-names";
 import { useProfileNames } from "../submit/use-profile-names";
 import { viewerFromToken } from "../review-form/viewer";
-import { appealStatus, filedAppeal, type FiledAppeal } from "./appeal-dialog";
+import {
+  filedAppeal,
+  subscribeAppealFiled,
+  type FiledAppeal,
+} from "./appeal-dialog";
 import type { LoadPdfjs } from "./pdf-render";
 import { PdfView } from "./pdf-view";
 import { parsePaperAddress } from "./paper-address";
 import type { PaperAddress } from "./paper-address";
 import { AuthorActions } from "./paper-actions";
-import { PaperTombstoneView, UnlistedStatusBanner } from "./paper-access-view";
+import {
+  bannerWithAppeal,
+  PaperTombstoneView,
+  UnlistedStatusBanner,
+} from "./paper-access-view";
 import { authorDetail, authorLabel, versionOfTotal } from "./paper-facts";
 import { READING_ID } from "./paper-links";
 import { PaperPageNotice } from "./paper-page-view";
@@ -61,10 +69,8 @@ import {
   unlistedBanner,
   type AccessLoaders,
   type AccessView,
-  type ModerationFact,
   type TombstoneFacts,
   type UnlistedAuthor,
-  type UnlistedBanner,
   type UnlistedPdf,
   type UnlistedVersion,
 } from "./unlisted-paper";
@@ -95,37 +101,6 @@ type Phase =
   | { readonly kind: "notice" }
   | { readonly kind: "tombstone"; readonly facts: TombstoneFacts }
   | { readonly kind: "paper"; readonly view: AccessView };
-
-/**
- * The banner, with what the author's appeal says (design.md §8).
- *
- * A refusal banner invites an appeal only until one is filed: afterwards it
- * reports the appeal — filed and awaiting a panel, or the panel's outcome —
- * and keeps the moderator's reason. An overturn appends a `release` that puts
- * the version back in its prior state, so the hold is no longer the standing
- * decision; the appeal is then joined through the release record and its
- * outcome is said alongside the state the release restored.
- */
-function bannerWithAppeal(
-  banner: UnlistedBanner,
-  decision: ModerationFact | null,
-  appeal: FiledAppeal | null,
-): UnlistedBanner {
-  if (decision === null || appeal === null) {
-    return banner;
-  }
-  if (decision.action === "hold" || decision.action === "reject") {
-    const reason = decision.reason?.trim().replace(/[.!?…]+$/, "") ?? "";
-    return {
-      ...banner,
-      detail: `${reason === "" ? "" : `${reason}. `}${appealStatus(appeal)}`,
-    };
-  }
-  if (decision.action === "release") {
-    return { ...banner, detail: `${banner.detail} ${appealStatus(appeal)}` };
-  }
-  return banner;
-}
 
 export interface PaperAccessProps {
   /** The paper the page is for; the boundary reads it from the address. */
@@ -430,10 +405,26 @@ export function PaperAccessView({
   loadPdfFile = loadUnlistedPdf,
   loadPdf = loadPdfjsWithSession,
 }: PaperAccessViewProps) {
-  const { version, banner, consents, text } = view;
+  const { version, banner: loadedBanner, consents, text } = view;
   const authors = useAuthorProfiles(version.authors);
   const checks = useChecks(version, fetchChecks);
   const paperId = version.shortId ?? "";
+
+  // An appeal filed from the dialog while this page is open is not in the
+  // records this view was assembled from. Hearing it here lets the banner say
+  // what a reload would say, without one.
+  const [filedAppeal, setFiledAppeal] = useState<FiledAppeal | null>(null);
+  useEffect(() => {
+    setFiledAppeal(null);
+    if (paperId === "") return;
+    return subscribeAppealFiled((event) => {
+      if (event.paperId === paperId) setFiledAppeal(event.appeal);
+    });
+  }, [paperId]);
+  const banner =
+    filedAppeal === null
+      ? loadedBanner
+      : bannerWithAppeal(loadedBanner, loadedBanner.decision, filedAppeal);
 
   // The status tracker shows co-authors by name (profile) with the DID as
   // secondary text, marks the signed-in viewer as "(you)", and offers a
@@ -546,6 +537,10 @@ export function PaperAccessView({
             version={version.n}
             versionCid={version.versionCid}
             paragraphs={text.paragraphs}
+            // The title and abstract are shown above the text; a PDF's text
+            // layer repeats them, so the column starts at the body.
+            title={version.title}
+            abstract={version.abstract}
           />
         ) : (
           <p className="ppg-reading-note">

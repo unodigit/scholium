@@ -20,7 +20,11 @@ const PARAGRAPHS = [
   { id: "p4", text: "Normalising gives $$\\frac{a}{b}$$ in the limit." },
 ];
 
-function renderText(loadMath: LoadMath = loadKatex, paragraphs = PARAGRAPHS) {
+function renderText(
+  loadMath: LoadMath = loadKatex,
+  paragraphs = PARAGRAPHS,
+  facts: { title?: string; abstract?: string } = {},
+) {
   return render(
     <ReadingText
       paperId="sch:6sel-2dio-orm6"
@@ -28,6 +32,8 @@ function renderText(loadMath: LoadMath = loadKatex, paragraphs = PARAGRAPHS) {
       versionCid="bafyrei-version-2"
       paragraphs={paragraphs}
       loadMath={loadMath}
+      title={facts.title}
+      abstract={facts.abstract}
     />,
   );
 }
@@ -168,6 +174,76 @@ describe("ReadingText: math", () => {
           ?.textContent,
       ).toBe("r = \\prod_i w_i");
     });
+  });
+});
+
+describe("ReadingText: the body", () => {
+  const TITLE = "Can a Meta-Agent Choose the Safer Branch?";
+  const ABSTRACT =
+    "An evaluation framework investigating whether meta-agents can identify the safer of two candidate branches before either is executed.";
+  // The demo manuscripts' front matter: title, byline, notice, "Abstract"
+  // heading, abstract — the byline and notice sit between title and abstract.
+  const REPEATED = [
+    { id: "title", text: TITLE },
+    { id: "byline", text: "Mei Zhang, A. Okafor  |  cs.AI cs.MA" },
+    {
+      id: "notice",
+      text: "Demo manuscript. The authors, institutions and results in it are fictional.",
+    },
+    { id: "abstract-heading", text: "Abstract" },
+    { id: "abstract", text: ABSTRACT },
+    { id: "body-1", text: "Multi-agent systems increasingly choose between candidate plans." },
+    { id: "body-2", text: "Section 2 states the evaluation protocol." },
+  ];
+
+  it("starts at the body: the title and abstract already shown above are not repeated", () => {
+    renderText(loadKatex, REPEATED, { title: TITLE, abstract: ABSTRACT });
+
+    for (const id of ["title", "byline", "notice", "abstract-heading", "abstract"]) {
+      expect(document.getElementById(`p-${id}`)).toBeNull();
+    }
+    expect(paragraphElement("body-1").textContent).toBe(REPEATED[5].text);
+    expect(paragraphElement("body-2").textContent).toBe(REPEATED[6].text);
+  });
+
+  it("drops only the leading repeats: an abstract quoted later in the paper stays", () => {
+    const quoted = [
+      ...REPEATED,
+      { id: "later", text: ABSTRACT },
+    ];
+    renderText(loadKatex, quoted, { title: TITLE, abstract: ABSTRACT });
+
+    expect(paragraphElement("later").textContent).toBe(ABSTRACT);
+  });
+
+  it("keeps every paragraph when the text does not repeat the title or abstract", () => {
+    renderText(loadKatex, PARAGRAPHS, { title: TITLE, abstract: ABSTRACT });
+
+    for (const paragraph of PARAGRAPHS) {
+      expect(paragraphElement(paragraph.id).textContent).toBe(paragraph.text);
+    }
+  });
+
+  it("reads the title and abstract from the page when the props are not given", async () => {
+    // The listed page's reading column renders the heading and abstract above
+    // this component and does not pass them; the column still starts at the
+    // body once the page runs.
+    render(
+      <>
+        <h1 id="ppg-title">{TITLE}</h1>
+        <p className="ppg-abstract-body">{ABSTRACT}</p>
+        <ReadingText
+          paperId="sch:6sel-2dio-orm6"
+          version={2}
+          versionCid="bafyrei-version-2"
+          paragraphs={REPEATED}
+          loadMath={() => new Promise(() => {})}
+        />
+      </>,
+    );
+
+    await waitFor(() => expect(document.getElementById("p-title")).toBeNull());
+    expect(paragraphElement("body-1").textContent).toBe(REPEATED[5].text);
   });
 });
 

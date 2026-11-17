@@ -392,6 +392,51 @@ export function filedAppeal(
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* A filing the page can hear                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** An appeal one of this paper's dialogs just had accepted. */
+export interface AppealFiledEvent {
+  /** The paper the appeal belongs to, so only its banner answers. */
+  readonly paperId: string;
+  /** The appeal as the reloaded records would report it. */
+  readonly appeal: FiledAppeal;
+}
+
+type AppealFiledListener = (event: AppealFiledEvent) => void;
+
+const appealFiledListeners = new Set<AppealFiledListener>();
+
+/**
+ * Hear about an appeal accepted while the page is open.
+ *
+ * The banner above the paper is assembled from the public records at load
+ * time. Filing an appeal appends a record, so without this the banner behind
+ * the dialog would keep saying "You can appeal once." until a reload. The
+ * listener gets the filed appeal in the same shape `filedAppeal` reads from the
+ * records, so the banner can say exactly what the reload says. Returns the
+ * unsubscribe function.
+ */
+export function subscribeAppealFiled(
+  listener: AppealFiledListener,
+): () => void {
+  appealFiledListeners.add(listener);
+  return () => {
+    appealFiledListeners.delete(listener);
+  };
+}
+
+/** Tell the page an appeal was just accepted (called by the dialog). */
+export function announceAppealFiled(
+  paperId: string,
+  appeal: FiledAppeal,
+): void {
+  for (const listener of [...appealFiledListeners]) {
+    listener({ paperId, appeal });
+  }
+}
+
 /**
  * How a panel's outcome reads after "the panel" in the author's banner.
  * The vocabulary is `appeal.decision`'s schema enum.
@@ -597,6 +642,7 @@ export function AppealDialog({
   if (decision === null) return null;
   return (
     <AppealButton
+      paperId={paperId}
       paperCid={paperCid}
       decision={decision}
       sign={sign}
@@ -607,6 +653,7 @@ export function AppealDialog({
 }
 
 interface AppealButtonProps {
+  readonly paperId: string;
   readonly paperCid: string;
   readonly decision: AppealableDecision;
   readonly sign: SignAppeal;
@@ -615,13 +662,28 @@ interface AppealButtonProps {
 }
 
 function AppealButton(props: AppealButtonProps) {
+  const { paperId } = props;
   const [open, setOpen] = useState(false);
+  // A decision can be appealed once: once this dialog has filed it, the action
+  // is not offered again, exactly as after a reload. It stays mounted while
+  // the "Your appeal is filed" panel is open.
+  const [filed, setFiled] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(
+    () =>
+      subscribeAppealFiled((event) => {
+        if (event.paperId === paperId) setFiled(true);
+      }),
+    [paperId],
+  );
 
   const close = useCallback(() => {
     setOpen(false);
     trigger.current?.focus();
   }, []);
+
+  if (filed && !open) return null;
 
   return (
     <>
@@ -644,6 +706,7 @@ interface AppealPanelProps extends AppealButtonProps {
 }
 
 function AppealPanel({
+  paperId,
   paperCid,
   decision,
   sign,
@@ -740,6 +803,16 @@ function AppealPanel({
       if (!mounted.current) return;
       setFiled(accepted);
       setPhase("filed");
+      // The banner behind this dialog reads the same facts from the records on
+      // a reload; hand them over now so it does not lag behind the dialog.
+      announceAppealFiled(paperId, {
+        appealCid: accepted.id,
+        decisionCid: decision.decisionCid,
+        filedAt: new Date().toISOString(),
+        outcome: null,
+        verdictCid: null,
+        decidedAt: null,
+      });
     } catch (error) {
       if (!mounted.current) return;
       setFailed(describeAppealError(error));

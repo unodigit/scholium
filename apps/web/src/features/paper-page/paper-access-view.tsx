@@ -11,7 +11,12 @@
 
 import { policyHref } from "../policies-page";
 import { DecisionBanner, Icon, RecordLink } from "../ui-kit";
-import type { TombstoneFacts, UnlistedBanner } from "./unlisted-paper";
+import { appealStatus, type FiledAppeal } from "./appeal-dialog";
+import type {
+  ModerationFact,
+  TombstoneFacts,
+  UnlistedBanner,
+} from "./unlisted-paper";
 
 /* -------------------------------------------------------------------------- */
 /* The tombstone state                                                         */
@@ -76,6 +81,40 @@ export function PaperTombstoneView({ facts }: PaperTombstoneViewProps) {
 /* -------------------------------------------------------------------------- */
 /* The status banner                                                           */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * The banner, with what the author's appeal says (design.md §8).
+ *
+ * A refusal banner invites an appeal only until one is filed: afterwards it
+ * reports the appeal — filed and awaiting a panel, or the panel's outcome —
+ * and keeps the moderator's reason. An overturn appends a `release` that puts
+ * the version back in its prior state, so the hold is no longer the standing
+ * decision; the appeal is then joined through the release record and its
+ * outcome is said alongside the state the release restored.
+ *
+ * Shared by the retry that assembles the banner from the records and the view
+ * that updates it when the dialog files an appeal without a reload.
+ */
+export function bannerWithAppeal(
+  banner: UnlistedBanner,
+  decision: ModerationFact | null,
+  appeal: FiledAppeal | null,
+): UnlistedBanner {
+  if (decision === null || appeal === null) {
+    return banner;
+  }
+  if (decision.action === "hold" || decision.action === "reject") {
+    const reason = decision.reason?.trim().replace(/[.!?…]+$/, "") ?? "";
+    return {
+      ...banner,
+      detail: `${reason === "" ? "" : `${reason}. `}${appealStatus(appeal)}`,
+    };
+  }
+  if (decision.action === "release") {
+    return { ...banner, detail: `${banner.detail} ${appealStatus(appeal)}` };
+  }
+  return banner;
+}
 
 export interface UnlistedStatusBannerProps {
   /** Where the version stands (`unlistedBanner` joins the facts). */

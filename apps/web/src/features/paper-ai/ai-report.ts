@@ -390,6 +390,84 @@ export function sortAgentGroups(groups: readonly AiAgentGroup[]): readonly AiAge
   return [...groups].sort((a, b) => rank(a.agent) - rank(b.agent));
 }
 
+/** An agent name flattened for matching: the API spells them in both cases. */
+function agentKey(agent: string): string {
+  return agent.trim().toLowerCase();
+}
+
+/**
+ * Make the panels agree with "Also reported by".
+ *
+ * The meta-reviewer merges a finding into the agents that reported it
+ * (`also_reported_by`), but the endpoint still lists it only in its primary
+ * agent's group. Left alone, a finding could say "Also reported by Literature"
+ * above a Literature panel that says "No findings". Each participating agent
+ * therefore gets a copy of the finding in its own panel, and each copy's
+ * "Also reported by" names the *other* participating panels — never itself,
+ * and never an agent the report has no panel for (which could not show the
+ * finding it is credited with).
+ */
+function shareCoReportedFindings(
+  groups: readonly AiAgentGroup[],
+): readonly AiAgentGroup[] {
+  const canonical = new Map<string, string>();
+  for (const group of groups) {
+    const key = agentKey(group.agent);
+    if (key !== "" && !canonical.has(key)) {
+      canonical.set(key, group.agent);
+    }
+  }
+
+  // Every finding, in panel order, with the panels that should show it.
+  const participants = new Map<AiFinding, string[]>();
+  const order: AiFinding[] = [];
+  for (const group of groups) {
+    for (const finding of group.findings) {
+      const seen = participants.get(finding);
+      if (seen === undefined) {
+        participants.set(finding, [group.agent]);
+        order.push(finding);
+      } else if (!seen.includes(group.agent)) {
+        seen.push(group.agent);
+      }
+    }
+  }
+  for (const finding of order) {
+    const agents = participants.get(finding)!;
+    for (const name of finding.alsoReportedBy) {
+      const found = canonical.get(agentKey(name));
+      if (found !== undefined && !agents.includes(found)) {
+        agents.push(found);
+      }
+    }
+  }
+
+  return groups.map((group) => {
+    const ownKey = agentKey(group.agent);
+    const findings: AiFinding[] = [];
+    for (const finding of order) {
+      const agents = participants.get(finding)!;
+      if (!agents.some((agent) => agentKey(agent) === ownKey)) {
+        continue;
+      }
+      // A finding already in this panel stays once.
+      if (
+        findings.some(
+          (seen) => seen.id === finding.id && seen.claim === finding.claim,
+        )
+      ) {
+        continue;
+      }
+      findings.push({
+        ...finding,
+        agent: group.agent,
+        alsoReportedBy: agents.filter((agent) => agentKey(agent) !== ownKey),
+      });
+    }
+    return { ...group, findings };
+  });
+}
+
 function parseGroups(payload: Dict): readonly AiAgentGroup[] {
   const groups: AiAgentGroup[] = [];
 
@@ -422,7 +500,7 @@ function parseGroups(payload: Dict): readonly AiAgentGroup[] {
     }
   }
 
-  return sortAgentGroups(groups);
+  return sortAgentGroups(shareCoReportedFindings(groups));
 }
 
 function parseModels(raw: unknown): readonly AiModel[] {
@@ -469,9 +547,22 @@ export function parseAiReport(payload: unknown): AiReport {
   };
 }
 
-/** How many findings a report holds, across its agents. */
+/**
+ * How many distinct findings a report holds.
+ *
+ * A finding co-reported by several agents appears in each of their panels, so
+ * the panels' counts are summed only after the copies are folded together;
+ * the summary says how many problems the report found, not how many cards it
+ * draws.
+ */
 export function findingCount(report: AiReport): number {
-  return report.agents.reduce((total, group) => total + group.findings.length, 0);
+  const distinct = new Set<string>();
+  for (const group of report.agents) {
+    for (const finding of group.findings) {
+      distinct.add(`${finding.id}\u0000${finding.claim}`);
+    }
+  }
+  return distinct.size;
 }
 
 /** `No findings` · `1 finding` · `4 findings`. */

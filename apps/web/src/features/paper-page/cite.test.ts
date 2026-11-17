@@ -4,11 +4,14 @@ import { ApiError, NetworkError, createApiClient } from "../../lib/api";
 import {
   CITE_FORMATS,
   CitationResponseError,
+  citationFilename,
+  citationUrl,
   citeFormat,
   citePath,
   describeCiteError,
   loadCitation,
   parseCitation,
+  withCitationUrl,
 } from "./cite";
 import { BIBTEX_BODY, RIS_BODY, SHORT_ID } from "./paper-page-fixtures";
 
@@ -120,6 +123,65 @@ describe("loadCitation", () => {
     await expect(loadCitation(SHORT_ID, 2, "bibtex", client)).rejects.toBeInstanceOf(
       CitationResponseError,
     );
+  });
+});
+
+describe("the canonical address and file name", () => {
+  const URL = "https://scholium.example/p/6sel-2dio-orm6/v2";
+
+  it("names the version on screen at the site's public origin, without the sch: prefix", () => {
+    expect(citationUrl(SHORT_ID, 2, "https://scholium.example")).toBe(URL);
+    expect(citationUrl(`  ${SHORT_ID} `, 2, "https://scholium.example/")).toBe(URL);
+  });
+
+  it("writes the configured canonical origin when the deployment sets one", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://scholium.example");
+    try {
+      expect(citationUrl(SHORT_ID, 2)).toBe(URL);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("names downloaded files the way the node names them", () => {
+    expect(citationFilename(SHORT_ID, 2, "bibtex")).toBe("sch-6sel-2dio-orm6-v2.bib");
+    expect(citationFilename(SHORT_ID, 2, "ris")).toBe("sch-6sel-2dio-orm6-v2.ris");
+  });
+});
+
+describe("withCitationUrl", () => {
+  const URL = "https://scholium.example/p/6sel-2dio-orm6/v2";
+
+  it("adds url and howpublished to BibTeX, before the entry closes", () => {
+    const cited = withCitationUrl(BIBTEX_BODY, "bibtex", URL);
+
+    expect(cited).toContain(`  url = {${URL}},`);
+    expect(cited).toContain(`  howpublished = {${URL}},`);
+    expect(cited.startsWith("@misc{sch-6sel-2dio-orm6-v2,")).toBe(true);
+    expect(cited.trimEnd().endsWith("}")).toBe(true);
+    // The node's own fields are still there, unchanged.
+    expect(cited).toContain("  eprint = {sch:6sel-2dio-orm6/v2},");
+  });
+
+  it("adds UR to RIS, before the record ends", () => {
+    const cited = withCitationUrl(RIS_BODY, "ris", URL);
+    const lines = cited.split("\n");
+
+    expect(lines).toContain(`UR  - ${URL}`);
+    expect(lines.indexOf(`UR  - ${URL}`)).toBeLessThan(lines.indexOf("ER  - "));
+    expect(lines[0]).toBe("TY  - UNPB");
+  });
+
+  it("never adds a second copy when the node already names the address", () => {
+    const once = withCitationUrl(BIBTEX_BODY, "bibtex", URL);
+    expect(withCitationUrl(once, "bibtex", URL)).toBe(once);
+
+    const risOnce = withCitationUrl(RIS_BODY, "ris", URL);
+    expect(withCitationUrl(risOnce, "ris", URL)).toBe(risOnce);
+  });
+
+  it("leaves text that is not the format it claims alone", () => {
+    expect(withCitationUrl("not a citation", "bibtex", URL)).toBe("not a citation");
   });
 });
 

@@ -13,6 +13,7 @@ import {
   latestAppealableDecision,
   loadAppealableDecision,
   submitAppeal,
+  subscribeAppealFiled,
   type AppealAccepted,
   type AppealBody,
   type AppealableDecision,
@@ -179,6 +180,47 @@ describe("the dialog", () => {
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({ type: "appeal" }));
     await waitFor(() => expect(screen.getByText("Your appeal is filed")).toBeTruthy());
     expect(screen.getByText("bafyrei-appeal-record")).toBeTruthy();
+  });
+
+  it("tells the page the appeal was filed, so the banner behind the dialog can update", async () => {
+    const events: unknown[] = [];
+    const unsubscribe = subscribeAppealFiled((event) => events.push(event));
+    try {
+      show();
+      await waitFor(() => expect(trigger()).toBeTruthy());
+      await open();
+      type("The paper is in scope.");
+
+      await submitForm();
+
+      expect(events).toEqual([
+        {
+          paperId: PAPER,
+          appeal: expect.objectContaining({
+            appealCid: "bafyrei-appeal-record",
+            decisionCid: DECISION,
+            filedAt: expect.any(String),
+            outcome: null,
+          }),
+        },
+      ]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("stops offering File an appeal once the filed dialog is closed", async () => {
+    show();
+    await waitFor(() => expect(trigger()).toBeTruthy());
+    await open();
+    type("The paper is in scope.");
+    await submitForm();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    });
+
+    expect(screen.queryByRole("button", { name: "File an appeal" })).toBeNull();
   });
 });
 

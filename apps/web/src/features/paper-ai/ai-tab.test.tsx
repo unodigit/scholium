@@ -140,7 +140,9 @@ describe("findings grouped by agent", () => {
     );
     expect(agents).toEqual([
       "Methodology: 1 finding",
-      "Literature: No findings",
+      // Methodology's finding was co-reported by Literature, so the panel
+      // shows it instead of saying "No findings" beneath "Also reported by".
+      "Literature: 1 finding",
       "Reproducibility: No findings",
       "Integrity: 1 finding",
     ]);
@@ -148,8 +150,8 @@ describe("findings grouped by agent", () => {
 
   it("an agent with nothing to report says so: no findings is a result, not a gap", async () => {
     const { container } = await renderReady({ loadReport: loaderOf(payload()) });
-    const literature = container.querySelectorAll(".ai-agent")[1]!;
-    expect(literature.querySelector(".ai-agent__none")!.textContent).toContain(
+    const reproducibility = container.querySelectorAll(".ai-agent")[2]!;
+    expect(reproducibility.querySelector(".ai-agent__none")!.textContent).toContain(
       "reported nothing",
     );
   });
@@ -174,7 +176,10 @@ describe("findings grouped by agent", () => {
 
   it("the evidence link jumps to the quoted paragraph; the log line is not a link", async () => {
     const { container } = await renderReady({ loadReport: loaderOf(payload()) });
-    const [methodology, integrity] = cardsOf(container);
+    const methodology = cardsOf(container)[0];
+    const integrity = cardsOf(container).find(
+      (card) => card.dataset.agent === "integrity",
+    )!;
 
     const evidence = methodology.querySelector<HTMLAnchorElement>(".ai-evidence")!;
     expect(evidence.getAttribute("href")).toBe("#p-p4");
@@ -279,7 +284,9 @@ describe("answering a finding", () => {
     const sendAssessment = vi.fn(async () => undefined);
     const { container } = await renderReady({ loadReport: load, sendAssessment });
 
-    const integrity = cardsOf(container)[1];
+    const integrity = cardsOf(container).find(
+      (card) => card.dataset.agent === "integrity",
+    )!;
     fireEvent.click(within(integrity).getByTitle(/mark this finding wrong/i));
 
     await waitFor(() => expect(sendAssessment).toHaveBeenCalledTimes(1));
@@ -401,7 +408,7 @@ describe("a report that cannot be shown", () => {
 
     load.mockResolvedValueOnce(parseAiReport(payload()));
     fireEvent.click(within(failure).getByText("Try again"));
-    await waitFor(() => expect(cardsOf(container).length).toBe(2));
+    await waitFor(() => expect(cardsOf(container).length).toBe(3));
     expect(load).toHaveBeenCalledTimes(2);
   });
 });

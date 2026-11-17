@@ -8,14 +8,17 @@
  * asking for `/v{n}` cites exactly the version on screen, which is what a reader
  * who copies it will be held to.
  *
- * What a citation says is the node's to decide, so this module never edits the
- * text it gets: what is shown is what is copied. A body that is not text at all
- * (or is empty) is an error ("we don't know what the citation is"), never a
- * blank box with a Copy button on it.
+ * What a citation says is the node's to decide. The one addition made here is
+ * the version's canonical web address (`withCitationUrl`), which the endpoint
+ * does not carry; every other field is shown, copied and downloaded exactly as
+ * it arrived. A body that is not text at all (or is empty) is an error ("we
+ * don't know what the citation is"), never a blank box with a Copy button on
+ * it.
  *
  * Pure data and functions (plus the injectable loader), no React.
  */
 
+import { siteUrl } from "../../app/site-metadata";
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
 
 /** One format the node can cite in, in the order the dialog lists them. */
@@ -69,6 +72,110 @@ export function citeFormat(id: CiteFormatId): CiteFormat {
  */
 export function citePath(shortId: string, version: number): string {
   return `/papers/${encodeURIComponent(shortId.trim())}/v${version}/cite`;
+}
+
+/** The `sch:` id without its prefix, the way a path and a file name write it. */
+export function bareId(shortId: string): string {
+  return shortId.trim().replace(/^sch:/i, "");
+}
+
+/**
+ * The origin a citation's address is written at.
+ *
+ * `NEXT_PUBLIC_SITE_URL` is the deployment's canonical origin when it is
+ * configured. When it is not (a local development or verification run), the
+ * browser's own origin is the address the reader is actually on, so the
+ * citation opens the paper instead of a dead default port.
+ */
+function citationOrigin(): string {
+  const configured =
+    typeof process === "undefined"
+      ? ""
+      : (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim();
+  if (configured !== "") {
+    return configured;
+  }
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return siteUrl();
+}
+
+/**
+ * The version's canonical web address: `/p/{id}/v{n}` at the site's public
+ * origin. This is what a citation's `url`, `howpublished` and `UR` point at,
+ * so someone holding the citation can open the exact version it names.
+ */
+export function citationUrl(
+  shortId: string,
+  version: number,
+  baseUrl: string = citationOrigin(),
+): string {
+  const base = baseUrl.trim().replace(/\/+$/, "");
+  return `${base}/p/${encodeURIComponent(bareId(shortId))}/v${version}`;
+}
+
+/**
+ * The name a downloaded citation is saved as: `sch-{id}-v{n}.bib`, matching
+ * the name the node's own `Content-Disposition` gives the same entry.
+ */
+export function citationFilename(
+  shortId: string,
+  version: number,
+  format: CiteFormatId,
+): string {
+  return `sch-${bareId(shortId)}-v${version}.${citeFormat(format).extension}`;
+}
+
+/**
+ * The node's citation with its canonical address added.
+ *
+ * `GET /v1/papers/{id}/cite` names the `sch:` id but not where it lives, so a
+ * citation copied from the page could not be followed. The address is added
+ * without touching anything the node wrote: BibTeX gains `url` and
+ * `howpublished`, RIS gains `UR`. Text that already carries the address (a
+ * newer node, or this function applied twice) is returned unchanged, and
+ * anything that is not the shape it claims is left exactly as it arrived.
+ */
+export function withCitationUrl(
+  text: string,
+  format: CiteFormatId,
+  url: string,
+): string {
+  return format === "bibtex" ? bibtexWithUrl(text, url) : risWithUrl(text, url);
+}
+
+function bibtexWithUrl(text: string, url: string): string {
+  const hasUrl = /^\s*url\s*=/m.test(text);
+  const hasHowPublished = /^\s*howpublished\s*=/m.test(text);
+  if (hasUrl && hasHowPublished) {
+    return text;
+  }
+  const closing = text.lastIndexOf("}");
+  if (closing === -1) {
+    return text; // not a BibTeX entry: never guess where a field belongs.
+  }
+  const fields = [
+    ...(hasUrl ? [] : [`  url = {${url}},`]),
+    ...(hasHowPublished ? [] : [`  howpublished = {${url}},`]),
+  ];
+  const head = text.slice(0, closing).replace(/\s*$/, "");
+  return `${head}\n${fields.join("\n")}\n${text.slice(closing)}`;
+}
+
+function risWithUrl(text: string, url: string): string {
+  if (/^UR\s+-/m.test(text)) {
+    return text;
+  }
+  const lines = text.split("\n");
+  const end = lines.findIndex((line) => /^ER\s+-/.test(line));
+  if (end !== -1) {
+    lines.splice(end, 0, `UR  - ${url}`);
+    return lines.join("\n");
+  }
+  const trailing = text.endsWith("\n") ? "\n" : "";
+  const body = trailing === "" ? text : text.slice(0, -1);
+  return `${body}\nUR  - ${url}${trailing}`;
 }
 
 /** Validate a `GET /v1/papers/{id}/cite` body: it must be text with something in it. */

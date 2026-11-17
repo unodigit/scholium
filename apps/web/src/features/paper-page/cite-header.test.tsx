@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { citationUrl, withCitationUrl } from "./cite";
 import { PaperHeader } from "./paper-header";
 import { loadPaperPageData, type PaperPageData } from "./paper-page-data";
 import {
@@ -85,8 +86,10 @@ describe("the Cite dialog, opened from the header", () => {
 
     const bibtex = (await screen.findByRole("textbox", { name: "BibTeX" })) as HTMLTextAreaElement;
     const ris = (await screen.findByRole("textbox", { name: "RIS" })) as HTMLTextAreaElement;
-    expect(bibtex.value).toBe(BIBTEX_BODY);
-    expect(ris.value).toBe(RIS_BODY);
+    expect(bibtex.value).toBe(
+      withCitationUrl(BIBTEX_BODY, "bibtex", citationUrl(SHORT_ID, 2)),
+    );
+    expect(ris.value).toBe(withCitationUrl(RIS_BODY, "ris", citationUrl(SHORT_ID, 2)));
 
     const calls = citeCalls(fetchMock);
     expect(Object.keys(calls).sort()).toEqual(["bibtex", "ris"]);
@@ -96,7 +99,7 @@ describe("the Cite dialog, opened from the header", () => {
     }
   });
 
-  it("copies what the node sent, byte for byte", async () => {
+  it("copies the citation shown, with the canonical address added", async () => {
     stubApi();
     const writeText = vi.fn(async (_text: string) => undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
@@ -109,7 +112,10 @@ describe("the Cite dialog, opened from the header", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy BibTeX" }));
     await screen.findByRole("button", { name: "Copied BibTeX" });
 
-    expect(writeText.mock.calls.map(([text]) => text)).toEqual([RIS_BODY, BIBTEX_BODY]);
+    expect(writeText.mock.calls.map(([text]) => text)).toEqual([
+      withCitationUrl(RIS_BODY, "ris", citationUrl(SHORT_ID, 2)),
+      withCitationUrl(BIBTEX_BODY, "bibtex", citationUrl(SHORT_ID, 2)),
+    ]);
   });
 
   it("cites the version in the address when it is not the newest", async () => {
