@@ -23,13 +23,18 @@ router = APIRouter(tags=["network"])
     summary="Return this node's public network status",
 )
 def get_network() -> NetworkStatus:
-    """Return the node DID, log head, anchor status, replicas and moderation counts.
+    """Return the node's identity, log head, anchor, replication and moderation facts.
 
     ``log_head`` is the log's current last entry (``seq`` 0 over the genesis
     digest for an empty log), ``last_anchor.status`` is always ``"pending"``
     because this node does not anchor on-chain yet, ``replicas`` is the local
     ``1 of 1 local`` summary, and ``moderation.by_clause`` counts accepted
-    decisions per cited policy clause.  No credentials are required and
-    nothing is written.
+    decisions per cited policy clause.  ``operator`` and ``software_version``
+    name who runs the node and what it runs, ``probes`` is the availability-probe
+    pass rate for the last 24 hours (``pass_rate`` is ``null`` when no probe has
+    run), ``incidents`` is the public incident log (possibly empty),
+    ``replication_policy`` is the 5/3/2 target, and ``papers_by_replica_health``
+    counts listed papers per health.  No credentials are required and nothing is
+    written.
     """
     return network_summary()

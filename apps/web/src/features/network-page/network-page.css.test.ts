@@ -43,6 +43,39 @@ describe("network-page.css", () => {
     expect(rules).toMatch(/background:\s*var\(--rule\)/);
   });
 
+  it("colours the health meter per health from tokens, neutral by default", () => {
+    // Every segment and swatch starts neutral…
+    expect(rules).toMatch(
+      /\.np-health-segment,\s*\.np-health-swatch\s*\{[^}]*--np-health-color:\s*var\(--ink-2\)/s,
+    );
+    // …meeting the policy is the accent, falling short is the pending family,
+    // and a single copy is not an alarm: it is never --critical.
+    expect(rules).toMatch(
+      /\[data-health="meets_policy"\][^{]*\{[^}]*--np-health-color:\s*var\(--accent\)/s,
+    );
+    expect(rules).toMatch(
+      /\[data-health="below_policy"\][^{]*\{[^}]*--np-health-color:\s*var\(--pending\)/s,
+    );
+    // (--critical stays reserved for the error notice, further down the file.)
+    const healthRules = rules.slice(
+      rules.indexOf(".np-health-meter"),
+      rules.indexOf(".np-section-heading"),
+    );
+    expect(healthRules).toContain(".np-health-list");
+    expect(healthRules).not.toMatch(/--critical/);
+  });
+
+  it("sizes each health segment by its count, from the inline flex-grow", () => {
+    expect(rules).toMatch(/\.np-health-segment\s*\{[^}]*flex-basis:\s*0/s);
+    expect(rules).toMatch(/\.np-health-segment\s*\{[^}]*background:\s*var\(--np-health-color\)/s);
+  });
+
+  it("lets a command scroll instead of wrap, and take keyboard focus", () => {
+    expect(rules).toMatch(/\.np-code\s*\{[^}]*overflow-x:\s*auto/s);
+    expect(rules).toMatch(/\.np-code:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\)/s);
+    expect(rules).toMatch(/\.np-code\s*\{[^}]*font-family:\s*var\(--family-mono\)/s);
+  });
+
   it("keeps ids and hashes monospace and breakable", () => {
     expect(rules).toMatch(/\.np-hash\s*\{[^}]*overflow-wrap:\s*anywhere/s);
     expect(rules).toMatch(/font-variant-numeric:\s*tabular-nums/);

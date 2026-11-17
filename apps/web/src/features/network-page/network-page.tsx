@@ -3,13 +3,17 @@
 /**
  * `/network` — what this Scholium node says about itself.
  *
- * The public transparency page of docs/design.md §5.8: the node's standing,
- * the head of its record log, the state of its last public-timestamp anchor,
- * its replication summary, and its moderation decisions counted by policy
+ * The public transparency page of docs/design.md §5.8: who operates the node
+ * and which software it runs, its standing, the head of its record log, the
+ * state of its last public-timestamp anchor, its availability-probe pass rate,
+ * its replication summary (with the policy target and how many listed papers
+ * sit at each replica health), its moderation decisions counted by policy
  * clause (each clause linking to the rule on `/policies` it cites, through the
- * same anchor a decision banner uses). No account is needed; nothing here is
- * secret, and nothing on this page is an error state — "anchor pending" and
- * "1 of 1 local" are states, not failures (§1 "Calm under failure").
+ * same anchor a decision banner uses), its incident log, and how to download
+ * the public export and rebuild it independently (PRD NET-2). No account is
+ * needed; nothing here is secret, and nothing on this page is an error state —
+ * "anchor pending", "1 of 1 local" and "No probes run yet" are states, not
+ * failures (§1 "Calm under failure").
  *
  * Rendering is server-first: the route (`app/(network-page)/network/page.tsx`)
  * fetches once and passes `initialStatus`, so the HTML contains the whole
@@ -27,17 +31,32 @@ import { EmptyState, Icon, IdPill, type IconName } from "../ui-kit";
 import { POLICIES_PATH, policyHref } from "../policies-page";
 
 import {
+  EXPORT_ARCHIVE_PATH,
+  EXPORT_REBUILD_COMMAND,
+  EXPORT_VERIFY_COMMAND,
   NETWORK_TITLE,
+  REPLICA_HEALTHS,
   anchorSpec,
+  archiveExportHref,
   describeNetworkError,
+  incidentDate,
+  listedPapersLine,
   loadNetworkStatus as fetchNetworkStatus,
   moderationCountLine,
+  policyTargetSentence,
+  probeSummary,
+  replicaHealthSegments,
+  replicaHealthSpec,
   replicaSegments,
   standingSpec,
   type AnchorSpec,
+  type IncidentEntry,
   type LogHeadStatus,
   type NetworkStatus,
+  type ProbeStatistics,
+  type ReplicaHealthCounts,
   type ReplicaSummary,
+  type ReplicationPolicy,
   type StandingSpec,
   type StatusTone,
 } from "./network";
@@ -156,28 +175,42 @@ function NetworkHeader() {
       <p className="np-kicker mono-id">scholium / network</p>
       <h1 className="np-title">{NETWORK_TITLE}</h1>
       <p className="np-lede">
-        What this node says about itself, in public: its standing, the head of
-        its record log, its replication, and its moderation record. No account
-        is needed to read any of it.
+        What this node says about itself, in public: who runs it, its standing,
+        the head of its record log, its replication, its moderation record and
+        its incidents. No account is needed to read any of it.
       </p>
     </header>
   );
 }
 
-/** The status document as four fact cards and the moderation statistics. */
+/** The status document as fact cards, the moderation statistics, incidents and the export. */
 function NetworkStatusView({ summary }: { summary: NetworkStatus }) {
   const clauses = Object.entries(summary.moderation.by_clause);
 
   return (
     <>
       <div className="np-grid">
-        <NodeCard standing={standingSpec(summary.standing)} nodeDid={summary.node_did} />
+        <NodeCard
+          standing={standingSpec(summary.standing)}
+          nodeDid={summary.node_did}
+          operator={summary.operator}
+          softwareVersion={summary.software_version}
+        />
         <LogHeadCard head={summary.log_head} />
         <AnchorCard anchor={anchorSpec(summary.last_anchor.status)} />
-        <ReplicationCard replicas={summary.replicas} />
+        <ProbeCard probes={summary.probes} />
+        <ReplicationCard
+          replicas={summary.replicas}
+          policy={summary.replication_policy}
+          papersByHealth={summary.papers_by_replica_health}
+        />
       </div>
 
       <ModerationSection total={summary.moderation.total} clauses={clauses} />
+
+      <IncidentLogSection incidents={summary.incidents} />
+
+      <PublicExportSection />
     </>
   );
 }
@@ -217,13 +250,29 @@ function Fact({
 }
 
 /** This node: its federation standing and the DID a peer audits against. */
-function NodeCard({ standing, nodeDid }: { standing: StandingSpec; nodeDid: string }) {
+function NodeCard({
+  standing,
+  nodeDid,
+  operator,
+  softwareVersion,
+}: {
+  standing: StandingSpec;
+  nodeDid: string;
+  operator: string;
+  softwareVersion: string;
+}) {
   return (
     <section className="np-card" aria-labelledby="np-node-heading">
       <h2 className="np-card-heading" id="np-node-heading">
         This node
       </h2>
       <dl className="np-facts">
+        <Fact term="Operator">
+          <p className="np-value">{operator}</p>
+        </Fact>
+        <Fact term="Software version">
+          <code className="np-value mono-id">{softwareVersion}</code>
+        </Fact>
         <Fact term="Standing">
           <Chip icon="circle" label={standing.label} tone={standing.tone} />
           <p className="np-note">{standing.meaning}</p>
@@ -277,8 +326,16 @@ function AnchorCard({ anchor }: { anchor: AnchorSpec }) {
   );
 }
 
-/** The replication summary: a meter, the node's own words, and what they mean. */
-function ReplicationCard({ replicas }: { replicas: ReplicaSummary }) {
+/** The replication summary: the node's own words, the policy target, and papers by health. */
+function ReplicationCard({
+  replicas,
+  policy,
+  papersByHealth,
+}: {
+  replicas: ReplicaSummary;
+  policy: ReplicationPolicy;
+  papersByHealth: ReplicaHealthCounts;
+}) {
   const segments = replicaSegments(replicas);
 
   return (
@@ -306,8 +363,59 @@ function ReplicationCard({ replicas }: { replicas: ReplicaSummary }) {
             across several operators is not enabled yet.
           </p>
         </Fact>
+        <Fact term="Target">
+          <p className="np-note">{policyTargetSentence(policy)}</p>
+        </Fact>
+        <Fact term="Listed papers">
+          <PapersByHealth counts={papersByHealth} />
+        </Fact>
       </dl>
     </section>
+  );
+}
+
+/**
+ * Listed papers at each replica health: a sentence, a segmented bar and one row
+ * per health. Every health is listed, zero included. The bar only pictures the
+ * rows (each carries its word and count), so it is hidden from assistive
+ * technology and a colour is never the only way to read it.
+ */
+function PapersByHealth({ counts }: { counts: ReplicaHealthCounts }) {
+  const segments = replicaHealthSegments(counts);
+
+  return (
+    <>
+      <p className="np-note">{listedPapersLine(counts)}</p>
+      {segments.length > 0 ? (
+        <div className="np-health-meter" aria-hidden="true">
+          {segments.map(({ health, count }) => (
+            <span
+              key={health}
+              className="np-health-segment"
+              data-health={health}
+              style={{ flexGrow: count }}
+            />
+          ))}
+        </div>
+      ) : null}
+      <ul className="np-health-list">
+        {REPLICA_HEALTHS.map((health) => {
+          const spec = replicaHealthSpec(health);
+          return (
+            <li key={health} className="np-health-row">
+              <span
+                className="np-health-swatch"
+                data-health={health}
+                aria-hidden="true"
+              />
+              <span className="np-health-label">{spec.label}</span>
+              <span className="np-health-count">{counts[health]}</span>
+              <span className="np-health-meaning">{spec.meaning}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 
@@ -364,6 +472,104 @@ function ModerationSection({
           </table>
         </>
       )}
+    </section>
+  );
+}
+
+/** Availability-probe pass rate over the last 24 hours, or that none have run. */
+function ProbeCard({ probes }: { probes: ProbeStatistics }) {
+  const summary = probeSummary(probes);
+
+  return (
+    <section className="np-card" aria-labelledby="np-probes-heading">
+      <h2 className="np-card-heading" id="np-probes-heading">
+        Probe pass rate
+      </h2>
+      <dl className="np-facts">
+        <Fact term={`Last ${probes.window_hours} hours`}>
+          <p className="np-value">{summary.figure}</p>
+          <p className="np-note">{summary.detail}</p>
+        </Fact>
+      </dl>
+    </section>
+  );
+}
+
+/** The public incident log; an empty one says so rather than disappearing. */
+function IncidentLogSection({
+  incidents,
+}: {
+  incidents: readonly IncidentEntry[];
+}) {
+  return (
+    <section className="np-mod" aria-labelledby="np-incidents-heading">
+      <h2 className="np-section-heading" id="np-incidents-heading">
+        Incident log
+      </h2>
+      {incidents.length === 0 ? (
+        <p className="np-note">No incidents recorded.</p>
+      ) : (
+        <ul className="np-incidents">
+          {incidents.map((incident) => (
+            <li
+              key={`${incident.occurred_at}|${incident.title}`}
+              className="np-incident"
+            >
+              <p className="np-incident-head">
+                <time className="np-incident-date" dateTime={incident.occurred_at}>
+                  {incidentDate(incident.occurred_at)}
+                </time>
+                <span className="np-incident-title">{incident.title}</span>
+              </p>
+              <p className="np-note">{incident.detail}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * How to take the whole public archive and check it without trusting this node
+ * (PRD NET-2): the download link and the two commands that verify and rebuild it.
+ */
+function PublicExportSection() {
+  return (
+    <section className="np-mod" aria-labelledby="np-export-heading">
+      <h2 className="np-section-heading" id="np-export-heading">
+        Public export
+      </h2>
+      <p className="np-note">
+        Every signed record, every public file and the whole log are available
+        as one archive. Download it, check it, and rebuild it yourself; none of
+        it depends on trusting this node.
+      </p>
+      <p className="np-export-download">
+        <a className="np-export-link mono-id" href={archiveExportHref()}>
+          {EXPORT_ARCHIVE_PATH}
+        </a>
+      </p>
+      <div className="np-step">
+        <p className="np-note">
+          Check that every block and record in it is intact:
+        </p>
+        <pre className="np-code" tabIndex={0}>
+          <code>{EXPORT_VERIFY_COMMAND}</code>
+        </pre>
+      </div>
+      <div className="np-step">
+        <p className="np-note">
+          Rebuild its papers, versions and statuses into a fresh database:
+        </p>
+        <pre className="np-code" tabIndex={0}>
+          <code>{EXPORT_REBUILD_COMMAND}</code>
+        </pre>
+      </div>
+      <p className="np-note">
+        Both commands exit 0 when everything checks out and 1 if anything in the
+        archive was altered; a failed rebuild leaves no database behind.
+      </p>
     </section>
   );
 }

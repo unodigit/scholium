@@ -114,6 +114,26 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A fact that is a name or a figure — the operator, the software version, the
+   probe pass rate — set like the sequence number: scannable, never running text. */
+.np-value {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The version is a monospace string; keep the sans metrics off it. */
+.np-value.mono-id {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+}
+
 /* A 32-byte hash wraps rather than outgrowing the card (design.md §2). */
 .np-hash {
   display: block;
@@ -198,6 +218,90 @@
   background: var(--accent);
 }
 
+/* ---- Listed papers by replica health -------------------------------------- */
+
+/* One stretch per health that has papers, sized by its count. The rows below
+   carry each health's word and count, so the bar is only a picture of them
+   and no colour has to be told apart. */
+.np-health-meter {
+  display: flex;
+  gap: calc(var(--space-unit) * 0.5);
+  inline-size: 100%;
+  block-size: calc(var(--space-unit) * 3);
+}
+
+.np-health-segment {
+  flex-basis: 0;
+  min-inline-size: calc(var(--space-unit) * 1.5);
+  border-radius: var(--corner-control);
+  background: var(--np-health-color);
+  transition: flex-grow var(--duration-base) var(--ease-decel);
+}
+
+.np-health-segment,
+.np-health-swatch {
+  --np-health-color: var(--ink-2);
+}
+
+/* Meeting the policy is the accent; falling short is the pending family (a
+   state, not a failure); a single copy is neutral — on a local node it is the
+   plain fact, not an alarm (design.md §1 "Calm under failure"). */
+.np-health-segment[data-health="meets_policy"],
+.np-health-swatch[data-health="meets_policy"] {
+  --np-health-color: var(--accent);
+}
+
+.np-health-segment[data-health="below_policy"],
+.np-health-swatch[data-health="below_policy"] {
+  --np-health-color: var(--pending);
+}
+
+.np-health-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.np-health-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  column-gap: calc(var(--space-unit) * 2);
+  row-gap: calc(var(--space-unit) * 0.5);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.np-health-swatch {
+  inline-size: calc(var(--space-unit) * 3);
+  block-size: calc(var(--space-unit) * 3);
+  border-radius: var(--corner-control);
+  background: var(--np-health-color);
+}
+
+.np-health-label {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.np-health-count {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.np-health-meaning {
+  grid-column: 2 / -1;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
 /* ---- Moderation statistics ----------------------------------------------- */
 
 .np-mod {
@@ -266,6 +370,115 @@
 /* Touch targets are at least 44 px (design.md §9). */
 @media (pointer: coarse) {
   .np-clause-link {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 44px;
+  }
+}
+
+/* ---- Incident log ---------------------------------------------------------- */
+
+/* The section follows the moderation card, with the same spacing the page
+   gives every section after the grid. */
+.np-mod + .np-mod {
+  margin-top: calc(var(--space-unit) * 6);
+}
+
+.np-incidents {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.np-incident {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  padding-block-end: calc(var(--space-unit) * 4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.np-incident:last-child {
+  padding-block-end: 0;
+  border-bottom: none;
+}
+
+.np-incident-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.np-incident-date {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.np-incident-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* ---- Public export ---------------------------------------------------------- */
+
+.np-export-download {
+  margin: calc(var(--space-unit) * 3) 0;
+}
+
+.np-export-link {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  transition: opacity var(--duration-fast) var(--ease-decel);
+}
+
+.np-export-link:hover {
+  opacity: 0.8;
+}
+
+.np-step {
+  margin-top: calc(var(--space-unit) * 4);
+}
+
+/* A command the reader copies: monospace, scrollable instead of wrapping so it
+   stays one pasteable line, and focusable so the keyboard can scroll it. */
+.np-code {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  overflow-x: auto;
+  background: var(--accent-soft);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
+}
+
+.np-code:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.np-step + .np-note,
+.np-code + .np-note {
+  margin-top: calc(var(--space-unit) * 4);
+}
+
+/* Touch targets are at least 44 px (design.md §9). */
+@media (pointer: coarse) {
+  .np-export-link {
     display: inline-flex;
     align-items: center;
     min-block-size: 44px;
