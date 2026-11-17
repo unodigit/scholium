@@ -302,6 +302,22 @@
   font-weight: 400;
 }
 
+.rf-optional {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.rf-field-hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.rf-report-textarea {
+  min-height: calc(var(--space-unit) * 28);
+}
+
 .rf-textarea {
   box-sizing: border-box;
   display: block;
@@ -634,6 +650,81 @@
 .rf-sealed-id {
   margin: 0;
   color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---- The update confirmation -------------------------------------------- */
+
+.rf-updated__recommendation {
+  margin: 0;
+  display: inline-block;
+  align-self: flex-start;
+  padding: var(--space-unit) calc(var(--space-unit) * 2);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background-color: var(--surface);
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+}
+
+.rf-updated__rubric {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+  margin: 0;
+}
+
+.rf-updated__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-unit) calc(var(--space-unit) * 3);
+}
+
+.rf-updated__label {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.rf-updated__reading {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  white-space: nowrap;
+}
+
+.rf-updated__justification {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rf-updated__report {
+  padding-top: calc(var(--space-unit) * 3);
+  border-top: 1px solid var(--rule);
+}
+
+.rf-updated__report-title {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+}
+
+.rf-updated__report-body {
+  margin: calc(var(--space-unit) * 2) 0 0;
+  color: var(--ink);
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

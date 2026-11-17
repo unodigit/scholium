@@ -718,6 +718,31 @@ describe("with the reviews tab's own data", () => {
     expect(screen.getByText("Reviewer scored 4 of 5")).toBeTruthy();
   });
 
+  it("treats a review with a reveal date but no written report as revealed", async () => {
+    const [revealed] = parseReviews({
+      reviews: [
+        {
+          review_cid: "bafyrei-noreport",
+          label: "Reviewer A",
+          revealed_at: "2026-11-09T00:00:00",
+          recommendation: "minor_revisions",
+          scores: { soundness: { score: 4, justification: "Solid." } },
+        },
+      ],
+    }).reviews;
+
+    render(
+      <ReviewCardActions
+        review={revealed}
+        paperId={PAPER}
+        viewer={AUTHOR_VIEWER}
+        authorDids={[AUTHOR]}
+      />,
+    );
+
+    expect(await screen.findByText("Reply point by point")).toBeTruthy();
+  });
+
   it("names the review by the cid the API's response and rating paths expect", async () => {
     const [revealed] = parseReviews(payload).reviews;
     if (revealed === undefined) throw new Error("no review parsed");

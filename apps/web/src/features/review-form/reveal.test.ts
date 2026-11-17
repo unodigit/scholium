@@ -10,10 +10,18 @@ import {
   WrongRevealRecordError,
   buildRevealBody,
   describeRevealError,
+  describeUpdateError,
   loadRevealGate,
   revealReview,
+  updateReview,
 } from "./reveal";
 import type { SealedReview } from "./sealed-review";
+import {
+  RUBRIC_DIMENSIONS,
+  emptyDraft,
+  withDimension,
+  type ReviewDraft,
+} from "./rubric";
 
 /**
  * Revealing a sealed review (spec features 109/166, docs/design.md §5.5).
@@ -196,15 +204,61 @@ describe("describeRevealError", () => {
   });
 });
 
+describe("updating a review", () => {
+  const input = {
+    paperId: "sch:6sel-2dio-orm6",
+    versionCid: "bafyversion",
+    prev: "bafyformal1",
+    draft: RUBRIC_DIMENSIONS.reduce(
+      (current, { id }) =>
+        withDimension(current, id, { score: 3, justification: "Fine." }),
+      {
+        ...emptyDraft(),
+        confidence: "high",
+        recommendation: "sound_as_is",
+        report: "The revised report.",
+      } as ReviewDraft,
+    ),
+  };
+
+  it("carries the written report on the update", async () => {
+    const sign = vi.fn(async (type: string, body: Record<string, unknown>, prev: string | null) =>
+      revealedRecord(body, type),
+    );
+    const submit = vi.fn(async () => ({ id: "bafyreveal", review: "bafycommit" }));
+
+    await updateReview(input, {
+      deriveKey: vi.fn(async () => KEY),
+      sign,
+      submit,
+    });
+
+    expect(sign.mock.calls[0][1]).toMatchObject({ report: "The revised report." });
+  });
+
+  it("turns an already-updated refusal into plain words, not the API's `prev` message", () => {
+    const failure = describeUpdateError(
+      new ApiError(409, {
+        detail:
+          "This review has already been updated; point 'prev' at the reviewer's latest review.",
+      }),
+    );
+
+    expect(failure.message).toContain("already been updated");
+    expect(failure.message).toContain("Nothing was sent.");
+    expect(failure.message).not.toContain("prev");
+  });
+});
+
 describe("loadRevealGate", () => {
   const client = (payload: unknown) => ({ get: vi.fn(async () => payload) });
 
   it("reads gate_open and the version from the public reviews listing", async () => {
-    const api = client({ gate_open: true, version_cid: "bafyversion" });
+    const api = client({ gate_open: true, version_cid: "bafyversion", reviews: [] });
 
     const gate = await loadRevealGate("sch:6sel-2dio-orm6", undefined, api);
 
-    expect(gate).toEqual({ open: true, versionCid: "bafyversion" });
+    expect(gate).toEqual({ open: true, versionCid: "bafyversion", committed: 0 });
     expect(api.get).toHaveBeenCalledTimes(1);
     const [path, options] = api.get.mock.calls[0] as unknown as [string, Record<string, unknown>];
     expect(path).toBe("/papers/sch%3A6sel-2dio-orm6/reviews");
@@ -226,6 +280,24 @@ describe("loadRevealGate", () => {
     expect(await loadRevealGate("sch:6sel-2dio-orm6", undefined, client({}))).toEqual({
       open: false,
       versionCid: null,
+      committed: null,
+    });
+  });
+
+  it("says how many reviews are committed on the version the gate is about", async () => {
+    const api = client({
+      gate_open: false,
+      version_cid: "bafyversion",
+      reviews: [
+        { review_cid: "a", version_cid: "bafyversion", revealed_at: null },
+        // A revealed review carried from an older version is not a commit here.
+        { review_cid: "b", version_cid: "bafyold", revealed_at: "2026-11-01T00:00:00" },
+      ],
+    });
+
+    expect(await loadRevealGate("sch:6sel-2dio-orm6", undefined, api)).toMatchObject({
+      open: false,
+      committed: 1,
     });
   });
 });

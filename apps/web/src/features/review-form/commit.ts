@@ -209,12 +209,16 @@ export function reviewRevealBody(
   review: ReviewBody,
   versionCid: string,
 ): Record<string, unknown> {
+  const report = (review.report ?? "").trim();
   return {
     target: versionCid,
     scores: review.scores,
     confidence: review.confidence,
     recommendation: review.recommendation,
     aiAssisted: review.aiAssisted,
+    // The written report is optional: a review without one seals exactly the
+    // body it did before the option existed.
+    ...(report !== "" ? { report } : {}),
     ...(review.signed ? { signed: true } : {}),
   };
 }

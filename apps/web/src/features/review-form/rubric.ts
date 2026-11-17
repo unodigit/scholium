@@ -109,11 +109,17 @@ export interface ReviewDraft {
    * The choice is part of what a commit seals, so it is made before committing.
    */
   readonly signed: boolean;
+  /**
+   * The optional free-text written report (markdown), published with the
+   * rubric when the review is revealed. Empty means the review carries no
+   * written report.
+   */
+  readonly report: string;
 }
 
 /**
- * A blank review: no score, no confidence, no recommendation, no AI, and
- * anonymous.
+ * A blank review: no score, no confidence, no recommendation, no AI, no
+ * written report, and anonymous.
  */
 export function emptyDraft(): ReviewDraft {
   const scores = {} as Record<DimensionId, DimensionDraft>;
@@ -126,6 +132,7 @@ export function emptyDraft(): ReviewDraft {
     recommendation: null,
     aiAssisted: false,
     signed: false,
+    report: "",
   };
 }
 
@@ -266,6 +273,8 @@ export interface ReviewBody {
   readonly recommendation: Recommendation;
   readonly aiAssisted: boolean;
   readonly signed: boolean;
+  /** The optional written report, trimmed; empty when none was written. */
+  readonly report: string;
 }
 
 /** Thrown by {@link toReviewBody} when the draft is not a complete review. */
@@ -310,5 +319,6 @@ export function toReviewBody(draft: ReviewDraft): ReviewBody {
     // Anything but an explicit `true` stays anonymous, so a draft that never
     // heard of the option cannot put a name on a review.
     signed: draft.signed === true,
+    report: (draft.report ?? "").trim(),
   };
 }

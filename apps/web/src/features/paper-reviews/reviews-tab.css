@@ -211,6 +211,69 @@
   line-height: var(--leading-meta);
 }
 
+/* ---- A revised review: the marker and its earlier revisions -------------- */
+
+.pr-card__flag {
+  margin: calc(var(--space-unit) * 2) 0 0;
+}
+
+.pr-revised {
+  display: inline-block;
+  padding: 0 calc(var(--space-unit) * 2);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-pill);
+  background-color: var(--accent-soft);
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 500;
+}
+
+.pr-history {
+  margin-block-start: calc(var(--space-unit) * 4);
+  padding-block-start: calc(var(--space-unit) * 2);
+  border-block-start: 1px solid var(--rule);
+}
+
+.pr-history__summary {
+  display: flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.pr-history__summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pr-history__list {
+  display: grid;
+  gap: calc(var(--space-unit) * 3);
+  margin: calc(var(--space-unit) * 2) 0 0;
+  padding-inline-start: calc(var(--space-unit) * 4);
+}
+
+.pr-history__item {
+  min-inline-size: 0;
+}
+
+.pr-history__meta {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.pr-history__recommendation {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 /* The recommendation: an icon of its own shape, a tint, and always the word.
    The icon is the only part that carries the family's status colour. */
 .pr-recommendation {
@@ -335,6 +398,17 @@
   line-height: var(--leading-meta);
 }
 
+/* The reviewer's words for one dimension, beneath its dots. */
+.pr-rubric__justification {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---- The expandable report ----------------------------------------------- */
 
 .pr-report {
@@ -370,6 +444,14 @@
   padding: calc(var(--space-unit) * 3);
   border: 1px dashed var(--rule);
   border-radius: var(--corner-control);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* A revealed review may simply have no written report; say so calmly. */
+.pr-report__none {
+  margin: calc(var(--space-unit) * 4) 0 0;
   color: var(--ink-2);
   font-size: var(--type-meta);
   line-height: var(--leading-meta);

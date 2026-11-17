@@ -119,6 +119,100 @@ describe("a review card", () => {
     expect(screen.getByText("reports sealed", { exact: false })).toBeTruthy();
   });
 
+  it("shows a revealed review without a written report as revealed, not sealed", () => {
+    renderTab(
+      dataOf(review({ revealed_at: "2027-03-02T05:00:00" })),
+    );
+
+    expect(screen.getByText("Minor revisions")).toBeTruthy();
+    expect(screen.getByText("4 of 5")).toBeTruthy();
+    expect(screen.getByText(/No written report/)).toBeTruthy();
+    expect(screen.queryByText(/has not been revealed yet/)).toBeNull();
+    expect(screen.queryByText(/Report sealed/)).toBeNull();
+  });
+
+  it("shows the reviewer's justification for every rubric score", () => {
+    const { container } = renderTab(
+      dataOf(review({ revealed_at: "2027-03-02T05:00:00" })),
+    );
+
+    const rubric = container.querySelector(".pr-rubric") as HTMLElement;
+    expect(within(rubric).getByText("The design is sound.")).toBeTruthy();
+    expect(within(rubric).getByText("One claim is unsupported.")).toBeTruthy();
+  });
+
+  it("marks a revised review and lists its earlier recommendations by version and date", () => {
+    const { container } = renderTab(
+      dataOf(
+        review({
+          revealed_at: "2027-04-01T00:00:00",
+          recommendation: "sound_as_is",
+          history: [
+            {
+              formal_cid: "bafy-formal-1",
+              version: 1,
+              revealed_at: "2027-03-02T05:00:00",
+              recommendation: "minor_revisions",
+            },
+            {
+              formal_cid: "bafy-formal-2",
+              version: 2,
+              revealed_at: "2027-04-01T00:00:00",
+              recommendation: "sound_as_is",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(screen.getByText("Revised")).toBeTruthy();
+    const details = container.querySelector("details.pr-history");
+    expect(details).not.toBeNull();
+    expect(within(details as HTMLElement).getByText(/Earlier revisions/)).toBeTruthy();
+    expect(within(details as HTMLElement).getByText("Minor revisions")).toBeTruthy();
+    expect(within(details as HTMLElement).getByText(/v1 · 2 Mar 2027/)).toBeTruthy();
+  });
+
+  it("does not label a revealed review of an earlier version as sealed", () => {
+    const { container } = renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        // v2 has no review of its own: its reports are still sealed.
+        gate_open: false,
+        reviews: [
+          review({
+            label: "Reviewer A",
+            version: 1,
+            revealed_at: "2027-03-02T05:00:00",
+          }),
+        ],
+      }),
+    );
+
+    const card = container.querySelector(".pr-card") as HTMLElement;
+    expect(within(card).queryByText(/sealed/i)).toBeNull();
+    expect(within(card).queryByText(/has not been revealed yet/i)).toBeNull();
+    expect(within(card).getByText(/No written report/)).toBeTruthy();
+  });
+
+  it("says how many reviews are committed when the gate is shut, and never claims a sealed rubric is public", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [review({ revealed_at: null, scores: null })],
+      }),
+    );
+
+    expect(
+      screen.getByText(/1 review has been committed on this version so far/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/The rubric scores are already public/)).toBeNull();
+    expect(screen.getByText(/The rubric is sealed with the review/)).toBeTruthy();
+  });
+
   it("shows author replies point by point", () => {
     const { container } = renderTab(
       dataOf(
@@ -211,6 +305,27 @@ describe("the actions on a revealed review card", () => {
     expect(screen.queryByText("Reply point by point")).toBeNull();
     // A sealed review is not answered or rated, so there is no byline read.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Report action on a review card", () => {
+  it("is offered on every revealed review, even when it has no written report", () => {
+    renderTab(dataOf(review({ revealed_at: "2027-03-02T05:00:00" })));
+
+    expect(screen.getByRole("button", { name: "Report" })).toBeTruthy();
+  });
+
+  it("is absent while the review is sealed", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [review({ revealed_at: null, scores: null })],
+      }),
+    );
+
+    expect(screen.queryByRole("button", { name: "Report" })).toBeNull();
   });
 });
 

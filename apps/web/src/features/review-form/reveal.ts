@@ -23,7 +23,7 @@
  * vitest can drive the whole flow without a network or a passkey.
  */
 
-import { api } from "../../lib/api";
+import { ApiError, api } from "../../lib/api";
 import {
   signRecord,
   type SignedRecord,
@@ -35,7 +35,7 @@ import {
   type ActionFailure,
   type ActionWords,
 } from "./action-errors";
-import { reviewRecordSigner } from "./commit";
+import { describeCommitError, reviewRecordSigner, type CommitFailure } from "./commit";
 import { deriveReviewKey, nullifierForReviewKey, type DeriveReviewKey } from "./review-key";
 import type { SealedReview } from "./sealed-review";
 import { toReviewBody, type ReviewDraft } from "./rubric";
@@ -241,6 +241,11 @@ export interface RevealGate {
   readonly open: boolean;
   /** The cid of the version the answer is about, when the API names it. */
   readonly versionCid: string | null;
+  /**
+   * How many reviews are committed on that version, when the listing says.
+   * `null` when the answer does not carry a list to count.
+   */
+  readonly committed?: number | null;
 }
 
 /** `GET`-only slice of the API client, so tests need no network stack. */
@@ -268,9 +273,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function parseRevealGate(raw: unknown): RevealGate {
   const root = isRecord(raw) ? raw : {};
   const served = root.gate_open ?? root.gateOpen;
+  const versionCid = readText(root.versionCid) ?? readText(root.version_cid);
+
+  let committed: number | null = null;
+  if (Array.isArray(root.reviews)) {
+    const reviews = root.reviews.filter(isRecord);
+    committed = reviews.filter((review) => {
+      const version =
+        readText(review.version_cid) ?? readText(review.versionCid);
+      // A review carried from an older version is not a commit on this one.
+      return version === null || versionCid === null || version === versionCid;
+    }).length;
+  } else if (typeof root.count === "number" && Number.isFinite(root.count)) {
+    committed = root.count;
+  }
+
   return {
     open: served === true,
-    versionCid: readText(root.versionCid) ?? readText(root.version_cid),
+    versionCid,
+    committed,
   };
 }
 
@@ -351,6 +372,7 @@ export const updateReview: UpdateReview = async (input, seams = {}) => {
   const now = seams.now;
 
   const key = await deriveKey(input.paperId);
+  const report = review.report.trim();
   const body: Record<string, unknown> = {
     target: versionCid,
     scores: review.scores,
@@ -359,6 +381,7 @@ export const updateReview: UpdateReview = async (input, seams = {}) => {
     aiAssisted: review.aiAssisted,
     reviewKey: key.did,
     nullifier: nullifierForReviewKey(key, input.paperId),
+    ...(report !== "" ? { report } : {}),
     ...(review.signed ? { signed: true } : {}),
   };
 
@@ -387,6 +410,25 @@ export const updateReview: UpdateReview = async (input, seams = {}) => {
   return { revealCid, reviewCid, body, record };
 };
 
+
+/**
+ * One plain-language sentence for a failed update.
+ *
+ * An update's `409` is the stale-page case: the reviewer already revised the
+ * review, so `prev` no longer names the newest one. The API's detail is about
+ * the `prev` field and means nothing to a reader, so it is replaced with what
+ * happened and what to do.
+ */
+export function describeUpdateError(error: unknown): CommitFailure {
+  if (error instanceof ApiError && error.status === 409) {
+    return {
+      message:
+        "This review has already been updated since you opened this page. Reload the page to see the newest review. Nothing was sent.",
+      signIn: false,
+    };
+  }
+  return describeCommitError(error);
+}
 
 /** Alias for {@link updateReview}, for callers that name it otherwise. */
 export const reviseReview = updateReview;

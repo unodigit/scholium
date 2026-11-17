@@ -110,6 +110,24 @@ describe("reviewRevealBody", () => {
     );
   });
 
+  it("carries the optional written report, and only when one was written", () => {
+    const withReport = reviewRevealBody(
+      toReviewBody({ ...completeDraft(), report: "  **Bold** finding.  " }),
+      VERSION,
+    );
+    expect(withReport.report).toBe("**Bold** finding.");
+
+    const without = reviewRevealBody(toReviewBody(completeDraft()), VERSION);
+    expect("report" in without).toBe(false);
+  });
+
+  it("makes the commitment cover the written report", () => {
+    const plain = toReviewBody(completeDraft());
+    expect(reviewCommitment({ ...plain, report: "One more point." }, VERSION)).not.toBe(
+      reviewCommitment(plain, VERSION),
+    );
+  });
+
   it("makes the commitment depend on the review and the version", () => {
     const review = toReviewBody(completeDraft());
     const commitment = reviewCommitment(review, VERSION);

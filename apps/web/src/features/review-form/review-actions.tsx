@@ -80,6 +80,11 @@ export interface ReviewCardTarget {
   readonly label: string;
   /** The report body; `null` while the review is still sealed. */
   readonly report: string | null;
+  /**
+   * The instant the review was revealed; `null` while it is only sealed.
+   * When a host omits it, a served report is the signal that it is revealed.
+   */
+  readonly revealedAt?: string | null;
   /** What the reviewer scored, so the author sees the point being answered. */
   readonly scores?: readonly {
     readonly dimension: string;
@@ -127,8 +132,13 @@ export function ReviewCardActions({
   const viewer = useViewer(viewerOverride);
 
   const reviewCid = review.reviewCid?.trim() ?? "";
-  // A review is answered and rated once it is revealed: the report is served.
-  const revealed = review.report !== null && reviewCid !== "";
+  // A review is answered and rated once it is revealed. The reveal date is the
+  // signal: a revealed review may legitimately carry no written report, so the
+  // report cannot stand in for reveal state (older hosts sent only the report).
+  const revealed =
+    reviewCid !== "" &&
+    ((typeof review.revealedAt === "string" && review.revealedAt !== "") ||
+      review.report !== null);
 
   // The byline is only worth a request for someone who could act on it.
   const authors = usePaperAuthors(

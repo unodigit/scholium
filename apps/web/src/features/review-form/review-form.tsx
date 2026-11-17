@@ -45,6 +45,7 @@ import {
   useId,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from "react";
 
@@ -77,6 +78,7 @@ import {
   REVEALED_HEADLINE,
   REVEALED_TEXT,
   describeRevealError,
+  describeUpdateError,
   loadRevealGate,
   revealReview,
   updateReview,
@@ -85,6 +87,7 @@ import {
   type RevealReview,
   type ReviewRevealResult,
   type UpdateReview,
+  type UpdateReviewResult,
 } from "./reveal";
 import {
   ReviewSessionProvider,
@@ -255,7 +258,8 @@ function ReviewFormBody({
   const [submitted, setSubmitted] = useState(false);
   const [phase, setPhase] = useState<Phase>("editing");
   const [sealed, setSealed] = useState<SealedReview | null>(null);
-  const [updated, setUpdated] = useState(false);
+  // The review a successful update now stands on, shown read-only.
+  const [updated, setUpdated] = useState<UpdateReviewResult | null>(null);
   const [error, setError] = useState<CommitFailure | null>(null);
 
   // Whether this browser's own storage has been asked for a sealed review yet:
@@ -384,6 +388,9 @@ function ReviewFormBody({
         if (typeof record.signed === "boolean") {
           next.signed = record.signed;
         }
+        if (typeof record.report === "string") {
+          next.report = record.report;
+        }
         setDraft(next);
       })
       .catch(() => {
@@ -489,19 +496,25 @@ function ReviewFormBody({
     setError(null);
     setPhase("signing");
     try {
-      await ((updateOverride ?? reviseOverride) ?? updateReview)({
+      const result = await ((updateOverride ?? reviseOverride) ?? updateReview)({
         paperId,
         versionCid,
         prev: prev ?? "",
         draft: { ...draft, signed },
       });
-      setUpdated(true);
+      setUpdated(result);
       setPhase("editing");
     } catch (thrown) {
-      setError(describeCommitError(thrown));
+      setError(describeUpdateError(thrown));
       setPhase("editing");
     }
   };
+
+  // A successful update becomes a read-only confirmation of what is now public,
+  // so the same update cannot be submitted twice.
+  if (updated !== null) {
+    return <UpdateConfirmed result={updated} />;
+  }
 
   return (
     <>
@@ -659,6 +672,30 @@ function ReviewFormBody({
         ) : null}
       </fieldset>
 
+      <fieldset className="rf-group">
+        <legend className="rf-group-legend">Written report</legend>
+        <div className="rf-field">
+          <label className="rf-field-label" htmlFor={`${uid}-report`}>
+            Written report <span className="rf-optional">(optional)</span>
+          </label>
+          <p className="rf-field-hint" id={`${uid}-report-hint`}>
+            Markdown is allowed. Your report is published with the rubric when
+            the review is revealed; leave it blank if the rubric says everything.
+          </p>
+          <textarea
+            id={`${uid}-report`}
+            className="rf-textarea rf-report-textarea"
+            rows={6}
+            value={draft.report}
+            aria-describedby={`${uid}-report-hint`}
+            onChange={(event) => {
+              const report = event.currentTarget.value;
+              setDraft((current) => ({ ...current, report }));
+            }}
+          />
+        </div>
+      </fieldset>
+
       <label className="rf-ai">
         <input
           type="checkbox"
@@ -718,6 +755,102 @@ function ReviewFormBody({
   );
 }
 
+/** One rubric row of the read-only confirmation. */
+interface UpdatedScore {
+  readonly id: string;
+  readonly label: string;
+  readonly score: number;
+  readonly justification: string | null;
+}
+
+/** The rubric of the just-updated review, in the form's canonical order. */
+function updatedScores(raw: unknown): UpdatedScore[] {
+  const record =
+    typeof raw === "object" && raw !== null
+      ? (raw as Record<string, unknown>)
+      : {};
+  const rows: UpdatedScore[] = [];
+  for (const { id, label } of RUBRIC_DIMENSIONS) {
+    const entry = record[id];
+    if (typeof entry !== "object" || entry === null) continue;
+    const fields = entry as Record<string, unknown>;
+    const score =
+      typeof fields.score === "number" ? fields.score : Number(fields.score);
+    if (!Number.isFinite(score)) continue;
+    const justification =
+      typeof fields.justification === "string" &&
+      fields.justification.trim() !== ""
+        ? fields.justification.trim()
+        : null;
+    rows.push({ id, label, score, justification });
+  }
+  return rows;
+}
+
+/** The reader-facing recommendation of the just-updated review. */
+function updatedRecommendation(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text === "") return "No recommendation";
+  const known = RECOMMENDATION_OPTIONS.find((option) => option.value === text);
+  return known?.label ?? text;
+}
+
+/**
+ * What replaces the form once an update is accepted.
+ *
+ * The reviewer sees the review they now stand on, read-only, rather than a
+ * still-editable form that looks as though nothing happened. There is nothing
+ * left to submit, so a second click (and a confusing `409`) is impossible.
+ */
+export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
+  const body = result.body;
+  const scores = updatedScores(body.scores);
+  const report =
+    typeof body.report === "string" && body.report.trim() !== ""
+      ? body.report.trim()
+      : null;
+
+  return (
+    <section
+      className="rf-sealed rf-updated"
+      role="status"
+      aria-live="polite"
+      data-state="updated"
+    >
+      <h2 className="rf-form-title">Your review is updated</h2>
+      <p className="rf-sealed-text">
+        This is the review now published on the paper’s Reviews tab.
+      </p>
+      <p className="rf-updated__recommendation">
+        {updatedRecommendation(body.recommendation)}
+      </p>
+
+      <dl className="rf-updated__rubric">
+        {scores.map((row) => (
+          <div className="rf-updated__row" key={row.id}>
+            <dt className="rf-updated__label">{row.label}</dt>
+            <dd className="rf-updated__reading">
+              {row.score} of {SCORE_MAX}
+            </dd>
+            {row.justification !== null ? (
+              <dd className="rf-updated__justification">{row.justification}</dd>
+            ) : null}
+          </div>
+        ))}
+      </dl>
+
+      {report !== null ? (
+        <section className="rf-updated__report">
+          <h3 className="rf-updated__report-title">Written report</h3>
+          <p className="rf-updated__report-body">{report}</p>
+        </section>
+      ) : null}
+
+      <p className="rf-sealed-id mono-id">Review {result.revealCid}</p>
+    </section>
+  );
+}
+
 /**
  * What replaces the form once the commit is accepted, and what reveals it.
  *
@@ -772,11 +905,32 @@ export function SealedNotice({
     "sealed",
   );
   const [revealed, setRevealed] = useState<ReviewRevealResult | null>(null);
+  // The gate as the public listing reports it, read once on mount so the card
+  // describes the actual state instead of always promising a second review.
+  const [gate, setGate] = useState<RevealGate | null>(null);
   const [failure, setFailure] = useState<ActionFailure | null>(null);
   // Said when the gate is shut: information, not an error.
   const [note, setNote] = useState<string | null>(null);
   // One action at a time, even across the render a click has not reached yet.
   const working = useRef(false);
+
+  useEffect(() => {
+    if (sealed.paperId.trim() === "") return;
+    let cancelled = false;
+    loadGate(sealed.paperId).then(
+      (answer) => {
+        if (!cancelled) {
+          setGate(gateApplies(answer, sealed.versionCid) ? answer : null);
+        }
+      },
+      () => {
+        if (!cancelled) setGate(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [sealed, loadGate]);
 
   const open = async (): Promise<void> => {
     if (working.current) return;
@@ -843,12 +997,7 @@ export function SealedNotice({
     >
       <h2 className="rf-form-title">{SEALED_HEADLINE}</h2>
       <p className="rf-sealed-text">
-        It will be revealed with the others when a second review is committed,
-        or on{" "}
-        <time className="rf-sealed-date" dateTime={sealed.revealAt}>
-          {revealDate}
-        </time>
-        .
+        {sealedGateText(gate, revealDate, sealed.revealAt)}
       </p>
       {named ? <p className="rf-sealed-text">{SEALED_SIGNED_NOTE}</p> : null}
       <p className="rf-sealed-id mono-id">Review {sealed.reviewCid}</p>
@@ -909,6 +1058,61 @@ export function SealedNotice({
         </p>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Said when the reveal gate is already open: the only thing left is to reveal.
+ */
+export const REVEAL_GATE_OPEN_NOTE =
+  "The reveal gate is open for this version. Reveal your review to publish its rubric and report.";
+
+/**
+ * What the sealed card says about the gate.
+ *
+ * A gate that could not be read keeps the design's promise (a second review,
+ * or 21 days) rather than inventing a state. A gate that was read names how
+ * many reviews are committed, what is still needed, and the fallback date;
+ * once it is open, it says so instead of still asking for a second review.
+ */
+function sealedGateText(
+  gate: RevealGate | null,
+  revealDate: string,
+  revealAt: string,
+): ReactNode {
+  if (gate !== null && gate.open) return REVEAL_GATE_OPEN_NOTE;
+
+  const committed = gate?.committed ?? null;
+  const count =
+    committed === null
+      ? null
+      : committed === 0
+        ? "No review has been committed on this version yet."
+        : committed === 1
+          ? "1 review has been committed on this version so far."
+          : `${committed} reviews have been committed on this version so far.`;
+  const needed =
+    committed === null || committed >= 2
+      ? null
+      : committed === 1
+        ? "one more independent review"
+        : "a second independent review";
+
+  return (
+    <>
+      {count !== null ? `${count} ` : "It will be revealed with the others "}
+      {count === null ? "when a second review is committed, or on " : null}
+      {count !== null && needed !== null
+        ? `Your review can be revealed once ${needed} is committed, or on `
+        : null}
+      {count !== null && needed === null
+        ? "Your review can be revealed on "
+        : null}
+      <time className="rf-sealed-date" dateTime={revealAt}>
+        {revealDate}
+      </time>
+      .
+    </>
   );
 }
 

@@ -8,6 +8,7 @@ import {
   describeLoadError,
   loadReviews,
   reviewsPath,
+  splitTarget,
   type ReviewsClient,
 } from "./reviews-api";
 
@@ -56,13 +57,24 @@ describe("reviewsPath", () => {
     expect(reviewsPath("k3f9-q2xz-7mwd")).toBe("/papers/k3f9-q2xz-7mwd/reviews");
   });
 
-  it("splits off a version suffix: the endpoint's id is one segment", () => {
-    expect(reviewsPath("sch:k3f9-q2xz-7mwd/v2")).toBe(
+  it("encodes the resolved id into the endpoint's one path segment", () => {
+    expect(reviewsPath("bafyreiversion")).toBe("/papers/bafyreiversion/reviews");
+    expect(reviewsPath("sch:k3f9-q2xz-7mwd")).toBe(
       "/papers/sch%3Ak3f9-q2xz-7mwd/reviews",
     );
-    expect(reviewsPath("k3f9-q2xz-7mwd/v12")).toBe(
-      "/papers/k3f9-q2xz-7mwd/reviews",
-    );
+  });
+});
+
+describe("splitTarget", () => {
+  it("separates a /vN suffix from the paper id", () => {
+    expect(splitTarget("sch:k3f9-q2xz-7mwd/v2")).toEqual({
+      paper: "sch:k3f9-q2xz-7mwd",
+      version: 2,
+    });
+    expect(splitTarget("k3f9-q2xz-7mwd")).toEqual({
+      paper: "k3f9-q2xz-7mwd",
+      version: null,
+    });
   });
 });
 
@@ -89,6 +101,43 @@ describe("loadReviews", () => {
     await loadReviews("k3f9-q2xz-7mwd", controller.signal, { client });
 
     expect(client.calls[0].options).toMatchObject({ signal: controller.signal });
+  });
+
+  it("resolves /vN to that version's cid before listing its reviews", async () => {
+    const calls: Array<{ path: string; options: unknown }> = [];
+    const client: ReviewsClient = {
+      get: (async (path: string, options?: unknown) => {
+        calls.push({ path, options });
+        if (path.endsWith("/versions")) {
+          return {
+            paper: "sch:k3f9-q2xz-7mwd",
+            versions: [
+              { n: 1, cid: "bafyrei-v1" },
+              { n: 2, cid: "bafyrei-v2" },
+            ],
+          };
+        }
+        return { ...PAYLOAD, version: 1, versionCid: "bafyrei-v1" };
+      }) as ReviewsClient["get"],
+    };
+
+    const data = await loadReviews("sch:k3f9-q2xz-7mwd/v1", undefined, { client });
+
+    expect(calls.map((call) => call.path)).toEqual([
+      "/papers/sch%3Ak3f9-q2xz-7mwd/versions",
+      "/papers/bafyrei-v1/reviews",
+    ]);
+    expect(data.version).toBe(1);
+  });
+
+  it("says so when the named version is not listed, instead of showing the newest", async () => {
+    const client: ReviewsClient = {
+      get: (async () => ({ versions: [{ n: 2, cid: "bafyrei-v2" }] })) as ReviewsClient["get"],
+    };
+
+    await expect(
+      loadReviews("sch:k3f9-q2xz-7mwd/v1", undefined, { client }),
+    ).rejects.toThrow("no listed version 1");
   });
 });
 

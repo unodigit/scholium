@@ -6,6 +6,7 @@ import {
   dimensionMedians,
   emptyReviews,
   formatReviewDate,
+  isRevealed,
   median,
   medianText,
   parseReviews,
@@ -145,6 +146,82 @@ describe("parseReviews", () => {
     expect(parseReviews("not json").reviews).toEqual([]);
     expect(parseReviews({ reviews: "nope" }).reviews).toEqual([]);
     expect(parseReviews({ reviews: [null, 3, []] }).reviews).toHaveLength(3);
+  });
+});
+
+describe("revealed reviews and their revision history", () => {
+  it("reads revealed_at even when the review carries no written report", () => {
+    const data = parseReviews({
+      reviews: [
+        {
+          review_cid: "a",
+          revealed_at: "2027-03-02T05:00:00",
+          scores: { soundness: { score: 4, justification: "Sound." } },
+        },
+      ],
+    });
+
+    expect(data.reviews[0].revealedAt).toBe("2027-03-02T05:00:00");
+    expect(isRevealed(data.reviews[0])).toBe(true);
+  });
+
+  it("does not call a committed but unrevealed review revealed", () => {
+    const data = parseReviews({
+      reviews: [{ review_cid: "a", revealed_at: null, scores: null }],
+    });
+    expect(isRevealed(data.reviews[0])).toBe(false);
+  });
+
+  it("reads a reviewer's history oldest first, with each revision's version and date", () => {
+    const data = parseReviews({
+      reviews: [
+        {
+          review_cid: "a",
+          revealed_at: "2027-04-01T00:00:00",
+          recommendation: "sound_as_is",
+          history: [
+            {
+              formal_cid: "bafy-formal-1",
+              version: 1,
+              revealed_at: "2027-03-02T05:00:00",
+              recommendation: "minor_revisions",
+              scores: {
+                soundness: { score: 4, justification: "Mostly sound." },
+              },
+            },
+            {
+              formal_cid: "bafy-formal-2",
+              version: 2,
+              revealed_at: "2027-04-01T00:00:00",
+              recommendation: "sound_as_is",
+              scores: {
+                soundness: { score: 5, justification: "Now sound." },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const history = data.reviews[0].history ?? [];
+    expect(history).toHaveLength(2);
+    expect(history[0]).toMatchObject({
+      formalCid: "bafy-formal-1",
+      version: 1,
+      recommendation: "minor_revisions",
+      recommendationLabel: "Minor revisions",
+      revealedAt: "2027-03-02T05:00:00",
+    });
+    expect(history[0].scores[0]).toMatchObject({
+      dimension: "soundness",
+      justification: "Mostly sound.",
+    });
+    expect(history[1]).toMatchObject({
+      formalCid: "bafy-formal-2",
+      version: 2,
+      recommendationLabel: "Sound as is",
+      revealedAt: "2027-04-01T00:00:00",
+    });
   });
 });
 

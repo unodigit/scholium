@@ -129,6 +129,36 @@ describe("/reviews/[id]", () => {
     expect((props.initial as { reviews: unknown[] }).reviews).toHaveLength(2);
   });
 
+  it("renders the listing of the version the URL names, not the newest", async () => {
+    const versioned = `${SHORT}/v1`;
+    const versionsPath = `/papers/${encodeURIComponent(SHORT)}/versions`;
+    const v1Path = "/papers/bafyrei-v1/reviews";
+    const fetchMock = stubApi((url) => {
+      if (url.endsWith(versionsPath)) {
+        return json({
+          paper: SHORT,
+          versions: [
+            { n: 1, cid: "bafyrei-v1" },
+            { n: 2, cid: "bafyrei-v2" },
+          ],
+        });
+      }
+      if (url.endsWith(v1Path)) {
+        return json({ ...REVIEWS, version: 1, versionCid: "bafyrei-v1" });
+      }
+      return json({ title: "Not Found", status: 404 }, 404);
+    });
+
+    const props = await tabProps(["6sel-2dio-orm6", "v1"]);
+
+    // The version number is resolved to its cid: the endpoint takes one segment.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String((fetchMock.mock.calls[1] as unknown[])[0])).toContain(v1Path);
+    // The tab asks for that version's reviews; a later fetch keeps the suffix.
+    expect(props.paperId).toBe(versioned);
+    expect((props.initial as { version: number }).version).toBe(1);
+  });
+
   it("treats a 404 as the calm no-reviews state, not a failure", async () => {
     stubApi((url) =>
       url.endsWith(`/papers/${encoded}/reviews`)

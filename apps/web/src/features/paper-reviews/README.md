@@ -62,10 +62,20 @@ page's `/p/{id}[/v{n}]`; the `sch:` prefix is optional.
 
 `GET /v1/papers/{id}/reviews` (feature 110), read anonymously and uncached.
 The endpoint serves the paper's resolved listed version; its `{paper_id}` is
-one path segment, so `loadReviews` splits off a `/vN` suffix and sends the
-paper's own id. The payload's `version` and `versionCid` say which version the
-reviews belong to. Report bodies are absent while `gate_open` is false; rubric
-scores are always present.
+one path segment, so a `sch:…/vN` URL first reads
+`GET /v1/papers/{id}/versions` and passes that version's **cid**, which the
+endpoint resolves to exactly that version. (A percent-encoded slash is decoded
+by the server before routing, so the suffix cannot ride in the one segment.)
+The payload's `version` and `versionCid` say which version the reviews belong
+to. Report bodies are absent while `gate_open` is false.
+
+A revealed review is one whose `revealed_at` is set, never one whose report
+happens to be present: the form's written report is optional, so `report` is
+`null` for a revealed review that has none. The card shows the rubric with each
+dimension's justification, the report when served ("No written report"
+otherwise), and a **Revised** marker with an expandable history of earlier
+recommendations (version and date) when `history` carries more than the
+current review.
 
 The listing of a version also carries each reviewer's newest *revealed* review
 of an earlier version, marked by the `version` it targets (a review still sealed

@@ -105,6 +105,26 @@ export interface AuthorReply {
   readonly createdAt: string | null;
 }
 
+/** One earlier revision of a review that has been updated across versions. */
+export interface ReviewRevision {
+  /** Stable key for list rendering. */
+  readonly key: string;
+  /** The cid of the `review.formal` this revision was revealed as. */
+  readonly formalCid: string | null;
+  /** The paper version this revision is of, when named. */
+  readonly version: number | null;
+  /** The wire recommendation for this revision. */
+  readonly recommendation: string | null;
+  /** `Minor revisions`, in the reader's words. */
+  readonly recommendationLabel: string;
+  /** When this revision was revealed, as served. */
+  readonly revealedAt: string | null;
+  /** This revision's report body, when the gate serves it. */
+  readonly report: string | null;
+  /** This revision's rubric, in canonical dimension order. */
+  readonly scores: readonly ReviewScore[];
+}
+
 /** One formal review, as a card shows it. */
 export interface Review {
   /** Stable key for list rendering. */
@@ -125,6 +145,12 @@ export interface Review {
   readonly report: string | null;
   /** Author replies that arrived with the review. */
   readonly replies: readonly AuthorReply[];
+  /**
+   * Every revision of this reviewer's review of the paper, oldest version
+   * first; the latest is the review itself. Empty when the endpoint serves no
+   * history (a first reveal).
+   */
+  readonly history?: readonly ReviewRevision[];
   /** The instant the review was committed, as served. */
   readonly committedAt: string | null;
   /**
@@ -139,6 +165,24 @@ export interface Review {
   readonly signedBy?: string | null;
   /** The cid of the `review.formal` the review stands on, when named. */
   readonly formalCid?: string | null;
+}
+
+/**
+ * Whether a review is revealed, as the listing says.
+ *
+ * The reveal date is the signal: a revealed review with no written report has
+ * `report === null` but is not sealed, so the report can never stand in for
+ * reveal state. A host that carries only the report (older payloads) still
+ * reads as revealed when it is present.
+ */
+export function isRevealed(
+  review: Pick<Review, "revealedAt" | "report">,
+): boolean {
+  const revealedAt = review.revealedAt;
+  if (typeof revealedAt === "string" && revealedAt !== "") return true;
+  // A payload that predates the reveal date carried only the report: a served
+  // report still means the review is open. A sealed review serves neither.
+  return review.report !== null;
 }
 
 /** A paper's formal reviews and the state of the reveal gate. */
@@ -601,6 +645,39 @@ function reportOf(value: unknown): string | null {
   return firstText(record.text, record.body, record.content, record.markdown);
 }
 
+/** Every earlier revision a reviewer's review carries, oldest first. */
+function historyOf(value: unknown): ReviewRevision[] {
+  if (!Array.isArray(value)) return [];
+  const revisions: ReviewRevision[] = [];
+  value.forEach((entry, index) => {
+    const record = recordOf(entry);
+    if (record === null) return;
+    const formalCid = firstText(
+      record.formal_cid,
+      record.formalCid,
+      record.reveal_cid,
+      record.revealCid,
+      record.id,
+    );
+    const recommendation = firstText(
+      record.recommendation,
+      record.verdict,
+      record.recommendation_label,
+    );
+    revisions.push({
+      key: formalCid ?? `revision-${index}`,
+      formalCid,
+      version: firstNumber(record.version, record.n),
+      recommendation,
+      recommendationLabel: recommendationLabel(recommendation),
+      revealedAt: firstText(record.revealed_at, record.revealedAt),
+      report: reportOf(record.report),
+      scores: parseScores(record.scores ?? record.rubric),
+    });
+  });
+  return revisions;
+}
+
 /** One wire review as a {@link Review}. */
 function reviewOf(value: unknown, index: number): Review {
   const record = recordOf(value) ?? {};
@@ -638,6 +715,7 @@ function reviewOf(value: unknown, index: number): Review {
     scores: parseScores(record.scores ?? record.rubric),
     report: reportOf(record.report),
     replies: repliesOf(record),
+    history: historyOf(record.history),
     committedAt: firstText(
       record.committed_at,
       record.committedAt,

@@ -94,8 +94,10 @@ describe("/review route (server render)", () => {
       expect(html).toContain(label);
     }
     expect(html.match(/type="radio"/g)).toHaveLength(6 * 5 + 3 + 4);
-    expect(html.match(/<textarea/g)).toHaveLength(6);
+    // Six required justifications, plus the optional written report.
+    expect(html.match(/<textarea/g)).toHaveLength(7);
     expect(html.match(/<textarea[^>]*required/g)).toHaveLength(6);
+    expect(html).toContain("Written report");
     expect(html).toContain("Confidence");
     expect(html).toContain("Recommendation");
     expect(html).toContain("I used AI assistance in writing this review");

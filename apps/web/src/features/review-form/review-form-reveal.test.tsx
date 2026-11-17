@@ -135,6 +135,32 @@ async function commitFirst(
   await screen.findByRole("heading", { name: "Your review is sealed" });
 }
 
+describe("the sealed card's gate copy", () => {
+  it("says how many reviews are committed and what is still needed", async () => {
+    await commitFirst({
+      gate: { open: false, versionCid: "bafyversion", committed: 1 },
+    });
+
+    expect(
+      await screen.findByText(/1 review has been committed on this version so far/),
+    ).toBeTruthy();
+    expect(screen.getByText(/one more independent review/)).toBeTruthy();
+    // The 21-day fallback is still named, as the one other way to open it.
+    expect(screen.getByText("14 Dec")).toBeTruthy();
+  });
+
+  it("says the gate is open once a second review is committed, not that it still awaits one", async () => {
+    await commitFirst({
+      gate: { open: true, versionCid: "bafyversion", committed: 2 },
+    });
+
+    expect(
+      await screen.findByText(/reveal gate is open for this version/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/when a second review is committed/)).toBeNull();
+  });
+});
+
 describe("Reveal review", () => {
   it("offers the action once the gate is open, signs and posts, then says it is revealed", async () => {
     const reveal = vi.fn<RevealReview>(async () => revealResult());

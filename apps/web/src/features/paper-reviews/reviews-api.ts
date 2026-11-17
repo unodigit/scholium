@@ -20,6 +20,7 @@ import {
   type ApiClient,
   type ApiRequestOptions,
 } from "../../lib/api";
+import { loadVersions } from "../paper-meta";
 
 import { parseReviews, type ReviewsData } from "./review";
 
@@ -30,19 +31,48 @@ export type ReviewsClient = Pick<ApiClient, "get">;
 export type LoadReviews = (paperId: string, signal?: AbortSignal) => Promise<ReviewsData>;
 
 /**
- * The path of a paper's reviews.
+ * The path of a paper's reviews, for an id the endpoint can resolve in one
+ * path segment.
  *
- * The endpoint resolves a listed paper or version id itself, but its
- * `{paper_id}` is one path segment and a version id's `/vN` is a second one.
- * The panel shows the paper's resolved listed version, whose number and cid
- * come back in the payload, so the canonical `/vN` suffix is split off and
- * the paper's own id is sent.
+ * The endpoint resolves a listed paper, a paper genesis cid, or a *version
+ * cid*; a `sch:…/vN` spelling cannot ride in one segment because the server
+ * decodes `%2F` into a path separator. {@link loadReviews} therefore resolves
+ * a version number to its cid first (see {@link splitTarget}).
  */
 export function reviewsPath(paperId: string): string {
-  const id = paperId.trim();
-  const versionMatch = /^(.+?)\/v\d+$/.exec(id);
-  const paper = versionMatch !== null ? versionMatch[1] : id;
-  return `/papers/${encodeURIComponent(paper)}/reviews`;
+  return `/papers/${encodeURIComponent(paperId.trim())}/reviews`;
+}
+
+/** A paper spelling and the version it names, if it names one. */
+export interface ReviewsTarget {
+  /** The paper, without a `/vN` suffix. */
+  readonly paper: string;
+  /** The version number the id names; `null` for "the newest listed". */
+  readonly version: number | null;
+}
+
+/** Split `sch:…/v2` into the paper id and version 2. */
+export function splitTarget(paperId: string): ReviewsTarget {
+  const text = paperId.trim();
+  const match = /^(.+?)\/v([1-9][0-9]*)$/i.exec(text);
+  return match === null
+    ? { paper: text, version: null }
+    : { paper: match[1], version: Number(match[2]) };
+}
+
+/** The cid of `version` in `paper`'s timeline, or a readable error. */
+async function versionCidOf(
+  paper: string,
+  version: number,
+  signal: AbortSignal | undefined,
+  client: ReviewsClient,
+): Promise<string> {
+  const timeline = await loadVersions(paper, signal, client);
+  const entry = timeline.versions.find((known) => known.n === version);
+  if (entry === undefined) {
+    throw new Error(`There is no listed version ${version} of this paper.`);
+  }
+  return entry.cid;
 }
 
 /** Why the reviews cannot be shown. */
@@ -114,7 +144,17 @@ export async function loadReviews(
   signal?: AbortSignal,
   { client = api, options }: LoadReviewsOptions = {},
 ): Promise<ReviewsData> {
-  const payload = await client.get<unknown>(reviewsPath(paperId), {
+  const target = splitTarget(paperId);
+  const requestSignal = signal ?? options?.signal ?? undefined;
+  // A `/vN` URL names one version, and the endpoint's one-segment id cannot
+  // carry it. Resolve it to the version's cid so /reviews/{id}/vN shows that
+  // version's reviews rather than the newest one's.
+  const resolved =
+    target.version === null
+      ? target.paper
+      : await versionCidOf(target.paper, target.version, requestSignal, client);
+
+  const payload = await client.get<unknown>(reviewsPath(resolved), {
     // Reading the page is anonymous; a stale session token must not be able
     // to hide public reviews behind a 401.
     auth: false,

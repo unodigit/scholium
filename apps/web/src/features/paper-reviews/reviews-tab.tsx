@@ -50,6 +50,7 @@ import { tokenStore } from "../../lib/api";
 import {
   dimensionMedians,
   formatReviewDate,
+  isRevealed,
   medianText,
   recommendationTone,
   scoreFraction,
@@ -57,6 +58,7 @@ import {
   type AuthorReply,
   type RecommendationTone,
   type Review,
+  type ReviewRevision,
   type ReviewsData,
   type ReviewScore,
 } from "./review";
@@ -69,7 +71,6 @@ import {
 import { paperHref, reviewHref } from "./links";
 import {
   ReportPanel,
-  paperPagePath,
   reportPostFlag,
   signInPath,
   type ReportReason,
@@ -211,6 +212,46 @@ export function ReviewsTab({
   );
 }
 
+/** How many listed reviews are committed on the version being listed. */
+function committedOnVersion(
+  reviews: readonly Review[],
+  version: number | null,
+): number {
+  if (version === null) return reviews.length;
+  return reviews.filter(
+    (review) => review.version === null || review.version === version,
+  ).length;
+}
+
+/** What the gate note says: commits so far, what opens it, and the fallback. */
+function gateNote(commits: number): string {
+  if (commits <= 0) {
+    return "No review has been committed on this version yet. Reviews are revealed, with their rubric and report, once two independent reviews are committed on the version, or 21 days after the first.";
+  }
+  const count =
+    commits === 1
+      ? "1 review has been committed on this version so far."
+      : `${commits} reviews have been committed on this version so far.`;
+  if (commits >= 2) return `${count} Reviews are revealed once the gate opens.`;
+  return `${count} The review is revealed, with its rubric and report, once one more independent review is committed on the version, or 21 days after the first commit.`;
+}
+
+/** The earlier revisions of a revised review, oldest first. */
+function earlierRevisions(review: Review): readonly ReviewRevision[] {
+  const history = review.history ?? [];
+  return history.length > 1 ? history.slice(0, -1) : [];
+}
+
+/** `v1 · 2 Mar 2027` — how one earlier revision is labelled. */
+function revisionMeta(revision: ReviewRevision): string {
+  const parts: string[] = [
+    revision.version !== null ? `v${revision.version}` : "Earlier version",
+  ];
+  const date = formatReviewDate(revision.revealedAt);
+  if (date !== null) parts.push(date);
+  return parts.join(" · ");
+}
+
 /** The loaded panel: the summary bar, the gate note, and the review cards. */
 function ReviewsView({
   data,
@@ -226,6 +267,10 @@ function ReviewsView({
   const reviews = data.reviews;
   const medians = dimensionMedians(reviews);
   const latest = latestVersion ?? data.version;
+  // How many reviews this version has, and how many of the listed ones are
+  // still sealed. A carried review of an earlier version is not a commit here.
+  const commits = committedOnVersion(reviews, data.version);
+  const sealed = reviews.filter((review) => !isRevealed(review)).length;
 
   // Who wrote an anonymous review is escrowed, so which of the earlier reviews
   // is the viewer's own is asked of their dashboard; only when there is one to
@@ -261,14 +306,12 @@ function ReviewsView({
       <p className="pr-summary-line">
         {data.version !== null ? `Version ${data.version} · ` : ""}
         {reviews.length} {reviews.length === 1 ? "review" : "reviews"}
-        {!data.gateOpen ? " · reports sealed" : ""}
+        {!data.gateOpen && sealed > 0 ? " · reports sealed" : ""}
       </p>
 
       {!data.gateOpen ? (
         <p className="pr-gate" role="note">
-          Report bodies stay sealed until two reviews are committed on this
-          version, or 21 days after the first. The rubric scores are already
-          public.
+          {gateNote(commits)}
         </p>
       ) : null}
 
@@ -374,6 +417,9 @@ function ReviewCard({
   const tone = recommendationTone(review.recommendation);
   const date = formatReviewDate(review.committedAt);
   const earlier = isEarlierRevealed(review, latestVersion);
+  const revealed = isRevealed(review);
+  const revisions = earlierRevisions(review);
+  const revised = revisions.length > 0;
   const [reportOpen, setReportOpen] = useState(false);
   const [reported, setReported] = useState<ReportReason | null>(null);
 
@@ -390,6 +436,11 @@ function ReviewCard({
           {review.label}
         </h4>
         <p className="pr-card__meta">{meta.join(" · ")}</p>
+        {revised ? (
+          <p className="pr-card__flag">
+            <span className="pr-revised">Revised</span>
+          </p>
+        ) : null}
         <p className={`pr-recommendation pr-recommendation--${tone}`}>
           <Icon name={TONE_ICONS[tone]} />
           <span>{review.recommendationLabel}</span>
@@ -403,14 +454,40 @@ function ReviewCard({
           ))}
         </dl>
       ) : (
-        <p className="pr-rubric__none">The rubric is not available for this review.</p>
+        <p className="pr-rubric__none">
+          {revealed
+            ? "The rubric is not available for this review."
+            : "The rubric is sealed with the review."}
+        </p>
       )}
 
-      {review.report !== null ? (
-        <details className="pr-report">
-          <summary className="pr-report__summary">Read the report</summary>
-          <p className="pr-report__body">{review.report}</p>
+      {revised ? (
+        <details className="pr-history">
+          <summary className="pr-history__summary">
+            {`Earlier revisions (${revisions.length})`}
+          </summary>
+          <ol className="pr-history__list">
+            {revisions.map((revision) => (
+              <li className="pr-history__item" key={revision.key}>
+                <p className="pr-history__meta">{revisionMeta(revision)}</p>
+                <p className="pr-history__recommendation">
+                  {revision.recommendationLabel}
+                </p>
+              </li>
+            ))}
+          </ol>
         </details>
+      ) : null}
+
+      {revealed ? (
+        review.report !== null ? (
+          <details className="pr-report">
+            <summary className="pr-report__summary">Read the report</summary>
+            <p className="pr-report__body">{review.report}</p>
+          </details>
+        ) : (
+          <p className="pr-report__none">No written report.</p>
+        )
       ) : (
         <p className="pr-report__sealed">
           {gateOpen
@@ -443,7 +520,7 @@ function ReviewCard({
           reader, or to someone the API would refuse; the API is the gate. */}
       <ReviewCardActions review={review} paperId={paperId} />
 
-      {review.reviewCid !== null ? (
+      {revealed && review.reviewCid !== null ? (
         <div className="pr-report-action">
           {reported === null ? (
             <button
@@ -452,7 +529,7 @@ function ReviewCard({
               data-action="report"
               onClick={() => {
                 if (typeof window !== "undefined" && !tokenStore.isAuthenticated) {
-                  const href = signInPath(paperPagePath(paperId));
+                  const href = signInPath(paperHref(paperId));
                   if (typeof window.location.assign === "function") {
                     window.location.assign(href);
                   } else {
@@ -475,7 +552,7 @@ function ReviewCard({
             <div className="pd-panel">
               <ReportPanel
                 authorLabel={review.label}
-                signInHref={signInPath(paperPagePath(paperId))}
+                signInHref={signInPath(paperHref(paperId))}
                 onCancel={() => setReportOpen(false)}
                 onReport={async (reason) => {
                   await reportPostFlag(review.reviewCid as string, reason);
@@ -509,6 +586,9 @@ function RubricRow({ score }: { score: ReviewScore }) {
         </span>
         <span className="pr-rubric__score">{scoreText(score.score)}</span>
       </dd>
+      {score.justification !== null ? (
+        <dd className="pr-rubric__justification">{score.justification}</dd>
+      ) : null}
     </div>
   );
 }

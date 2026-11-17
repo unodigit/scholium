@@ -6,13 +6,17 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { ApiError } from "../../lib/api";
 
 import {
   AI_ASSISTANCE_HINT,
   AI_ASSISTANCE_LABEL,
+  UPDATE_LABEL,
   ReviewForm,
 } from "./review-form";
+import type { UpdateReview, UpdateReviewResult } from "./reveal";
 import {
   RUBRIC_DIMENSIONS,
   emptyDraft,
@@ -21,6 +25,51 @@ import {
 } from "./rubric";
 
 afterEach(cleanup);
+
+/** A draft with every rubric answer filled in. */
+function completeDraft(): ReviewDraft {
+  return RUBRIC_DIMENSIONS.reduce(
+    (current, { id }) =>
+      withDimension(current, id, { score: 4, justification: "Fine." }),
+    {
+      ...emptyDraft(),
+      confidence: "high",
+      recommendation: "sound_as_is",
+    } as ReviewDraft,
+  );
+}
+
+/** What a successful update returns: the body the reviewer now stands on. */
+function updatedReview(): UpdateReviewResult {
+  return {
+    revealCid: "bafyreveal2",
+    reviewCid: "bafycommit",
+    body: {
+      target: "bafyversion",
+      scores: Object.fromEntries(
+        RUBRIC_DIMENSIONS.map(({ id }) => [
+          id,
+          { score: 4, justification: `Revised ${id}.` },
+        ]),
+      ),
+      confidence: "high",
+      recommendation: "sound_as_is",
+      aiAssisted: false,
+      report: "The revised report.",
+    },
+    record: {
+      v: 1,
+      type: "review.formal",
+      id: "bafyreveal2",
+      author: "did:key:z6Mkreview",
+      created: "2026-12-01T00:00:00Z",
+      prev: "bafyformal",
+      body: {},
+      proofs: [],
+      sig: "sig",
+    },
+  };
+}
 
 /** The fieldset for one rubric dimension, found by its legend. */
 function dimension(label: string): HTMLElement {
@@ -363,5 +412,89 @@ describe("ReviewForm as a form", () => {
     );
     // Eight radio groups per form: six dimensions, confidence, recommendation.
     expect(names.size).toBe(16);
+  });
+});
+
+describe("ReviewForm written report", () => {
+  it("offers an optional free-text report in addition to the rubric", () => {
+    render(<ReviewForm />);
+
+    const box = screen.getByRole("textbox", {
+      name: /Written report/,
+    }) as HTMLTextAreaElement;
+    expect(box.required).toBe(false);
+    expect(box.value).toBe("");
+
+    fireEvent.change(box, {
+      target: { value: "## Summary\nThe method is sound." },
+    });
+    expect(box.value).toBe("## Summary\nThe method is sound.");
+  });
+
+  it("starts from the report in the draft it is given", () => {
+    render(
+      <ReviewForm initialDraft={{ ...completeDraft(), report: "A prior report." }} />,
+    );
+
+    const box = screen.getByRole("textbox", {
+      name: /Written report/,
+    }) as HTMLTextAreaElement;
+    expect(box.value).toBe("A prior report.");
+  });
+});
+
+describe("ReviewForm update", () => {
+  it("switches to a confirmed, read-only state showing the new review", async () => {
+    const update = vi.fn<UpdateReview>(async () => updatedReview());
+
+    render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        prev="bafyformal"
+        update={update}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Your review is updated" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Sound as is")).toBeTruthy();
+    expect(screen.getAllByText("4 of 5").length).toBeGreaterThan(0);
+    expect(screen.getByText("Revised soundness.")).toBeTruthy();
+    expect(screen.getByText("The revised report.")).toBeTruthy();
+    // The form is gone, so a second click cannot surface an API refusal.
+    expect(screen.queryByRole("button", { name: UPDATE_LABEL })).toBeNull();
+  });
+
+  it("shows an already-updated refusal in human words, not the API's `prev` message", async () => {
+    const update = vi.fn<UpdateReview>(async () => {
+      throw new ApiError(409, {
+        detail:
+          "This review has already been updated; point 'prev' at the reviewer's latest review.",
+      });
+    });
+
+    render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        prev="bafyformal"
+        update={update}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("already been updated");
+    expect(alert.textContent).toContain("Nothing was sent.");
+    expect(alert.textContent).not.toContain("prev");
+    // Still editable, so the reviewer can reload or try again.
+    expect(screen.getByRole("button", { name: UPDATE_LABEL })).toBeTruthy();
   });
 });

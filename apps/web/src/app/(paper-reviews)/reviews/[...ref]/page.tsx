@@ -106,9 +106,9 @@ export default async function ReviewsPage({ params }: ReviewsPageProps) {
   let initial: ReviewsData | undefined;
   let initialError: string | undefined;
   try {
-    // The endpoint resolves the paper's listed version itself; passing the
-    // short id is the spelling it accepts for both a bare and a versioned URL.
-    initial = await loadReviews(ref.shortId);
+    // The URL's version, when it names one, is part of the id: `/v1` must list
+    // version 1, not the newest listed version the bare id resolves to.
+    initial = await loadReviews(ref.schId);
   } catch (error) {
     const failure = classifyReviewsError(error);
     if (failure.kind === "missing") {
@@ -122,7 +122,7 @@ export default async function ReviewsPage({ params }: ReviewsPageProps) {
     <>
       <Header schId={ref.schId} />
       <ReviewsTab
-        paperId={ref.shortId}
+        paperId={ref.schId}
         initial={initial}
         initialError={initialError}
       />
