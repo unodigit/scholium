@@ -391,7 +391,7 @@ describe("SearchPage semantic toggle", () => {
       "push",
     );
     expect(await screen.findByText(/results by meaning/)).toBeTruthy();
-    expect(screen.getByText(/ranked by hashing-v1-1024/)).toBeTruthy();
+    expect(screen.getByText(/Semantic match/)).toBeTruthy();
   });
 
   it("links each author of a semantic result to their profile", () => {

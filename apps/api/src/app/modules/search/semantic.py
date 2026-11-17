@@ -93,14 +93,18 @@ def semantic_search(query: str, limit: int = 10) -> SemanticResult:
 
     with db.SessionLocal() as session:
         rows = session.execute(
-            select(PaperVersion.version_cid, Embedding.vector)
+            select(PaperVersion.version_cid, PaperVersion.paper_cid, PaperVersion.n, Embedding.vector)
             .outerjoin(Embedding, Embedding.version_cid == PaperVersion.version_cid)
             .where(PaperVersion.state == LISTED)
         ).all()
 
+    version_paper: dict[str, str] = {}
+    version_number: dict[str, int] = {}
     vectors: dict[str, tuple[float, ...]] = {}
     stale: list[str] = []
-    for version_cid, blob in rows:
+    for version_cid, paper_cid, n, blob in rows:
+        version_paper[version_cid] = paper_cid
+        version_number[version_cid] = int(n)
         stored = decode_vector(blob)
         if (
             stored is not None
@@ -114,8 +118,24 @@ def semantic_search(query: str, limit: int = 10) -> SemanticResult:
         if len(vector) == len(query_vector):
             vectors[version_cid] = vector
 
+    # One hit per paper: keep its latest listed version (highest ``n``) among
+    # the listed versions that have a usable vector, rather than ranking every
+    # version of a multi-version paper as a separate hit.
+    latest_by_paper: dict[str, str] = {}
+    for cid in vectors:
+        paper_cid = version_paper[cid]
+        n = version_number[cid]
+        current = latest_by_paper.get(paper_cid)
+        if current is None or n > version_number[current] or (
+            n == version_number[current] and cid < current
+        ):
+            latest_by_paper[paper_cid] = cid
+
     ranked = sorted(
-        ((cosine_similarity(query_vector, vector), cid) for cid, vector in vectors.items()),
+        (
+            (cosine_similarity(query_vector, vectors[cid]), cid)
+            for cid in latest_by_paper.values()
+        ),
         key=lambda scored: (-scored[0], scored[1]),
     )[: max(limit, 0)]
     return SemanticResult(query, embedder.name, _describe(ranked))

@@ -132,7 +132,7 @@ describe("search route (server render)", () => {
     expect(url).toContain("/v1/search/semantic");
     expect(url).toContain("q=pulsar");
     expect(html).toContain("by meaning");
-    expect(html).toContain("ranked by hashing-v1-1024");
+    expect(html).toContain("Semantic match");
   });
 
   it("renders a retryable notice instead of throwing when the API is down", async () => {

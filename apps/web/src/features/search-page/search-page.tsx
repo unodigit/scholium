@@ -605,9 +605,9 @@ export function SearchPage({
                   semantic ? "semantic" : "keyword",
                 )}
                 {isResults(view.result) ? null : (
-                  <span className="sp-embedder">
+                  <span className="sp-embedder" title={view.result.embedder}>
                     {" "}
-                    · ranked by {view.result.embedder}
+                    · Semantic match
                   </span>
                 )}
               </p>
@@ -701,8 +701,10 @@ function ResultRow({
         {!semantic && hit.hasCode ? (
           <span className="sp-code-badge">⌥ Code available</span>
         ) : null}
-        {semantic ? (
-          <span className="sp-score">{Math.round(hit.score * 100)}% match</span>
+        {semantic && hit.score >= 0.1 ? (
+          <span className="sp-score">
+            {Math.round(Math.max(0, Math.min(1, hit.score)) * 100)}% match
+          </span>
         ) : null}
       </div>
 
