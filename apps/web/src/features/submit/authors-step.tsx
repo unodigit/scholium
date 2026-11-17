@@ -24,6 +24,8 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactElement } from "react";
 
+import { initials } from "../ui-kit/initials";
+
 import {
   CREDIT_ROLES,
   KIND_LABELS,
@@ -32,7 +34,6 @@ import {
   authorLabel,
   authorsBlockers,
   canContinueAuthors,
-  initials,
   moveAuthor,
   parseIdentifier,
   removeAuthor,

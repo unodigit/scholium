@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
 import { formatDate, parseInstant } from "../feed/feed";
+import { initials } from "../ui-kit/initials";
 
 import { CopyDid } from "./copy-did";
 import { EndorseSection } from "./endorse-button";
@@ -207,10 +208,9 @@ function useViewerDid(): string | null {
   return did;
 }
 
-/** The first letter of a name, for the monogram; `#` for a pseudonymous member. */
+/** Letters for the profile's avatar; a title is skipped, and `#` stands in for a pseudonym. */
 function monogramOf(profile: ProfileData): string {
-  const first = Array.from(profile.name ?? "")[0];
-  return first === undefined ? "#" : first.toUpperCase();
+  return initials(profile.name ?? "") ?? "#";
 }
 
 function ProfileView({

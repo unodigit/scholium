@@ -165,6 +165,7 @@ export function SubmitWizard({
   // the page-level status region, so it is still said before signing.
   const categoryBlocker = blockers.find((blocker) => blocker.kind === "categories") ?? null;
   const categoryWarning = categoryBlocker === null ? null : describeBlocker(categoryBlocker, { did: ownDid });
+  const categoryWarningFor = categoryBlocker?.kind === "categories" ? categoryBlocker.missing : [];
   const pageBlockers = blockers.filter(
     (blocker) => blocker.kind !== "categories" || step !== "details",
   );
@@ -277,7 +278,7 @@ export function SubmitWizard({
     <div className="sw-wizard">
       <header className="sw-header">
         <p className="sw-crumb">Submit</p>
-        <h1 className="sw-title">{submitted ? "Submitted - version 1" : "Submit a paper"}</h1>
+        <h1 className="sw-title">{submitted ? "Submitted – version 1" : "Submit a paper"}</h1>
         {draftStatus === "saved" && !submitted ? (
           <p className="sw-draft-saved" role="status">
             Draft saved
@@ -334,6 +335,7 @@ export function SubmitWizard({
               onBack={() => setStep("files")}
               onContinue={() => setStep("authors")}
               categoryWarning={categoryWarning}
+              categoryWarningFor={categoryWarningFor}
             />
           ) : null}
 

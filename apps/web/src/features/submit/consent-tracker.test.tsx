@@ -39,6 +39,19 @@ describe("ConsentTracker", () => {
     expect(rows.map((row) => row.querySelector(".sw-avatar")?.textContent)).toEqual(["MC", "AL", "GH"]);
   });
 
+  it("takes avatar letters from the name, not from its honorific", () => {
+    render(
+      <ConsentTracker
+        entries={[
+          entry({ key: "a", name: "Dr. Tunde Okafor", monogram: "DO" }),
+          entry({ key: "b", name: "Dr. Keller", monogram: "DK" }),
+        ]}
+      />,
+    );
+    const avatars = Array.from(document.querySelectorAll(".sw-avatar")).map((avatar) => avatar.textContent);
+    expect(avatars).toEqual(["TO", "K"]);
+  });
+
   it("never leaves the status to colour alone: every chip has an icon and a word", () => {
     render(
       <ConsentTracker

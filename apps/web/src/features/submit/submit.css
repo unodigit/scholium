@@ -577,9 +577,9 @@
   gap: calc(var(--space-unit) * 2);
 }
 
-/* The endorsement problem with the chosen categories, beside the picker. The
-   live region stays in the page (empty when nothing is wrong) so a change as
-   chips are pressed is announced, and it never leaves a gap when empty. */
+/* The endorsement problem with the chosen categories, directly after the chips
+   it is about. The live region that announces it stays elsewhere in the
+   fieldset, so this never leaves a gap when empty. */
 .sw-category-warning {
   display: flex;
   flex-direction: column;

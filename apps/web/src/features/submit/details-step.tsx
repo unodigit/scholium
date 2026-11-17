@@ -21,7 +21,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useRef, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, type ReactElement } from "react";
 
 import {
   ABSTRACT_MAX_LENGTH,
@@ -58,6 +58,17 @@ export interface DetailsStepProps {
    * always in the page so a change as chips are pressed is announced.
    */
   categoryWarning?: BlockerMessage | null;
+  /**
+   * The chosen categories the warning is about, so it can sit directly under
+   * the chips for them rather than below every category group. Empty when
+   * there is no warning.
+   */
+  categoryWarningFor?: readonly string[];
+}
+
+/** The group a category chip belongs to, for placing the warning under it. */
+function groupIdOf(category: string): string | null {
+  return CATEGORY_GROUPS.find((group) => group.categories.some((option) => option.id === category))?.id ?? null;
 }
 
 export function DetailsStep({
@@ -67,8 +78,23 @@ export function DetailsStep({
   onContinue,
   nextStepLabel = "Authors",
   categoryWarning = null,
+  categoryWarningFor = [],
 }: DetailsStepProps): ReactElement {
   const titleRef = useRef<HTMLInputElement>(null);
+  const warningRef = useRef<HTMLDivElement>(null);
+  const warningTitle = categoryWarning?.title ?? null;
+  const warningGroup = useMemo(
+    () => (categoryWarningFor.length === 0 ? null : groupIdOf(categoryWarningFor[0])),
+    [categoryWarningFor],
+  );
+
+  // A warning that appears as a chip is pressed can be below the fold, because
+  // the categories run to seven groups. Bring it into view as it arrives.
+  useEffect(() => {
+    if (warningTitle !== null) {
+      warningRef.current?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [warningTitle]);
 
   // Entering the step from Files should start at the first thing to fill in,
   // not leave focus on a button that has just disappeared.
@@ -95,6 +121,37 @@ export function DetailsStep({
       ? "No categories chosen yet."
       : `${value.categories.length} of ${MAX_CATEGORIES} chosen: ${selectedNames}.` +
         (atCategoryLimit ? " Remove one to choose another." : "");
+
+  // The visible notice goes straight after the chips it is about. The live
+  // region stays where it was, so a notice that is shown rather than changed
+  // is still announced.
+  const categoryWarningNotice =
+    categoryWarning === null ? null : (
+      <div className="sw-category-warning" ref={warningRef}>
+        <div className="sw-eligibility__item" data-blocker={categoryWarning.kind}>
+          <p className="sw-eligibility__title">{categoryWarning.title}</p>
+          <p className="sw-eligibility__body">{categoryWarning.body}</p>
+          {categoryWarning.help !== null ? (
+            <Link className="sw-eligibility__help" href={categoryWarning.help.href}>
+              {categoryWarning.help.label}
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    );
+
+  // The live region is always in the page, so a warning that is shown rather
+  // than changed is still announced. It says the same thing in different
+  // words, so the notice itself is not duplicated in the accessibility tree.
+  const categoryAnnouncement = (
+    <p className="sw-sr-only" aria-live="polite" aria-atomic="true">
+      {categoryWarning === null
+        ? ""
+        : categoryWarningFor.length > 0
+          ? `Endorsement needed in ${categoryWarningFor.join(", ")}.`
+          : "There is a problem with the chosen categories."}
+    </p>
+  );
 
   return (
     <section className="sw-step" aria-labelledby="sw-details-title">
@@ -150,6 +207,7 @@ export function DetailsStep({
         <p id="sw-details-categories-hint" className="sw-field__hint">
           Choose one to {MAX_CATEGORIES}. Readers browse by category and reviewers are matched by it.
         </p>
+        {categoryAnnouncement}
 
         <div className="sw-category-groups">
           {CATEGORY_GROUPS.map((group) => (
@@ -183,25 +241,14 @@ export function DetailsStep({
                   );
                 })}
               </div>
+              {group.id === warningGroup ? categoryWarningNotice : null}
             </div>
           ))}
         </div>
 
-        {/* Always in the page, so a warning appearing or clearing as chips are
-            pressed is announced rather than silently painted in. */}
-        <div className="sw-category-warning" aria-live="polite" aria-atomic="true">
-          {categoryWarning !== null ? (
-            <div className="sw-eligibility__item" data-blocker={categoryWarning.kind}>
-              <p className="sw-eligibility__title">{categoryWarning.title}</p>
-              <p className="sw-eligibility__body">{categoryWarning.body}</p>
-              {categoryWarning.help !== null ? (
-                <Link className="sw-eligibility__help" href={categoryWarning.help.href}>
-                  {categoryWarning.help.label}
-                </Link>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+        {/* A caller that cannot say which chips the warning is about still
+            gets it beside the picker. */}
+        {warningGroup === null ? categoryWarningNotice : null}
 
         <p className="sw-summary" role="status">
           {categorySummary}

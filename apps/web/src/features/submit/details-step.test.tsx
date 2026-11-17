@@ -109,26 +109,55 @@ describe("DetailsStep — licence picker", () => {
 });
 
 describe("DetailsStep — categories", () => {
-  it("shows an endorsement warning beside the picker, announced as choices change", () => {
-    render(
-      <Harness
-        categoryWarning={{
-          kind: "categories",
-          title: "You are not endorsed in cs.CR",
-          body: "You can submit only in a category where you hold an endorsement.",
-          help: { href: "/u/me", label: "How to get endorsed" },
-        }}
-      />,
-    );
+  const CATEGORY_WARNING = {
+    kind: "categories" as const,
+    title: "You are not endorsed in cs.CR",
+    body: "You can submit only in a category where you hold an endorsement.",
+    help: { href: "/u/me", label: "How to get endorsed" },
+  };
 
-    // It belongs with the chips the author is choosing, not above the wizard.
+  it("shows the endorsement warning directly under the chips it is about", () => {
+    render(<Harness categoryWarning={CATEGORY_WARNING} categoryWarningFor={["cs.CR"]} />);
+
     const categories = screen.getByRole("group", { name: "Categories" });
     const title = within(categories).getByText("You are not endorsed in cs.CR");
-    const live = title.closest("[aria-live]");
-    expect(live?.getAttribute("aria-live")).toBe("polite");
+    // Under the Computer science chips, not below every group.
+    expect(chip("cs.CR").closest(".sw-chip-row")?.nextElementSibling).toBe(
+      title.closest(".sw-category-warning"),
+    );
     expect(
       within(categories).getByRole("link", { name: "How to get endorsed" }).getAttribute("href"),
     ).toBe("/u/me");
+  });
+
+  it("announces the warning from a live region that was already in the page", () => {
+    const { rerender } = render(<Harness categoryWarning={null} categoryWarningFor={[]} />);
+    const categories = screen.getByRole("group", { name: "Categories" });
+    const live = (): Element | null => categories.querySelector("[aria-live='polite']");
+    expect(live()?.textContent).toBe("");
+
+    rerender(<Harness categoryWarning={CATEGORY_WARNING} categoryWarningFor={["cs.CR"]} />);
+    expect(live()?.textContent).toBe("Endorsement needed in cs.CR.");
+  });
+
+  it("scrolls a warning that has just appeared into view", () => {
+    const scrollIntoView = vi.fn();
+    const proto = Element.prototype as unknown as { scrollIntoView?: () => void };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = scrollIntoView;
+    try {
+      const { rerender } = render(<Harness categoryWarning={null} categoryWarningFor={[]} />);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      rerender(<Harness categoryWarning={CATEGORY_WARNING} categoryWarningFor={["cs.CR"]} />);
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      if (original === undefined) {
+        delete proto.scrollIntoView;
+      } else {
+        proto.scrollIntoView = original;
+      }
+    }
   });
 
   it("has no warning when every chosen category is endorsed", () => {

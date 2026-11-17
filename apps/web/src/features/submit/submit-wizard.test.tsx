@@ -423,6 +423,10 @@ describe("SubmitWizard — eligibility is explained before any upload", () => {
     const categories = screen.getByRole("group", { name: "Categories" });
     const warning = await within(categories).findByText(/not endorsed in cs\.AI/);
     expect((warning.closest("[data-blocker='categories']") as HTMLElement).textContent).toMatch(/cs\.CL/);
+    // It sits directly under the chips it is about, not below every group.
+    expect(screen.getByRole("button", { name: /^cs\.AI/ }).closest(".sw-chip-row")?.nextElementSibling).toBe(
+      warning.closest(".sw-category-warning"),
+    );
     // The warning no longer sits off-screen above the steps.
     expect(region.textContent).toBe("");
 
@@ -475,7 +479,7 @@ describe("SubmitWizard — eligibility is explained before any upload", () => {
 });
 
 describe("SubmitWizard — after signing", () => {
-  it("turns the header into 'Submitted - version 1' without a draft status", async () => {
+  it("turns the header into 'Submitted – version 1' without a draft status", async () => {
     const signRecord = vi.fn().mockImplementation((type: string) =>
       Promise.resolve({
         v: 1,
@@ -522,7 +526,7 @@ describe("SubmitWizard — after signing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
     await screen.findByText("Status", { selector: ".sw-status-tracker__title" });
 
-    expect(screen.getByRole("heading", { level: 1, name: "Submitted - version 1" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Submitted – version 1" })).toBeTruthy();
     expect(screen.queryByText("Draft saved")).toBeNull();
     expect(screen.queryByText(/You are signing version 1/)).toBeNull();
   });

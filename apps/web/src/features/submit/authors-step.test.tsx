@@ -101,6 +101,12 @@ describe("AuthorsStep — adding a co-author", () => {
     expect(announcement()).toContain("Added Ada Lovelace");
   });
 
+  it("draws an avatar's letters from the name without its title", () => {
+    render(<Harness />);
+    addCoauthor(ADA, "Dr. Tunde Okafor");
+    expect(rowFor("Dr. Tunde Okafor").querySelector(".sw-avatar")?.textContent).toBe("TO");
+  });
+
   it("adds by ORCID iD, whatever spelling it was pasted in", () => {
     render(<Harness />);
     addCoauthor(`https://orcid.org/${ORCID}`, "Josiah Carberry");

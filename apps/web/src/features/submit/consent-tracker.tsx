@@ -16,6 +16,8 @@
 
 import type { ReactElement, ReactNode } from "react";
 
+import { initials } from "../ui-kit/initials";
+
 import { CONSENT_STATUS_LABELS, consentSummary, countConsents, declineNotice, type TrackerEntry } from "./consents";
 import { ConsentIcon, PersonIcon } from "./icons";
 
@@ -53,10 +55,14 @@ export function ConsentTracker({
     ) : (
       <ul className="sw-tracker__list" aria-label={embedded ? "Co-author consents" : undefined}>
         {entries.map((entry) => {
+          // A stored monogram may have been taken from a title ("DO" for Dr.
+          // Okafor); recompute from the name so every avatar agrees. A bare
+          // identifier has no monogram and keeps the person glyph.
+          const monogram = entry.monogram === null ? null : initials(entry.name);
           return (
             <li key={entry.key} className="sw-tracker__row" data-status={entry.status}>
               <span className="sw-avatar" aria-hidden="true">
-                {entry.monogram ?? <PersonIcon />}
+                {monogram ?? <PersonIcon />}
               </span>
               <span className="sw-tracker__who">
                 <span className="sw-tracker__name">

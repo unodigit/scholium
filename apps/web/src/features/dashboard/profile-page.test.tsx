@@ -308,3 +308,31 @@ describe("ProfilePage: one's own profile", () => {
     expect(await screen.findByRole("button", { name: "Follow Ada Lovelace" })).toBeTruthy();
   });
 });
+
+describe("ProfilePage: avatar initials", () => {
+  it("skips a title and uses the first and last name letters", () => {
+    render(
+      <ProfilePage
+        did={DID}
+        initialProfile={{ ...PROFILE, name: "Dr. Tunde Okafor" }}
+        signedIn={false}
+        loadPapers={noPapers}
+      />,
+    );
+
+    expect(document.querySelector(".pp-monogram")?.textContent).toBe("TO");
+  });
+
+  it("keeps the mark for a pseudonymous member", () => {
+    render(
+      <ProfilePage
+        did={DID}
+        initialProfile={{ ...PROFILE, name: null }}
+        signedIn={false}
+        loadPapers={noPapers}
+      />,
+    );
+
+    expect(document.querySelector(".pp-monogram")?.textContent).toBe("#");
+  });
+});
