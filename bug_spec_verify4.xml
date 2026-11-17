@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Verify sweep 4 (claw-forge-verify, 2026-11-17, main @ 27246ad): real-browser journeys 01-07, 10-16 plus the new
+  08-verify-and-download (PRD §9 journey 3) and 09-preserve-and-transparency (PRD §9 journey 4, phase-1 parts).
+  Evidence: .claw-forge/journeys/*.md and .claw-forge/journeys/screenshots/<journey>/s4-*.png (gitignored, local).
+  Decisions recorded here (PRD + design.md): the verification indicator carries the PRD's counts plus the anchor state;
+  /verify identifies the paper from the file alone; on this single-node phase-1 deployment preservation and anchoring
+  are shown honestly as "1 of 1 local copy" and "anchoring not enabled", never as promises.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/content/**,apps/web/src/features/paper-meta/files-tab.tsx,apps/web/src/features/paper-meta/files-tab.test.tsx,apps/web/src/features/paper-page/download-menu.tsx,apps/web/src/features/paper-page/download-menu.test.tsx">
+    <title>Downloaded PDFs save with no name or extension; archive download does not explain offline verification; Files tab hides missing code/data</title>
+    <symptoms>
+      The Files tab "Download" saves the PDF as a bare CID (e.g. "bafkreidkbwlhcrupxrxwqsivv22s536gwjmmoqgv2hyp47733bfytvnfdy") with no .pdf: GET /v1/content/{cid} answers application/octet-stream with no Content-Disposition, and the download attribute is ignored because the API is on another origin
+      The paper archive downloads as sch-{id}.car but nothing near it says it verifies offline or how (the scholium verify command only appears in the Proof tab's technical details)
+      The Files tab shows "1 file" without saying the paper has no code, data or reproduction log; sizes disagree with /verify ("3 KiB" vs "3.0 KB")
+    </symptoms>
+    <reproduction_steps>
+      Journey 08 step 4-5: open a listed paper, Files tab, Download the PDF and the paper archive (screenshots/08-verify-and-download/s4-09-files.png, s4-10-download-menu.png, s4-11-after-downloads.png)
+    </reproduction_steps>
+    <expected>GET /v1/content/{cid} serves the media type recorded in the version manifest (application/pdf for PDFs) and, with ?download=1, Content-Disposition: attachment with a safe filename built from the manifest's file name (RFC 6266 filename and filename* for non-ASCII), otherwise inline with the same filename; the Files tab and download menu link with ?download=1 so the browser saves "main.pdf" etc.; the API also answers GET /v1/content/{cid}/versions with the public listed versions whose manifest names that blob (paper short id, version n, title, file name, role) for /verify to use, honouring the same visibility rules as content reads; the download menu's archive item carries one line "Verifies offline: scholium verify sch-{id}.car" with a "How to verify" link to the Proof tab section; the Files tab lists PDF, source, code, data and reproduction log rows and states "No code, data or reproduction log was published with this version." when absent; sizes use one formatter (KB/MB, 1 decimal) everywhere in these components</expected>
+    <actual>Nameless downloads; no offline-verification guidance; silent absence of artefacts</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="high"
+       touches_files="apps/web/src/app/layout.tsx"
+       creates="apps/web/src/components/footer/site-footer.tsx,apps/web/src/components/footer/site-footer.test.tsx,apps/web/src/components/footer/footer.css,apps/web/src/components/footer/index.ts">
+    <title>Network, Verify a file, Policies and the public export are unreachable from the UI</title>
+    <symptoms>
+      No page links to /network or /verify: they are not in the nav or Categories menu, and no page has a footer (design.md's sitemap lists Docs, Policies, Verify a file, Network)
+      There is no link anywhere to the node's public export (PRD NET-2, phase 1, P0); the API serves GET /v1/export/archive.car (200) but users cannot reach it
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 1 and 5, journey 08 step 6 (screenshots/09-preserve-and-transparency/s4-01-nav-categories.png, s4-02-home-bottom-no-footer.png)
+    </reproduction_steps>
+    <expected>Every page renders a site footer (inside the root layout, below page content, above the mobile bottom bar) with the BrandMark glyph and the links Network (/network), Verify a file (/verify), Policies (/policies), Public export (the API's /v1/export/archive.car with a "CAR archive" note), and the node's short description; it follows design.md tokens in light and dark, is keyboard reachable, and renders on mobile without horizontal scroll</expected>
+    <actual>Key public pages and the export are undiscoverable</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="medium"
+       touches_files="apps/web/src/features/network-page/**,apps/api/src/app/modules/network/**">
+    <title>/network lacks operator, software version, probe pass rate, incident log, the replication target and the export instructions</title>
+    <symptoms>
+      /network does not show the node's operator name, software version or probe pass rate (design.md §5.8)
+      There is no incident log section, not even an empty one
+      The replication summary shows "1 of 1 local" with an honest note but never states the policy target (5 replicas, 3 operators, 2 jurisdictions) nor how many papers are at each replica health
+      Nothing explains how to download the public export and rebuild/verify it independently (NET-2)
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 steps 1, 2, 4, 5 (screenshots/09-preserve-and-transparency/s4-03-network-top.png)
+    </reproduction_steps>
+    <expected>The API's network status (extend the existing network module response) includes operator name and software version (from settings / package metadata), probe statistics (pass rate over the last 24 h, or an explicit "no probes run yet"), an incident list (empty list allowed) and counts of listed papers by replica health; /network shows: node card (operator, version, standing, last anchor or "Anchoring is not enabled on this node yet"), probe pass rate, replication summary with the policy target sentence and per-health counts with a segmented meter, moderation statistics by clause (existing), an Incident log section ("No incidents recorded." when empty), and a Public export section linking /v1/export/archive.car with the two commands to verify and rebuild it</expected>
+    <actual>Transparency page incomplete</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-proof/**,apps/web/src/features/ui-kit/verify.ts,apps/web/src/features/ui-kit/verify.test.ts,apps/web/src/features/paper-meta/meta.ts,apps/web/src/features/paper-meta/meta.test.ts,apps/web/src/features/paper-meta/versions-tab.tsx,apps/web/src/features/paper-meta/versions-tab.test.tsx,apps/web/src/features/paper-page/paper-header.tsx,apps/web/src/features/paper-page/paper-header.test.tsx">
+    <title>Paper verification indicator lacks counts, promises an anchor "within the hour", shows no preservation state, and leaks raw ids</title>
+    <symptoms>
+      The header indicator reads "Signed · anchor pending" without the counts PRD journey 3 describes ("Verified: 3 versions, 4 signatures, anchored ...")
+      The paper page and Proof tab say "The public timestamp will be added within the hour" while /network says anchoring is not enabled; phase 1 has no anchoring
+      No preservation state appears anywhere on the paper (no header line, no Proof row, no link to /network)
+      The Proof checklist has no ledger-inclusion item (the log entry number is only in technical details); the Corrected warning prints a full record CID and full did:key in the primary list
+      The Versions tab labels v1 "Current" and v2 "Latest" while the reader is on v1
+    </symptoms>
+    <reproduction_steps>
+      Journey 08 steps 1-2, journey 09 step 3 (screenshots/08-verify-and-download/s4-04-proof-checklist.png, screenshots/09-preserve-and-transparency/s4-06-paper-no-preservation.png, s4-07-paper-proof-no-preservation.png)
+    </reproduction_steps>
+    <expected>The indicator reads "Verified · {n} versions · {m} signatures" (or a failure state) followed by the anchor state; anchoring copy everywhere says "Anchoring is not enabled on this node yet" when the node has no anchoring configured, and only promises a time when an anchor is actually scheduled; the header and Proof tab show "Preserved: {k} of {target} replicas" (here "1 of 1 local copy - multi-operator replication is not enabled yet") linking to /network; the checklist includes "Recorded in the node's public log (entry #{n})"; raw CIDs and DIDs move to the technical details, the primary list naming people and records in words; the Versions tab marks the version being read as "Viewing" and the newest as "Latest"</expected>
+    <actual>Incomplete and partly misleading verification UI</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="medium" depends_on="1"
+       touches_files="apps/web/src/features/verify-page/**">
+    <title>/verify needs the version id typed in and never names the paper; its copy is ungrammatical</title>
+    <symptoms>
+      /verify requires the user to type the version id alongside the file, and the result names the version id but not the paper title
+      It says "one of the 1 file signed"; sizes are formatted differently from the Files tab
+    </symptoms>
+    <reproduction_steps>
+      Journey 08 step 6: download a paper's PDF, drop it on /verify
+    </reproduction_steps>
+    <expected>Dropping a file alone is enough: the page hashes it locally, asks GET /v1/content/{cid}/versions (added by the downloads fix) and reports "This file is {file name} of {paper title}, version {n} ({sch:id/vn}) - signed by its authors" with a link to the paper, or "No listed paper on this node contains this file" when none; the optional version field remains for checking against a specific version; counts pluralise correctly ("the only file", "one of 3 files") and sizes use KB/MB with 1 decimal</expected>
+    <actual>Extra manual step; no paper name; grammar</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-reviews/**,apps/web/src/features/review-form/**">
+    <title>Review gate text calls a sealed update "already revealed"; Markdown lists lose their markers; update confirmation overstates publication</title>
+    <symptoms>
+      With one reviewer updated for v2, the box above the listing says "The reviews shown below are from an earlier version and are already revealed", which is false for the v2 update whose report is sealed; it also no longer says how many reviews are committed on this version
+      Markdown lists in reports render with list-style none: bullets and numbers are missing
+      After updating, the confirmation says "This is the review now published on the paper's Reviews tab" above a written report that is publicly sealed until the version's gate opens
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 steps 7-8 (screenshots/13-new-version-and-review-update/s4-11-after-update.png, s4-12-anon-after-update.png, s4-14-updated-report-sealed.png); journey 12 step 6 (screenshots/12-review-commit-reveal/s4-14-ordered-list-no-numbers.png)
+    </reproduction_steps>
+    <expected>The gate box states the count committed on this version and describes each group truthfully (e.g. "1 review committed on this version; its written report unseals once 2 are committed, or on {date}. 1 earlier-version review below is already revealed."); report Markdown lists show disc bullets and decimal numbers with proper indentation in light and dark; the update confirmation says the scores and recommendation are public now and the written report unseals with the version's gate (with the date)</expected>
+    <actual>Contradictory copy; unreadable lists; overstated confirmation</actual>
+    <constraints>
+      <constraint>REV-4 sealing is unchanged</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/moderation/**,apps/web/src/features/mod-console/**">
+    <title>Moderation outcome notices name only the item type and a raw reason code; "List the paper" offered for listed papers; no decided count</title>
+    <symptoms>
+      Reporter notifications say "The post you reported was hidden." without the paper title or an excerpt, and show raw reason codes (duplicated-figures, off-topic, misleading)
+      Deciding a flag on an already-listed paper still offers "List the paper"; /mod no longer shows a decided count
+      The moderation item shows the licence as the id "CC-BY-4.0"
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 (screenshots/07-flag-and-dispute/s4-21b-reporter-notifications-zoom.png)
+    </reproduction_steps>
+    <expected>Outcome notifications read e.g. 'The post you reported on "{paper title}" ("{first 80 chars}...") was hidden: Duplicated figures.' using human labels for reason codes (one shared mapping used by the console too); a flag decision on a listed paper offers Dismiss (keep listed), Hold and Tombstone but not List; /mod shows counts of open and decided-in-the-last-7-days flags; the item page shows the licence's full name</expected>
+    <actual>Vague notices; wrong action; missing count</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/recovery/**,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/guardian-approval.tsx,apps/web/src/features/dashboard/guardian-approval.test.tsx,apps/web/src/features/web-auth/recover-form.tsx,apps/web/src/features/web-auth/recover-messages.ts,apps/web/src/features/web-auth/recover-messages.test.ts,apps/web/src/features/web-auth/verify-email-form.tsx,apps/web/src/features/web-auth/verify-email.ts,apps/web/src/features/web-auth/verify-email.test.ts">
+    <title>Recovery attention items name the requester by DID and never clear; takeover time has no time zone; /verify-email offers onboarding to onboarded members</title>
+    <symptoms>
+      A guardian's "Needs your attention" item reads "Approve the recovery of did:key:z6MkfBiV..." and stays (with an unread "Recovery approval" notification) after the guardian answered or the request reached 3 of 3
+      "Your new passkey takes over on 20 Nov 2026, 20:56" has no time zone; after reload the guardian's copy loses the approval date
+      /verify-email offers "Continue setting up" to a member who finished onboarding
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 (screenshots/06-key-recovery/s4-05-okafor-me.png, s4-09b-okafor-after-reload.png, s4-11-requester-3-approvals.png); journey 03
+    </reproduction_steps>
+    <expected>Attention items name the requester by profile name (short DID secondary) and disappear once the guardian answered or the request closed, and the matching notification is marked read at that moment; times show the viewer's local time with zone abbreviation (and UTC on hover); the guardian's answered state always shows its date; /verify-email shows "Continue setting up" only when onboarding is incomplete, otherwise "Go to your dashboard"</expected>
+    <actual>Stale, DID-labelled items; ambiguous time; wrong CTA</actual>
+  </bug>
+
+  <bug index="9" shape="core" severity="low"
+       touches_files="apps/web/src/features/submit/submit-wizard.tsx,apps/web/src/features/submit/submit-wizard.test.tsx,apps/web/src/features/submit/details-step.tsx,apps/web/src/features/submit/details-step.test.tsx,apps/web/src/features/submit/consent-tracker.tsx,apps/web/src/features/submit/consent-tracker.test.tsx,apps/web/src/features/submit/authors-step.tsx,apps/web/src/features/submit/submit.css,apps/web/src/features/dashboard/profile-page.tsx,apps/web/src/features/dashboard/profile-page.test.tsx"
+       creates="apps/web/src/features/ui-kit/initials.ts,apps/web/src/features/ui-kit/initials.test.ts">
+    <title>Avatar initials come from honorifics; endorsement warning appears far from the chip; "Submitted - version 1" uses a hyphen</title>
+    <symptoms>
+      Avatars show "D" for Dr. Okafor and Dr. Keller and "DK" in the consent tracker
+      The endorsement warning renders about 480px below the category chip, off-screen at the moment the chip is clicked
+      "Submitted - version 1" uses a hyphen instead of an en dash
+    </symptoms>
+    <reproduction_steps>
+      Journeys 10, 14, 15 (screenshots/10-publish/s4-03-cscr-warning.png, s4-04-cscr-warning-inline.png)
+    </reproduction_steps>
+    <expected>A shared initials helper skips honorifics and titles (Dr, Prof, Mr, Ms, Mrs, Mx, Sir, Dame, with or without period) and uses first and last name initials ("TO" for Dr. Tunde Okafor), used by the consent tracker, the authors step and the profile header; the endorsement warning renders directly under the category chips and is scrolled into view / announced when it appears; the header reads "Submitted – version 1"</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="10" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/appeal-dialog.tsx,apps/web/src/features/paper-page/appeal-dialog.test.tsx,apps/web/src/features/paper-page/paper-access.tsx,apps/web/src/features/paper-page/paper-access-view.tsx,apps/web/src/features/paper-page/paper-access.test.tsx,apps/web/src/features/paper-page/cite.ts,apps/web/src/features/paper-page/cite.test.ts,apps/web/src/features/paper-page/cite-dialog.tsx,apps/web/src/features/paper-page/cite-dialog.test.tsx,apps/web/src/features/paper-page/reading-view.tsx,apps/web/src/features/paper-page/reading-view.test.tsx,apps/web/src/features/paper-page/reading-text.tsx,apps/web/src/features/paper-page/reading-text.test.tsx,apps/web/src/features/paper-ai/**">
+    <title>Paper page polish: appeal banner lags, citations lack a URL and cannot be downloaded, HTML view repeats title/abstract, AI attribution contradicts agent panels</title>
+    <symptoms>
+      While the "Your appeal is filed" dialog is open the banner behind it still says "You can appeal once." (it updates only on reload)
+      BibTeX and RIS contain the sch: id but no URL field and can only be copied, not downloaded
+      The HTML reading view repeats the title and abstract right below the header's abstract
+      An AI finding says "Also reported by Literature, Reproducibility, Integrity" while Literature and Integrity show "No findings"
+    </symptoms>
+    <reproduction_steps>
+      Journeys 08 step 8, 10 (screenshots/10-publish/s4-17-anon-ai.png), 11
+    </reproduction_steps>
+    <expected>Filing an appeal updates the banner state immediately (same state the reload shows); citations include url = the paper's canonical web URL (BibTeX url and howpublished, RIS UR) and the Cite dialog offers Download .bib and Download .ris (text/plain files named sch-{id}-v{n}.bib/.ris); the reading view starts at the body (no duplicate title/abstract); "Also reported by" lists only agents whose panels show a matching finding, and agent panels include findings they co-reported</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="11" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/identity/**">
+    <title>Signed-out page loads get 422 from POST /v1/auth/refresh</title>
+    <symptoms>
+      Every signed-out page load makes POST /v1/auth/refresh which answers 422 (harmless, but noisy and misleading in logs and devtools)
+    </symptoms>
+    <reproduction_steps>
+      Open any page signed out; watch the network panel (journeys 08, 09)
+    </reproduction_steps>
+    <expected>A refresh request without a refresh cookie answers 401 with a problem body (type no_session), the same status as an expired or revoked cookie; malformed bodies still 422; the web session bootstrap already treats 401 as signed out</expected>
+    <actual>422 for the ordinary signed-out case</actual>
+  </bug>
+
+</bug_spec>
