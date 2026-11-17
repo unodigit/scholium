@@ -135,6 +135,42 @@ describe("category route (server render)", () => {
     expect(html).toContain("Atom feed");
   });
 
+  it("offers the follow control, sending signed-out readers to sign in", async () => {
+    stubApi({ items: [ITEM], nextCursor: null });
+
+    const html = await render();
+
+    // The server cannot see the browser's in-memory session, so the first
+    // render is the sign-in link; it returns to this exact category page.
+    expect(html).toContain('href="/signin?next=%2Fc%2Fcs.AI"');
+    expect(html).toContain("Follow");
+  });
+
+  it("returns not found for a category no paper is filed under", async () => {
+    stubApi({ items: [], nextCursor: null });
+
+    const thrown = await CategoryRoutePage({
+      params: params("xx.FAKE"),
+    }).catch((error: unknown) => error);
+
+    // Next's `notFound()` throws a control-flow error carrying the marker.
+    // Next 15 spells it as an HTTP 404 fallback; older builds use NOT_FOUND.
+    expect(String((thrown as { digest?: string }).digest ?? "")).toMatch(
+      /NEXT_NOT_FOUND|NEXT_HTTP_ERROR_FALLBACK;404/,
+    );
+  });
+
+  it("still shows a category the taxonomy does not name when it has papers", async () => {
+    stubApi({
+      items: [{ ...ITEM, categories: ["astro-ph.HE"] }],
+      nextCursor: null,
+    });
+
+    const html = await render("astro-ph.HE");
+
+    expect(html).toContain(ITEM.title);
+  });
+
   it("points the Atom link at the configured API origin", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_URL", "https://api.example.org");
     stubApi({ items: [ITEM], nextCursor: null });
@@ -199,8 +235,9 @@ describe("category route (server render)", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(html).toContain("That is not a category on this node.");
-    // Nothing to subscribe to.
+    // Nothing to subscribe to, and nothing to follow.
     expect(html).not.toContain("application/atom+xml");
+    expect(html).not.toContain("/signin?next=");
   });
 
   it("is rendered on demand, never prerendered with a baked-in error", () => {

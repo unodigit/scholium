@@ -72,3 +72,18 @@
     transition: none;
   }
 }
+
+/* The Follows card on /me: the dashboard grid's column rhythm, below it. */
+.db-follows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: calc(var(--space-unit) * 6);
+  margin-block-start: calc(var(--space-unit) * 6);
+  align-items: start;
+}
+
+@media (max-width: 40rem) {
+  .db-follows {
+    grid-template-columns: 1fr;
+  }
+}

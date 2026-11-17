@@ -4,14 +4,13 @@
  * `POST /v1/me/saved-searches` (feature 180) stores a search and answers
  * `{"id": "ss_...", "did": "...", "query": {...}}`, `query` being the filters
  * of `GET /v1/search` in canonical form: `q`, `category[]`, `status[]`,
- * `has_code`, `from`, `to`. The list and the delete are reads and writes the
- * API does not serve yet; this module is written against:
+ * `has_code`, `from`, `to`. The API also serves the list and the delete:
  *
  * - `GET    /v1/me/saved-searches`      -> `{"items": [{id, did, query}, ...]}`
  * - `DELETE /v1/me/saved-searches/{id}` -> `204`, idempotent
  *
- * Until they exist the card shows its error state with a retry; nothing here
- * guesses at a list.
+ * A body that is not a list is an error, never "no saved searches": that would
+ * say the reader has none when the truth is "we don't know".
  *
  * Pure data and functions, no React, so the card and vitest share them.
  */
@@ -33,6 +32,9 @@ export function savedSearchEndpoint(id: string): string {
 
 /** What the saved-search calls need from the API client. */
 export type SavedSearchesClient = Pick<ApiClient, "get" | "delete">;
+
+/** What saving needs from the API client. */
+export type SavedSearchesWriteClient = Pick<ApiClient, "post">;
 
 /** A saved search's filters, as the API stores them. Every key is optional. */
 export interface SavedSearchQuery {
@@ -142,6 +144,73 @@ export function savedSearchState(query: SavedSearchQuery): SearchState {
     dateFrom: query.from ?? "",
     dateTo: query.to ?? "",
   };
+}
+
+/**
+ * The saved-search `query` object for a `/search` state — the inverse of
+ * {@link savedSearchState}. Only filters that are actually set are carried:
+ * the API rejects a blank `q` and stores a canonical object, so an empty
+ * filter must not become an explicit `null`.
+ */
+export function savedSearchQuery(state: SearchState): SavedSearchQuery {
+  const query: {
+    q?: string;
+    category?: readonly string[];
+    status?: readonly string[];
+    has_code?: boolean;
+    from?: string;
+    to?: string;
+  } = {};
+  const term = state.q.trim();
+  if (term !== "") {
+    query.q = term;
+  }
+  if (state.categories.length > 0) {
+    query.category = [...state.categories];
+  }
+  if (state.statuses.length > 0) {
+    query.status = [...state.statuses];
+  }
+  if (state.hasCode !== null) {
+    query.has_code = state.hasCode;
+  }
+  if (state.dateFrom !== "") {
+    query.from = state.dateFrom;
+  }
+  if (state.dateTo !== "") {
+    query.to = state.dateTo;
+  }
+  return query;
+}
+
+/** Optional extras when saving a search. */
+export interface SaveSearchOptions {
+  /**
+   * Ask for new matches by email. The API does not store a per-search flag
+   * yet (its daily digest already covers every saved search and follows), so
+   * this is carried in the request body for forward compatibility only.
+   */
+  readonly digest?: boolean;
+}
+
+/**
+ * Save a search through `POST /v1/me/saved-searches`.
+ *
+ * The body is `{"query": {...}}`; each save is its own row, so saving the same
+ * search twice keeps both copies until one is deleted.
+ */
+export async function saveSearch(
+  query: SavedSearchQuery,
+  options: SaveSearchOptions = {},
+  client: SavedSearchesWriteClient = api,
+): Promise<SavedSearch> {
+  const body: Record<string, unknown> = { query };
+  if (options.digest === true) {
+    body.digest = true;
+  }
+  const payload = await client.post<unknown>(SAVED_SEARCHES_ENDPOINT, body);
+  const [saved] = parseSavedSearches([payload]);
+  return saved;
 }
 
 /** `/search?...` for a saved query: the link that re-runs it. */

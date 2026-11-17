@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError, NetworkError } from "../../lib/api";
-import { parseSearchParams } from "../search-page/search";
+import { EMPTY_SEARCH_STATE, parseSearchParams } from "../search-page/search";
 
 import {
   SAVED_SEARCHES_ENDPOINT,
@@ -10,9 +10,11 @@ import {
   describeSavedSearchError,
   loadSavedSearches,
   parseSavedSearches,
+  saveSearch,
   savedSearchEndpoint,
   savedSearchFilters,
   savedSearchHref,
+  savedSearchQuery,
   savedSearchTitle,
 } from "./saved-searches";
 
@@ -152,6 +154,69 @@ describe("savedSearchTitle and savedSearchFilters", () => {
 
   it("still names a query with no filter this screen knows", () => {
     expect(savedSearchTitle({})).toBe("Saved search");
+  });
+});
+
+describe("savedSearchQuery: the /search state as an API query", () => {
+  it("maps the query and every filter onto the names the API stores", () => {
+    expect(
+      savedSearchQuery({
+        ...EMPTY_SEARCH_STATE,
+        q: "  reward models  ",
+        categories: ["cs.LG", "cs.AI"],
+        statuses: ["reviewed"],
+        hasCode: false,
+        dateFrom: "2026-01-01",
+        dateTo: "2026-02-01",
+      }),
+    ).toEqual({
+      q: "reward models",
+      category: ["cs.LG", "cs.AI"],
+      status: ["reviewed"],
+      has_code: false,
+      from: "2026-01-01",
+      to: "2026-02-01",
+    });
+  });
+
+  it("omits every unset filter", () => {
+    expect(savedSearchQuery(EMPTY_SEARCH_STATE)).toEqual({});
+  });
+});
+
+describe("saveSearch", () => {
+  it("posts the query to /me/saved-searches and reads the row back", async () => {
+    const post = vi
+      .fn()
+      .mockResolvedValue({ id: "ss_0123", did: "did:key:z6Mk", query: { q: "reward" } });
+
+    const saved = await saveSearch({ q: "reward" }, {}, { post });
+
+    expect(post).toHaveBeenCalledWith("/me/saved-searches", {
+      query: { q: "reward" },
+    });
+    expect(saved.id).toBe("ss_0123");
+    expect(saved.query.q).toBe("reward");
+  });
+
+  it("carries the optional daily-digest choice", async () => {
+    const post = vi
+      .fn()
+      .mockResolvedValue({ id: "ss_0123", did: "did:key:z6Mk", query: { q: "reward" } });
+
+    await saveSearch({ q: "reward" }, { digest: true }, { post });
+
+    expect(post).toHaveBeenCalledWith("/me/saved-searches", {
+      query: { q: "reward" },
+      digest: true,
+    });
+  });
+
+  it("rejects a body that is not a saved search rather than pretending it saved", async () => {
+    const post = vi.fn().mockResolvedValue({ unexpected: true });
+    await expect(saveSearch({ q: "reward" }, {}, { post })).rejects.toThrow(
+      SavedSearchError,
+    );
   });
 });
 

@@ -166,6 +166,107 @@
   max-width: var(--measure-reading);
 }
 
+/* ---- Save this search ---------------------------------------------------- */
+
+.sp-save {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin-top: calc(var(--space-unit) * 2);
+}
+
+.sp-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+}
+
+/* A quiet control, not the page's primary action: the search button is. */
+.sp-save-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-block-size: 44px;
+  padding-inline: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color var(--duration-fast) var(--ease-decel),
+    border-color var(--duration-fast) var(--ease-decel);
+}
+
+.sp-save-button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.sp-save-button[aria-busy="true"],
+.sp-save-button[aria-disabled="true"] {
+  cursor: progress;
+  color: var(--ink-2);
+}
+
+.sp-save-button:focus-visible,
+.sp-save-digest input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sp-save-digest {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  min-block-size: 44px;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sp-save-digest input {
+  inline-size: 1.15em;
+  block-size: 1.15em;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sp-save-error,
+.sp-save-status {
+  margin: 0;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.sp-save-error {
+  color: var(--critical);
+}
+
+.sp-save-status {
+  color: var(--ink-2);
+}
+
+.sp-save-link {
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-save-button {
+    transition: none;
+  }
+}
+
 /* ---- Layout -------------------------------------------------------------- */
 
 .sp-layout {

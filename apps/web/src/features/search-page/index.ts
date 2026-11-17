@@ -38,6 +38,7 @@ export {
   SEMANTIC_ENDPOINT,
   SEMANTIC_RESULT_LIMIT,
   SearchResponseError,
+  attachAuthorNames,
   clearFilters,
   describeSearchError,
   facetOptions,
@@ -62,6 +63,7 @@ export {
   toggleStatus,
   type FacetCounts,
   type FacetOption,
+  type SearchAuthor,
   type SearchClient,
   type SearchMode,
   type SearchParamsInput,
@@ -82,6 +84,12 @@ export {
 } from "./search-page";
 
 export { PaperPage, type PaperPageProps } from "./paper-page";
+
+export {
+  SaveSearchButton,
+  saveSearchSigninHref,
+  type SaveSearchButtonProps,
+} from "./save-search-button";
 
 export {
   PaperResponseError,

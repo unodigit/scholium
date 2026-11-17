@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { DashboardPage } from "../../../features/dashboard/dashboard-page";
+import { FollowedCategoriesCard } from "../../../features/dashboard/follow-toggle";
 
 export const metadata: Metadata = {
   title: "Me · Scholium",
@@ -16,5 +17,11 @@ export const metadata: Metadata = {
  * the page fetches on the client and the API decides what to show.
  */
 export default function MeRoutePage() {
-  return <DashboardPage />;
+  return (
+    <>
+      <DashboardPage />
+      {/* Reads GET /v1/me/follows; the categories the Follow controls saved. */}
+      <FollowedCategoriesCard />
+    </>
+  );
 }

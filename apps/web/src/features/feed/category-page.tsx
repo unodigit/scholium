@@ -24,6 +24,7 @@
  */
 
 import { EmptyState } from "../ui-kit";
+import { FollowToggle } from "../dashboard/follow-toggle";
 import {
   categoryEmptySentence,
   categoryFeedHref,
@@ -67,17 +68,21 @@ export function CategoryPage({
         <div className="fd-category-head">
           {/* The id is the title: it is what the URL and the papers carry. */}
           <h1 className="fd-category-title">{category}</h1>
-          {atomHref !== null ? (
-            <a
-              className="fd-category-feed"
-              href={atomHref}
-              rel="alternate"
-              type="application/atom+xml"
-              title={`Atom feed of papers in ${category}`}
-            >
-              Atom feed
-            </a>
-          ) : null}
+          <div className="fd-category-actions">
+            {/* No real category to follow when the caller passed `null`. */}
+            {atomHref !== null ? <FollowToggle category={category} /> : null}
+            {atomHref !== null ? (
+              <a
+                className="fd-category-feed"
+                href={atomHref}
+                rel="alternate"
+                type="application/atom+xml"
+                title={`Atom feed of papers in ${category}`}
+              >
+                Atom feed
+              </a>
+            ) : null}
+          </div>
         </div>
         <p className="fd-category-lede">{categoryLede(category)}</p>
       </header>

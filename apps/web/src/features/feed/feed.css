@@ -150,6 +150,14 @@
   gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
 }
 
+/* Follow and subscribe sit together, quiet beside the category's title. */
+.fd-category-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+}
+
 .fd-category-title {
   margin: 0;
   font-family: var(--family-serif);

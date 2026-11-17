@@ -39,6 +39,8 @@ import {
 } from "react";
 
 import { StatusChip, isPaperStatus } from "../ui-kit";
+import { authorLine } from "../feed/feed";
+import { SaveSearchButton, type SaveSearchButtonProps } from "./save-search-button";
 import {
   EMPTY_SEARCH_STATE,
   SEARCH_PATH,
@@ -92,6 +94,13 @@ export interface SearchPageProps {
   loadSemantic?: LoadSemanticSearch;
   /** Replace the URL update, for tests. */
   updateUrl?: UpdateUrl;
+  /**
+   * Pin the sign-in state for the Save control. When omitted it is read from
+   * the shared token store.
+   */
+  signedIn?: boolean;
+  /** Replace the save call, for tests or an alternate API client. */
+  saveSearch?: SaveSearchButtonProps["save"];
 }
 
 type SearchView =
@@ -186,6 +195,8 @@ export function SearchPage({
   loadKeyword,
   loadSemantic,
   updateUrl,
+  signedIn,
+  saveSearch,
 }: SearchPageProps = {}) {
   const [state, setState] = useState<SearchState>(initialState);
   const [draft, setDraft] = useState(initialState.q);
@@ -426,6 +437,12 @@ export function SearchPage({
             ? "Semantic search ranks listed papers by meaning, not by the words you type."
             : "Keyword search matches the words you type in a paper’s title, abstract and text."}
         </p>
+
+        <SaveSearchButton
+          state={state}
+          signedIn={signedIn}
+          save={saveSearch}
+        />
       </header>
 
       <div className="sp-layout">
@@ -639,6 +656,9 @@ function ResultRow({
   semantic: boolean;
 }) {
   const listed = formatListedAt(hit.listedAt);
+  const byline = authorLine(hit.authors ?? []);
+  const bylineText =
+    byline.shown.join(", ") + (byline.more > 0 ? `, +${byline.more}` : "");
   const meta = [
     hit.categories.length > 0 ? hit.categories.join(", ") : "",
     `v${hit.n}`,
@@ -651,7 +671,20 @@ function ResultRow({
         <a href={resultHref(hit)}>{hit.title}</a>
       </h2>
 
-      {meta.length > 0 ? <p className="sp-result-meta">{meta.join(" · ")}</p> : null}
+      {bylineText !== "" || meta.length > 0 ? (
+        <p className="sp-result-meta">
+          {bylineText !== "" ? (
+            <span
+              className="sp-result-authors"
+              title={byline.more > 0 ? byline.all.join(", ") : undefined}
+            >
+              {bylineText}
+            </span>
+          ) : null}
+          {bylineText !== "" && meta.length > 0 ? " · " : null}
+          {meta.join(" · ")}
+        </p>
+      ) : null}
 
       <div className="sp-result-badges">
         {hit.status !== null && isPaperStatus(hit.status) ? (

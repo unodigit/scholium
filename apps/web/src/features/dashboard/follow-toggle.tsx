@@ -28,6 +28,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
 
+import { Card } from "./card";
 import {
   describeFollowError,
   followCategory,
@@ -54,6 +55,11 @@ export interface FollowToggleProps {
   readonly follow?: (category: string) => Promise<void>;
   /** Replace the unfollow call, for tests. */
   readonly unfollow?: (category: string) => Promise<void>;
+  /**
+   * Where a signed-out reader goes. Defaults to the category page itself, so
+   * sign-in returns them to the control they clicked.
+   */
+  readonly signinHref?: string;
 }
 
 /** Follow or unfollow one category. */
@@ -64,6 +70,7 @@ export function FollowToggle({
   loadFollowing = loadFollowedCategories,
   follow = followCategory,
   unfollow = unfollowCategory,
+  signinHref,
 }: FollowToggleProps) {
   const [sessionKnown, setSessionKnown] = useState(false);
   // `null` is "not known": loading, or the read failed.
@@ -73,10 +80,16 @@ export function FollowToggle({
   // Set once the reader acts, so a slow read cannot overwrite what they chose.
   const acted = useRef(false);
 
+  // The access token lives in memory only, so a page load starts signed out
+  // until the session provider's refresh answers. Subscribe rather than read
+  // once, so a reload upgrades to the button when the session arrives.
   useEffect(() => {
-    if (signedIn === undefined) {
-      setSessionKnown(tokenStore.isAuthenticated);
+    if (signedIn !== undefined) {
+      return;
     }
+    const read = (): void => setSessionKnown(tokenStore.isAuthenticated);
+    read();
+    return tokenStore.subscribe(read);
   }, [signedIn]);
   const isSignedIn = signedIn ?? sessionKnown;
 
@@ -105,7 +118,7 @@ export function FollowToggle({
       <div className="db-follow">
         <a
           className="db-follow-button"
-          href={followSigninHref(category)}
+          href={signinHref ?? followSigninHref(category)}
           aria-label={`Follow ${category}, sign in required`}
         >
           <span aria-hidden="true">+</span> Follow
@@ -158,3 +171,123 @@ export function FollowToggle({
 }
 
 export default FollowToggle;
+
+/** Props for {@link FollowedCategoriesCard}. Everything is optional. */
+export interface FollowedCategoriesCardProps {
+  /** Pin the sign-in state. When omitted it is read from the token store. */
+  readonly signedIn?: boolean;
+  /** Replace the read of the followed categories, for tests. */
+  readonly loadFollows?: () => Promise<readonly string[]>;
+}
+
+type FollowsState =
+  | { readonly status: "loading" }
+  | { readonly status: "error"; readonly message: string }
+  | { readonly status: "ready"; readonly categories: readonly string[] };
+
+/**
+ * The "Follows" card on `/me`.
+ *
+ * The category page's FollowToggle writes `PUT /v1/me/follows/{category}`;
+ * this card reads the same set back from `GET /v1/me/follows`, so a follow a
+ * reader makes from `/c/{category}` is visible on their dashboard (and stays
+ * visible after a reload or on another device). Signed-out readers are left to
+ * the dashboard's own sign-in notice, so the card renders nothing.
+ */
+export function FollowedCategoriesCard({
+  signedIn,
+  loadFollows = loadFollowedCategories,
+}: FollowedCategoriesCardProps = {}) {
+  const [sessionKnown, setSessionKnown] = useState(false);
+  const [state, setState] = useState<FollowsState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  // The token store is restored from the cookie after mount, so subscribe to
+  // it rather than reading once; a reload then fills the card when it lands.
+  useEffect(() => {
+    if (signedIn !== undefined) {
+      return;
+    }
+    const read = (): void => setSessionKnown(tokenStore.isAuthenticated);
+    read();
+    return tokenStore.subscribe(read);
+  }, [signedIn]);
+
+  const isSignedIn = signedIn ?? sessionKnown;
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      return;
+    }
+    let cancelled = false;
+    setState({ status: "loading" });
+    loadFollows().then(
+      (categories) => {
+        if (!cancelled) {
+          setState({ status: "ready", categories: [...categories] });
+        }
+      },
+      (failure: unknown) => {
+        if (!cancelled) {
+          setState({
+            status: "error",
+            message:
+              failure instanceof Error && failure.message.trim() !== ""
+                ? failure.message
+                : "The API could not return the categories you follow.",
+          });
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt, isSignedIn, loadFollows]);
+
+  if (!isSignedIn) {
+    return null;
+  }
+
+  return (
+    <div className="db-follows">
+      <Card title="Follows" anchor="follows">
+        {state.status === "error" ? (
+          <>
+            <p className="db-item-detail meta" role="alert">
+              {state.message}
+            </p>
+            <button
+              type="button"
+              className="db-button"
+              onClick={() => setAttempt((count) => count + 1)}
+            >
+              Try again
+            </button>
+          </>
+        ) : state.status === "loading" ? (
+          <p className="db-loading" role="status">
+            Loading your follows…
+          </p>
+        ) : state.categories.length === 0 ? (
+          <p className="db-item-detail meta">
+            You don’t follow any categories yet. Open a category page and choose
+            Follow.
+          </p>
+        ) : (
+          <ul className="db-list">
+            {state.categories.map((category) => (
+              <li className="db-item" key={category}>
+                <a
+                  className="db-link"
+                  href={`/c/${encodeURIComponent(category)}`}
+                >
+                  {category}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}

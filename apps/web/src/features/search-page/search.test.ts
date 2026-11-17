@@ -263,6 +263,49 @@ describe("request building", () => {
 });
 
 describe("response parsing", () => {
+  it("reads the author line a result carries, in byline order", () => {
+    const result = parseSearchResult({
+      results: [
+        {
+          ...HIT,
+          authors: [
+            { did: "did:key:z6Mkha", author: "did:key:z6Mkha", position: 1, name: "M. Zhang" },
+            { did: "did:key:z6MkOka", position: 2 },
+          ],
+        },
+      ],
+    });
+
+    expect(result.results[0]?.authors).toEqual([
+      { did: "did:key:z6Mkha", name: "M. Zhang" },
+      { did: "did:key:z6MkOka", name: null },
+    ]);
+  });
+
+  it("fills an author name from the profiles API when the result names only a DID", async () => {
+    const get = vi.fn(async (path: string) =>
+      path.startsWith("/profiles/")
+        ? { name: "M. Zhang" }
+        : {
+            query: "pulsar",
+            results: [{ ...HIT, authors: [{ did: "did:key:z6Mkha", position: 1 }] }],
+            facets: {},
+          },
+    );
+
+    const result = await loadKeywordSearch(state(), {
+      get,
+    } as unknown as SearchClient);
+
+    expect(get).toHaveBeenCalledWith("/profiles/did%3Akey%3Az6Mkha", {
+      cache: "no-store",
+    });
+    expect(result.results[0]?.authors?.[0]).toEqual({
+      did: "did:key:z6Mkha",
+      name: "M. Zhang",
+    });
+  });
+
   it("maps the keyword response, facets included", () => {
     const result = parseSearchResult({
       query: "pulsar",

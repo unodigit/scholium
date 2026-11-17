@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 
 import {
   CategoryPage,
@@ -74,6 +75,20 @@ export default async function CategoryRoutePage({ params }: CategoryRouteProps) 
     initialPage = await loadFeedPage(categoryFeedState(category));
   } catch (error) {
     initialError = describeFeedError(error, "latest");
+  }
+
+  // A code the node's taxonomy does not name and that no listed paper is
+  // filed under is not a category: it is a mistyped or invented URL. Answer
+  // with the app's not-found page rather than an empty category and an Atom
+  // link that can never carry anything. A category that has papers still
+  // renders even when the launch taxonomy does not name it, and a category
+  // the taxonomy knows keeps its honest empty state.
+  if (
+    initialPage !== undefined &&
+    initialPage.items.length === 0 &&
+    categoryLabel(category) === null
+  ) {
+    notFound();
   }
 
   return (

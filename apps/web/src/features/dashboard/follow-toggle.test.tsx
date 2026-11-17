@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, NetworkError, tokenStore } from "../../lib/api";
 
-import { FollowToggle } from "./follow-toggle";
+import { FollowToggle, FollowedCategoriesCard } from "./follow-toggle";
 
 afterEach(() => {
   cleanup();
@@ -40,6 +40,20 @@ describe("FollowToggle: signed in", () => {
     const loadFollowing = vi.fn().mockResolvedValue(["cs.AI"]);
     render(<FollowToggle category="cs.AI" loadFollowing={loadFollowing} />);
     await waitFor(() => expect(pressed(button())).toBe("true"));
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("upgrades once the session is restored after mount, as on a reload", async () => {
+    const loadFollowing = vi.fn().mockResolvedValue(["cs.AI"]);
+    render(<FollowToggle category="cs.AI" loadFollowing={loadFollowing} />);
+
+    // A page load starts signed out until the session provider's refresh lands.
+    expect(screen.getByRole("link", { name: /Follow cs\.AI/ })).toBeTruthy();
+
+    act(() => tokenStore.set({ accessToken: "a" }));
+
+    await waitFor(() => expect(pressed(button())).toBe("true"));
+    expect(loadFollowing).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("link")).toBeNull();
   });
 
@@ -129,6 +143,55 @@ describe("FollowToggle: when the state is not known", () => {
     // The read finally answers "not following"; the reader's follow must win.
     await act(async () => resolveRead([]));
     expect(pressed(button())).toBe("true");
+  });
+});
+
+describe("FollowedCategoriesCard on /me", () => {
+  it("renders nothing for a signed-out reader", () => {
+    const { container } = render(<FollowedCategoriesCard signedIn={false} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("lists the categories the reader follows, linked to their pages", async () => {
+    render(
+      <FollowedCategoriesCard
+        signedIn
+        loadFollows={vi.fn().mockResolvedValue(["cs.AI", "cs.LG"])}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Follows" })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "cs.AI" }).getAttribute("href"),
+    ).toBe("/c/cs.AI");
+    expect(
+      screen.getByRole("link", { name: "cs.LG" }).getAttribute("href"),
+    ).toBe("/c/cs.LG");
+  });
+
+  it("says how to follow when the reader follows none", async () => {
+    render(
+      <FollowedCategoriesCard signedIn loadFollows={vi.fn().mockResolvedValue([])} />,
+    );
+
+    expect((await screen.findByText(/don’t follow any categories/)).textContent).toContain(
+      "Follow",
+    );
+  });
+
+  it("shows a retryable error when the list cannot be read", async () => {
+    const loadFollows = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("The API is down."))
+      .mockResolvedValueOnce(["cs.AI"]);
+    render(<FollowedCategoriesCard signedIn loadFollows={loadFollows} />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "The API is down.",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "cs.AI" })).toBeTruthy();
   });
 });
 

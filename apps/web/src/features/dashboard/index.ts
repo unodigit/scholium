@@ -151,7 +151,12 @@ export {
   type FollowsClient,
 } from "./follows";
 
-export { FollowToggle, type FollowToggleProps } from "./follow-toggle";
+export {
+  FollowedCategoriesCard,
+  FollowToggle,
+  type FollowedCategoriesCardProps,
+  type FollowToggleProps,
+} from "./follow-toggle";
 
 export {
   SAVED_SEARCHES_ENDPOINT,
@@ -160,14 +165,18 @@ export {
   describeSavedSearchError,
   loadSavedSearches,
   parseSavedSearches,
+  saveSearch,
   savedSearchEndpoint,
   savedSearchFilters,
   savedSearchHref,
+  savedSearchQuery,
   savedSearchState,
   savedSearchTitle,
+  type SaveSearchOptions,
   type SavedSearch,
   type SavedSearchQuery,
   type SavedSearchesClient,
+  type SavedSearchesWriteClient,
 } from "./saved-searches";
 
 export { SavedSearchesCard, type SavedSearchesCardProps } from "./saved-searches-card";

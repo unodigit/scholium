@@ -24,6 +24,7 @@ import {
   type ApiClient,
   type QueryParams,
 } from "../../lib/api";
+import { PROFILE_ENDPOINT } from "../feed/feed";
 
 /** The route path (docs/design.md §4). */
 export const SEARCH_PATH = "/search";
@@ -60,6 +61,14 @@ export const SEARCH_STATUSES = [
   "retracted",
 ] as const;
 
+/** One author of a result, in byline order. */
+export interface SearchAuthor {
+  /** The author's `did:` identifier. */
+  readonly did: string;
+  /** The public display name, when the result (or a profile read) supplies it. */
+  readonly name: string | null;
+}
+
 /** One result row, common to both endpoints. */
 export interface SearchResultItem {
   readonly versionCid: string;
@@ -68,6 +77,12 @@ export interface SearchResultItem {
   readonly n: number;
   readonly title: string;
   readonly abstract: string;
+  /**
+   * The version's authors in byline order. Optional so a caller that builds a
+   * result from an older payload keeps type-checking; a payload that carries
+   * an `authors` list always parses to this field.
+   */
+  readonly authors?: readonly SearchAuthor[];
   readonly categories: readonly string[];
   readonly status: string | null;
   readonly listedAt: string | null;
@@ -449,6 +464,31 @@ export function semanticQuery(state: SearchState): QueryParams {
 /** A narrow interface for the shared API client, so tests can pass a stub. */
 export type SearchClient = Pick<ApiClient, "get">;
 
+/** Read one author entry; a row with no identifier is dropped. */
+function parseAuthor(value: unknown): SearchAuthor | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const did = readText(value.did) ?? readText(value.author);
+  if (did === null) {
+    return null;
+  }
+  return {
+    did,
+    name:
+      readText(value.name) ??
+      readText(value.displayName) ??
+      readText(value.display_name),
+  };
+}
+
+/** Read the authors of one hit, in the order the API sent them. */
+function parseAuthors(value: unknown): SearchAuthor[] {
+  return (Array.isArray(value) ? value : [])
+    .map(parseAuthor)
+    .filter((author): author is SearchAuthor => author !== null);
+}
+
 function parseHit(value: unknown): SearchResultItem | null {
   if (!isRecord(value)) {
     return null;
@@ -457,6 +497,7 @@ function parseHit(value: unknown): SearchResultItem | null {
   if (title === null) {
     return null;
   }
+  const authors = parseAuthors(value.authors);
   return {
     versionCid: readText(value.version_cid) ?? "",
     paperCid: readText(value.paper_cid) ?? "",
@@ -464,6 +505,9 @@ function parseHit(value: unknown): SearchResultItem | null {
     n: readInteger(value.n) ?? 1,
     title,
     abstract: typeof value.abstract === "string" ? value.abstract : "",
+    // Older payloads carry no author list at all; keep them shape-compatible
+    // until the API always sends it.
+    ...(Array.isArray(value.authors) ? { authors } : {}),
     categories: readList(value.categories),
     status: readText(value.status),
     listedAt: readText(value.listed_at),
@@ -517,6 +561,71 @@ export function parseSemanticResult(payload: unknown): SemanticResult {
   };
 }
 
+/** Read one author's public name; any failure is simply "no name". */
+async function loadAuthorName(
+  did: string,
+  client: SearchClient,
+): Promise<string | null> {
+  try {
+    const payload = await client.get<unknown>(
+      `${PROFILE_ENDPOINT}/${encodeURIComponent(did)}`,
+      { cache: "no-store" },
+    );
+    if (!isRecord(payload) || payload.erased === true) {
+      return null;
+    }
+    return (
+      readText(payload.name) ??
+      readText(payload.displayName) ??
+      readText(payload.display_name)
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fill in author names the result did not carry.
+ *
+ * The feed does the same for `GET /v1/papers`: the API names authors by DID,
+ * and `GET /v1/profiles/{did}` supplies the public display name. A DID is
+ * asked for once per result page, a name already present wins without a
+ * request, and a profile that is missing, erased or unreachable leaves the
+ * short DID — the honest fallback after erasure (docs/design.md §2).
+ */
+export async function attachAuthorNames(
+  results: readonly SearchResultItem[],
+  client: SearchClient = api,
+): Promise<SearchResultItem[]> {
+  const wanted = new Set<string>();
+  for (const hit of results) {
+    for (const author of hit.authors ?? []) {
+      if (author.name === null && author.did !== "") {
+        wanted.add(author.did);
+      }
+    }
+  }
+  if (wanted.size === 0) {
+    return [...results];
+  }
+
+  const names = new Map<string, string | null>();
+  await Promise.all(
+    [...wanted].map(async (did) => {
+      names.set(did, await loadAuthorName(did, client));
+    }),
+  );
+
+  return results.map((hit) => ({
+    ...hit,
+    authors: (hit.authors ?? []).map((author) =>
+      author.name !== null
+        ? author
+        : { ...author, name: names.get(author.did) ?? null },
+    ),
+  }));
+}
+
 /** Run a keyword search through the shared API client. */
 export async function loadKeywordSearch(
   state: SearchState,
@@ -530,7 +639,8 @@ export async function loadKeywordSearch(
     query: keywordQuery(state),
     cache: "no-store",
   });
-  return parseSearchResult(payload);
+  const result = parseSearchResult(payload);
+  return { ...result, results: await attachAuthorNames(result.results, client) };
 }
 
 /** Run a semantic search through the shared API client. */
@@ -546,7 +656,8 @@ export async function loadSemanticSearch(
     query: semanticQuery(state),
     cache: "no-store",
   });
-  return parseSemanticResult(payload);
+  const result = parseSemanticResult(payload);
+  return { ...result, results: await attachAuthorNames(result.results, client) };
 }
 
 /** One plain sentence for a failed search, whichever way it failed. */

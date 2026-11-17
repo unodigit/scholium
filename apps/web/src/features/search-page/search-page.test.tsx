@@ -23,6 +23,10 @@ const HIT = {
   n: 2,
   title: "Sparse arrays for pulsar timing",
   abstract: "A timing model that survives sparse sampling.",
+  authors: [
+    { did: "did:key:z6Mkha", name: "M. Zhang" },
+    { did: "did:key:z6MkOka", name: "A. Okafor" },
+  ],
   categories: ["astro-ph.HE"],
   status: "reviewed",
   listedAt: "2026-11-02T10:00:00Z",
@@ -94,6 +98,36 @@ describe("SearchPage with server data", () => {
     expect(
       screen.getByRole("link", { name: HIT.title }).getAttribute("href"),
     ).toBe("/p/sch%3Ak3f9-q2xz-7mwd/v2");
+  });
+
+  it("shows the author line the feed shows", () => {
+    render(
+      <SearchPage initialState={state()} initialResult={RESULT} updateUrl={vi.fn()} />,
+    );
+
+    expect(screen.getAllByText("M. Zhang, A. Okafor").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("offers Save this search for the query on screen", () => {
+    render(
+      <SearchPage
+        initialState={state()}
+        initialResult={RESULT}
+        updateUrl={vi.fn()}
+        signedIn
+        saveSearch={vi.fn().mockResolvedValue({ id: "ss_1", query: {} })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Save this search" }),
+    ).toBeTruthy();
+  });
+
+  it("does not offer Save this search before there is a search", () => {
+    render(<SearchPage initialState={EMPTY_SEARCH_STATE} updateUrl={vi.fn()} />);
+
+    expect(screen.queryByText("Save this search")).toBeNull();
   });
 
   it("shows status and code badges without relying on colour", () => {
