@@ -274,6 +274,33 @@
   overflow-wrap: anywhere;
 }
 
+/* An earlier revision's report, behind an expander like the card's own. */
+.pr-history__report {
+  margin-block-start: var(--space-unit);
+}
+
+.pr-history__report-summary {
+  display: flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.pr-history__report-summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pr-history__report-body {
+  margin: var(--space-unit) 0 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* The recommendation: an icon of its own shape, a tint, and always the word.
    The icon is the only part that carries the family's status colour. */
 .pr-recommendation {

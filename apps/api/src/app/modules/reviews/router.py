@@ -27,7 +27,6 @@ The module loader mounts this router under ``/v1``, so this package serves:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Response
@@ -333,6 +332,25 @@ def reveal_review(
     }
 
 
+def _response_provenance(response_cid: str) -> tuple[Optional[str], Optional[str]]:
+    """Who signed the author response ``response_cid`` and when, as the log holds it.
+
+    Authors are public (only reviewers are anonymous), so the signer's DID and
+    the record's date are the byline the tab shows; both are ``None`` for a
+    response the log does not hold.
+    """
+    from app.modules import ledger
+
+    entry = ledger.entry_by_cid(response_cid)
+    if entry is None:
+        return None, None
+    try:
+        created: Optional[str] = ledger.stored_envelope(entry).created
+    except Exception:  # an entry that will not decode still has its signer
+        created = None
+    return entry.author_did, created
+
+
 @router.get("/papers/{paper_id}/reviews")
 def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     """Return the formal reviews of a listed paper's resolved version.
@@ -381,16 +399,11 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     visible[version_cid] = int(version.n)
     chains = history.paper_revisions(visible)
     # A reviewer who updated their review to this version is listed here, though
-    # they sealed it on an earlier one.
-    updated_keys = {
-        key
-        for key, chain in chains.items()
-        if any(revision.version_cid == version_cid for revision in chain)
-    }
-    # So is one who revealed a review of an earlier listed version and has not
-    # revised it since: it is their newest review, and the tab offers them an
-    # update.  A chain is made of ``review.formal`` records, so a review enters
-    # it only once revealed; one still sealed on an earlier version is not here.
+    # they sealed it on an earlier one; so is one who revealed a review of an
+    # earlier listed version and has not revised it since: it is their newest
+    # review, and the tab offers them an update.  A chain is made of
+    # ``review.formal`` records, so a review enters it only once revealed; one
+    # still sealed on an earlier version is not here.
     revealed_keys = {key for key, chain in chains.items() if chain}
     paper_versions = [
         known.version_cid for known in submissions.versions_for_paper(view.paper.paper_cid)
@@ -444,23 +457,25 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
     # committed on it and the ones revised to it, as it always has -- not the
     # earlier reviews the listing merely carries: two reviewers who revealed on
     # v1 must not open v2's reports by being listed there.
-    gate_rows = [
-        r for r in rows if r.version_cid == version_cid or r.review_key in updated_keys
-    ]
-    committed_times = [r.committed_at for r in gate_rows if r.committed_at is not None]
-    first_commit = min(committed_times) if committed_times else None
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    gate_open = len(gate_rows) >= 2 or (
-        first_commit is not None
-        and now >= first_commit + timedelta(days=21)
-    )
+    #
+    # Each earlier version has a gate of its own, worked out the way its own
+    # listing works it out: a revision's report is public wherever its version's
+    # listing serves it, so a carried review keeps its report here too.
+    version_gates = {
+        listed_cid: history.report_gate_open(listed_cid, paper_rows, chains)
+        for listed_cid in visible
+    }
+    gate_open = version_gates[version_cid]
 
     reviews_out: list[dict[str, Any]] = []
     for row in rows:
         # The reviewer's reviews of this paper up to this version, oldest first;
         # the last is the one they stand on.
         reviewer_history = history.review_history(
-            row, chains.get(row.review_key, []), report_allowed=gate_open
+            row,
+            chains.get(row.review_key, []),
+            report_allowed=gate_open,
+            version_gates=version_gates,
         )
         if row.version_cid != version_cid and not reviewer_history:
             # An earlier review is listed only once it is revealed and readable;
@@ -513,22 +528,28 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
             item["formal_cid"] = latest["formal_cid"]
             item["id"] = latest["formal_cid"]
 
-        # The paper authors' point-by-point answers to this review.
-        response_items = [
-            {
-                "response_cid": saved.response_cid,
-                "responseCid": saved.response_cid,
-                "cid": saved.response_cid,
-                "id": saved.response_cid,
-                "review_cid": saved.review_cid,
-                "replies": saved.replies,
-            }
-            for saved in responses_by_review.get(row.review_cid, [])
-        ]
+        # The paper authors' point-by-point answers to this review.  One
+        # canonical field (``responses``) carries them; serving the same row
+        # under ``response`` or ``replies`` as well made the tab render it
+        # three times, two of them as bare field dumps.
+        response_items = []
+        for saved in responses_by_review.get(row.review_cid, []):
+            author, created = _response_provenance(saved.response_cid)
+            response_items.append(
+                {
+                    "response_cid": saved.response_cid,
+                    "responseCid": saved.response_cid,
+                    "cid": saved.response_cid,
+                    "id": saved.response_cid,
+                    "review_cid": saved.review_cid,
+                    "reviewCid": saved.review_cid,
+                    "replies": saved.replies,
+                    "author": author,
+                    "created": created,
+                    "created_at": created,
+                }
+            )
         item["responses"] = response_items
-        if response_items:
-            item["response"] = response_items[0]
-            item["replies"] = response_items[0]["replies"]
 
         # Serve the report body only when the gate is open (the history left
         # it out of each review otherwise); when closed, 'report' is

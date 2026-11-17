@@ -79,8 +79,8 @@ function Header({ schId }: { schId?: string }) {
       <p className="prs-lede">
         Formal peer reviews, with the reviewer&rsquo;s recommendation and
         rubric. Reports stay sealed until two reviews are committed on the
-        version, or 21 days after the first; the scores and their medians are
-        public either way.
+        version, or 21 days after the first; the rubric is sealed with the
+        review until that review is revealed.
       </p>
     </header>
   );

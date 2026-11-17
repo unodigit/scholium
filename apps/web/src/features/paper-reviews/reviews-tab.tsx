@@ -224,17 +224,25 @@ function committedOnVersion(
 }
 
 /** What the gate note says: commits so far, what opens it, and the fallback. */
-function gateNote(commits: number): string {
+function gateNote(commits: number, hasEarlierRevealed: boolean): string {
+  const earlier =
+    hasEarlierRevealed
+      ? " The reviews shown below are from an earlier version and are already revealed."
+      : "";
   if (commits <= 0) {
-    return "No review has been committed on this version yet. Reviews are revealed, with their rubric and report, once two independent reviews are committed on the version, or 21 days after the first.";
+    return `No review has been committed on this version yet. Reviews are revealed, with their rubric and report, once two independent reviews are committed on this version, or 21 days after the first.${earlier}`;
   }
   const count =
     commits === 1
       ? "1 review has been committed on this version so far."
       : `${commits} reviews have been committed on this version so far.`;
-  if (commits >= 2) return `${count} Reviews are revealed once the gate opens.`;
-  return `${count} The review is revealed, with its rubric and report, once one more independent review is committed on the version, or 21 days after the first commit.`;
+  if (commits >= 2) return `${count} Reviews are revealed once the gate opens.${earlier}`;
+  return `${count} The review is revealed, with its rubric and report, once one more independent review is committed on this version, or 21 days after the first commit.${earlier}`;
 }
+
+/** What a card says of a report the version's gate still withholds. */
+const SEALED_REPORT_NOTE =
+  "Report sealed until two reviews are committed on this version, or 21 days after the first.";
 
 /** The earlier revisions of a revised review, oldest first. */
 function earlierRevisions(review: Review): readonly ReviewRevision[] {
@@ -271,6 +279,9 @@ function ReviewsView({
   // still sealed. A carried review of an earlier version is not a commit here.
   const commits = committedOnVersion(reviews, data.version);
   const sealed = reviews.filter((review) => !isRevealed(review)).length;
+  const hasEarlierRevealed = reviews.some(
+    (review) => review.version !== null && data.version !== null && review.version !== data.version && isRevealed(review),
+  );
 
   // Who wrote an anonymous review is escrowed, so which of the earlier reviews
   // is the viewer's own is asked of their dashboard; only when there is one to
@@ -311,7 +322,7 @@ function ReviewsView({
 
       {!data.gateOpen ? (
         <p className="pr-gate" role="note">
-          {gateNote(commits)}
+          {gateNote(commits, hasEarlierRevealed)}
         </p>
       ) : null}
 
@@ -323,6 +334,7 @@ function ReviewsView({
             <ReviewCard
               review={review}
               gateOpen={data.gateOpen}
+              listedVersion={data.version}
               paperId={paperId}
               latestVersion={latest}
               mine={viewer.signedIn && isMine(review)}
@@ -402,12 +414,15 @@ function updateHref(paperId: string, review: Review): string {
 function ReviewCard({
   review,
   gateOpen,
+  listedVersion,
   paperId,
   latestVersion,
   mine,
 }: {
   review: Review;
   gateOpen: boolean;
+  /** The version whose listing this is: its gate is the one `gateOpen` says. */
+  listedVersion: number | null;
   paperId: string;
   latestVersion: number | null;
   /** The signed-in viewer wrote this review. */
@@ -420,6 +435,15 @@ function ReviewCard({
   const revealed = isRevealed(review);
   const revisions = earlierRevisions(review);
   const revised = revisions.length > 0;
+  // A revealed review of the version being listed has its report withheld while
+  // that version's gate is shut (an update is revealed, but its report is not
+  // served until the gate opens): that is sealed, not "no written report".
+  const reportWithheld =
+    revealed &&
+    review.report === null &&
+    !gateOpen &&
+    review.version !== null &&
+    review.version === listedVersion;
   const [reportOpen, setReportOpen] = useState(false);
   const [reported, setReported] = useState<ReportReason | null>(null);
 
@@ -473,6 +497,16 @@ function ReviewCard({
                 <p className="pr-history__recommendation">
                   {revision.recommendationLabel}
                 </p>
+                {revision.report !== null ? (
+                  <details className="pr-history__report">
+                    <summary className="pr-history__report-summary">
+                      {revision.version !== null
+                        ? `Read the v${revision.version} report`
+                        : "Read the report"}
+                    </summary>
+                    <p className="pr-history__report-body">{revision.report}</p>
+                  </details>
+                ) : null}
               </li>
             ))}
           </ol>
@@ -485,14 +519,14 @@ function ReviewCard({
             <summary className="pr-report__summary">Read the report</summary>
             <p className="pr-report__body">{review.report}</p>
           </details>
+        ) : reportWithheld ? (
+          <p className="pr-report__sealed">{SEALED_REPORT_NOTE}</p>
         ) : (
           <p className="pr-report__none">No written report.</p>
         )
       ) : (
         <p className="pr-report__sealed">
-          {gateOpen
-            ? "This review has not been revealed yet."
-            : "Report sealed until two reviews are committed on this version, or 21 days after the first."}
+          {gateOpen ? "This review has not been revealed yet." : SEALED_REPORT_NOTE}
         </p>
       )}
 
@@ -520,7 +554,7 @@ function ReviewCard({
           reader, or to someone the API would refuse; the API is the gate. */}
       <ReviewCardActions review={review} paperId={paperId} />
 
-      {revealed && review.reviewCid !== null ? (
+      {revealed && (review.formalCid ?? review.reviewCid) !== null ? (
         <div className="pr-report-action">
           {reported === null ? (
             <button
@@ -551,11 +585,12 @@ function ReviewCard({
           {reportOpen && reported === null ? (
             <div className="pd-panel">
               <ReportPanel
+                subject="review"
                 authorLabel={review.label}
                 signInHref={signInPath(paperHref(paperId))}
                 onCancel={() => setReportOpen(false)}
                 onReport={async (reason) => {
-                  await reportPostFlag(review.reviewCid as string, reason);
+                  await reportPostFlag((review.formalCid ?? review.reviewCid) as string, reason);
                   setReported(reason);
                   setReportOpen(false);
                 }}

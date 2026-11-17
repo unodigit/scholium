@@ -589,3 +589,192 @@ describe("Update for v{latest} on a review of an earlier version", () => {
     expect(screen.getByText("Read the report")).toBeTruthy();
   });
 });
+
+describe("author responses, as GET /papers/{id}/reviews serves them", () => {
+  // One entry of ``responses``: the only field that carries an answer.
+  const served = {
+    response_cid: "bafyrei-resp",
+    responseCid: "bafyrei-resp",
+    cid: "bafyrei-resp",
+    id: "bafyrei-resp",
+    review_cid: "bafyrei-a",
+    reviewCid: "bafyrei-a",
+    replies: {
+      soundness: "Section 3.2 names the baseline.",
+      evidence: "Table 4 now reports the seeds.",
+    },
+    author: "did:key:z6MkAuthor",
+    created: "2027-03-05T10:00:00",
+    created_at: "2027-03-05T10:00:00",
+  };
+
+  it("draws the answer once, as a formatted reply with its date, never as a field dump", () => {
+    const { container } = renderTab(dataOf(review({ responses: [served] })));
+
+    expect(container.querySelectorAll(".pr-reply")).toHaveLength(1);
+    expect(screen.getAllByText("Section 3.2 names the baseline.")).toHaveLength(1);
+    expect(screen.getAllByText("Table 4 now reports the seeds.")).toHaveLength(1);
+    // The signer is a DID, which is not a name: the byline says "The authors".
+    expect(screen.getByText("The authors · 5 Mar 2027")).toBeTruthy();
+    for (const dumped of ["Response cid", "Responsecid", "Cid", "Id", "Review cid"]) {
+      expect(screen.queryByText(dumped)).toBeNull();
+    }
+    expect(container.textContent).not.toContain("bafyrei-resp");
+  });
+
+  it("puts each answer under the review it answers", () => {
+    const { container } = renderTab(
+      dataOf(
+        review({ responses: [served] }),
+        review({ review_cid: "bafyrei-b", label: "Reviewer B" }),
+      ),
+    );
+
+    const cards = container.querySelectorAll(".pr-card");
+    expect(cards).toHaveLength(2);
+    expect(cards[0].querySelectorAll(".pr-reply")).toHaveLength(1);
+    expect(cards[1].querySelectorAll(".pr-reply")).toHaveLength(0);
+  });
+});
+
+describe("a review carried from an earlier version, and one revised since", () => {
+  const FIRST = "The first report: the evidence is thin.";
+  const REVISED = "The revised report: the evidence now holds.";
+
+  it("shows the earlier revision's report under Earlier revisions, and the latest as the card's own", () => {
+    const { container } = renderTab(
+      dataOf(
+        review({
+          revealed_at: "2027-04-01T00:00:00",
+          report: REVISED,
+          history: [
+            {
+              formal_cid: "bafy-formal-1",
+              version: 1,
+              revealed_at: "2027-03-02T05:00:00",
+              recommendation: "major_concerns",
+              report: FIRST,
+            },
+            {
+              formal_cid: "bafy-formal-2",
+              version: 2,
+              revealed_at: "2027-04-01T00:00:00",
+              recommendation: "minor_revisions",
+              report: REVISED,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const history = container.querySelector("details.pr-history") as HTMLElement;
+    expect(within(history).getByText(FIRST)).toBeTruthy();
+    expect(within(history).queryByText(REVISED)).toBeNull();
+    expect(screen.getAllByText(REVISED)).toHaveLength(1);
+  });
+
+  it("says an update's report is sealed, not that there is none, while its version's gate is shut", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [review({ version: 2, revealed_at: "2027-04-01T00:00:00" })],
+      }),
+    );
+
+    expect(screen.queryByText(/No written report/)).toBeNull();
+    expect(screen.getByText(/Report sealed until two reviews are committed/)).toBeTruthy();
+  });
+
+  it("describes the reviews on this version, and says plainly that the earlier ones shown are revealed", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [
+          review({ version: 1, revealed_at: "2027-03-02T05:00:00", report: FIRST }),
+        ],
+      }),
+    );
+
+    const note = screen.getByRole("note");
+    expect(note.textContent).toMatch(/No review has been committed on this version yet/);
+    expect(note.textContent).toMatch(/already revealed/);
+    expect(note.textContent).toMatch(/earlier version/);
+  });
+
+  it("does not mention earlier reviews when none is shown", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [review({ version: 2, revealed_at: null, scores: null })],
+      }),
+    );
+
+    expect(screen.getByRole("note").textContent).not.toMatch(/already revealed/);
+  });
+});
+
+describe("reporting a revealed review", () => {
+  function signedIn(): void {
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    tokenStore.set({
+      accessToken: `${encode({ alg: "HS256" })}.${encode({ sub: "did:key:z6MkMember", tier: 1 })}.sig`,
+    });
+  }
+
+  function stubFlags(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ id: "flag-1", authors: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** The `target` of every flag the tab filed. */
+  function flagged(fetchMock: ReturnType<typeof vi.fn>): string[] {
+    return fetchMock.mock.calls
+      .filter(([url]) => String(url).includes("/flags"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)).target as string);
+  }
+
+  const revealed = review({
+    review_cid: "bafy-commit",
+    formal_cid: "bafy-formal-1",
+    revealed_at: "2027-03-02T05:00:00",
+  });
+
+  it("asks about the review by the reviewer, not the post", () => {
+    signedIn();
+    stubFlags();
+    renderTab(dataOf(revealed));
+
+    fireEvent.click(screen.getByRole("button", { name: "Report" }));
+
+    expect(
+      screen.getByRole("group", { name: "Why are you reporting the review by Reviewer A?" }),
+    ).toBeTruthy();
+  });
+
+  it("files the flag against the revealed review record, not the sealed commit", async () => {
+    signedIn();
+    const fetchMock = stubFlags();
+    renderTab(dataOf(revealed));
+
+    fireEvent.click(screen.getByRole("button", { name: "Report" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Spam or advertising/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+
+    await screen.findByText("Reported");
+    expect(flagged(fetchMock)).toEqual(["bafy-formal-1"]);
+  });
+});

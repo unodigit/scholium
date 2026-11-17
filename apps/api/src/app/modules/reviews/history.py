@@ -27,8 +27,9 @@ review enters it once it is revealed -- a sealed one is never carried.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.errors import ProblemException
@@ -37,7 +38,7 @@ from .models import Review
 from .reveal import review_reveal_fields
 from .service import formal_entries
 
-__all__ = ["Revision", "paper_revisions", "review_history"]
+__all__ = ["Revision", "paper_revisions", "report_gate_open", "review_history"]
 
 
 @dataclass(frozen=True)
@@ -124,14 +125,52 @@ def _read(row: Review, revision: Revision) -> Optional[dict[str, Any]]:
     }
 
 
+def report_gate_open(
+    version_cid: str, rows: Iterable[Review], chains: Mapping[str, list[Revision]]
+) -> bool:
+    """Whether the report gate of ``version_cid`` is open, as its own listing says.
+
+    REV-4: open once two reviews are counted on the version, or 21 days after the
+    first.  A review counts when it was committed on the version or its reviewer
+    revised it to the version; the earlier reviews a later listing merely carries
+    do not.  ``rows`` are the paper's committed reviews and ``chains`` its
+    reviewers' :func:`paper_revisions`.
+    """
+    updated = {
+        key
+        for key, chain in chains.items()
+        if any(revision.version_cid == version_cid for revision in chain)
+    }
+    counted = [
+        row for row in rows if row.version_cid == version_cid or row.review_key in updated
+    ]
+    committed = [row.committed_at for row in counted if row.committed_at is not None]
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return len(counted) >= 2 or (
+        bool(committed) and now >= min(committed) + timedelta(days=21)
+    )
+
+
 def review_history(
-    row: Review, chain: list[Revision], *, report_allowed: bool
+    row: Review,
+    chain: list[Revision],
+    *,
+    report_allowed: bool,
+    version_gates: Optional[Mapping[str, bool]] = None,
 ) -> list[dict[str, Any]]:
     """``row``'s reviewer's reviews, oldest version first, as the listing serves them.
 
     ``chain`` is that reviewer's :func:`paper_revisions` entry; ``report_allowed``
     is whether the listing's report gate is open, so a sealed report stays out.
+
+    ``version_gates`` says, for versions the listing carries, whether *that
+    version's* gate is open (:func:`report_gate_open`).  A revision's report is
+    served when the listed version's gate is open, or when its own version's is:
+    then it is already public on that version's listing, and a later version's
+    gate being shut does not take it back.  An update to a version whose gate
+    never opened is not carried past it.
     """
+    gates = version_gates or {}
     history: list[dict[str, Any]] = []
     for revision in chain:
         read = _read(row, revision)
@@ -158,7 +197,8 @@ def review_history(
             ),
         }
         report = revision.body.get("report")
-        if report_allowed and revealed_at is not None and isinstance(report, str):
+        allowed = report_allowed or gates.get(revision.version_cid, False)
+        if allowed and revealed_at is not None and isinstance(report, str):
             item["report"] = report
         history.append(item)
     return history

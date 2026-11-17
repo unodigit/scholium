@@ -506,8 +506,14 @@ def test_review_journey(client, node, reviewer):
 
     listing = listed_reviews(client, short_id)
     reviews = by_review_cid(listing)
-    assert reviews[first_commit_cid]["replies"]["soundness"] == f"{first_marker} soundness", reviews
-    assert reviews[second_commit_cid]["replies"]["evidence"] == f"{second_marker} evidence", reviews
+    # Each answer is served once, under ``responses``; it used to be repeated as
+    # ``response`` and ``replies`` too (which the tab drew three times).
+    [first_answer] = reviews[first_commit_cid]["responses"]
+    [second_answer] = reviews[second_commit_cid]["responses"]
+    assert first_answer["replies"]["soundness"] == f"{first_marker} soundness", reviews
+    assert second_answer["replies"]["evidence"] == f"{second_marker} evidence", reviews
+    for review in reviews.values():
+        assert "response" not in review and "replies" not in review, review
 
     # --- 6. the author posts version 2 --------------------------------------
     v2 = publish_version(

@@ -551,7 +551,7 @@ function replyOf(value: unknown, index: number): AuthorReply | null {
   const record = recordOf(value);
   if (record === null) return null;
 
-  const items = replyItemsOf(record.items);
+  const items = replyItemsOf(record.items ?? record.replies);
   const text = firstText(
     record.text,
     record.reply,
@@ -610,8 +610,22 @@ function repliesOf(record: Record<string, unknown>): AuthorReply[] {
         "body" in asRecord ||
         "content" in asRecord ||
         "items" in asRecord ||
+        "replies" in asRecord ||
         "reply_cid" in asRecord ||
-        "replyCid" in asRecord;
+        "replyCid" in asRecord ||
+        "response_cid" in asRecord ||
+        "responseCid" in asRecord ||
+        "review_cid" in asRecord ||
+        "reviewCid" in asRecord ||
+        "cid" in asRecord ||
+        "id" in asRecord ||
+        "created" in asRecord ||
+        "created_at" in asRecord ||
+        "createdAt" in asRecord ||
+        "author" in asRecord ||
+        "author_name" in asRecord ||
+        "authorName" in asRecord ||
+        "version" in asRecord;
       if (!single) {
         // A map of dimension → answer is one point-by-point reply.
         const reply = replyOf({ items: asRecord }, replies.length);

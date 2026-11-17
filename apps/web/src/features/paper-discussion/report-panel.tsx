@@ -26,6 +26,8 @@ import {
 import { FailureText } from "./notes";
 
 export interface ReportPanelProps {
+  /** What is being reported, for the legend: "Why are you reporting the review by …?" */
+  subject?: string;
   /** Who wrote the post, for the legend: "Why are you reporting the post by …?" */
   authorLabel: string;
   /** Files the report. Resolve when it is filed; reject to show why not. */
@@ -36,7 +38,7 @@ export interface ReportPanelProps {
   signInHref: string;
 }
 
-export function ReportPanel({ authorLabel, onReport, onCancel, signInHref }: ReportPanelProps) {
+export function ReportPanel({ subject = "post", authorLabel, onReport, onCancel, signInHref }: ReportPanelProps) {
   const uid = useId();
   const [choice, setChoice] = useState<ReportReason | null>(null);
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,7 @@ export function ReportPanel({ authorLabel, onReport, onCancel, signInHref }: Rep
     >
       <fieldset className="pd-report__fieldset" disabled={busy} aria-describedby={missing ? problemId : undefined}>
         <legend className="pd-report__legend">
-          {`Why are you reporting the post by ${authorLabel}?`}
+          {`Why are you reporting the ${subject} by ${authorLabel}?`}
         </legend>
         {REPORT_REASONS.map((reason) => (
           <div className="pd-reason" key={reason.id}>

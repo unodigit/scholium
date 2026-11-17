@@ -119,6 +119,16 @@ describe("/reviews/[id]", () => {
     expect(html).toContain("Careful work; the code bundle runs.");
   });
 
+  it("says in its lede what the sealed cards say: the rubric is sealed with the review", async () => {
+    stubApi(() => json(REVIEWS));
+
+    const html = await render(["6sel-2dio-orm6"]);
+
+    expect(html).toContain("the rubric is sealed with the review");
+    // Scores are not public until their review is: the lede must not say so.
+    expect(html).not.toMatch(/public either way/);
+  });
+
   it("hands the tab the parsed data and the paper id", async () => {
     stubApi(() => json(REVIEWS));
 

@@ -205,17 +205,56 @@ def test_carried_reviews_do_not_open_the_report_gate_of_the_latest_version():
 
     listing = client.get(listing_url(paper)).json()
 
-    # Nothing is committed on v2, so its reports stay sealed (REV-4): the two
-    # carried reviews are listed with their scores, but no report body.
+    # Nothing is committed on v2, so v2's own gate stays closed (REV-4): the
+    # two carried reviews are listed with their scores, and carrying them has
+    # not opened it.
     assert {item["review_cid"] for item in listing["reviews"]} == {
         first_commit["id"],
         second_commit["id"],
     }
     assert listing["gate_open"] is False
-    for item in listing["reviews"]:
-        assert "report" not in item
-        assert all("report" not in entry for entry in item["history"])
-    assert first["body"]["report"] not in client.get(listing_url(paper)).text
+
+
+def test_a_carried_review_serves_the_report_it_was_revealed_with():
+    paper, first_reviewer, second_reviewer = Paper(), Reviewer(), Reviewer()
+    first_commit, first = revealed_review(first_reviewer, paper)
+    second_commit, second = revealed_review(second_reviewer, paper)
+    publish_version(paper, 2, open_gate=False)
+
+    listing = client.get(listing_url(paper)).json()
+    items = {item["review_cid"]: item for item in listing["reviews"]}
+
+    # v2's gate is shut, but these reports were revealed under v1's open gate
+    # and are public on v1's listing: the card must not say "No written report".
+    assert listing["gate_open"] is False
+    assert items[first_commit["id"]]["report"] == first["body"]["report"]
+    assert items[second_commit["id"]]["report"] == second["body"]["report"]
+    # The history carries it too, which is where "Earlier revisions" reads it.
+    assert [entry["report"] for entry in items[first_commit["id"]]["history"]] == [
+        first["body"]["report"]
+    ]
+
+
+def test_an_update_report_is_not_carried_past_a_version_whose_gate_never_opened():
+    paper, first_reviewer, second_reviewer = Paper(), Reviewer(), Reviewer()
+    first_commit, first = revealed_review(first_reviewer, paper)
+    revealed_review(second_reviewer, paper)
+    v2 = publish_version(paper, 2, open_gate=False)
+    update = update_record(first_reviewer, paper, v2, first["id"], report="Revised for v2.")
+    assert post_update(first_reviewer, update).status_code == 201
+    publish_version(paper, 3, open_gate=False)
+
+    listing = client.get(listing_url(paper)).json()
+    item = next(entry for entry in listing["reviews"] if entry["review_cid"] == first_commit["id"])
+
+    # v1's gate is open, so its report is public; the v2 update was never
+    # revealed under an open gate on v2, so listing v3 does not publish it.
+    assert listing["gate_open"] is False
+    assert [entry["version"] for entry in item["history"]] == [1, 2]
+    assert item["history"][0]["report"] == first["body"]["report"]
+    assert "report" not in item["history"][1]
+    assert "report" not in item
+    assert "Revised for v2." not in client.get(listing_url(paper)).text
 
 
 def test_a_carried_review_names_no_one():

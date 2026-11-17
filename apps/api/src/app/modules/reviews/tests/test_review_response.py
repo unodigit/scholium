@@ -318,6 +318,34 @@ def test_an_author_response_is_saved_and_served_with_the_review():
     assert commit["id"] in listing.text
 
 
+def test_the_listing_serves_each_author_response_once():
+    paper = Paper()
+    reviewer = Reviewer()
+    commit, _ = reviewer.post_commit(paper)
+    author = Member(seed=paper.seed)
+    marker = f"Author reply {uuid.uuid4().hex}"
+    assert author.post_response(commit["id"], marker).status_code == 201
+
+    listing = client.get(f"{PAPERS_URL}/{paper.short_id}/reviews")
+    assert listing.status_code == 200, listing.text
+    # ``post_commit`` seals the extra commits that open the gate: pick ours.
+    item = next(entry for entry in listing.json()["reviews"] if entry["review_cid"] == commit["id"])
+
+    # ``responses`` is the one field that carries the answer.  The same row was
+    # also served as ``response`` and as ``replies``, so the reviews tab drew it
+    # three times, two of them as bare field dumps.
+    [answer] = item["responses"]
+    assert answer["review_cid"] == commit["id"]
+    assert answer["replies"]["soundness"] == f"{marker} soundness"
+    assert "response" not in item
+    assert "replies" not in item
+    assert listing.text.count(f"{marker} soundness") == 1
+
+    # The reply says who wrote it and when, for the tab to show.
+    assert answer["author"] == author.did
+    assert answer["created"]
+
+
 def test_a_response_may_be_addressed_by_the_revealed_review_cid():
     paper = Paper()
     reviewer = Reviewer()
