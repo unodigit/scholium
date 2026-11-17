@@ -15,6 +15,13 @@
   `npm install <pkg> --workspace apps/web`, API deps in `apps/api/pyproject.toml` (or the owning package).
 - Test everything: `npm test` (api pytest, then web vitest)
 - API only: `cd apps/api && uv run --all-packages pytest`
+- **Slow suites vs. the Bash tool limit:** a Bash call is killed after 2 minutes unless you pass a
+  longer `timeout` (max 600000 ms). The full API suite (~4.7k tests) takes 2–4 minutes and the web
+  suite ~2 minutes, longer while other agents share the machine. Run the tests of what you changed
+  (`uv run --all-packages pytest src/app/modules/<module>`, `npx vitest run src/features/<feature>`);
+  if you need a full suite, call Bash with `timeout: 600000` (a shell `timeout 590` prefix does not
+  extend the tool's limit). Three tool-killed commands in a row end the attempt (`agent_command_stuck`).
+  The acceptance gate runs the full `npm test` anyway.
 - Run API: `cd apps/api && uv run python -m app` (serves `create_app` on HOST/PORT, default 127.0.0.1:8000; set FORWARDED_ALLOW_IPS to honour proxy headers)
 - Web only: `npm test --workspace apps/web`
 - Browser journeys: `npm run test:e2e` (Playwright, not part of `npm test`)
