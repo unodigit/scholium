@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://scholium.network/schemas/moderation.decision.json",
   "title": "moderation.decision record body",
-  "description": "A moderator's public, signed decision on a version. The action must reference a known policy clause and a reason.",
+  "description": "A moderator's public, signed decision on a version, a discussion post, an annotation or a revealed review. The action must be one the target's type accepts, cite a known policy clause and give a reason.",
   "type": "object",
   "required": ["target", "action", "clause"],
   "allOf": [
@@ -20,7 +20,7 @@
     },
     "action": {
       "type": "string",
-      "enum": ["list", "hold", "reclassify", "reject", "delist", "tombstone", "release"]
+      "enum": ["list", "hold", "reclassify", "reject", "delist", "tombstone", "release", "dismiss", "hide"]
     },
     "state": {
       "type": "string",

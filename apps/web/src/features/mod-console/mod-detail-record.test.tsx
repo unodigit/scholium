@@ -212,9 +212,7 @@ describe("ModDetail for a flagged discussion post", () => {
 
     const action = within(form).getByLabelText(/^Action/) as HTMLSelectElement;
     const options = Array.from(action.options).map((option) => option.value);
-    expect(options).toContain("list");
-    expect(options).toContain("delist");
-    expect(options).toContain("tombstone");
+    expect(options).toEqual(["", "dismiss", "hide"]);
     expect(within(form).getByLabelText(/^Policy clause/)).toBeTruthy();
     expect(within(form).getByLabelText(/^Reason/)).toBeTruthy();
     expect(within(form).getByText(PUBLIC_RECORD_NOTICE)).toBeTruthy();

@@ -140,7 +140,6 @@ export {
 } from "./record";
 
 export {
-  RECORD_DECISION_ACTIONS,
   RecordDecisionForm,
   recordActionLabel,
   recordOutcome,
@@ -152,6 +151,13 @@ export {
   RecordFlags,
   type RecordFlagsProps,
 } from "./record-flags";
+
+export {
+  PersonName,
+  loadPersonName,
+  type LoadPersonName,
+  type PersonNameProps,
+} from "./person";
 
 export {
   LOG_PAGE_SIZE,

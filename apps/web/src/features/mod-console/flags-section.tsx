@@ -24,7 +24,6 @@ import {
 
 import { EmptyState } from "../ui-kit/empty-state";
 import { Icon, RecordLink } from "../ui-kit";
-import { shortenDid } from "./decision";
 import {
   classifyFlagsError,
   flagDecisionHref,
@@ -36,6 +35,7 @@ import {
   type FlagEntry,
   type FlagsFailure,
 } from "./flags";
+import { PersonName, type LoadPersonName } from "./person";
 import { SIGNIN_HREF } from "./queue";
 import {
   loadFlagTargetSummary,
@@ -60,6 +60,8 @@ export interface FlagsSectionProps {
    * excerpt). Defaults to reading the flagged record from the public log.
    */
   loadTarget?: LoadFlagTarget;
+  /** Reads a reporter's profile name; replaceable in tests. */
+  loadPerson?: LoadPersonName;
 }
 
 type ListState =
@@ -72,6 +74,7 @@ export function FlagsSection({
   loadFlags,
   loadFlag,
   loadTarget,
+  loadPerson,
 }: FlagsSectionProps = {}) {
   const [state, setState] = useState<ListState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -137,10 +140,11 @@ export function FlagsSection({
           refreshing={state.refreshing}
           onRefresh={reload}
           loadTarget={loadTarget}
+          loadPerson={loadPerson}
         />
       ) : null}
 
-      <FlagLookup loadFlag={loadFlag} loadTarget={loadTarget} />
+      <FlagLookup loadFlag={loadFlag} loadTarget={loadTarget} loadPerson={loadPerson} />
     </section>
   );
 }
@@ -150,11 +154,13 @@ function FlagList({
   refreshing,
   onRefresh,
   loadTarget,
+  loadPerson,
 }: {
   flags: readonly FlagEntry[];
   refreshing: boolean;
   onRefresh: () => void;
   loadTarget?: LoadFlagTarget;
+  loadPerson?: LoadPersonName;
 }) {
   if (flags.length === 0) {
     return (
@@ -190,7 +196,7 @@ function FlagList({
       <ul className="mc-case-list" aria-label="Flags">
         {flags.map((flag) => (
           <li key={flag.id}>
-            <FlagCard flag={flag} loadTarget={loadTarget} />
+            <FlagCard flag={flag} loadTarget={loadTarget} loadPerson={loadPerson} />
           </li>
         ))}
       </ul>
@@ -209,9 +215,12 @@ function FlagList({
 export function FlagCard({
   flag,
   loadTarget,
+  loadPerson,
 }: {
   flag: FlagEntry;
   loadTarget?: LoadFlagTarget;
+  /** Reads the reporter's profile name; replaceable in tests. */
+  loadPerson?: LoadPersonName;
 }) {
   const open = isFlagOpen(flag);
   const headingId = `flag-${flag.id}-title`;
@@ -278,7 +287,9 @@ export function FlagCard({
         {flag.reporterDid !== null ? (
           <div>
             <dt>Reported by</dt>
-            <dd>{shortenDid(flag.reporterDid)}</dd>
+            <dd>
+              <PersonName did={flag.reporterDid} loadName={loadPerson} />
+            </dd>
           </div>
         ) : null}
         <div>
@@ -371,9 +382,11 @@ type LookupState =
 function FlagLookup({
   loadFlag,
   loadTarget,
+  loadPerson,
 }: {
   loadFlag: LoadFlag | undefined;
   loadTarget: LoadFlagTarget | undefined;
+  loadPerson: LoadPersonName | undefined;
 }) {
   const [id, setId] = useState("");
   const [state, setState] = useState<LookupState>({ status: "idle" });
@@ -444,7 +457,7 @@ function FlagLookup({
 
       {state.status === "found" ? (
         <div className="mc-lookup-result">
-          <FlagCard flag={state.flag} loadTarget={loadTarget} />
+          <FlagCard flag={state.flag} loadTarget={loadTarget} loadPerson={loadPerson} />
         </div>
       ) : null}
     </form>

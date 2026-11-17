@@ -8,10 +8,10 @@ import { RecordDecisionForm } from "./record-decision-form";
 
 /**
  * A record that is not a paper version is decided with the same signed
- * `moderation.decision` the API already accepts: the target is the flagged
- * record, and the action is one of the three that make sense for it —
- * dismiss the flag (`list`), hide the record (`delist`) or take it down
- * (`tombstone`).
+ * `moderation.decision` the paper form uses: the target is the flagged record,
+ * and the action is one of the two the record's type accepts — dismiss the
+ * flag (`dismiss`) or hide the record (`hide`). The paper actions are refused
+ * by the API with a 422, so the form never offers them.
  */
 
 const POST: ModeratedRecord = {
@@ -40,9 +40,9 @@ const ACCEPTED: DecisionAccepted = {
   id: "bafyreidecisionaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   shortId: null,
   target: POST.cid,
-  action: "delist",
+  action: "hide",
   clause: "MOD-09",
-  state: "decided",
+  state: "hidden",
   anchor: "pending",
 };
 
@@ -64,27 +64,39 @@ describe("RecordDecisionForm", () => {
     const action = screen.getByLabelText(/^Action/) as HTMLSelectElement;
     expect(Array.from(action.options).map((option) => option.value)).toEqual([
       "",
-      "list",
-      "delist",
-      "tombstone",
+      "dismiss",
+      "hide",
     ]);
     expect(
       within(action).getByRole("option", { name: /Dismiss the flag \(leave the post as it is\)/ }),
     ).toBeTruthy();
     expect(
-      within(action).getByRole("option", { name: "Hide the post from the discussion" }),
+      within(action).getByRole("option", { name: "Hide the post from public reads" }),
     ).toBeTruthy();
-    expect(
-      within(action).getByRole("option", { name: "Legal takedown (tombstone) of the post" }),
-    ).toBeTruthy();
+    // The paper actions say nothing true about a post, and the API refuses
+    // each with a 422 -- the takedown included (a hide is the reversible one).
+    for (const refused of ["list", "hold", "reclassify", "reject", "delist", "tombstone"]) {
+      expect(Array.from(action.options).map((option) => option.value)).not.toContain(refused);
+    }
   });
 
   it("previews the outcome for the record, not for a paper listing", () => {
     render(<RecordDecisionForm record={POST} clauses={[...CLAUSES]} />);
-    fill("delist");
+    fill("hide");
 
     expect(
-      screen.getByText("The post is hidden from the discussion, and the flag is settled."),
+      screen.getByText(
+        "The post is hidden from public reads with the reason below, and the flag is settled.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("previews the dismiss outcome: the post is left as it is", () => {
+    render(<RecordDecisionForm record={POST} clauses={[...CLAUSES]} />);
+    fill("dismiss");
+
+    expect(
+      screen.getByText("The post stays as it is, and the flag is settled."),
     ).toBeTruthy();
   });
 
@@ -120,7 +132,7 @@ describe("RecordDecisionForm", () => {
     }));
     const submitDecision = vi.fn<DecisionSubmitter>(async () => ({
       ...ACCEPTED,
-      action: "delist",
+      action: "hide",
     }));
 
     render(
@@ -132,29 +144,20 @@ describe("RecordDecisionForm", () => {
       />,
     );
 
-    fill("delist");
+    fill("hide");
     fireEvent.click(screen.getByRole("button", { name: "Sign decision" }));
 
     expect(await screen.findByRole("heading", { name: "Decision published" })).toBeTruthy();
     expect(signDecision).toHaveBeenCalledTimes(1);
     expect(signDecision.mock.calls[0]![0]).toMatchObject({
       target: POST.cid,
-      action: "delist",
+      action: "hide",
       clause: "MOD-09",
       reason: "The post is advertising with no scholarly content.",
     });
     expect(submitDecision).toHaveBeenCalledTimes(1);
     expect(
       screen.getByRole("button", { name: "View the signed record" }),
-    ).toBeTruthy();
-  });
-
-  it("warns that a takedown cannot be undone", () => {
-    render(<RecordDecisionForm record={POST} clauses={[...CLAUSES]} />);
-    fill("tombstone");
-
-    expect(
-      screen.getByText(/A takedown makes the record’s content unavailable/),
     ).toBeTruthy();
   });
 });

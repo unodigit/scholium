@@ -189,11 +189,13 @@ class DecisionAccepted(BaseModel):
     id: str
     #: The version's ``sch:xxxx-xxxx-xxxx/vN`` id, when the paper is indexed.
     shortId: Optional[str] = None
-    #: cid of the version the decision is about.
+    #: cid of the record the decision is about.
     target: str
     action: str
     clause: str
-    #: The version's state once the decision has been applied.
+    #: The version's state once the decision has been applied; for a decision
+    #: on a flagged record, the outcome the handler reports instead
+    #: (``dismissed``, ``hidden``).
     state: str
     #: Public-timestamp status; always ``"pending"`` until anchoring exists.
     anchor: str = "pending"
@@ -209,15 +211,17 @@ class DecisionAccepted(BaseModel):
 def post_decision(
     record: dict[str, Any] = Body(..., description="The signed moderation.decision envelope."),
 ) -> DecisionAccepted:
-    """Accept a signed ``moderation.decision`` and apply it to its version.
+    """Accept a signed ``moderation.decision`` and apply it to its target.
 
     The decision goes through the same pipeline as ``POST /v1/records`` --
     envelope, body schema, cid, signature, the signer's tier -- and then this
     plugin's checks: the cited ``clause`` must be one served by
     ``GET /v1/moderation/policies``, a ``reason`` (or ``reasonCid``) is
-    required, and ``target`` must be a version this node holds.  An accepted
-    decision is appended to the public log (``GET /v1/records/{cid}``), saved
-    to ``moderation_decisions`` and sets the version's state:
+    required, ``target`` must be a flaggable record this node holds, and the
+    action must be one that target's type accepts.  An accepted decision is
+    appended to the public log (``GET /v1/records/{cid}``), saved to
+    ``moderation_decisions``, settles every open flag on its target and sets
+    the version's state:
 
     * ``list`` -- ``listed``; the paper becomes resolvable by its ``sch:`` id;
     * ``hold`` -- ``held``;
@@ -230,10 +234,21 @@ def post_decision(
       the paper still verifies.  ``target`` may be a version, a paper or a file
       id, and ``state`` is ``tombstoned`` unless the target is a version.
 
+    A ``target`` that is a flagged record rather than a version -- a discussion
+    post (a thread post or an inline annotation) or a revealed review -- takes:
+
+    * ``dismiss`` (also valid for a version) -- nothing about the record
+      changes; the flags on it close and their reporters, and the record's
+      author, are told the outcome;
+    * ``hide`` -- the signed record stays in the log, but the node withdraws
+      it from public reads with a "hidden by moderation" placeholder and the
+      reason, reversible by a ``release`` (an overturned appeal).
+
     Failures are RFC 9457 problem details: ``401``/``403`` for a caller or a
     signer below tier 4 or a bad signature, ``409`` for a repeated decision or
     a state the version cannot move to, ``422`` for an invalid record, an
-    unknown clause or an unknown target.
+    unknown clause, an unknown target, or an action the target's type does not
+    accept.
     """
     if record.get("type") != DECISION_TYPE:
         raise ProblemException(

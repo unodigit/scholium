@@ -1,9 +1,9 @@
 """Accepting signed ``moderation.decision`` records (plugin: moderation, feature 71).
 
-A moderator's public, signed decision on a version::
+A moderator's public, signed decision on a flaggable record::
 
-    {"target": "bafyrei...",      # cid of the version being decided on
-     "action": "list",            # list | hold | reclassify | reject | delist | tombstone | release
+    {"target": "bafyrei...",      # cid of the record being decided on
+     "action": "list",            # list | hold | reclassify | reject | delist | tombstone | release | dismiss | hide
      "clause": "MOD-01",          # a clause served by GET /v1/moderation/policies
      "reason": "...",             # shown to the author; or ``reasonCid`` instead
      "category": "cs.CR"}         # reclassify only (or ``categories``)
@@ -18,15 +18,24 @@ generic pipeline cannot make, *before* anything is stored:
   :class:`~.errors.UnknownPolicyClause`).  A missing clause, or a decision with
   neither ``reason`` nor ``reasonCid``, is already a ``422`` from the body
   schema; a blank ``reason`` with no ``reasonCid`` is refused here;
-* **a version.**  ``body.target`` must be a version this node holds (``422``,
-  :class:`~.errors.UnknownDecisionTarget`); a ``tombstone`` may instead name a
-  paper or a file id;
-* **a settled version.**  A decision may act only on a version that has
-  finished the consent-and-scan pipeline -- ``moderation``, ``listed``,
-  ``held`` or ``rejected`` (:data:`DECIDABLE_STATES`).  One still
-  ``awaiting_consent``, ``scanning`` or ``draft`` is a ``409``
-  (:class:`~.errors.DecisionNotAllowed`): holding or rejecting it would settle
-  a version its co-authors never agreed to publish;
+* **a target this node holds** (``422``,
+  :class:`~.errors.UnknownDecisionTarget`).  A version, as before; a
+  ``tombstone`` may instead name a paper or a file id; and -- because a flag
+  may name one -- a discussion post (a thread post or an inline annotation,
+  both ``discussion.post`` records) or a revealed review (a ``review.formal``
+  record).  See :func:`resolve_decision_target`;
+* **an action the target's type accepts** (``422``,
+  :class:`~.errors.DecisionActionInvalid`).  The paper actions stay the
+  version's own; a post, an annotation or a review accepts ``dismiss`` and
+  ``hide`` only, and a version accepts ``dismiss`` but not ``hide``;
+* **a settled version.**  A version-target decision that *acts* may act only
+  on a version that has finished the consent-and-scan pipeline --
+  ``moderation``, ``listed``, ``held`` or ``rejected``
+  (:data:`DECIDABLE_STATES`).  One still ``awaiting_consent``, ``scanning`` or
+  ``draft`` is a ``409`` (:class:`~.errors.DecisionNotAllowed`): holding or
+  rejecting it would settle a version its co-authors never agreed to publish.
+  A ``dismiss`` changes nothing about the version, so it is allowed in any
+  state;
 * **a reachable state.**  The state the action asks for must follow from the
   version's present one (``409``, :class:`~.errors.DecisionNotAllowed`).  A
   ``tombstone`` is exempt from both checks: a takedown must work whatever state
@@ -56,12 +65,25 @@ What an action does
                 :data:`ACTION_STATES` -- the state is in the record, not implied
                 by the action -- and :func:`decision_state` is the one place that
                 reads a record's resulting state.  Only a version a decision has
-                moved (``held`` or ``rejected``) can be released.
+                moved (``held`` or ``rejected``) can be released.  Aimed at a
+                *hidden record* it instead removes the hiding (see ``hide``),
+                which is how an overturned appeal restores a hidden post.
+``dismiss``     nothing about the record changes -- no state moves, no content
+                is withdrawn.  Valid for every flaggable type, and it is how a
+                moderator settles a report without acting on the record: the
+                decision closes every open flag on the target and tells each
+                reporter and the record's author the outcome.
+``hide``        a post, an annotation or a review is withdrawn from public
+                reads: the signed record stays in the log, its cid goes to the
+                ``moderation_hidden`` table and the read paths serve a "hidden
+                by moderation" placeholder with the reason.  Reversible by a
+                ``release``.  Not valid for a version -- a version has its own
+                actions.  See :mod:`app.modules.moderation.hides`.
 ==============  ================================================================
 
 This is the split :func:`app.modules.status.compute_status` assumes: ``list``,
 ``hold``, ``reject``, ``delist`` and ``tombstone`` set a version's state,
-``reclassify`` does not.  The state change goes through
+``reclassify``, ``dismiss`` and ``hide`` do not.  The state change goes through
 :func:`app.modules.submissions.transition_version`, so ``version.state_changed``
 is published like for any other move (the author notification, the advisory AI
 pre-review of a newly listed version).
@@ -95,7 +117,13 @@ from app.modules.ingest import InvalidRecord
 from app.modules.submissions.models import Paper
 from app.security import Tier
 
-from .errors import DecisionNotAllowed, UnknownDecisionTarget, UnknownPolicyClause
+from .errors import (
+    DecisionActionInvalid,
+    DecisionNotAllowed,
+    UnknownDecisionTarget,
+    UnknownPolicyClause,
+)
+from .hides import HIDDEN, get_hidden_entry, hide_target, unhide_target
 from .models import ModerationDecision, ensure_tables
 from .policies import get_clause
 from .tombstones import TOMBSTONE, TOMBSTONED, resolve_scope, tombstone_target
@@ -108,8 +136,19 @@ __all__ = [
     "DECIDABLE_STATES",
     "DECISION_MIN_TIER",
     "DECISION_TYPE",
+    "DISMISS",
+    "DISMISSED",
+    "HIDE",
+    "HIDDEN",
+    "POST_TARGET_TYPE",
+    "RECORD_ACTIONS",
     "RELEASE",
     "RELEASE_STATES",
+    "REVIEW_TARGET_TYPE",
+    "VERSION_ACTIONS",
+    "VERSION_TARGET",
+    "POST_TARGET",
+    "REVIEW_TARGET",
     "AUTHOR_NOTIFICATION_KIND",
     "DECISION_MADE_KIND",
     "DECISION_NOTIFICATION_KIND",
@@ -124,6 +163,7 @@ __all__ = [
     "handle_moderation_decision",
     "persist_entry",
     "require_known_clause",
+    "resolve_decision_target",
 ]
 
 #: The record type this module owns.
@@ -148,10 +188,22 @@ DECISION_MIN_TIER = int(Tier.MODERATOR)
 #: restoration to ``moderation`` is never written as an approval.
 RELEASE = "release"
 
+#: The action that settles a report without acting on the record: no state
+#: moves, no content is withdrawn, the flags on the target close.  The one
+#: action valid for *every* flaggable type.
+DISMISS = "dismiss"
+
+#: The state a ``dismiss`` reports (it is not a version state).
+DISMISSED = "dismissed"
+
+#: The action that withdraws a flagged post, annotation or review from public
+#: reads while its signed record stays in the log (see :mod:`.hides`).
+HIDE = "hide"
+
 #: The actions a ``moderation.decision`` may carry.  The record core's schema
 #: must list every one of them, or ingest refuses the record before this plugin
 #: sees it.
-ACTIONS = ("list", "hold", "reclassify", "reject", "delist", TOMBSTONE, RELEASE)
+ACTIONS = ("list", "hold", "reclassify", "reject", "delist", TOMBSTONE, RELEASE, DISMISS, HIDE)
 
 #: The states a ``release`` may name.  ``moderation`` is the one no other action
 #: can ask for; the others are what a decision itself can leave a version in.
@@ -191,6 +243,69 @@ DECIDABLE_STATES: frozenset[str] = frozenset(
         submissions.REJECTED,
     }
 )
+
+
+# --------------------------------------------------------------------------- #
+# What a decision may target
+# --------------------------------------------------------------------------- #
+
+#: The record types a decision may target besides a paper version: the two a
+#: flag may name and this node holds as signed records.  A thread post and an
+#: inline annotation are both ``discussion.post`` records; a review a member
+#: may flag is the *revealed* one (``review.formal``) -- the sealed
+#: ``review.commit`` is not public content.
+POST_TARGET_TYPE = "discussion.post"
+REVIEW_TARGET_TYPE = "review.formal"
+
+#: The kinds of target a decision may name, as :func:`resolve_decision_target`
+#: reports them.
+VERSION_TARGET = "version"
+POST_TARGET = "post"
+REVIEW_TARGET = "review"
+
+#: How each kind reads in a refusal, so a ``422`` says what was targeted
+#: rather than a bare "record".
+_KIND_WORDS = {
+    VERSION_TARGET: "a paper version",
+    POST_TARGET: "a discussion post or annotation",
+    REVIEW_TARGET: "a revealed review",
+}
+
+#: The actions each non-version target accepts.  A version keeps the paper
+#: actions (:data:`ACTIONS` minus the record ones, plus ``dismiss``).
+RECORD_ACTIONS: tuple[str, ...] = (DISMISS, HIDE)
+VERSION_ACTIONS: tuple[str, ...] = (
+    "list",
+    "hold",
+    "reclassify",
+    "reject",
+    "delist",
+    TOMBSTONE,
+    RELEASE,
+    DISMISS,
+)
+
+
+def resolve_decision_target(target: str) -> Optional[tuple[str, Any]]:
+    """What a decision's ``target`` names on this node: ``(kind, record)``.
+
+    ``kind`` is one of :data:`VERSION_TARGET`, :data:`POST_TARGET` and
+    :data:`REVIEW_TARGET`; ``record`` is what the kind lives in -- the
+    submissions row for a version, the ledger entry for a post or a review.
+    ``None`` when this node holds no flaggable record with that cid (a paper
+    and a file id remain the ``tombstone``-only targets :func:`resolve_scope`
+    takes).
+    """
+    version = submissions.get_version(target)
+    if version is not None:
+        return VERSION_TARGET, version
+    entry = ledger.entry_by_cid(target)
+    record_type = getattr(entry, "record_type", None)
+    if record_type == POST_TARGET_TYPE:
+        return POST_TARGET, entry
+    if record_type == REVIEW_TARGET_TYPE:
+        return REVIEW_TARGET, entry
+    return None
 
 
 def _invalid(loc: list[Any], message: str, error_type: str, value: Any = None) -> InvalidRecord:
@@ -452,14 +567,16 @@ def _requested_state(fields: DecisionFields, current: str) -> str:
 
 
 def handle_moderation_decision(record: Mapping[str, Any]) -> str:
-    """Validate a ``moderation.decision``; return the state its version will be in.
+    """Validate a ``moderation.decision``; return the state its target will be in.
 
     A ``tombstone`` reports ``"tombstoned"``: its target may be a file, which
-    has no version state.
+    has no version state.  A decision on a flagged record reports
+    ``"dismissed"``, or ``"hidden"`` for a ``hide`` (and ``"released"`` for the
+    release that restores one): a post or a review has no version state to name.
 
     Runs before the record is appended to the ledger, so a refusal stores
-    nothing and leaves the version alone.  Nothing is changed here either: the
-    state change and the ``moderation_decisions`` row are made by
+    nothing and leaves the target alone.  Nothing is changed here either: the
+    state change, the hiding and the ``moderation_decisions`` row are made by
     :func:`apply_decision` once the record is in the log.
     """
     fields = decision_fields(record)
@@ -483,20 +600,50 @@ def handle_moderation_decision(record: Mapping[str, Any]) -> str:
                 fields.reason_cid,
             )
 
+    resolved = resolve_decision_target(fields.target)
+    kind, target_record = (resolved if resolved is not None else (None, None))
+
     if fields.action == TOMBSTONE:
+        if kind in (POST_TARGET, REVIEW_TARGET):
+            # A legal takedown takes bytes down; a post or a review a flag
+            # named is withdrawn with a hide, which can be appealed.
+            raise DecisionActionInvalid(
+                fields.target, TOMBSTONE, _KIND_WORDS[kind], RECORD_ACTIONS
+            )
         resolve_scope(fields.target)  # refuses (422) a target it cannot take down
         return TOMBSTONED
 
-    version = submissions.get_version(fields.target)
-    if version is None:
+    if resolved is None:
         raise UnknownDecisionTarget(fields.target)
 
-    if fields.action == _RECLASSIFY and submissions.get_paper(version.paper_cid) is None:
-        # Categories live on the paper row; a version whose paper this node has
-        # not indexed has nothing to reclassify.
-        raise UnknownDecisionTarget(fields.target)
+    if kind == VERSION_TARGET:
+        version = target_record
+        if fields.action == DISMISS:
+            # A dismiss settles the flags and changes nothing about the
+            # version, so the consent-and-scan guard below does not apply: it
+            # protects a version a decision would *settle* behind its
+            # co-authors' backs, and this decision settles nothing.
+            return str(version.state)
+        if fields.action == HIDE:
+            # A version has its own actions for taking content out of view.
+            raise DecisionActionInvalid(fields.target, HIDE, _KIND_WORDS[kind], VERSION_ACTIONS)
+        if fields.action == _RECLASSIFY and submissions.get_paper(version.paper_cid) is None:
+            # Categories live on the paper row; a version whose paper this node has
+            # not indexed has nothing to reclassify.
+            raise UnknownDecisionTarget(fields.target)
+        return _requested_state(fields, str(version.state))
 
-    return _requested_state(fields, str(version.state))
+    # A flagged record: a post, an annotation or a revealed review.  It has no
+    # version state to move, so the paper actions say nothing true about it.
+    if fields.action == DISMISS:
+        return DISMISSED
+    if fields.action == HIDE:
+        return HIDDEN
+    if fields.action == RELEASE and get_hidden_entry(fields.target) is not None:
+        # The restoration of a hidden record (an overturned appeal): it removes
+        # the hiding, whatever state the record carries.
+        return "released"
+    raise DecisionActionInvalid(fields.target, fields.action, _KIND_WORDS[kind], RECORD_ACTIONS)
 
 
 # --------------------------------------------------------------------------- #
@@ -531,11 +678,43 @@ def get_decision(decision_cid: object) -> Optional[ModerationDecision]:
         return row
 
 
+def _review_signer(entry: Any) -> Optional[str]:
+    '''The DID behind a revealed review, when its reviewer took public credit.
+
+    A ``review.formal`` is signed by the pseudonymous per-paper review key, not
+    by a person.  The reviewer's DID is on the ``review`` row only when they
+    asked to sign the review with their name (``signed_by``); an anonymous
+    review has no author to notify, and ``None`` says exactly that.
+    '''
+    review_key = getattr(entry, "author_did", None)
+    if not isinstance(review_key, str) or not review_key:
+        return None
+    try:
+        from app.modules.reviews.models import Review
+    except Exception:  # pragma: no cover - reviews is a shipped plugin
+        return None
+    try:
+        with db.SessionLocal() as session:
+            row = (
+                session.query(Review)
+                .filter(Review.review_key == review_key)
+                .order_by(Review.committed_at, Review.review_cid)
+                .first()
+            )
+            signed_by = getattr(row, "signed_by", None) if row is not None else None
+            return signed_by if isinstance(signed_by, str) and signed_by else None
+    except Exception:  # pragma: no cover - a node without the reviews tables
+        logger.exception("could not read the reviewer behind %r", review_key)
+        return None
+
+
 def _submitting_author_dids(target: str) -> list[str]:
-    '''The submitting author DID(s) affected by a decision on ``target``.
+    '''The author DID(s) affected by a decision on ``target``.
 
     A version names one submitting author (its first byline entry); a paper
-    names one per version.  A bare file id has no author.
+    names one per version.  A flagged record names the member who signed it --
+    the post's author -- or, for a revealed review, the reviewer when they took
+    public credit.  A bare file id has no author.
     '''
     version = submissions.get_version(target)
     if version is not None:
@@ -567,6 +746,15 @@ def _submitting_author_dids(target: str) -> list[str]:
                 seen.add(did)
                 result.append(did)
         return result
+
+    entry = ledger.entry_by_cid(target)
+    record_type = getattr(entry, "record_type", None)
+    if record_type == POST_TARGET_TYPE:
+        did = getattr(entry, "author_did", None)
+        return [did] if isinstance(did, str) and did else []
+    if record_type == REVIEW_TARGET_TYPE:
+        signer = _review_signer(entry)
+        return [signer] if signer is not None else []
 
     return []
 
@@ -601,14 +789,14 @@ def _notify_submitting_author(fields: DecisionFields, reason_text: str) -> None:
 
 
 def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
-    """Act on the decision's version and save it to ``moderation_decisions``.
+    """Act on the decision's target and save it to ``moderation_decisions``.
 
     Idempotent per decision cid: a decision that already has its row was fully
     applied, and is returned as it is -- so the ledger subscriber and the
     endpoint may both call this for the same record without the second call
     undoing a later decision made in between.
 
-    The version is acted on first and the row written last, so a failure
+    The target is acted on first and the row written last, so a failure
     between the two is repaired by a retry rather than leaving a saved decision
     whose effect never happened.
 
@@ -617,6 +805,7 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
         UnknownDecisionTarget: the target is not a version (or, for a
             ``reclassify``, its paper is not indexed) on this node; for a
             ``tombstone``, not a paper, a version or a file id either.
+        DecisionActionInvalid: the action is not one the target's type takes.
         OSError: a ``tombstone`` could not delete a file's bytes.  Its cids are
             denylisted by then, and nothing is saved, so a retry finishes.
     """
@@ -636,7 +825,14 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
             actor=fields.moderator_did,
             reason=fields.reason,
         )
-    elif state is not None:
+    elif fields.action == DISMISS:
+        # A dismiss acts on nothing: it settles flags (the flags subscriber
+        # does that once this decision is saved) and notifies, and that is all.
+        pass
+    elif fields.action == HIDE:
+        # Withdraw the record from public reads; the signed record stays.
+        hide_target(fields.target, fields.decision_cid)
+    elif state is not None and submissions.get_version(fields.target) is not None:
         try:
             submissions.transition_version(
                 fields.target,
@@ -646,6 +842,13 @@ def apply_decision(record: Mapping[str, Any]) -> ModerationDecision:
             )
         except submissions.UnknownVersion as exc:
             raise UnknownDecisionTarget(fields.target) from exc
+    elif fields.action == RELEASE:
+        # The restoration of a hidden record (an overturned appeal): the row
+        # goes and the record reads as it did before.
+        if not unhide_target(fields.target):
+            raise UnknownDecisionTarget(
+                fields.target, "a hidden record a release can restore"
+            )
     else:
         _reclassify(fields)
 

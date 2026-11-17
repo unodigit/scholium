@@ -324,7 +324,10 @@ describe("appeals", () => {
 
     const card = within(await screen.findByRole("article", { name: "Sparse attention without the quadratic cost" }));
     expect(card.getByText("sch:k3f9-q2xz-7mwd/v1")).toBeTruthy();
-    expect(card.getByText(/Filed 4 May 2027 by did:key:z6MkAuthor/)).toBeTruthy();
+    // The appellant shows as their DID until a profile name resolves; the
+    // name and the DID are separate nodes (see person.tsx).
+    expect(card.getByText(/Filed 4 May 2027 by/)).toBeTruthy();
+    expect(card.getByText("did:key:z6MkAuthor")).toBeTruthy();
     expect(card.getByText("Reject the paper")).toBeTruthy();
     expect(card.getByRole("link", { name: "MOD-01" }).getAttribute("href")).toBe("/policies#MOD-01");
     expect(card.getByText("Out of scope.")).toBeTruthy();

@@ -35,10 +35,11 @@ import {
   classifyPaperError,
   loadDecisionClauses,
   shortenDid,
-  type ModeratedPaper,
-  type PaperFailure,
   type DecisionSigner,
   type DecisionSubmitter,
+  type ModeratedPaper,
+  type PaperAuthor,
+  type PaperFailure,
 } from "./decision";
 import { DecisionForm } from "./decision-form";
 import {
@@ -58,6 +59,7 @@ import {
   type ModeratedRecord,
 } from "./record";
 import type { LoadTargetFlags } from "./flags";
+import { PersonName, type LoadPersonName } from "./person";
 import { RecordDecisionForm } from "./record-decision-form";
 import { RecordFlags } from "./record-flags";
 import type { LoadPdfjs } from "../paper-page/pdf-render";
@@ -95,6 +97,8 @@ export interface ModDetailProps {
   loadFlags?: LoadTargetFlags;
   /** Replace the flag-target summary loader, for tests. */
   loadTarget?: LoadFlagTarget;
+  /** Replace how a person's profile name is read, for tests. */
+  loadPerson?: LoadPersonName;
   /** Replace the text loader, for tests or an alternate API client. */
   loadText?: LoadText;
   /** Replace the PDF finder, for tests or an alternate API client. */
@@ -130,6 +134,7 @@ export function ModDetail({
   loadClauses = loadDecisionClauses,
   loadFlags,
   loadTarget,
+  loadPerson,
   loadText,
   loadPdfFile,
   loadPdfjs,
@@ -206,7 +211,7 @@ export function ModDetail({
       {state.status === "ready" && state.item.kind === "paper" ? (
         <div className="mc-detail-grid">
           <div className="mc-detail-paper">
-            <PaperPane paper={state.item.paper} />
+            <PaperPane paper={state.item.paper} loadPerson={loadPerson} />
             <VersionContent
               paper={state.item.paper}
               loadText={loadText}
@@ -227,11 +232,12 @@ export function ModDetail({
       {state.status === "ready" && state.item.kind === "record" ? (
         <div className="mc-detail-grid">
           <div className="mc-detail-paper">
-            <RecordPane record={state.item.record} />
+            <RecordPane record={state.item.record} loadPerson={loadPerson} />
             <RecordFlags
               targetCid={state.item.record.cid}
               loadFlags={loadFlags}
               loadTarget={loadTarget}
+              loadPerson={loadPerson}
               refreshKey={flagsRefresh}
             />
           </div>
@@ -274,14 +280,21 @@ function DetailHeader({ versionCid }: { versionCid: string }) {
  * The version is waiting for moderation, so it is not in the public catalog.
  * This card is the signed metadata and abstract; the PDF and extracted text
  * follow it ({@link VersionContent}). The record link opens the envelope itself.
+ *
+ * An author the byline names is shown as named; one the byline carries as a
+ * bare DID is resolved through their public profile ({@link PersonName}), with
+ * the DID kept as secondary text.
  */
-export function PaperPane({ paper }: { paper: ModeratedPaper }) {
+export function PaperPane({
+  paper,
+  loadPerson,
+}: {
+  paper: ModeratedPaper;
+  /** Replace how an author's profile name is read, for tests. */
+  loadPerson?: LoadPersonName;
+}) {
   const titleId = useId();
   const abstractId = useId();
-  const authors =
-    paper.authors.length === 0
-      ? "Not listed"
-      : paper.authors.map((author) => author.name).join(", ");
   const categories =
     paper.categories.length === 0 ? "—" : paper.categories.join(", ");
   const version = paper.versionId ?? "—";
@@ -296,7 +309,9 @@ export function PaperPane({ paper }: { paper: ModeratedPaper }) {
       <dl className="mc-paper-facts">
         <div>
           <dt>Authors</dt>
-          <dd>{authors}</dd>
+          <dd>
+            <PaperAuthors authors={paper.authors} loadPerson={loadPerson} />
+          </dd>
         </div>
         <div>
           <dt>Categories</dt>
@@ -341,16 +356,67 @@ export function PaperPane({ paper }: { paper: ModeratedPaper }) {
 }
 
 /**
+ * The byline's authors: a named one as named, a bare DID through their profile.
+ *
+ * The signed record names an author as the submitter chose to (a name, a DID,
+ * or both); {@link parseVersionRecord} falls back to the DID when no name is
+ * in the record, which is exactly the author whose profile the node may still
+ * resolve — so that fallback, and only it, goes through {@link PersonName}.
+ */
+function PaperAuthors({
+  authors,
+  loadPerson,
+}: {
+  authors: readonly PaperAuthor[];
+  loadPerson?: LoadPersonName;
+}) {
+  if (authors.length === 0) {
+    return <>Not listed</>;
+  }
+  // A byline whose authors all carry a real name renders as a single text
+  // node, so callers can match it verbatim; a byline that falls back to a DID
+  // for at least one author resolves that DID through its profile instead.
+  const allNamed = authors.every(
+    (author) => author.did === "" || author.name !== shortenDid(author.did),
+  );
+  if (allNamed) {
+    return <>{authors.map((author) => author.name).join(", ")}</>;
+  }
+  return (
+    <>
+      {authors.map((author, index) => (
+        <span key={`${author.did}-${index}`}>
+          {index > 0 ? ", " : null}
+          {author.did !== "" && author.name === shortenDid(author.did) ? (
+            <PersonName did={author.did} loadName={loadPerson} />
+          ) : (
+            author.name
+          )}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
  * A flagged record that is not a paper version: a post, an annotation or a
  * review.
  *
- * The moderator sees what the reporter saw — the author's pseudonymous DID,
- * the text or quoted passage, and the paper the record belongs to, linked —
- * rather than an error. The record is public and signed, so its own window is
- * one click away. A record whose owning paper the node cannot resolve is
- * still shown; only the link is missing.
+ * The moderator sees what the reporter saw — the author (their profile name
+ * with the DID beside it when the node knows one), the text or quoted passage,
+ * and the paper the record belongs to, linked — rather than an error. The
+ * record is public and signed, so its own window is one click away. A record
+ * whose owning paper the node cannot resolve is still shown; only the link is
+ * missing.
  */
-export function RecordPane({ record }: { record: ModeratedRecord }) {
+export function RecordPane({
+  record,
+  loadPerson,
+}: {
+  record: ModeratedRecord;
+  /** Replace how the author's profile name is read, for tests. */
+  loadPerson?: LoadPersonName;
+}) {
   const titleId = useId();
   const textId = useId();
   const kind = recordKindLabel(record);
@@ -368,7 +434,11 @@ export function RecordPane({ record }: { record: ModeratedRecord }) {
         <div>
           <dt>Author</dt>
           <dd title={record.authorDid === "" ? undefined : record.authorDid}>
-            {record.authorDid === "" ? "Not listed" : shortenDid(record.authorDid)}
+            {record.authorDid === "" ? (
+              "Not listed"
+            ) : (
+              <PersonName did={record.authorDid} loadName={loadPerson} />
+            )}
           </dd>
         </div>
         <div>

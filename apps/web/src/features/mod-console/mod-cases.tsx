@@ -27,6 +27,7 @@ import {
 import { FlagsSection, type LoadFlag, type LoadFlags } from "./flags-section";
 import type { VoteCaster } from "./panel-vote";
 import type { LoadFlagTarget } from "./record";
+import type { LoadPersonName } from "./person";
 import "./mod-console.css";
 
 /** Props for {@link ModCases}. Everything is optional. */
@@ -42,6 +43,7 @@ export interface ModCasesProps {
   loadTarget?: LoadFlagTarget;
   loadAppeals?: LoadAppeals;
   castVote?: VoteCaster;
+  loadPerson?: LoadPersonName;
 }
 
 type Session = "unknown" | "in" | "out";
@@ -58,6 +60,7 @@ export function ModCases({
   loadTarget,
   loadAppeals,
   castVote,
+  loadPerson,
 }: ModCasesProps = {}) {
   const [session, setSession] = useState<Session>(() => pinnedSession(signedIn));
 
@@ -89,8 +92,9 @@ export function ModCases({
             loadFlags={loadFlags}
             loadFlag={loadFlag}
             loadTarget={loadTarget}
+            loadPerson={loadPerson}
           />
-          <AppealsSection loadAppeals={loadAppeals} castVote={castVote} />
+          <AppealsSection loadAppeals={loadAppeals} castVote={castVote} loadPerson={loadPerson} />
         </>
       )}
     </div>

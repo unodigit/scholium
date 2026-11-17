@@ -21,7 +21,7 @@ import {
   outcomeLabel,
   type AppealCase,
 } from "./appeals";
-import { shortenDid } from "./decision";
+import { PersonName, type LoadPersonName } from "./person";
 import type { VoteCaster } from "./panel-vote";
 import { modDetailHref, type Signal } from "./queue";
 import { SignalCell } from "./queue-table";
@@ -40,10 +40,12 @@ export interface AppealCardProps {
   appeal: AppealCase;
   /** Injectable vote sender, passed to the form. */
   castVote?: VoteCaster;
+  /** Reads the appellant's profile name; replaceable in tests. */
+  loadPerson?: LoadPersonName;
 }
 
 /** The appeal as a card. */
-export function AppealCard({ appeal, castVote }: AppealCardProps) {
+export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
   const [decidedNow, setDecidedNow] = useState(false);
   const open = isAppealOpen(appeal) && !decidedNow;
   const filed = formatDate(appeal.filedAt);
@@ -63,9 +65,10 @@ export function AppealCard({ appeal, castVote }: AppealCardProps) {
             ) : null}
             {appeal.paper?.versionId && filed !== null ? " · " : null}
             {filed !== null ? `Filed ${filed}` : null}
-            {appeal.appellantDid !== ""
-              ? ` by ${shortenDid(appeal.appellantDid)}`
-              : null}
+            {appeal.appellantDid !== "" ? " by " : null}
+            {appeal.appellantDid !== "" ? (
+              <PersonName did={appeal.appellantDid} loadName={loadPerson} />
+            ) : null}
           </p>
         </div>
         <SignalCell signal={appealSignal(open)} />

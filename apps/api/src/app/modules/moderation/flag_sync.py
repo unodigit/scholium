@@ -8,8 +8,9 @@ stops being moderators' open work the moment someone has ruled on it.
 
 Which flags a decision settles
 ------------------------------
-* flags filed against the decision's ``target`` -- a version, or, for a
-  ``tombstone``, a paper or a file id;
+* flags filed against the decision's ``target`` -- a version, a flagged
+  record (a post, an annotation, a revealed review), or, for a ``tombstone``,
+  a paper or a file id;
 * for a decision on a **version**, flags filed against that version's
   **paper**: a reader flags "the paper" while a moderator holds one of its
   versions, and that decision is the answer to the report.

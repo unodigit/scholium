@@ -397,6 +397,12 @@
   overflow-wrap: anywhere;
 }
 
+/* A person's DID beside their name (see person.tsx): secondary, still the
+   identifier the signed record names. */
+.mc-person-did {
+  color: var(--ink-2);
+}
+
 .mc-paper-abstract {
   margin-top: calc(var(--space-unit) * 4);
   padding-top: calc(var(--space-unit) * 4);

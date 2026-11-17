@@ -5,18 +5,19 @@
  *
  * A flag can name a discussion post, an inline annotation or a review. Those
  * records have no version state to move, so the paper form's `list`/`hold`/
- * `reclassify`/`reject`/`delist` choices would say nothing useful about them.
- * This form offers the three decisions that do:
+ * `reclassify`/`reject`/`delist` choices say nothing true about them — the API
+ * refuses each with a 422 that names the actions the record does accept. This
+ * form offers exactly those two:
  *
- * - **dismiss the flag** (`list`) — the record stays as it is and the flag is
- *   settled;
- * - **hide the record** (`delist`) — it leaves the discussion listing;
- * - **legal takedown** (`tombstone`) — its content may not be served again.
+ * - **dismiss the flag** (`dismiss`) — the record stays as it is, the flag is
+ *   settled and its reporter hears the outcome;
+ * - **hide the record** (`hide`) — the signed record stays in the log but its
+ *   body is withheld from public reads with a "hidden by moderation"
+ *   placeholder and the reason, reversible on appeal.
  *
- * The three are actions the API's `moderation.decision` schema already
- * defines, and every decision is signed on the moderator's device and posted
- * to the same `POST /v1/moderation/decisions` the paper form uses, so the
- * record it produces is the same public signed record.
+ * Every decision is signed on the moderator's device and posted to the same
+ * `POST /v1/moderation/decisions` the paper form uses, so the record it
+ * produces is the same public signed record.
  *
  * The required fields are the same as the paper form's: an action, a policy
  * clause from `GET /v1/moderation/policies`, and a reason. Signing needs the
@@ -30,6 +31,7 @@ import { policyHref, type PolicyClause } from "../policies-page";
 import { Icon, RecordLink } from "../ui-kit";
 import {
   PUBLIC_RECORD_NOTICE,
+  RECORD_DECISION_ACTIONS,
   buildDecisionBody,
   describeDecisionError,
   signModerationDecision,
@@ -39,7 +41,6 @@ import {
   type DecisionDraft,
   type DecisionSigner,
   type DecisionSubmitter,
-  type DecisionAction,
 } from "./decision";
 import { MOD_PATH } from "./queue";
 import {
@@ -48,12 +49,6 @@ import {
   type ModeratedRecord,
 } from "./record";
 import "./mod-console.css";
-
-/**
- * The actions a flagged record can be decided with, in form order:
- * dismiss (`list`), hide (`delist`) and the legal takedown (`tombstone`).
- */
-export const RECORD_DECISION_ACTIONS = ["list", "delist", "tombstone"] as const;
 
 /** One decision this form can sign for a non-paper record. */
 export type RecordDecisionAction = (typeof RECORD_DECISION_ACTIONS)[number];
@@ -65,12 +60,10 @@ export function recordActionLabel(
 ): string {
   const noun = recordNoun(record);
   switch (action) {
-    case "list":
+    case "dismiss":
       return `Dismiss the flag (leave the ${noun} as it is)`;
-    case "delist":
-      return `Hide the ${noun} from the discussion`;
-    case "tombstone":
-      return `Legal takedown (tombstone) of the ${noun}`;
+    case "hide":
+      return `Hide the ${noun} from public reads`;
   }
 }
 
@@ -81,12 +74,10 @@ export function recordOutcome(
 ): string | null {
   const noun = recordNoun(record);
   switch (action) {
-    case "list":
+    case "dismiss":
       return `The ${noun} stays as it is, and the flag is settled.`;
-    case "delist":
-      return `The ${noun} is hidden from the discussion, and the flag is settled.`;
-    case "tombstone":
-      return `The ${noun}'s content is removed from this node for legal reasons, and the flag is settled.`;
+    case "hide":
+      return `The ${noun} is hidden from public reads with the reason below, and the flag is settled.`;
     default:
       return null;
   }
@@ -151,7 +142,7 @@ export function RecordDecisionForm({
     if (busy || phase === "published") return;
 
     const draft: DecisionDraft = {
-      action: action as DecisionAction | "",
+      action,
       clause,
       reason,
       category: "",
@@ -312,15 +303,6 @@ export function RecordDecisionForm({
           This text is published with the decision, and the person who reported
           the record sees the flag&rsquo;s outcome.
         </p>
-        {action === "tombstone" ? (
-          <p className="mc-takedown-warning">
-            <Icon name="alert" className="mc-form-error-icon" />
-            <span>
-              A takedown makes the record&rsquo;s content unavailable from this
-              node. The signed records stay. This cannot be undone.
-            </span>
-          </p>
-        ) : null}
         {errors.reason !== undefined ? (
           <FieldError id={`${reasonId}-error`} message={errors.reason} />
         ) : null}

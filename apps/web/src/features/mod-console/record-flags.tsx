@@ -24,6 +24,7 @@ import {
   type LoadTargetFlags,
 } from "./flags";
 import { FlagCard } from "./flags-section";
+import type { LoadPersonName } from "./person";
 import type { LoadFlagTarget } from "./record";
 import "./mod-console.css";
 
@@ -34,6 +35,8 @@ export interface RecordFlagsProps {
   loadFlags?: LoadTargetFlags;
   /** Reads what each flag is about; replaceable in tests. */
   loadTarget?: LoadFlagTarget;
+  /** Reads a reporter's profile name; replaceable in tests. */
+  loadPerson?: LoadPersonName;
   /** Bump to reload the list, e.g. after a decision was published. */
   refreshKey?: number;
 }
@@ -48,6 +51,7 @@ export function RecordFlags({
   targetCid,
   loadFlags,
   loadTarget,
+  loadPerson,
   refreshKey = 0,
 }: RecordFlagsProps) {
   const [state, setState] = useState<FlagsState>({ status: "loading" });
@@ -102,7 +106,7 @@ export function RecordFlags({
           <ul className="mc-case-list" aria-label="Flags against this record">
             {state.flags.map((flag) => (
               <li key={flag.id}>
-                <FlagCard flag={flag} loadTarget={loadTarget} />
+                <FlagCard flag={flag} loadTarget={loadTarget} loadPerson={loadPerson} />
               </li>
             ))}
           </ul>

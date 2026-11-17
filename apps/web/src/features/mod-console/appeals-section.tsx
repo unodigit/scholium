@@ -15,6 +15,7 @@ import { useCallback, useEffect, useId, useState } from "react";
 
 import { EmptyState } from "../ui-kit/empty-state";
 import { AppealCard } from "./appeal-card";
+import type { LoadPersonName } from "./person";
 import {
   describeAppealsError,
   isAppealOpen,
@@ -33,6 +34,8 @@ export interface AppealsSectionProps {
   loadAppeals?: LoadAppeals;
   /** Replace the vote sender, for tests. */
   castVote?: VoteCaster;
+  /** Reads an appellant's profile name; replaceable in tests. */
+  loadPerson?: LoadPersonName;
 }
 
 type SectionState =
@@ -44,6 +47,7 @@ type SectionState =
 export function AppealsSection({
   loadAppeals,
   castVote,
+  loadPerson,
 }: AppealsSectionProps = {}) {
   const [state, setState] = useState<SectionState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -114,6 +118,7 @@ export function AppealsSection({
           refreshing={state.refreshing}
           onRefresh={reload}
           castVote={castVote}
+          loadPerson={loadPerson}
         />
       ) : null}
     </section>
@@ -125,11 +130,13 @@ function AppealsList({
   refreshing,
   onRefresh,
   castVote,
+  loadPerson,
 }: {
   load: AppealsLoad;
   refreshing: boolean;
   onRefresh: () => void;
   castVote: VoteCaster | undefined;
+  loadPerson?: LoadPersonName;
 }) {
   const { cases, truncated } = load;
 
@@ -171,7 +178,7 @@ function AppealsList({
       <ul className="mc-case-list" aria-label="Appeals">
         {cases.map((appeal) => (
           <li key={appeal.appealCid}>
-            <AppealCard appeal={appeal} castVote={castVote} />
+            <AppealCard appeal={appeal} castVote={castVote} loadPerson={loadPerson} />
           </li>
         ))}
       </ul>

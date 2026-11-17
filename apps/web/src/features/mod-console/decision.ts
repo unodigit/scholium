@@ -75,11 +75,29 @@ export const TOMBSTONE_ACTION = "tombstone" as const;
 /** The trust tier that may issue a tombstone (`Tier.MODERATOR` in the API). */
 export const TOMBSTONE_MIN_TIER = 4;
 
+/**
+ * The actions that decide a *flagged record* — a discussion post, an inline
+ * annotation or a revealed review — rather than a paper version. A record has
+ * no version state to move, so the paper's `list`/`hold`/… say nothing true
+ * about it and the API refuses them:
+ *
+ * - `dismiss` settles the flag and leaves the record as it is;
+ * - `hide` withdraws the record from public reads with a "hidden by
+ *   moderation" placeholder and the reason, reversible on appeal.
+ */
+export const RECORD_DECISION_ACTIONS = ["dismiss", "hide"] as const;
+
+/** One of the two actions a flagged record accepts. */
+export type RecordDecisionAction = (typeof RECORD_DECISION_ACTIONS)[number];
+
 /** One of the five actions any moderator may choose. */
 export type StandardAction = (typeof DECISION_ACTIONS)[number];
 
 /** One action of a `moderation.decision` this form can sign. */
-export type DecisionAction = StandardAction | typeof TOMBSTONE_ACTION;
+export type DecisionAction =
+  | StandardAction
+  | typeof TOMBSTONE_ACTION
+  | RecordDecisionAction;
 
 /** How each of the five standard actions reads to a moderator. */
 export const DECISION_ACTION_LABELS: Readonly<Record<StandardAction, string>> =
@@ -94,11 +112,23 @@ export const DECISION_ACTION_LABELS: Readonly<Record<StandardAction, string>> =
 /** How the legal takedown reads to a moderator. */
 export const TOMBSTONE_LABEL = "Legal takedown (tombstone)";
 
+/** How each of the two record actions reads to a moderator. */
+export const RECORD_DECISION_ACTION_LABELS: Readonly<
+  Record<RecordDecisionAction, string>
+> = {
+  dismiss: "Dismiss the flag",
+  hide: "Hide from public reads",
+};
+
 /** How any action the form can sign reads to a moderator. */
 export function actionOptionLabel(action: DecisionAction): string {
-  return action === TOMBSTONE_ACTION
-    ? TOMBSTONE_LABEL
-    : DECISION_ACTION_LABELS[action];
+  if (action === TOMBSTONE_ACTION) {
+    return TOMBSTONE_LABEL;
+  }
+  if (isRecordDecisionAction(action)) {
+    return RECORD_DECISION_ACTION_LABELS[action];
+  }
+  return DECISION_ACTION_LABELS[action];
 }
 
 /** True when `value` is one of the five standard actions. */
@@ -109,9 +139,23 @@ export function isDecisionAction(value: unknown): value is StandardAction {
   );
 }
 
+/** True when `value` is one of the two actions a flagged record accepts. */
+export function isRecordDecisionAction(
+  value: unknown,
+): value is RecordDecisionAction {
+  return (
+    typeof value === "string" &&
+    (RECORD_DECISION_ACTIONS as readonly string[]).includes(value)
+  );
+}
+
 /** True when `value` is an action this form can sign: a standard one or the tombstone. */
 export function isSignableAction(value: unknown): value is DecisionAction {
-  return value === TOMBSTONE_ACTION || isDecisionAction(value);
+  return (
+    value === TOMBSTONE_ACTION ||
+    isRecordDecisionAction(value) ||
+    isDecisionAction(value)
+  );
 }
 
 /**
@@ -527,6 +571,12 @@ export function authorPreview(
     case "tombstone":
       headline =
         "Your paper's files have been removed for legal reasons, and the paper is no longer listed.";
+      break;
+    case "dismiss":
+      headline = "The report was dismissed; nothing changes.";
+      break;
+    case "hide":
+      headline = "The flagged record is hidden from public reads.";
       break;
   }
 

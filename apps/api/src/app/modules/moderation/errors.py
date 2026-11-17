@@ -13,9 +13,11 @@ from typing import Any
 from app.errors import ProblemException
 
 __all__ = [
+    "DECISION_ACTION_INVALID",
     "DECISION_NOT_ALLOWED",
     "UNKNOWN_DECISION_TARGET",
     "UNKNOWN_POLICY_CLAUSE",
+    "DecisionActionInvalid",
     "DecisionNotAllowed",
     "UnknownDecisionTarget",
     "UnknownPolicyClause",
@@ -24,6 +26,7 @@ __all__ = [
 UNKNOWN_POLICY_CLAUSE = "urn:scholium:problem:unknown-policy-clause"
 UNKNOWN_DECISION_TARGET = "urn:scholium:problem:unknown-decision-target"
 DECISION_NOT_ALLOWED = "urn:scholium:problem:decision-not-allowed"
+DECISION_ACTION_INVALID = "urn:scholium:problem:decision-action-invalid"
 
 _MAX_ECHO = 64
 
@@ -86,6 +89,39 @@ class UnknownDecisionTarget(ProblemException, LookupError):
                     "loc": ["body", "target"],
                     "msg": message,
                     "type": "unknown_decision_target",
+                    "input": shown,
+                }
+            ],
+        )
+
+
+class DecisionActionInvalid(ProblemException, ValueError):
+    """An action the target's type cannot take: ``422``.
+
+    A decision on a paper version may ``list``/``hold``/... it; a decision on a
+    flagged post, annotation or review may only ``dismiss`` it or ``hide`` it.
+    The message names the actions the target *does* accept, so a moderator (or
+    a console) is told what to send instead of guessing.
+    """
+
+    def __init__(self, target: object, action: object, kind: str, valid: tuple[str, ...] | list[str]) -> None:
+        self.target = target
+        self.action = action
+        self.target_kind = kind
+        shown = _clip(action if isinstance(action, str) else repr(action))
+        message = (
+            f"Action {shown!r} is not a decision a moderator can make about {kind}; "
+            f"the actions this target accepts are: {', '.join(valid)}."
+        )
+        super().__init__(
+            422,
+            message,
+            type=DECISION_ACTION_INVALID,
+            errors=[
+                {
+                    "loc": ["body", "action"],
+                    "msg": message,
+                    "type": "decision_action_invalid",
                     "input": shown,
                 }
             ],
