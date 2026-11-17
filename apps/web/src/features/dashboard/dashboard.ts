@@ -505,9 +505,10 @@ export function notificationReadEndpoint(id: number): string {
 /**
  * Fired on `window` after a notification is marked read, so the global nav can
  * lower its bell count without asking the API again.
- * `detail.unread` is how many rows are still unread.
+ * `detail.unread` is how many rows are still unread. Defined with the nav
+ * (which listens) and re-exported here for the code that dispatches it.
  */
-export const NOTIFICATIONS_CHANGED_EVENT = "scholium:notifications-changed";
+export { NOTIFICATIONS_CHANGED_EVENT } from "../../components/nav/notifications";
 
 /** One row of `GET /v1/me/notifications` (`NotificationOut`). */
 export interface NotificationItem {

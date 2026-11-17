@@ -25,6 +25,10 @@ export {
   type NavCategory,
 } from "./categories";
 
-export { countUnread, type NavNotification } from "./notifications";
+export {
+  NOTIFICATIONS_CHANGED_EVENT,
+  countUnread,
+  type NavNotification,
+} from "./notifications";
 
 export { useSignedIn } from "./session";

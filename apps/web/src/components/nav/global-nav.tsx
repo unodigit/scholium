@@ -48,7 +48,7 @@ import {
   SearchIcon,
   SignOutIcon,
 } from "./icons";
-import { countUnread } from "./notifications";
+import { countUnread, NOTIFICATIONS_CHANGED_EVENT } from "./notifications";
 import { useSignedIn, useSignOut } from "./session";
 import "./nav.css";
 
@@ -78,6 +78,38 @@ function isInside(pathname: string | null, prefix: string): boolean {
     return false;
   }
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+/**
+ * The `q` already in the address bar, and a setter for edits.
+ *
+ * `useSearchParams()` is not used here on purpose: this nav is mounted by
+ * several route-group layouts, and a static page that calls it needs a
+ * Suspense boundary it does not otherwise have. Reading `location.search`
+ * after mount keeps the server HTML and the first client render identical,
+ * and a `popstate` listener (plus the pathname in the effect's deps) makes the
+ * field follow back/forward and route changes. Before mount the field is
+ * empty, exactly as the server rendered it.
+ */
+function useSearchQuery(): [string, (value: string) => void] {
+  const pathname = usePathname();
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const read = (): void => {
+      setQuery(new URLSearchParams(window.location.search).get("q") ?? "");
+    };
+    read();
+    window.addEventListener("popstate", read);
+    return () => {
+      window.removeEventListener("popstate", read);
+    };
+  }, [pathname]);
+
+  return [query, setQuery];
 }
 
 /** The current URL hash, client-side only ("" on the server and first paint). */
@@ -157,6 +189,25 @@ export function GlobalNav({
     };
   }, [unreadCount, effectiveSignedIn, load]);
 
+  // The notifications card marks rows read; this is how the bell hears about
+  // it. `detail.unread` is authoritative, so rapid marks do not race the badge.
+  useEffect(() => {
+    if (unreadCount !== undefined) {
+      return;
+    }
+    const onChanged = (event: Event): void => {
+      const unreadNow = (event as CustomEvent<{ unread?: unknown }>).detail
+        ?.unread;
+      if (typeof unreadNow === "number" && Number.isFinite(unreadNow)) {
+        setFetchedUnread(Math.max(0, Math.trunc(unreadNow)));
+      }
+    };
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
+    };
+  }, [unreadCount]);
+
   const unread = unreadCount ?? fetchedUnread ?? 0;
 
   return (
@@ -207,12 +258,12 @@ function DesktopHeader({
   onSignOut: () => void;
 }) {
   const router = useRouter();
+  const [query, setQuery] = useSearchQuery();
 
   // Soft-navigate on submit; the `action` keeps the form working without JS.
   const onSearchSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    const value = new FormData(event.currentTarget).get("q");
-    const q = typeof value === "string" ? value.trim() : "";
+    const q = query.trim();
     router.push(q ? `/search?q=${encodeURIComponent(q)}` : "/search");
   };
 
@@ -239,6 +290,8 @@ function DesktopHeader({
           className="gn-search-input"
           type="search"
           name="q"
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
           placeholder={searchPlaceholder}
           aria-label={SEARCH_LABEL}
         />

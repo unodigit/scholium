@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { tokenStore } from "../../lib/api";
 
 import { EndorseSection } from "./endorse-button";
+import { FollowToggle } from "./follow-toggle";
 import {
   PROFILE_TITLE,
   describeProfileError,
@@ -34,6 +35,12 @@ export interface ProfilePageProps {
   loader?: LoadProfile;
   /** Replace the sign-and-post call behind the Endorse action, for tests. */
   endorse?: (endorseeDid: string, category: string) => Promise<EndorseResult>;
+  /** Replace the follow call behind the Follow toggle, for tests. */
+  follow?: (subject: string) => Promise<void>;
+  /** Replace the unfollow call behind the Follow toggle, for tests. */
+  unfollow?: (subject: string) => Promise<void>;
+  /** Replace the read of what the viewer already follows, for tests. */
+  loadFollowing?: () => Promise<readonly string[]>;
   /** Pin the sign-in state. */
   signedIn?: boolean;
 }
@@ -142,7 +149,15 @@ export function ProfilePage(props: ProfilePageProps = {}) {
       ) : null}
 
       {state.status === "ready" ? (
-        <ProfileView profile={state.profile} endorse={props.endorse} onEndorsed={refresh} />
+        <ProfileView
+          profile={state.profile}
+          endorse={props.endorse}
+          follow={props.follow}
+          unfollow={props.unfollow}
+          loadFollowing={props.loadFollowing}
+          signedIn={props.signedIn}
+          onEndorsed={refresh}
+        />
       ) : null}
     </div>
   );
@@ -168,11 +183,21 @@ function ProfileHeader({ did }: { did: string }) {
 function ProfileView({
   profile,
   endorse,
+  follow,
+  unfollow,
+  loadFollowing,
+  signedIn,
   onEndorsed,
 }: {
   profile: ProfileData;
   /** Passed through to the Endorse actions, for tests. */
   endorse?: (endorseeDid: string, category: string) => Promise<EndorseResult>;
+  /** Passed through to the Follow toggle, for tests. */
+  follow?: (subject: string) => Promise<void>;
+  unfollow?: (subject: string) => Promise<void>;
+  loadFollowing?: () => Promise<readonly string[]>;
+  /** Pin the Follow toggle's sign-in state. */
+  signedIn?: boolean;
   /** Called after an accepted endorsement, so the tier shown is refreshed. */
   onEndorsed?: () => void;
 }) {
@@ -210,6 +235,17 @@ function ProfileView({
             </div>
           ) : null}
         </dl>
+
+        {/* Follow this person, so their new work reaches the Following feed
+            and their name appears on /me's Follows card. */}
+        <FollowToggle
+          category={profile.did}
+          label={profile.name ?? "this member"}
+          follow={follow}
+          unfollow={unfollow}
+          loadFollowing={loadFollowing}
+          signedIn={signedIn}
+        />
 
         {/* ID-5: endorse this researcher, offered from the viewer's own
             standing (see ./endorse-button). Hidden for everyone else. */}

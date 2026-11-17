@@ -28,9 +28,144 @@ export function followEndpoint(category: string): string {
   return `${FOLLOWS_ENDPOINT}/${encodeURIComponent(category.trim())}`;
 }
 
-/** Sign-in, returning to the category page afterwards. */
-export function followSigninHref(category: string): string {
-  return `/signin?next=${encodeURIComponent(`/c/${category.trim()}`)}`;
+/** What a follow addresses. */
+export type FollowKind = "category" | "paper" | "person";
+
+/**
+ * The kind of subject a follow id names.
+ *
+ * The follows table stores whatever the Follow control sent: a category
+ * (`cs.AI`), a paper (`sch:…`) or a member (`did:…`). The id itself says
+ * which, so every screen that reads the list back can link each entry to the
+ * page that shows it instead of treating them all as categories.
+ */
+export function followKind(subject: string): FollowKind {
+  const id = subject.trim();
+  if (/^sch:/i.test(id)) {
+    return "paper";
+  }
+  if (/^did:/i.test(id)) {
+    return "person";
+  }
+  return "category";
+}
+
+/**
+ * The page that shows the followed subject: `/c/{id}`, `/p/{id}` or `/u/{did}`.
+ *
+ * A paper link drops the `sch:` prefix, exactly as the paper page's URL does
+ * (docs/design.md §4); a person link keeps the DID whole and percent-encodes
+ * its colons.
+ */
+export function followHref(subject: string): string {
+  const id = subject.trim();
+  switch (followKind(id)) {
+    case "paper":
+      return `/p/${encodeURIComponent(id.replace(/^sch:/i, ""))}`;
+    case "person":
+      return `/u/${encodeURIComponent(id)}`;
+    default:
+      return `/c/${encodeURIComponent(id)}`;
+  }
+}
+
+/** Sign-in, returning to the followed subject's page afterwards. */
+export function followSigninHref(subject: string): string {
+  return `/signin?next=${encodeURIComponent(followHref(subject))}`;
+}
+
+/** One entry of the reader's follows, ready to render as a link. */
+export interface FollowedSubject {
+  /** The stored follow: a category id, `sch:…` or `did:…`. */
+  readonly id: string;
+  readonly kind: FollowKind;
+  /** What the link says: the category, the paper's title, the person's name. */
+  readonly label: string;
+  /** Where the link goes. */
+  readonly href: string;
+}
+
+function readText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+/** A paper's title, or `null` when it cannot be read. */
+async function loadPaperTitle(
+  paperId: string,
+  client: Pick<ApiClient, "get">,
+): Promise<string | null> {
+  try {
+    const payload = await client.get<unknown>(
+      `/papers/${encodeURIComponent(paperId)}`,
+      { cache: "no-store" },
+    );
+    return isRecord(payload) ? readText(payload.title) : null;
+  } catch {
+    // An unlisted or removed paper still belongs in the list; it just has no
+    // title to show, so the short id stands in.
+    return null;
+  }
+}
+
+/** A member's profile name, or `null` when there is none to read. */
+async function loadPersonName(
+  did: string,
+  client: Pick<ApiClient, "get">,
+): Promise<string | null> {
+  try {
+    const payload = await client.get<unknown>(
+      `/profiles/${encodeURIComponent(did)}`,
+      { auth: false, cache: "no-store" },
+    );
+    if (!isRecord(payload) || payload.erased === true) {
+      return null;
+    }
+    return readText(payload.name) ?? readText(payload.display_name) ?? readText(payload.displayName);
+  } catch {
+    return null;
+  }
+}
+
+/** Turn a stored follow into a link, with the best label the caller has. */
+export function describeFollow(
+  subject: string,
+  label: string | null = null,
+): FollowedSubject {
+  const id = subject.trim();
+  const kind = followKind(id);
+  const fallback = kind === "paper" ? id.replace(/^sch:/i, "") : id;
+  return {
+    id,
+    kind,
+    label: label?.trim() || fallback,
+    href: followHref(id),
+  };
+}
+
+/**
+ * The reader's follows, each labelled by what it names.
+ *
+ * Papers are read from the catalog for their title and people from their
+ * public profile for their name; both reads are best-effort, so one paper
+ * that is no longer listed never hides the rest of the list. Categories
+ * are their own label.
+ */
+export async function loadFollowedSubjects(
+  client: Pick<ApiClient, "get"> = api,
+): Promise<FollowedSubject[]> {
+  const subjects = await loadFollowedCategories(client);
+  return Promise.all(
+    subjects.map(async (subject) => {
+      const kind = followKind(subject);
+      if (kind === "paper") {
+        return describeFollow(subject, await loadPaperTitle(subject, client));
+      }
+      if (kind === "person") {
+        return describeFollow(subject, await loadPersonName(subject, client));
+      }
+      return describeFollow(subject);
+    }),
+  );
 }
 
 /** What the follow calls need from the API client. */

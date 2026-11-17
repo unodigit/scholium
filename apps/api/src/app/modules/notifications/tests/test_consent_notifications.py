@@ -193,13 +193,31 @@ def test_a_direct_event_for_another_state_is_ignored():
     assert consent_rows(version_cid) == []
 
 
-def test_reentering_awaiting_consent_notifies_again():
+def test_reentering_awaiting_consent_does_not_duplicate_an_unread_request():
     alice, bob = new_did(), new_did()
     version_cid, _ = save_a_version([alice, bob])
     assert len(consent_rows(version_cid)) == 2
 
     # A decline returns the version to draft; a later edit sends it back to
-    # consent, which is a new round of signatures.
+    # consent. While the authors have not read the first requests, the second
+    # round asks them the same thing, so it adds no duplicate unread rows.
+    transition_version(version_cid, "draft")
+    transition_version(version_cid, "awaiting_consent")
+
+    assert [did for did, _ in consent_rows(version_cid)] == [alice, bob]
+
+    # Once they have read the requests, a later round is a fresh announcement.
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Notification)
+            .filter(Notification.kind == CONSENT_REQUEST_KIND)
+            .all()
+        )
+        for row in rows:
+            if isinstance(row.payload, dict) and row.payload.get("version_cid") == version_cid:
+                row.read = True
+        session.commit()
+
     transition_version(version_cid, "draft")
     transition_version(version_cid, "awaiting_consent")
 

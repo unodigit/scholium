@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, NetworkError, tokenStore } from "../../lib/api";
 
 import { FollowToggle, FollowedCategoriesCard } from "./follow-toggle";
+import type { FollowedSubject } from "./follows";
 
 afterEach(() => {
   cleanup();
@@ -167,6 +168,34 @@ describe("FollowedCategoriesCard on /me", () => {
     expect(
       screen.getByRole("link", { name: "cs.LG" }).getAttribute("href"),
     ).toBe("/c/cs.LG");
+  });
+
+  it("links a followed paper to /p/ and a followed person to /u/, by title and name", async () => {
+    const subjects: FollowedSubject[] = [
+      {
+        id: "sch:z7im-izv3-lom6",
+        kind: "paper",
+        label: "Pulsar timing",
+        href: "/p/z7im-izv3-lom6",
+      },
+      {
+        id: "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+        kind: "person",
+        label: "Ada Lovelace",
+        href: "/u/did%3Akey%3Az6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+      },
+    ];
+    render(
+      <FollowedCategoriesCard
+        signedIn
+        loadFollows={vi.fn().mockResolvedValue(subjects)}
+      />,
+    );
+
+    const paper = await screen.findByRole("link", { name: "Pulsar timing" });
+    expect(paper.getAttribute("href")).toBe("/p/z7im-izv3-lom6");
+    const person = screen.getByRole("link", { name: "Ada Lovelace" });
+    expect(person.getAttribute("href")).toBe(subjects[1]!.href);
   });
 
   it("says how to follow when the reader follows none", async () => {

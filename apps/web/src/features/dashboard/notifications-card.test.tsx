@@ -87,6 +87,21 @@ describe("NotificationsCard: what it shows", () => {
     expect(within(third).getByRole("link", { name: /open/i }).getAttribute("href")).toBe("/consent/bafy-version-1");
   });
 
+  it("renders the kind label once, and names each action with it", async () => {
+    render(<NotificationsCard signedIn loadNotifications={loaderOf(CONSENT)} />);
+    const item = (await screen.findAllByRole("listitem"))[0]!;
+
+    // One visible chip; the label is not repeated in the row's text.
+    expect(within(item).getAllByText("Consent request")).toHaveLength(1);
+    // The bare action words are disambiguated for assistive tech.
+    expect(
+      within(item).getByRole("link", { name: "Open consent request" }),
+    ).toBeTruthy();
+    expect(
+      within(item).getByRole("button", { name: "Mark as read consent request" }),
+    ).toBeTruthy();
+  });
+
   it("marks unread rows with the word Unread, never colour alone, and leaves read rows plain", async () => {
     render(<NotificationsCard signedIn loadNotifications={loaderOf(CONSENT, MODERATION)} />);
     await screen.findAllByRole("listitem");

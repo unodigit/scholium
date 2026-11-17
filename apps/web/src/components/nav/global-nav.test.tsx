@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -12,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tokenStore } from "../../lib/api";
 import { DEFAULT_CATEGORIES } from "./categories";
 import { GlobalNav, NavTabBarSpacer } from "./global-nav";
+import { NOTIFICATIONS_CHANGED_EVENT } from "./notifications";
 
 /* ---------------------------------------------------------------------------
    Next.js plumbing. Both hooks are read during render, so they are mocked at
@@ -46,7 +48,7 @@ beforeEach(() => {
   replace.mockReset();
   pathnameValue = "/";
   window.localStorage.clear();
-  window.location.hash = "";
+  window.history.replaceState(null, "", "/");
 });
 
 afterEach(() => {
@@ -125,6 +127,33 @@ describe("GlobalNav search field", () => {
     fireEvent.submit(form);
 
     expect(push).toHaveBeenCalledWith("/search");
+  });
+
+  it("shows the query already in the address bar on /search?q=…", async () => {
+    window.history.replaceState(null, "", "/search?q=reward+models");
+    pathnameValue = "/search";
+
+    render(<GlobalNav />);
+
+    const input = within(screen.getByRole("search")).getByLabelText(
+      /Search papers/,
+    ) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("reward models"));
+  });
+
+  it("adopts a back/forward change to the query without a remount", async () => {
+    render(<GlobalNav />);
+    const input = within(screen.getByRole("search")).getByLabelText(
+      /Search papers/,
+    ) as HTMLInputElement;
+    expect(input.value).toBe("");
+
+    window.history.replaceState(null, "", "/search?q=pulsars");
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    await waitFor(() => expect(input.value).toBe("pulsars"));
   });
 });
 
@@ -376,6 +405,65 @@ describe("GlobalNav unread loading", () => {
 
     await waitFor(() => expect(loadNotifications).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("link", { name: "Notifications" }).textContent).toBe("");
+  });
+
+  it("lowers the badge at once when the notifications card marks a row read", async () => {
+    const loadNotifications = vi.fn(async () => [
+      { id: 1, read: false },
+      { id: 2, read: false },
+    ]);
+    render(<GlobalNav signedIn loadNotifications={loadNotifications} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Notifications, 2 unread" }),
+      ).toBeTruthy(),
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NOTIFICATIONS_CHANGED_EVENT, {
+          detail: { unread: 1 },
+        }),
+      );
+    });
+
+    expect(
+      screen.getByRole("link", { name: "Notifications, 1 unread" }),
+    ).toBeTruthy();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NOTIFICATIONS_CHANGED_EVENT, {
+          detail: { unread: 0 },
+        }),
+      );
+    });
+
+    expect(screen.getByRole("link", { name: "Notifications" })).toBeTruthy();
+  });
+
+  it("ignores an event that carries no unread count", async () => {
+    const loadNotifications = vi.fn(async () => [{ id: 1, read: false }]);
+    render(<GlobalNav signedIn loadNotifications={loadNotifications} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Notifications, 1 unread" }),
+      ).toBeTruthy(),
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NOTIFICATIONS_CHANGED_EVENT, {
+          detail: { unread: "many" },
+        }),
+      );
+    });
+
+    expect(
+      screen.getByRole("link", { name: "Notifications, 1 unread" }),
+    ).toBeTruthy();
   });
 });
 

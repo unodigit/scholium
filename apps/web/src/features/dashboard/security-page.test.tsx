@@ -177,6 +177,49 @@ describe("Recovery guardians card", () => {
     expect(guardians.getByText(/No guardians are recorded on this device/)).toBeTruthy();
     expect(guardians.queryByText("You have not set any recovery guardians yet.")).toBeNull();
   });
+
+  it("names a guardian by their profile name, with the DID secondary", () => {
+    ready({ profileNames: { [GUARDIANS[0]!]: "Grace Hopper" } });
+
+    const guardians = within(card("Recovery guardians"));
+    expect(guardians.getByText("Grace Hopper")).toBeTruthy();
+    // The DID is still there, secondarily, so the guardian is identifiable.
+    expect(guardians.getByText(GUARDIANS[0]!)).toBeTruthy();
+    expect(guardians.getByText(GUARDIANS[1]!)).toBeTruthy();
+  });
+});
+
+describe("Recovery requests card", () => {
+  const REQUEST = {
+    requestId: "rr-1",
+    accountDid: GUARDIANS[0]!,
+    status: "pending",
+    approvals: 1,
+    threshold: 3,
+    newPublicKey: NEW_KEY,
+  };
+
+  it("names the requester by their profile name, with the DID secondary", () => {
+    ready({
+      recoveryRequests: [REQUEST],
+      profileNames: { [GUARDIANS[0]!]: "Grace Hopper" },
+    });
+
+    const requests = within(card("Recovery requests"));
+    expect(
+      requests.getByRole("link", { name: "Grace Hopper" }).getAttribute("href"),
+    ).toBe(`/me/recovery/${encodeURIComponent("rr-1")}`);
+    expect(requests.getByText(GUARDIANS[0]!)).toBeTruthy();
+  });
+
+  it("falls back to the requester's DID when no profile name is known", () => {
+    ready({ recoveryRequests: [REQUEST] });
+
+    const requests = within(card("Recovery requests"));
+    expect(
+      requests.getByRole("link", { name: GUARDIANS[0]! }).getAttribute("href"),
+    ).toBe(`/me/recovery/${encodeURIComponent("rr-1")}`);
+  });
 });
 
 describe("Key rotation card", () => {

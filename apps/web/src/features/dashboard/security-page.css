@@ -115,6 +115,27 @@
   list-style: none;
 }
 
+/* A guardian or requester with a readable profile: name first, DID second. */
+.db-guardian,
+.db-requester {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.db-guardian-name {
+  color: var(--ink);
+  font-weight: var(--weight-title);
+  overflow-wrap: anywhere;
+}
+
+.db-guardian-did,
+.db-requester-did {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+}
+
 /* ---- Key rotation --------------------------------------------------------- */
 
 .db-facts {

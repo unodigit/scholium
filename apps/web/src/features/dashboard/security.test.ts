@@ -416,6 +416,67 @@ describe("loadSecurity", () => {
     expect(data.rotations).toHaveLength(2);
   });
 
+  it("resolves guardians and recovery requesters to their profile names", async () => {
+    const api = client({
+      "/me/dashboard": DASHBOARD,
+      [didPath]: NEVER_ROTATED_DOC,
+      "/me/guardians": { guardians: [GUARDIANS[0], GUARDIANS[1]] },
+      "/recovery/requests": {
+        requests: [
+          {
+            request_id: "rr-1",
+            did: GUARDIANS[0],
+            status: "pending",
+            approval_count: 1,
+            threshold: 3,
+          },
+        ],
+      },
+      [`/profiles/${encodeURIComponent(GUARDIANS[0])}`]: {
+        did: GUARDIANS[0],
+        name: "Grace Hopper",
+        erased: false,
+      },
+      [`/profiles/${encodeURIComponent(GUARDIANS[1])}`]: {
+        did: GUARDIANS[1],
+        name: "Katherine Johnson",
+        erased: false,
+      },
+    });
+
+    const data = await loadSecurity({
+      client: api,
+      device: device(ACCOUNT),
+      storage: new MemoryTokenStorage(),
+    });
+
+    expect(data.profileNames).toEqual({
+      [GUARDIANS[0]]: "Grace Hopper",
+      [GUARDIANS[1]]: "Katherine Johnson",
+    });
+    expect(api.get).toHaveBeenCalledWith(
+      `/profiles/${encodeURIComponent(GUARDIANS[0])}`,
+      { auth: false, cache: "no-store" },
+    );
+  });
+
+  it("keeps the DIDs when a profile cannot be read", async () => {
+    const api = client({
+      "/me/dashboard": DASHBOARD,
+      [didPath]: NEVER_ROTATED_DOC,
+      "/me/guardians": { guardians: [GUARDIANS[0]] },
+    });
+
+    const data = await loadSecurity({
+      client: api,
+      device: device(ACCOUNT),
+      storage: new MemoryTokenStorage(),
+    });
+
+    expect(data.profileNames).toEqual({});
+    expect(data.guardians.dids).toEqual([GUARDIANS[0]]);
+  });
+
   it("still loads when guardians and the device cannot be read", async () => {
     const api = client({ "/me/dashboard": DASHBOARD, [didPath]: NEVER_ROTATED_DOC });
     const broken = device(ACCOUNT, {

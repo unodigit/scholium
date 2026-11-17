@@ -277,7 +277,8 @@ function NotificationRow({
       <div className="db-note-actions">
         {link === null ? null : (
           <a className="db-link" href={link} onClick={onOpen}>
-            Open<span className="db-visually-hidden"> {label.toLowerCase()}</span>
+            Open{" "}
+            <span className="db-visually-hidden">{label.toLowerCase()}</span>
           </a>
         )}
         {item.read ? null : (
@@ -288,8 +289,8 @@ function NotificationRow({
             aria-busy={busy}
             onClick={onMarkRead}
           >
-            {busy ? "Marking…" : "Mark as read"}
-            <span className="db-visually-hidden"> {label.toLowerCase()}</span>
+            {busy ? "Marking…" : "Mark as read"}{" "}
+            <span className="db-visually-hidden">{label.toLowerCase()}</span>
           </button>
         )}
       </div>

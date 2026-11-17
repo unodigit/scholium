@@ -30,18 +30,32 @@ import { tokenStore } from "../../lib/api";
 
 import { Card } from "./card";
 import {
+  describeFollow,
   describeFollowError,
   followCategory,
+  followKind,
   followSigninHref,
   loadFollowedCategories,
+  loadFollowedSubjects,
   unfollowCategory,
+  type FollowedSubject,
 } from "./follows";
 import "./follow-toggle.css";
 
 /** Props for {@link FollowToggle}. Only `category` is required. */
 export interface FollowToggleProps {
-  /** The category id from the route, e.g. `cs.AI`. */
+  /**
+   * The subject id: a category (`cs.AI`), a paper (`sch:…`) or a member
+   * (`did:…`). The id names which page the control's sign-in link returns to.
+   * (The name `category` is kept for the callers that predate papers and
+   * people; the follows table stores all three the same way.)
+   */
   readonly category: string;
+  /**
+   * What the subject is called on screen, for the accessible name. Defaults
+   * to the category id, "this paper" or "this member" by the id's shape.
+   */
+  readonly label?: string;
   /** The reader's follow state when the caller already knows it. */
   readonly initialFollowing?: boolean;
   /**
@@ -65,6 +79,7 @@ export interface FollowToggleProps {
 /** Follow or unfollow one category. */
 export function FollowToggle({
   category,
+  label,
   initialFollowing,
   signedIn,
   loadFollowing = loadFollowedCategories,
@@ -72,6 +87,14 @@ export function FollowToggle({
   unfollow = unfollowCategory,
   signinHref,
 }: FollowToggleProps) {
+  const subject = category.trim();
+  const subjectLabel =
+    label?.trim() ||
+    (followKind(subject) === "paper"
+      ? "this paper"
+      : followKind(subject) === "person"
+        ? "this member"
+        : subject);
   const [sessionKnown, setSessionKnown] = useState(false);
   // `null` is "not known": loading, or the read failed.
   const [following, setFollowing] = useState<boolean | null>(initialFollowing ?? null);
@@ -119,7 +142,7 @@ export function FollowToggle({
         <a
           className="db-follow-button"
           href={signinHref ?? followSigninHref(category)}
-          aria-label={`Follow ${category}, sign in required`}
+          aria-label={`Follow ${subjectLabel}, sign in required`}
         >
           <span aria-hidden="true">+</span> Follow
         </a>
@@ -153,7 +176,7 @@ export function FollowToggle({
       <button
         type="button"
         className="db-follow-button"
-        aria-label={`Follow ${category}`}
+        aria-label={`Follow ${subjectLabel}`}
         aria-pressed={pressed}
         aria-disabled={pending}
         aria-busy={pending}
@@ -176,14 +199,19 @@ export default FollowToggle;
 export interface FollowedCategoriesCardProps {
   /** Pin the sign-in state. When omitted it is read from the token store. */
   readonly signedIn?: boolean;
-  /** Replace the read of the followed categories, for tests. */
-  readonly loadFollows?: () => Promise<readonly string[]>;
+  /**
+   * Replace the read of the follows, for tests. A bare id is accepted too:
+   * the card links it by its shape (category, paper or person).
+   */
+  readonly loadFollows?: () => Promise<
+    readonly FollowedSubject[] | readonly string[]
+  >;
 }
 
 type FollowsState =
   | { readonly status: "loading" }
   | { readonly status: "error"; readonly message: string }
-  | { readonly status: "ready"; readonly categories: readonly string[] };
+  | { readonly status: "ready"; readonly subjects: readonly FollowedSubject[] };
 
 /**
  * The "Follows" card on `/me`.
@@ -196,7 +224,7 @@ type FollowsState =
  */
 export function FollowedCategoriesCard({
   signedIn,
-  loadFollows = loadFollowedCategories,
+  loadFollows = loadFollowedSubjects,
 }: FollowedCategoriesCardProps = {}) {
   const [sessionKnown, setSessionKnown] = useState(false);
   const [state, setState] = useState<FollowsState>({ status: "loading" });
@@ -222,9 +250,14 @@ export function FollowedCategoriesCard({
     let cancelled = false;
     setState({ status: "loading" });
     loadFollows().then(
-      (categories) => {
+      (entries) => {
         if (!cancelled) {
-          setState({ status: "ready", categories: [...categories] });
+          setState({
+            status: "ready",
+            subjects: entries.map((entry) =>
+              typeof entry === "string" ? describeFollow(entry) : entry,
+            ),
+          });
         }
       },
       (failure: unknown) => {
@@ -268,20 +301,17 @@ export function FollowedCategoriesCard({
           <p className="db-loading" role="status">
             Loading your follows…
           </p>
-        ) : state.categories.length === 0 ? (
+        ) : state.subjects.length === 0 ? (
           <p className="db-item-detail meta">
             You don’t follow any categories yet. Open a category page and choose
             Follow.
           </p>
         ) : (
           <ul className="db-list">
-            {state.categories.map((category) => (
-              <li className="db-item" key={category}>
-                <a
-                  className="db-link"
-                  href={`/c/${encodeURIComponent(category)}`}
-                >
-                  {category}
+            {state.subjects.map((subject) => (
+              <li className="db-item" key={subject.id} data-kind={subject.kind}>
+                <a className="db-link" href={subject.href}>
+                  {subject.label}
                 </a>
               </li>
             ))}

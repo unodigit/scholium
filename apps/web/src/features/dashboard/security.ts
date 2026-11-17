@@ -47,6 +47,9 @@ export const GUARDIANS_ENDPOINT = "/me/guardians";
 /** Pending recovery requests for the signed-in guardian. */
 export const RECOVERY_REQUESTS_ENDPOINT = "/recovery/requests";
 
+/** A member's public profile, relative to `/v1` (`GET /v1/profiles/{did}`). */
+export const PROFILES_ENDPOINT = "/profiles";
+
 /** Approvals a recovery needs: the "3" in "3 of 5" (the API's threshold). */
 export const GUARDIAN_THRESHOLD = RECOVERY_APPROVAL_THRESHOLD;
 
@@ -344,6 +347,62 @@ export async function loadDevices(
   }
 }
 
+/** One DID's public profile name, or `null` when there is none to read. */
+async function readProfileName(
+  did: string,
+  client: SecurityClient,
+): Promise<string | null> {
+  try {
+    const payload = await client.get<unknown>(
+      `${PROFILES_ENDPOINT}/${encodeURIComponent(did)}`,
+      { auth: false, cache: "no-store" },
+    );
+    if (!isRecord(payload) || payload.erased === true) {
+      return null;
+    }
+    return (
+      readText(payload.name) ??
+      readText(payload.display_name) ??
+      readText(payload.displayName)
+    );
+  } catch {
+    // A profile that cannot be read must not fail the security screen; the
+    // DID is still shown.
+    return null;
+  }
+}
+
+/**
+ * The public names of `dids`, keyed by DID.
+ *
+ * Guardians and recovery requesters are stored as DIDs (there is no profile
+ * join on either API), so the screen reads each one's public profile to show
+ * a name first and the DID second. Reads are best-effort and de-duplicated;
+ * a DID with no readable name is simply absent from the map.
+ */
+export async function loadProfileNames(
+  dids: readonly string[],
+  client: SecurityClient = api,
+): Promise<Record<string, string>> {
+  const unique = [
+    ...new Set(
+      dids.filter(
+        (did): did is string => typeof did === "string" && did.startsWith("did:"),
+      ),
+    ),
+  ];
+  const entries = await Promise.all(
+    unique.map(async (did) => [did, await readProfileName(did, client)] as const),
+  );
+  const names: Record<string, string> = {};
+  for (const [did, name] of entries) {
+    if (name !== null) {
+      names[did] = name;
+    }
+  }
+  return names;
+}
+
 /** Everything the security screen shows. */
 export interface SecurityData {
   /** The account's DID: who the API says you are. */
@@ -358,6 +417,12 @@ export interface SecurityData {
   readonly guardians: GuardianState;
   /** Recovery requests this guardian is asked to approve. */
   readonly recoveryRequests?: readonly RecoveryRequestSummary[];
+  /**
+   * Public profile names for the DIDs this screen lists (guardians and
+   * recovery requesters), keyed by DID. Absent when none could be read; the
+   * DID is then shown on its own.
+   */
+  readonly profileNames?: Readonly<Record<string, string>>;
   /** Keys held by devices Scholium can see: this browser's, when it has one. */
   readonly devices: readonly DeviceInfo[];
   /** False when this browser's key store could not be read. */
@@ -389,6 +454,13 @@ export async function loadSecurity(options: LoadSecurityOptions = {}): Promise<S
     loadRecoveryRequests(client),
   ]);
   const { devices, readable } = await loadDevices(options.device ?? deviceKey, key.activeKey);
+  const profileNames = await loadProfileNames(
+    [
+      ...guardians.dids,
+      ...recoveryRequests.map((request) => request.accountDid),
+    ],
+    client,
+  );
 
   return {
     did: key.did,
@@ -398,6 +470,7 @@ export async function loadSecurity(options: LoadSecurityOptions = {}): Promise<S
     lastRotation: key.rotations.length > 0 ? key.rotations[key.rotations.length - 1]! : null,
     guardians,
     recoveryRequests,
+    profileNames,
     devices,
     devicesReadable: readable,
   };

@@ -151,8 +151,14 @@ export function SecurityPage({
         <>
           <div className="db-grid">
             <DevicesCard data={state.data} />
-            <GuardiansCard guardians={state.data.guardians} />
-            <RecoveryRequestsCard requests={state.data.recoveryRequests ?? []} />
+            <GuardiansCard
+              guardians={state.data.guardians}
+              names={state.data.profileNames}
+            />
+            <RecoveryRequestsCard
+              requests={state.data.recoveryRequests ?? []}
+              names={state.data.profileNames}
+            />
             <KeyRotationCard data={state.data} rotate={rotate} onRotated={onRotated} />
           </div>
           <EraseProfileCard did={state.data.did} eraseProfile={eraseProfile} />
@@ -230,7 +236,13 @@ function DeviceRow({ device }: { device: DeviceInfo }) {
 
 // ---- Recovery guardians ----------------------------------------------------
 
-function GuardiansCard({ guardians }: { guardians: GuardianState }) {
+function GuardiansCard({
+  guardians,
+  names,
+}: {
+  guardians: GuardianState;
+  names?: Readonly<Record<string, string>>;
+}) {
   const source = describeGuardianSource(guardians);
   return (
     <Card title="Recovery guardians" anchor="guardians">
@@ -245,14 +257,18 @@ function GuardiansCard({ guardians }: { guardians: GuardianState }) {
       <p className="db-guardian-status">{describeGuardians(guardians)}</p>
       {guardians.dids.length > 0 ? (
         <ol className="db-guardians" aria-label="Your recovery guardians">
-          {guardians.dids.map((did) => (
-            <li className="db-cred-id mono-id" key={did}>
-              {did}
-              {(guardians.localDids ?? []).includes(did) ? (
-                <span className="db-cred-note meta"> (also on this device)</span>
-              ) : null}
-            </li>
-          ))}
+          {guardians.dids.map((did) => {
+            const name = names?.[did];
+            return (
+              <li className="db-guardian" key={did}>
+                {name ? <span className="db-guardian-name">{name}</span> : null}
+                <span className="db-cred-id mono-id db-guardian-did">{did}</span>
+                {(guardians.localDids ?? []).includes(did) ? (
+                  <span className="db-cred-note meta"> (also on this device)</span>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       ) : null}
       {source ? <p className="db-cred-note meta">{source}</p> : null}
@@ -268,22 +284,42 @@ function GuardiansCard({ guardians }: { guardians: GuardianState }) {
 // ---- Key rotation ----------------------------------------------------------
 
 
-function RecoveryRequestsCard({ requests }: { requests: readonly { requestId: string; accountDid: string; status: string; approvals: number; threshold: number }[] }) {
+function RecoveryRequestsCard({
+  requests,
+  names,
+}: {
+  requests: readonly {
+    requestId: string;
+    accountDid: string;
+    status: string;
+    approvals: number;
+    threshold: number;
+  }[];
+  names?: Readonly<Record<string, string>>;
+}) {
   return (
     <Card title="Recovery requests" anchor="recovery-requests">
       {requests.length > 0 ? (
         <ul className="db-list">
-          {requests.map((request) => (
-            <li key={request.requestId}>
-              <a className="db-link" href={`/me/recovery/${encodeURIComponent(request.requestId)}`}>
-                {request.accountDid || request.requestId}
-              </a>
-              <span className="db-cred-note meta">
-                {" "}
-                {request.approvals} of {request.threshold} approvals
-              </span>
-            </li>
-          ))}
+          {requests.map((request) => {
+            const name = names?.[request.accountDid];
+            return (
+              <li key={request.requestId} className="db-requester">
+                <a className="db-link" href={`/me/recovery/${encodeURIComponent(request.requestId)}`}>
+                  {name ?? (request.accountDid || request.requestId)}
+                </a>
+                {name && request.accountDid ? (
+                  <span className="db-cred-id mono-id db-requester-did">
+                    {request.accountDid}
+                  </span>
+                ) : null}
+                <span className="db-cred-note meta">
+                  {" "}
+                  {request.approvals} of {request.threshold} approvals
+                </span>
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <EmptyState sentence="No recovery requests need your approval right now." action={{ label: "Manage security", href: "/me/security" }} />

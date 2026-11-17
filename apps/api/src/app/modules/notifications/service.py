@@ -31,6 +31,52 @@ __all__ = ["list_notifications", "mark_read", "notify"]
 
 logger = logging.getLogger(__name__)
 
+#: Payload members that name the subject of a notification, most specific first.
+#: Two unread notifications with the same kind, recipient and subject describe
+#: the same fact, so a retried event must not add a duplicate row.  Kinds whose
+#: payload names no subject (``digest``, a bare ``{"n": 1}``) carry no subject
+#: and are never de-duplicated.
+_SUBJECT_KEYS = (
+    "version_cid",
+    "request_id",
+    # An appeal is its own subject: two appeals may contest the same decision.
+    "appeal_cid",
+    "flag_id",
+    "decision_cid",
+    "target_cid",
+    "appeal_id",
+    "paper_cid",
+    "record_cid",
+)
+
+
+def _subject_of(payload: Any) -> Optional[tuple[str, str]]:
+    """The ``(payload key, value)`` that names what a notification is about."""
+    if not isinstance(payload, Mapping):
+        return None
+    for key in _SUBJECT_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return key, value.strip()
+    return None
+
+
+def _unread_notification_for_subject(
+    session: Any, did: str, kind: str, subject: tuple[str, str]
+) -> Optional[Notification]:
+    """Return ``did``'s unread notification of ``kind`` about ``subject``, if any."""
+    rows = (
+        session.query(Notification)
+        .filter(
+            Notification.did == did,
+            Notification.kind == kind,
+            Notification.read.is_(False),
+        )
+        .order_by(Notification.id)
+        .all()
+    )
+    return next((row for row in rows if _subject_of(row.payload) == subject), None)
+
 
 def notify(did: str, kind: str, payload: Optional[Any] = None) -> Notification:
     """Persist an unread notification for ``did`` and email it.
@@ -38,6 +84,13 @@ def notify(did: str, kind: str, payload: Optional[Any] = None) -> Notification:
     ``payload`` must be JSON-serialisable (it is stored in the ``payload``
     JSON column and rendered into the email body).  Returns the persisted
     :class:`~app.modules.notifications.models.Notification`.
+
+    When the payload names a subject (a version, request, decision or paper)
+    and the same recipient already has an *unread* notification of the same
+    kind about it, that row is returned instead of writing a second one: a
+    repeated event tells the reader the same fact, and two identical unread
+    rows would ask them to deal with it twice.  Once the first row is read, a
+    later event is a new announcement and gets its own row.
     """
     if not isinstance(did, str) or not did.strip():
         raise ValueError("notify() requires a non-empty did")
@@ -55,6 +108,13 @@ def notify(did: str, kind: str, payload: Optional[Any] = None) -> Notification:
     # the returned object (its ``id`` especially) outside this function.
     session.expire_on_commit = False
     try:
+        subject = _subject_of(stored_payload)
+        if subject is not None:
+            duplicate = _unread_notification_for_subject(session, did, kind, subject)
+            if duplicate is not None:
+                # The same fact is already waiting for the reader; no second
+                # row and no second email.
+                return duplicate
         notification = Notification(
             did=did,
             kind=kind,

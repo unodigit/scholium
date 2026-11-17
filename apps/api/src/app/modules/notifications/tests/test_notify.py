@@ -22,6 +22,7 @@ from app.modules.notifications import (
     clear_outbox,
     ensure_table,
     get_outbox,
+    mark_read,
     notify,
     parse_smtp_url,
 )
@@ -133,6 +134,76 @@ def test_notify_persists_one_row_per_call(dids):
     assert [(row["did"], row["kind"]) for row in rows] == [
         (alice, "first"),
         (bob, "second"),
+    ]
+
+
+def test_notify_does_not_duplicate_an_unread_notification_for_the_same_subject(dids):
+    """A retried event must not pile up identical unread rows.
+
+    A version can enter ``awaiting_consent`` more than once, and a repeated
+    delivery of the same state-change event therefore asks :func:`notify` for
+    the same fact again. While the first row is still unread, the second call
+    is the same notification, not a new one.
+    """
+    alice, _ = dids
+    first = notify(
+        alice,
+        "consent.request",
+        {"version_cid": "bafyrei-version-1", "paper_cid": "bafyrei-paper-1", "n": 1},
+    )
+    second = notify(
+        alice,
+        "consent.request",
+        {"version_cid": "bafyrei-version-1", "paper_cid": "bafyrei-paper-1", "n": 1},
+    )
+
+    assert second.id == first.id
+    assert len(_rows_for(alice)) == 1
+
+
+def test_notify_keeps_notifications_for_different_subjects(dids):
+    alice, _ = dids
+    notify(alice, "consent.request", {"version_cid": "bafyrei-version-1"})
+    notify(alice, "consent.request", {"version_cid": "bafyrei-version-2"})
+
+    rows = _rows_for(alice)
+    assert [row["payload"]["version_cid"] for row in rows] == [
+        "bafyrei-version-1",
+        "bafyrei-version-2",
+    ]
+
+
+def test_notify_keeps_separate_appeals_about_one_decision(dids):
+    """The appeal, not the decision it contests, is the subject of a panel notice."""
+    alice, _ = dids
+    notify(alice, "appeal.panel", {"appeal_cid": "appeal-1", "decision_cid": "decision-1"})
+    notify(alice, "appeal.panel", {"appeal_cid": "appeal-2", "decision_cid": "decision-1"})
+
+    rows = _rows_for(alice)
+    assert [row["payload"]["appeal_cid"] for row in rows] == ["appeal-1", "appeal-2"]
+
+
+def test_notify_keeps_different_kinds_for_the_same_subject(dids):
+    alice, _ = dids
+    notify(alice, "consent.request", {"version_cid": "bafyrei-version-1"})
+    notify(alice, "review.invitation", {"version_cid": "bafyrei-version-1"})
+
+    assert len(_rows_for(alice)) == 2
+
+
+def test_notify_creates_a_new_row_once_the_earlier_one_is_read(dids):
+    """Once the reader has seen it, the same fact may be announced again."""
+    alice, _ = dids
+    first = notify(alice, "consent.request", {"version_cid": "bafyrei-version-1"})
+    mark_read(alice, first.id)
+
+    second = notify(alice, "consent.request", {"version_cid": "bafyrei-version-1"})
+
+    assert second.id != first.id
+    rows = _rows_for(alice)
+    assert [(row["read"], row["payload"]["version_cid"]) for row in rows] == [
+        (True, "bafyrei-version-1"),
+        (False, "bafyrei-version-1"),
     ]
 
 

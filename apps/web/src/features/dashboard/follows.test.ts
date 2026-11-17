@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError, NetworkError } from "../../lib/api";
+import { ApiError, NetworkError, type ApiClient } from "../../lib/api";
 
 import {
   FOLLOWS_ENDPOINT,
@@ -8,8 +8,11 @@ import {
   describeFollowError,
   followCategory,
   followEndpoint,
+  followHref,
+  followKind,
   followSigninHref,
   loadFollowedCategories,
+  loadFollowedSubjects,
   parseFollowedCategories,
   unfollowCategory,
 } from "./follows";
@@ -27,6 +30,109 @@ describe("follow endpoints", () => {
 
   it("returns to the category page after sign-in", () => {
     expect(followSigninHref("cs.AI")).toBe("/signin?next=%2Fc%2Fcs.AI");
+  });
+});
+
+describe("what a follow addresses", () => {
+  const PAPER = "sch:z7im-izv3-lom6";
+  const PERSON = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+
+  it("tells papers, people and categories apart by their ids", () => {
+    expect(followKind("cs.AI")).toBe("category");
+    expect(followKind(PAPER)).toBe("paper");
+    expect(followKind(` ${PAPER} `)).toBe("paper");
+    expect(followKind(PERSON)).toBe("person");
+  });
+
+  it("links each kind to the page that shows it, never to /c/", () => {
+    expect(followHref("cs.AI")).toBe("/c/cs.AI");
+    // The design drops the `sch:` prefix from a paper page's URL.
+    expect(followHref(PAPER)).toBe("/p/z7im-izv3-lom6");
+    expect(followHref(PERSON)).toBe(`/u/${encodeURIComponent(PERSON)}`);
+  });
+
+  it("returns to the followed subject's page after sign-in", () => {
+    expect(followSigninHref(PAPER)).toBe(
+      `/signin?next=${encodeURIComponent("/p/z7im-izv3-lom6")}`,
+    );
+    // `next` decodes once to the profile's href, which encodes the DID's colons.
+    expect(followSigninHref(PERSON)).toBe(
+      `/signin?next=${encodeURIComponent(`/u/${encodeURIComponent(PERSON)}`)}`,
+    );
+  });
+});
+
+describe("loadFollowedSubjects", () => {
+  const PAPER = "sch:z7im-izv3-lom6";
+  const PERSON = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+
+  /** A client that answers the follows read and the two lookups. */
+  function client(failing: readonly string[] = []) {
+    const routes: Record<string, unknown> = {
+      "/me/follows": { categories: ["cs.AI", PAPER, PERSON] },
+      [`/papers/${encodeURIComponent(PAPER)}`]: { title: "Pulsar timing" },
+      [`/profiles/${encodeURIComponent(PERSON)}`]: { name: "Ada Lovelace" },
+    };
+    const get = vi.fn(async (path: string) => {
+      if (failing.includes(path) || !(path in routes)) {
+        throw new ApiError(404, { title: "Not Found" });
+      }
+      return routes[path];
+    });
+    return { get } as unknown as Pick<ApiClient, "get"> & {
+      get: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it("labels a paper by title, a person by name, and a category by its id", async () => {
+    const subjects = await loadFollowedSubjects(client());
+
+    // The follows read is alphabetical; `did:` sorts before `sch:`.
+    expect(subjects).toEqual([
+      { id: "cs.AI", kind: "category", label: "cs.AI", href: "/c/cs.AI" },
+      {
+        id: PERSON,
+        kind: "person",
+        label: "Ada Lovelace",
+        href: `/u/${encodeURIComponent(PERSON)}`,
+      },
+      {
+        id: PAPER,
+        kind: "paper",
+        label: "Pulsar timing",
+        href: "/p/z7im-izv3-lom6",
+      },
+    ]);
+  });
+
+  it("reads public lookups without a token", async () => {
+    const api = client();
+    await loadFollowedSubjects(api);
+
+    expect(api.get).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(PERSON)}`, {
+      auth: false,
+      cache: "no-store",
+    });
+  });
+
+  it("keeps the follow, with its id as the label, when a lookup fails", async () => {
+    const subjects = await loadFollowedSubjects(
+      client([
+        `/papers/${encodeURIComponent(PAPER)}`,
+        `/profiles/${encodeURIComponent(PERSON)}`,
+      ]),
+    );
+
+    expect(subjects.map((subject) => subject.label)).toEqual([
+      "cs.AI",
+      PERSON,
+      "z7im-izv3-lom6",
+    ]);
+    expect(subjects.map((subject) => subject.href)).toEqual([
+      "/c/cs.AI",
+      `/u/${encodeURIComponent(PERSON)}`,
+      "/p/z7im-izv3-lom6",
+    ]);
   });
 });
 
