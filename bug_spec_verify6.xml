@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Verify sweep 6 (claw-forge-verify, 2026-11-18, main @ 8fedc26): real-browser journeys 01-16.
+  12/16 pass; 02, 05, 11, 13 fail. Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/s6-*.png (local, gitignored).
+  Held for the round after the pending cloud-agnostic tasks merge (their footprints include apps/api/src/app/**): author names in the search index and one hit per paper in keyword search; Needs-your-attention / notification lifecycle and wording (API + dashboard).
+  Decision: "Confirm your email address" is an action, so it belongs in Needs your attention until done.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/web/src/features/review-form/**">
+    <title>Importing the review key after a review is revealed traps the reviewer in a sealed state; the page wrongly says the key is needed to update</title>
+    <symptoms>
+      On a revealed review the page says "Updating the review is signed with the review key ... Import your review key file to continue here"; after okafor imports his key and passphrase, "Update for v2" and every later load of /review/{id} show "Your review is sealed - It will be revealed with the others when a second review is committed, or on 8 Dec." with a Reveal button and no form; Reveal answers "This sealed review has already been revealed; a commitment can be opened once. Nothing was sent." - the reviewer can no longer update from that browser
+      The import instruction is false: clicking "Update for v2" without importing opens the pre-filled form and the update succeeds
+      "Sign with my name instead" shows above the "You already have a sealed review" panel where there is no form; the conflict check says "No conflicts found. You can review this paper." directly above "a second review cannot be committed here"
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 step 8-9 (screenshots/13-new-version-and-review-update/s6-13-okafor-review-page.png, s6-15-okafor-update-form.png, s6-16-okafor-update-reload.png, s6-17-okafor-reveal-again.png, s6-19-solheim-review-page-v2.png, s6-20-solheim-update-nokey.png); journey 12 (screenshots/12-review-commit-reveal/s6-09-okafor-fresh.png)
+    </reproduction_steps>
+    <expected>The page's state is derived from the server's review status first and the local key second: once the API reports the review revealed, an imported or stored local secret never puts the page back into the sealed/Reveal state (the local entry is marked revealed); the revealed state offers "Update for v{latest}" whenever an update is possible, and asks for the review key only for the operations that actually sign with it (revealing a sealed review); the identity choice ("Sign with my name") appears only inside a form that will use it; the conflict-check result is worded for the state ("You already reviewed this paper" when a review exists); a regression test covers import-after-reveal then update</expected>
+    <actual>Reviewer stuck; misleading instruction</actual>
+    <constraints>
+      <constraint>REV-3/REV-4/REV-5 rules and the key vault encryption are unchanged</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-proof/**,apps/web/src/features/ui-kit/verify.ts,apps/web/src/features/ui-kit/verify.test.ts,apps/web/src/features/paper-page/download-menu.tsx,apps/web/src/features/paper-page/download-menu.test.tsx">
+    <title>The badge's signature count disagrees with the checklist; "How to verify" lands on a collapsed section</title>
+    <symptoms>
+      sch:c2gt-5oza-bgoc shows "Verified · 4 author signatures across 1 version" beside "Signed by all 3 listed authors"; a v1 page shows the same "6 author signatures" as the v2 page although v1's check covers 5 records; v2's technical details read "All 2 previous-version links match" for a two-version paper
+      The download menu's "How to verify - The Proof tab explains the offline check step by step" lands on #proof with Technical details collapsed so the Offline check is invisible, and it is one command, not steps
+    </symptoms>
+    <reproduction_steps>
+      Journey 08 steps 1-2 (screenshots/08-verify-and-download/s6-11-v1-after-v2.png, s6-13-v1-proof.png, s6-14-v2-proof.png, s6-05-how-to-verify-target.png, s6-03-proof-offline-check.png)
+    </reproduction_steps>
+    <expected>The badge's numbers come from the same check result the checklist shows for the version being viewed (signatures = distinct author signatures over that version's records in its verified chain; versions = versions in that chain), so badge and checklist always agree; previous-version link counts equal versions - 1 with natural wording ("The previous-version link matches" / "All 3 previous-version links match"); "How to verify" links to #offline-check, which opens Technical details and scrolls to an Offline check section with numbered steps (download the archive, install/run the CLI, run scholium verify sch-{id}.car, what success looks like)</expected>
+    <actual>Inconsistent counts; hidden guidance</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/paper-header.tsx,apps/web/src/features/paper-page/paper-header.test.tsx,apps/web/src/features/paper-page/report-paper.tsx,apps/web/src/features/paper-page/report-paper.test.tsx,apps/web/src/features/paper-page/paper-actions.css,apps/web/src/app/(paper-reviews)/**,apps/web/src/app/(paper-proof)/**,apps/web/src/app/(paper-meta)/**,apps/web/src/app/(paper-discussion)/**,apps/web/src/features/submit/authors-step.tsx,apps/web/src/features/submit/authors-step.test.tsx">
+    <title>Paper header layout glitches; standalone paper tab pages show only the id; Authors step says "Added did:key:..."</title>
+    <symptoms>
+      A stray "·" starts the header's second row before "Preserved" (desktop and mobile)
+      The paper Report panel opens inline between the action buttons and pushes Follow/Report aside
+      The standalone /reviews, /discussion, /proof and /meta pages name the paper only by its sch: id
+      The submit Authors step confirms "Added did:key:z6MkqkGz...Jq9r6m." instead of the co-author's name
+    </symptoms>
+    <reproduction_steps>
+      Journeys 01, 07, 10, 16 (screenshots/01-read-feed-and-paper/s6-05-paper-page.png, 16-branding/s6-mobile-paper-dark.png, 07-flag-and-dispute/s6-02-paper-report-panel.png, 10-publish/s6-04-authors.png)
+    </reproduction_steps>
+    <expected>Header meta rows never start or end with a separator; the Report panel opens as an anchored popover/dialog that does not reflow the action row (focus-trapped, Escape closes); the standalone tab pages show the paper title (linking to the paper) above the sch: id and use it in the document title; the Authors step confirms with the co-author's profile name (DID secondary)</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/submit/consent-page.tsx,apps/web/src/features/submit/consent-page.test.tsx,apps/web/src/features/paper-page/paper-access-view.tsx,apps/web/src/features/paper-page/paper-access.test.tsx,apps/web/src/features/paper-reviews/reviews-tab.tsx,apps/web/src/features/paper-reviews/reviews-tab.test.tsx,apps/web/src/features/paper-discussion/post-card.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx,apps/web/src/features/paper-meta/versions-tab.tsx,apps/web/src/features/paper-meta/versions-tab.test.tsx"
+       creates="apps/web/src/features/ui-kit/format-date.ts,apps/web/src/features/ui-kit/format-date.test.ts">
+    <title>Dates mix UTC and local time across pages</title>
+    <symptoms>
+      Actions taken at 00:4x on 18 Nov local time (AEDT) show as "17 Nov 2026" on the consent page, the appeal banner, review cards, discussion posts and version dates, while approval dates elsewhere show 18 Nov (local)
+    </symptoms>
+    <reproduction_steps>
+      Journeys 10, 11 near local midnight (screenshots in 10-publish/, 11-moderation-hold-and-appeal/)
+    </reproduction_steps>
+    <expected>A shared formatDate/formatDateTime in ui-kit renders every user-facing date in the viewer's local time zone (client-side, with the UTC instant in a title/tooltip and in a machine-readable datetime attribute), and the listed pages use it, so the same instant shows the same calendar date everywhere; server-rendered dates hydrate without mismatch warnings</expected>
+    <actual>Inconsistent calendar dates</actual>
+  </bug>
+
+</bug_spec>
