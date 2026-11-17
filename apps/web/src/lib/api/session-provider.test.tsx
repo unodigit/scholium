@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
@@ -107,5 +107,39 @@ describe("SessionProvider", () => {
         `/signin?next=${encodeURIComponent("/me")}`,
       ),
     );
+  });
+
+  it("re-checks the session when the browser restores the page after the ORCID detour", async () => {
+    // The document was loaded from the back-forward cache after the whole-page
+    // trip to ORCID. The first bootstrap ran before the refresh cookie was
+    // seen (or its answer was stale); returning to the page must ask again
+    // instead of leaving the newcomer signed out.
+    pathnameValue = "/me";
+    bootstrapMock.mockResolvedValueOnce(null);
+    bootstrapMock.mockImplementationOnce(async () => {
+      tokenStore.set({ accessToken: "restored" });
+      return { accessToken: "restored" };
+    });
+
+    render(page());
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        `/signin?next=${encodeURIComponent("/me")}`,
+      ),
+    );
+    replace.mockReset();
+
+    const restored = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(restored, "persisted", { value: true });
+    await act(async () => {
+      window.dispatchEvent(restored);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Asking again is what finds the still-valid refresh cookie; the page is
+    // not sent to sign-in a second time.
+    await waitFor(() => expect(bootstrapMock).toHaveBeenCalledTimes(2));
+    expect(tokenStore.isAuthenticated).toBe(true);
+    expect(replace).not.toHaveBeenCalled();
   });
 });

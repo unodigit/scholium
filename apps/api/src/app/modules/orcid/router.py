@@ -72,6 +72,15 @@ Where ORCID sends the browser back to
 
 ``GET /v1/auth/orcid/callback`` is retired and answers ``410`` problem details.
 
+With ``ORCID_MOCK=1`` the browser never leaves this node: the authorize URL
+points at ``GET /v1/auth/orcid/mock/authorize`` (below), a small HTML page that
+looks like ORCID's consent screen and redirects to the same web
+``/onboarding/orcid`` page with a ``mock-<orcid>`` code and the state it was
+given.  That exercises the real return path -- a whole-page navigation away
+from the app and back -- without an ORCID client registration.  Mock mode is
+refused in production by :meth:`app.settings.Settings.validate_for_environment`,
+and the mock page itself answers ``404`` unless it is on.
+
 Failures of ``/start``:
 
 * ``401`` problem details when a bearer token is sent but is invalid/expired.
@@ -87,11 +96,13 @@ The ``/start`` response carries a short-lived signed value, so it is sent with
 
 from __future__ import annotations
 
+import html
 import os
 from typing import Optional
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
 
@@ -109,6 +120,8 @@ __all__ = [
     "CALLBACK_PATH",
     "COMPLETE_PATH",
     "DEFAULT_ORCID_BASE_URL",
+    "MOCK_AUTHORIZE_PATH",
+    "MOCK_ORCID_ID",
     "ORCID_AUTH_SCOPE",
     "ORCID_STATE_PRINCIPAL_MISMATCH",
     "OrcidCompleteRequest",
@@ -117,6 +130,7 @@ __all__ = [
     "REDIRECT_PATH",
     "authorize_endpoint",
     "build_authorize_url",
+    "mock_authorize_endpoint",
     "orcid_base_url",
     "public_web_origin",
     "redirect_uri",
@@ -157,6 +171,13 @@ COMPLETE_PATH = "/v1/auth/orcid/complete"
 
 #: Path of the retired unauthenticated callback; it only answers ``410`` now.
 CALLBACK_PATH = "/v1/auth/orcid/callback"
+
+#: Path of the API-served substitute for ORCID's consent screen, used when
+#: ``ORCID_MOCK`` is on (dev/tests) so the full-page return path still runs.
+MOCK_AUTHORIZE_PATH = "/v1/auth/orcid/mock/authorize"
+
+#: The ORCID iD the mock consent screen offers, and the one a mock code names.
+MOCK_ORCID_ID = "0000-0002-1825-0097"
 
 #: Problem ``type`` of the ``403`` returned when the caller is not the DID the
 #: state was issued to.
@@ -248,6 +269,17 @@ def authorize_endpoint(base_url: Optional[str] = None) -> str:
     return base + AUTHORIZE_PATH
 
 
+def mock_authorize_endpoint(api_origin: Optional[str] = None) -> str:
+    """Return this node's mock ORCID authorize page, absolute.
+
+    ``api_origin`` is the origin the browser reached the API on (the request's
+    base URL, so proxy headers are honoured); without it the configured
+    ``NEXT_PUBLIC_API_URL`` is used, which is what the web app itself calls.
+    """
+    base = (api_origin or settings.NEXT_PUBLIC_API_URL or "").strip().rstrip("/")
+    return base + MOCK_AUTHORIZE_PATH
+
+
 def public_web_origin() -> Optional[str]:
     """Return the public origin of the web app, or ``None`` when none is configured.
 
@@ -283,6 +315,7 @@ def build_authorize_url(
     did: Optional[str] = None,
     state: Optional[str] = None,
     base_url: Optional[str] = None,
+    api_origin: Optional[str] = None,
 ) -> tuple[str, str]:
     """Build the authorize URL and return ``(url, state)``.
 
@@ -290,6 +323,12 @@ def build_authorize_url(
     callers that already minted a state may pass it in.  ``base_url`` overrides
     the configured ORCID base for this call.  The redirect is the web app's
     ``/onboarding/orcid`` page (see :func:`redirect_uri`).
+
+    With ``ORCID_MOCK`` on and no explicit ``base_url``, the URL is this node's
+    mock consent page instead of ORCID: no client registration exists in dev,
+    so sending the browser to the real sandbox could never complete.  The
+    query parameters are the same, so the mock page can send the browser back
+    with the code and state the real one would.
     """
     signed_state = sign_state(did=did) if state is None else state
     params = {
@@ -299,7 +338,12 @@ def build_authorize_url(
         "redirect_uri": redirect_uri(),
         "state": signed_state,
     }
-    return f"{authorize_endpoint(base_url)}?{urlencode(params)}", signed_state
+    endpoint = (
+        mock_authorize_endpoint(api_origin)
+        if settings.ORCID_MOCK and base_url is None
+        else authorize_endpoint(base_url)
+    )
+    return f"{endpoint}?{urlencode(params)}", signed_state
 
 
 def optional_principal(
@@ -333,7 +377,10 @@ def start_orcid_link(
             detail="ORCID sign-in is not configured: set ORCID_CLIENT_ID (or ORCID_MOCK=1 for tests).",
         )
 
-    url, state = build_authorize_url(did=principal.did if principal else None)
+    url, state = build_authorize_url(
+        did=principal.did if principal else None,
+        api_origin=str(request.base_url),
+    )
     # The state is signed material tied to one attempt; keep it out of caches.
     response.headers["Cache-Control"] = "no-store"
     return OrcidStartResponse(
@@ -343,6 +390,198 @@ def start_orcid_link(
         auth_url=url,
         state=state,
     )
+
+
+def _redirect_is_allowed(target: str) -> bool:
+    """True when ``target`` is the web app's ORCID return page.
+
+    The mock page must not become an open redirect, even in development: it
+    only ever sends the browser back to the page that started the flow, on an
+    origin ``CORS`` trusts.  A ``*`` entry means "any origin" in dev, so any
+    absolute http(s) URL on the return path is accepted then.
+    """
+    parts = urlsplit(target)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return False
+    if parts.path.rstrip("/") != REDIRECT_PATH:
+        return False
+    if "*" in settings.web_origins:
+        return True
+    origin = f"{parts.scheme}://{parts.netloc}"
+    return any(origin == entry.strip().rstrip("/") for entry in settings.web_origins)
+
+
+def _with_query(url: str, **params: str) -> str:
+    """Append/replace query parameters on ``url``."""
+    parts = urlsplit(url)
+    query = parse_qs(parts.query, keep_blank_values=True)
+    for name, value in params.items():
+        query[name] = [value]
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query, doseq=True), parts.fragment)
+    )
+
+
+def _mock_consent_page(
+    *,
+    redirect_uri: str,
+    state: str,
+    client_id: str,
+    scope: str,
+    response_type: str,
+) -> str:
+    """The fake ORCID consent screen, as one self-contained HTML document."""
+    escape = html.escape
+    fields = "".join(
+        f'<input type="hidden" name="{name}" value="{escape(value, quote=True)}">'
+        for name, value in (
+            ("redirect_uri", redirect_uri),
+            ("state", state),
+            ("client_id", client_id),
+            ("scope", scope),
+            ("response_type", response_type),
+        )
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sign in to ORCID (mock)</title>
+<style>
+  :root {{
+    color-scheme: light dark;
+    --bg: #f7f7f4; --surface: #ffffff; --ink: #1b1d22; --ink-2: #5a5f6b;
+    --rule: #e4e1d9; --accent: #a6ce39; --on-accent: #1b1d22;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg: #14151a; --surface: #1c1e25; --ink: #ecebe6; --ink-2: #a3a7b2;
+      --rule: #2c2f38; --accent: #a6ce39; --on-accent: #14151a;
+    }}
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    padding: 24px 16px; background: var(--bg); color: var(--ink);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px; line-height: 22px;
+  }}
+  main {{
+    width: 100%; max-width: 420px; padding: 32px 24px;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 12px;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55), 0 12px 32px rgb(0 0 0 / 0.08);
+  }}
+  .badge {{
+    display: inline-block; margin: 0 0 16px; padding: 2px 10px; border-radius: 999px;
+    background: var(--accent); color: var(--on-accent);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  }}
+  h1 {{ margin: 0 0 8px; font-size: 24px; line-height: 30px; letter-spacing: -0.01em; }}
+  p {{ margin: 0 0 16px; color: var(--ink-2); }}
+  .iD {{
+    margin: 0 0 24px; padding: 12px 16px; border: 1px solid var(--rule); border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px;
+  }}
+  .actions {{ display: flex; gap: 12px; flex-wrap: wrap; }}
+  button {{
+    min-height: 44px; padding: 10px 20px; border-radius: 999px; border: 1px solid transparent;
+    font: inherit; font-weight: 600; cursor: pointer;
+    transition: transform 120ms ease-out, filter 120ms ease-out;
+  }}
+  button:active {{ transform: scale(0.97); }}
+  button:focus-visible {{ outline: 2px solid var(--ink); outline-offset: 2px; }}
+  .approve {{ flex: 1; background: var(--accent); color: var(--on-accent); }}
+  .approve:active {{ filter: brightness(0.94); }}
+  .deny {{ background: transparent; color: var(--ink-2); border-color: var(--rule); }}
+  .note {{ margin: 20px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-2); }}
+</style>
+</head>
+<body>
+<main>
+  <p class="badge">Mock ORCID</p>
+  <h1>Scholium wants to sign you in</h1>
+  <p>This is a stand-in for ORCID's consent screen. No real ORCID account is
+     used and nothing leaves this machine.</p>
+  <p class="iD">{escape(MOCK_ORCID_ID)}</p>
+  <form method="get" action="{escape(MOCK_AUTHORIZE_PATH, quote=True)}">
+    {fields}
+    <div class="actions">
+      <button class="approve" type="submit" name="decision" value="approve">Authorize</button>
+      <button class="deny" type="submit" name="decision" value="deny">Deny</button>
+    </div>
+  </form>
+  <p class="note">ORCID would normally ask you to sign in and approve sharing
+     your iD with Scholium.</p>
+</main>
+</body>
+</html>"""
+
+
+@auth_router.get(
+    "/mock/authorize",
+    response_class=HTMLResponse,
+    summary="Mock ORCID consent screen (ORCID_MOCK only), redirecting back to the app",
+)
+def mock_authorize(
+    redirect_uri: str = Query(..., description="the web app page to send the browser back to"),
+    state: str = Query(..., description="the signed state /start issued"),
+    decision: Optional[str] = Query(default=None),
+    client_id: str = Query(default=""),
+    scope: str = Query(default=ORCID_AUTH_SCOPE),
+    response_type: str = Query(default="code"),
+) -> Response:
+    """Show a fake ORCID consent screen, or complete it.
+
+    The browser reaches this page from ``/start`` as a whole-page navigation
+    (no bearer token, exactly like ORCID).  ``decision=approve`` redirects to
+    ``redirect_uri`` with ``code=mock-<orcid>`` and the original ``state``;
+    ``decision=deny`` redirects with ``error=access_denied``; without a
+    decision the consent page is rendered and nothing is issued.
+
+    Only available with ``ORCID_MOCK`` on -- production configuration refuses
+    that setting, and this route answers ``404`` otherwise -- and only ever
+    redirects to an origin ``WEB_ORIGINS`` lists.
+    """
+    if not settings.ORCID_MOCK:
+        raise HTTPException(status_code=404, detail="Mock ORCID is not enabled on this node.")
+    if not _redirect_is_allowed(redirect_uri):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "redirect_uri must be the web app's "
+                f"{REDIRECT_PATH} page on a configured WEB_ORIGINS origin."
+            ),
+        )
+    if not state.strip():
+        raise HTTPException(status_code=400, detail="state is required.")
+
+    if decision == "deny":
+        target = _with_query(
+            redirect_uri,
+            error="access_denied",
+            error_description="The user denied the authorization request.",
+            state=state,
+        )
+        return RedirectResponse(target, status_code=302)
+    if decision == "approve":
+        target = _with_query(redirect_uri, code=f"mock-{MOCK_ORCID_ID}", state=state)
+        return RedirectResponse(target, status_code=302)
+
+    response = HTMLResponse(
+        _mock_consent_page(
+            redirect_uri=redirect_uri,
+            state=state,
+            client_id=client_id,
+            scope=scope,
+            response_type=response_type,
+        )
+    )
+    # A one-time state and code: never keep this page in a shared cache.
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @auth_router.post(

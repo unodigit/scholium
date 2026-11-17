@@ -146,29 +146,61 @@ test.describe("the session survives a page load", () => {
     void passkeys;
     await createAccount(page);
 
-    // ORCID is a real full-page navigation away from the app.  The mock
-    // authorize endpoint immediately redirects back with a `mock-<orcid>` code
-    // and the signed state the API issued to this session.
-    await page.route("https://sandbox.orcid.org/**", async (route) => {
-      const authorize = new URL(route.request().url());
-      const redirectUri = authorize.searchParams.get("redirect_uri");
-      const state = authorize.searchParams.get("state");
-      if (!redirectUri || !state) {
-        await route.abort();
-        return;
-      }
-      const target = new URL(redirectUri);
-      target.searchParams.set("code", `mock-${MOCK_ORCID}`);
-      target.searchParams.set("state", state);
-      await route.fulfill({ status: 302, headers: { location: target.toString() } });
-    });
-
+    // ORCID is a real full-page navigation away from the app.  With
+    // `ORCID_MOCK=1` the API serves a stand-in consent screen for the test iD;
+    // approving it redirects back with a `mock-<orcid>` code and the signed
+    // state the API issued to this session.
     await page.getByRole("button", { name: "Link your ORCID iD" }).click();
+    await expect(page.getByRole("heading", { name: "Scholium wants to sign you in" })).toBeVisible();
+    await expect(page.getByText(MOCK_ORCID, { exact: false })).toBeVisible();
+
+    await page.getByRole("button", { name: "Authorize" }).click();
 
     await expect(page).toHaveURL(/\/onboarding\/orcid\?/);
     await expect(page.getByRole("heading", { name: "ORCID iD linked" })).toBeVisible();
     await expect(page.getByText(MOCK_ORCID, { exact: false })).toBeVisible();
     await expect(page.getByRole("link", { name: "Continue setting up" })).toBeVisible();
+
+    // Coming back from the other origin must not cost the session: the
+    // checklist is still signed in, and skipping it keeps the member signed in
+    // on /me.
+    await page.getByRole("link", { name: "Continue setting up" }).click();
+    await expect(page).toHaveURL(/\/onboarding$/);
+    await page.getByRole("link", { name: "Skip for now" }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await visit(page, "/me");
+    await expect(page.getByRole("heading", { name: "Me", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in to continue" })).toHaveCount(0);
+  });
+
+  test("coming back from ORCID without linking, then skipping, keeps the session", async ({
+    page,
+    passkeys,
+  }) => {
+    void passkeys;
+    await createAccount(page);
+
+    // The reported journey: go to the ORCID step, come back without linking,
+    // then skip onboarding. The full-page round trip must not cost the
+    // session, and /me must still be the member's dashboard.
+    await page.getByRole("button", { name: "Link your ORCID iD" }).click();
+    await expect(page.getByRole("heading", { name: "Scholium wants to sign you in" })).toBeVisible();
+    await page.getByRole("button", { name: "Deny" }).click();
+
+    await expect(page).toHaveURL(/\/onboarding\/orcid\?/);
+    await expect(
+      page.getByRole("heading", { name: "We couldn't link your ORCID iD" }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Back to setup" }).click();
+    await expect(page).toHaveURL(/\/onboarding$/);
+
+    await page.getByRole("link", { name: "Skip for now" }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await visit(page, "/me");
+    await expect(page.getByRole("heading", { name: "Me", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in to continue" })).toHaveCount(0);
   });
 
   test("a moderator follows a queue row and stays signed in", async ({ page, passkeys }) => {

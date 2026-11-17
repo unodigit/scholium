@@ -21,9 +21,9 @@
  */
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { bootstrapSession, isProtectedPath } from "./session";
+import { bootstrapSession, isProtectedPath, resetSessionBootstrap } from "./session";
 import { tokenStore } from "./tokens";
 
 /** What a protected page shows while the cookie is being exchanged. */
@@ -64,8 +64,18 @@ export function SessionProvider({ children }: SessionProviderProps) {
   // hydrates exactly as it was rendered.
   const [settled, setSettled] = useState(false);
 
-  useEffect(() => {
+  /**
+   * Restore the session from the refresh cookie once.
+   *
+   * The bootstrap caches its answer for the life of the document, so a check
+   * that runs before the session exists (the visitor landed on `/signin`, or
+   * the browser restored an earlier document) would otherwise keep saying
+   * "signed out". Callers that have reason to ask again call
+   * {@link resetSessionBootstrap} first.
+   */
+  const restore = useCallback((): (() => void) => {
     let active = true;
+    setSettled(false);
     // Runs on every page load, public or private.  `bootstrapSession` shares
     // one refresh between every caller in the document.
     void bootstrapSession().finally(() => {
@@ -77,6 +87,39 @@ export function SessionProvider({ children }: SessionProviderProps) {
       active = false;
     };
   }, []);
+
+  useEffect(() => restore(), [restore]);
+
+  // Leaving the site and coming back (the ORCID detour is the common one) can
+  // restore this document from the back-forward cache, or bring a tab that was
+  // in the background forward again, without mounting the provider anew.  If
+  // the access token is no longer in memory, ask the refresh cookie again
+  // instead of deciding the visitor is signed out.
+  useEffect(() => {
+    const recheck = (): void => {
+      if (tokenStore.isAuthenticated) {
+        return;
+      }
+      resetSessionBootstrap();
+      restore();
+    };
+    const onPageShow = (event: PageTransitionEvent): void => {
+      if (event.persisted) {
+        recheck();
+      }
+    };
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === "visible") {
+        recheck();
+      }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [restore]);
 
   // A protected page without a session is not shown; sign-in brings the
   // visitor back to exactly this address.

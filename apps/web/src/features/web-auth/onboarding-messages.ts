@@ -28,6 +28,34 @@ export const ONBOARDING_PASSKEY_CHECKING = "Checking this device…";
 /** Shown while the passkey step links to `/signin`. */
 export const ONBOARDING_PASSKEY_SIGNIN_ACTION = "Sign in to create your passkey";
 
+/** Profile step: label of the display-name input. */
+export const PROFILE_NAME_LABEL = "Display name";
+
+/** Profile step: label of the (optional) affiliation input. */
+export const PROFILE_AFFILIATION_LABEL = "Affiliation (optional)";
+
+/** Profile step: label of the email input. */
+export const PROFILE_EMAIL_LABEL = "Email";
+
+/** Profile step: why the email is needed, under the field. */
+export const PROFILE_EMAIL_HINT =
+  "Used to verify your account. It is never shown on your public profile.";
+
+/** Profile step: why the name matters, under the fields. */
+export const PROFILE_NAME_HINT =
+  "This is the name readers see on your papers, reviews and profile.";
+
+/** Profile step: save the profile. */
+export const PROFILE_SAVE_ACTION = "Save profile";
+
+/** Profile step, while saving. */
+export const PROFILE_SAVING = "Saving…";
+
+/** Profile step, done. */
+export function profileSavedMessage(name: string): string {
+  return `Saved as ${name}. Readers will see this name instead of your account ID.`;
+}
+
 /** Link ORCID step, before it starts. */
 export const ORCID_START_ACTION = "Link your ORCID iD";
 

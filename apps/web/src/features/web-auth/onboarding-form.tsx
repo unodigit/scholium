@@ -1,14 +1,18 @@
 "use client";
 
 /**
- * The `/onboarding` card: the four first-run steps as a checklist.
+ * The `/onboarding` card: the five first-run steps as a checklist.
  *
- * create passkey → link ORCID → pick categories to follow → set recovery
- * guardians, in that order (`docs/design.md` §6). Each step shows its state
- * and its own controls:
+ * create passkey → add your name → link ORCID → pick categories to follow →
+ * set recovery guardians, in that order (`docs/design.md` §6, plus the profile
+ * step that gives a member a name instead of a truncated DID). Each step shows
+ * its state and its own controls:
  *
  * - **passkey** — done the moment a device key exists on this device;
  *   otherwise it links to `/signin`.
+ * - **profile** — display name, optional affiliation and the email
+ *   `PUT /v1/profiles/{did}` requires, saved through the same erasable-profile
+ *   API the rest of the app reads names from.
  * - **ORCID** — "Link your ORCID iD" sends the whole browser to the authorize
  *   URL from `GET /v1/auth/orcid/start`; ORCID sends it back to
  *   `/onboarding/orcid` (see {@link OrcidReturn}), which finishes the link as
@@ -28,7 +32,12 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { ONBOARDING_STEPS } from "./onboarding";
+import {
+  ONBOARDING_STEPS,
+  PROFILE_AFFILIATION_MAX,
+  PROFILE_EMAIL_MAX,
+  PROFILE_NAME_MAX,
+} from "./onboarding";
 import {
   CATEGORIES_ADD_ACTION,
   CATEGORIES_ADD_LABEL,
@@ -60,9 +69,17 @@ import {
   ORCID_STARTING,
   ORCID_START_ACTION,
   ORCID_STARTED_NOTE,
+  PROFILE_AFFILIATION_LABEL,
+  PROFILE_EMAIL_HINT,
+  PROFILE_EMAIL_LABEL,
+  PROFILE_NAME_HINT,
+  PROFILE_NAME_LABEL,
+  PROFILE_SAVE_ACTION,
+  PROFILE_SAVING,
   categoriesSavedMessage,
   onboardingProgressMessage,
   orcidReturnLinkedMessage,
+  profileSavedMessage,
 } from "./onboarding-messages";
 import { useOnboarding, useOrcidReturn } from "./use-onboarding";
 
@@ -100,7 +117,9 @@ export function OnboardingForm() {
                 <span className="wa-check" aria-hidden="true">
                   {done ? "✓" : "•"}
                 </span>
-                <h2 className="wa-step-title">{step.title}</h2>
+                <h2 className="wa-step-title" id={`onboarding-step-${step.id}`}>
+                  {step.title}
+                </h2>
                 {done ? (
                   <span className="wa-done-tag">Done</span>
                 ) : null}
@@ -111,6 +130,7 @@ export function OnboardingForm() {
                 {step.id === "passkey" ? (
                   <PasskeyBody onboarding={onboarding} />
                 ) : null}
+                {step.id === "profile" ? <ProfileBody onboarding={onboarding} /> : null}
                 {step.id === "orcid" ? <OrcidBody onboarding={onboarding} /> : null}
                 {step.id === "categories" ? (
                   <CategoriesBody
@@ -171,6 +191,140 @@ function PasskeyBody({ onboarding }: { onboarding: ReturnType<typeof useOnboardi
         </Link>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Profile step: the display name readers see, an optional affiliation, and the
+ * email the profile API requires (it sends a verification link there).
+ *
+ * A real `<form>` with labels and the browser's own `type`/`autocomplete`
+ * hints, so autofill works and Enter submits; the hook validates before any
+ * request and maps the API's 422 problems back onto these inputs.
+ */
+function ProfileBody({ onboarding }: { onboarding: ReturnType<typeof useOnboarding> }) {
+  const { profile, setProfileField, saveProfileAction, did } = onboarding;
+  const problemFor = (field: "name" | "affiliation" | "email") =>
+    profile.problems.find((problem) => problem.field === field);
+  const formProblem = profile.problems.find((problem) => problem.field === null);
+
+  const nameProblem = problemFor("name");
+  const affiliationProblem = problemFor("affiliation");
+  const emailProblem = problemFor("email");
+
+  return (
+    <form
+      aria-labelledby="onboarding-step-profile"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void saveProfileAction();
+      }}
+    >
+      <div className="wa-field">
+        <label className="wa-field-label" htmlFor="onboarding-profile-name">
+          {PROFILE_NAME_LABEL}
+        </label>
+        <input
+          id="onboarding-profile-name"
+          className="wa-input"
+          type="text"
+          name="name"
+          autoComplete="name"
+          required
+          maxLength={PROFILE_NAME_MAX}
+          value={profile.name}
+          onChange={(event) => setProfileField("name", event.target.value)}
+          aria-invalid={nameProblem ? true : undefined}
+          aria-describedby={nameProblem ? "onboarding-profile-name-problem" : undefined}
+        />
+        {nameProblem ? (
+          <p className="wa-field-error" id="onboarding-profile-name-problem" role="alert">
+            {nameProblem.message}
+          </p>
+        ) : null}
+        <p className="wa-note">{PROFILE_NAME_HINT}</p>
+      </div>
+
+      <div className="wa-field">
+        <label className="wa-field-label" htmlFor="onboarding-profile-affiliation">
+          {PROFILE_AFFILIATION_LABEL}
+        </label>
+        <input
+          id="onboarding-profile-affiliation"
+          className="wa-input"
+          type="text"
+          name="affiliation"
+          autoComplete="organization"
+          maxLength={PROFILE_AFFILIATION_MAX}
+          value={profile.affiliation}
+          onChange={(event) => setProfileField("affiliation", event.target.value)}
+          aria-invalid={affiliationProblem ? true : undefined}
+          aria-describedby={
+            affiliationProblem ? "onboarding-profile-affiliation-problem" : undefined
+          }
+        />
+        {affiliationProblem ? (
+          <p
+            className="wa-field-error"
+            id="onboarding-profile-affiliation-problem"
+            role="alert"
+          >
+            {affiliationProblem.message}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="wa-field">
+        <label className="wa-field-label" htmlFor="onboarding-profile-email">
+          {PROFILE_EMAIL_LABEL}
+        </label>
+        <input
+          id="onboarding-profile-email"
+          className="wa-input"
+          type="email"
+          name="email"
+          autoComplete="email"
+          inputMode="email"
+          spellCheck={false}
+          required
+          maxLength={PROFILE_EMAIL_MAX}
+          value={profile.email}
+          onChange={(event) => setProfileField("email", event.target.value)}
+          aria-invalid={emailProblem ? true : undefined}
+          aria-describedby={
+            emailProblem
+              ? "onboarding-profile-email-problem"
+              : "onboarding-profile-email-hint"
+          }
+        />
+        {emailProblem ? (
+          <p className="wa-field-error" id="onboarding-profile-email-problem" role="alert">
+            {emailProblem.message}
+          </p>
+        ) : (
+          <p className="wa-note" id="onboarding-profile-email-hint">
+            {PROFILE_EMAIL_HINT}
+          </p>
+        )}
+      </div>
+
+      {formProblem ? (
+        <p className="wa-field-error" role="alert">
+          {formProblem.message}
+        </p>
+      ) : null}
+
+      <button
+        type="submit"
+        className="wa-button wa-button--small"
+        disabled={profile.saving || !did}
+      >
+        {profile.saving ? PROFILE_SAVING : PROFILE_SAVE_ACTION}
+      </button>
+      {profile.saved ? (
+        <p className="wa-note">{profileSavedMessage(profile.name || "your name")}</p>
+      ) : null}
+    </form>
   );
 }
 

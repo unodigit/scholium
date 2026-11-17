@@ -82,6 +82,7 @@ describe("useOnboarding", () => {
       expect(result.current.did).toBe(OWNER);
       expect(result.current.steps).toEqual([
         { id: "passkey", done: true },
+        { id: "profile", done: false },
         { id: "orcid", done: false },
         { id: "categories", done: false },
         { id: "guardians", done: false },
@@ -106,6 +107,7 @@ describe("useOnboarding", () => {
     it("restores progress saved on an earlier visit", async () => {
       const { services, storage } = makeServices();
       seed(storage, {
+        profileSavedAt: "2026-11-14T23:59:00Z",
         orcidLinkedAt: "2026-11-15T00:00:00Z",
         categories: ["cs.AI"],
         guardiansSavedAt: "2026-11-15T00:01:00Z",
@@ -114,7 +116,7 @@ describe("useOnboarding", () => {
       const { result } = await renderOnboarding(services);
 
       expect(result.current.steps.every((step) => step.done)).toBe(true);
-      expect(result.current.completedCount).toBe(4);
+      expect(result.current.completedCount).toBe(5);
       expect(result.current.canFinish).toBe(true);
     });
 
@@ -585,5 +587,101 @@ describe("useOrcidReturn (the /onboarding/orcid page)", () => {
     expect(post).not.toHaveBeenCalled();
     expect(result.current.status).toBe("failed");
     expect(result.current.error).toBe(ORCID_RETURN_MISSING_MESSAGE);
+  });
+});
+
+describe("add your name", () => {
+  const PROFILE = {
+    name: "Ada Lovelace",
+    affiliation: "Analytical Engine Co.",
+    email: "ada@example.org",
+  };
+
+  it("fills the form from the account's profile and marks the step done", async () => {
+    const { services, storage } = makeServices({
+      client: {
+        get: vi.fn(async (path: string) =>
+          path.startsWith("/profiles/") ? PROFILE : ({}),
+        ),
+        put: vi.fn(async () => undefined),
+      } as unknown as OnboardingServices["client"],
+    });
+
+    const { result } = await renderOnboarding(services);
+
+    expect(result.current.profile).toMatchObject({ ...PROFILE, saved: true });
+    expect(result.current.steps.find((step) => step.id === "profile")?.done).toBe(true);
+    const stored = JSON.parse(storage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}");
+    expect(stored.profileSavedAt).toEqual(expect.any(String));
+  });
+
+  it("saves the profile and completes the step", async () => {
+    const { services, storage, put } = makeServices({
+      client: {
+        get: vi.fn(async () => ({})),
+        put: vi.fn(async (_path: string, body?: unknown) => body),
+      } as unknown as OnboardingServices["client"],
+    });
+    const { result } = await renderOnboarding(services);
+
+    act(() => {
+      result.current.setProfileField("name", " Ada Lovelace ");
+      result.current.setProfileField("affiliation", "Analytical Engine Co.");
+      result.current.setProfileField("email", "ada@example.org");
+    });
+    await act(async () => {
+      await result.current.saveProfileAction();
+    });
+
+    expect(put).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(OWNER)}`, PROFILE);
+    expect(result.current.profile.saved).toBe(true);
+    expect(result.current.profile.name).toBe("Ada Lovelace");
+    expect(result.current.steps.find((step) => step.id === "profile")?.done).toBe(true);
+    const stored = JSON.parse(storage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}");
+    expect(stored.profileSavedAt).toEqual(expect.any(String));
+  });
+
+  it("reports local validation problems without calling the API", async () => {
+    const { services, put } = makeServices();
+    const { result } = await renderOnboarding(services);
+
+    await act(async () => {
+      await result.current.saveProfileAction();
+    });
+
+    expect(put).not.toHaveBeenCalled();
+    expect(result.current.profile.problems.map((problem) => problem.field)).toEqual([
+      "name",
+      "email",
+    ]);
+    expect(result.current.steps.find((step) => step.id === "profile")?.done).toBe(false);
+  });
+
+  it("maps the API's 422 onto the inputs", async () => {
+    const { services } = makeServices({
+      client: {
+        get: vi.fn(async () => ({})),
+        put: vi.fn(async () => {
+          throw apiErrorFrom(422, {
+            detail: "The profile is not valid.",
+            errors: [{ loc: ["body", "email"], msg: "must be a valid email address" }],
+          });
+        }),
+      } as unknown as OnboardingServices["client"],
+    });
+    const { result } = await renderOnboarding(services);
+
+    act(() => {
+      result.current.setProfileField("name", "Ada Lovelace");
+      result.current.setProfileField("email", "ada@example.org");
+    });
+    await act(async () => {
+      await result.current.saveProfileAction();
+    });
+
+    expect(result.current.profile.problems).toEqual([
+      { field: "email", message: "must be a valid email address" },
+    ]);
+    expect(result.current.profile.saved).toBe(false);
   });
 });

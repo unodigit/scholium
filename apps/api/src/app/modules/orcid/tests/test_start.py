@@ -92,7 +92,10 @@ def test_route_is_mounted_by_the_module_loader():
 # --- the authorize URL ------------------------------------------------------
 
 
-def test_returns_the_sandbox_authorize_url_with_oauth_parameters(orcid_env):
+def test_returns_the_sandbox_authorize_url_with_oauth_parameters(orcid_env, monkeypatch):
+    # Real mode: the URL is ORCID's, with a registered client id.
+    monkeypatch.setattr(settings, "ORCID_MOCK", 0)
+
     response = _start()
 
     assert response.status_code == 200
@@ -106,6 +109,28 @@ def test_returns_the_sandbox_authorize_url_with_oauth_parameters(orcid_env):
     assert query["scope"] == "/authenticate"
     # ORCID sends the browser to the web app, which finishes the link as the
     # signed-in user -- never to an unauthenticated API endpoint.
+    assert query["redirect_uri"] == "http://localhost:3000/onboarding/orcid"
+    assert query["state"] == body["state"]
+
+
+def test_mock_mode_points_at_the_api_consent_page_with_the_same_parameters(orcid_env):
+    """ORCID_MOCK must not send the browser to the real sandbox.
+
+    No client id is registered in dev, so a sandbox URL with a blank
+    ``client_id`` can never complete.  The URL instead names this node's mock
+    consent page, carrying the redirect and signed state the real one would.
+    """
+    response = _start()
+
+    assert response.status_code == 200
+    body = response.json()
+    url = body["authorize_url"]
+    parts = urlsplit(url)
+    assert parts.netloc == "testserver", url
+    assert parts.path == "/v1/auth/orcid/mock/authorize"
+    query = _query(url)
+    assert query["response_type"] == "code"
+    assert query["scope"] == "/authenticate"
     assert query["redirect_uri"] == "http://localhost:3000/onboarding/orcid"
     assert query["state"] == body["state"]
 
@@ -144,12 +169,14 @@ def test_default_holds_for_the_real_settings_in_a_fresh_process():
 
 
 def test_blank_setting_falls_back_to_the_sandbox(orcid_env, monkeypatch):
+    monkeypatch.setattr(settings, "ORCID_MOCK", 0)
     monkeypatch.setattr(settings, "ORCID_BASE_URL", "   ")
 
     assert urlsplit(_start().json()["authorize_url"]).netloc == "sandbox.orcid.org"
 
 
 def test_production_is_used_when_the_operator_sets_it_explicitly(orcid_env, monkeypatch):
+    monkeypatch.setattr(settings, "ORCID_MOCK", 0)
     monkeypatch.setenv("ORCID_BASE_URL", "https://orcid.org")
 
     parts = urlsplit(_start().json()["authorize_url"])
@@ -167,6 +194,7 @@ def test_production_is_used_when_the_operator_sets_it_explicitly(orcid_env, monk
     ],
 )
 def test_honours_a_configured_base_url(orcid_env, monkeypatch, configured, expected_prefix):
+    monkeypatch.setattr(settings, "ORCID_MOCK", 0)
     monkeypatch.setattr(settings, "ORCID_BASE_URL", configured)
 
     assert _start().json()["authorize_url"].startswith(expected_prefix)

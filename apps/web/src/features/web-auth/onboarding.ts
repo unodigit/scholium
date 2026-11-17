@@ -1,16 +1,23 @@
 /**
  * The `/onboarding` steps (feature 142).
  *
- * Onboarding is four steps, in the order `docs/design.md` §6 fixes:
+ * Onboarding is five steps: the four `docs/design.md` §6 fixes, plus the
+ * profile step a new member needs so their name appears instead of a truncated
+ * DID:
  *
  * ```text
- * create passkey → link ORCID → pick categories to follow → set recovery guardians
+ * create passkey → add your name → link ORCID → pick categories → set guardians
  * ```
  *
  * The passkey exists by the time the user lands here (the first sign-in
- * created it), so this module is about the remaining three and about showing
+ * created it), so this module is about the remaining four and about showing
  * where each step stands:
  *
+ * - **add your name** — `PUT /v1/profiles/{did}` (feature 28, PRD ID-7) saves
+ *   the display name, an optional affiliation and an email. The API encrypts
+ *   them and only shows the name and affiliation publicly; pages that already
+ *   read profile names then stop showing a truncated DID. The step is done
+ *   once a profile with a name is observed (or one is saved from here).
  * - **link ORCID** — `GET /v1/auth/orcid/start` (feature 31) returns the
  *   authorize URL; the browser is sent there whole-page and comes back to the
  *   web app's `/onboarding/orcid` page, which POSTs the `code` and `state`
@@ -45,8 +52,8 @@ import type { ApiClient, TokenStorage } from "../../lib/api";
 
 import { isEd25519DidKey } from "./did-key";
 
-/** The four steps, in the order the design fixes for them. */
-export type OnboardingStepId = "passkey" | "orcid" | "categories" | "guardians";
+/** The five steps, in the order the design fixes for them. */
+export type OnboardingStepId = "passkey" | "profile" | "orcid" | "categories" | "guardians";
 
 /** One entry of the onboarding checklist. */
 export interface OnboardingStepInfo {
@@ -58,13 +65,19 @@ export interface OnboardingStepInfo {
   summary: string;
 }
 
-/** The `/onboarding` checklist, in order (design.md §6). */
+/** The `/onboarding` checklist, in order (design.md §6, plus the profile step). */
 export const ONBOARDING_STEPS: readonly OnboardingStepInfo[] = [
   {
     id: "passkey",
     title: "Create your passkey",
     summary:
       "Your passkey unlocks the signing key that lives on this device. Scholium never sees your key.",
+  },
+  {
+    id: "profile",
+    title: "Add your name",
+    summary:
+      "Shown on the papers and reviews you post, so readers see you rather than a truncated ID.",
   },
   {
     id: "orcid",
@@ -91,6 +104,8 @@ export const ONBOARDING_STORAGE_KEY = "scholium.web-auth.onboarding";
 
 /** Onboarding progress as remembered per browser. */
 export interface PersistedOnboarding {
+  /** UTC instant a profile with a display name was last observed or saved, if ever. */
+  profileSavedAt: string | null;
   /** UTC instant the browser was first sent to ORCID, if ever. */
   orcidStartedAt: string | null;
   /** UTC instant a linked ORCID iD was last observed, if ever. */
@@ -106,6 +121,7 @@ export interface PersistedOnboarding {
 /** A fresh, nothing-done-yet progress record. */
 export function emptyPersistedOnboarding(): PersistedOnboarding {
   return {
+    profileSavedAt: null,
     orcidStartedAt: null,
     orcidLinkedAt: null,
     categories: [],
@@ -151,6 +167,8 @@ export function loadPersistedOnboarding(
   const categories = stringArray(parsed.categories);
   const guardians = stringArray(parsed.guardians);
   return {
+    profileSavedAt:
+      typeof parsed.profileSavedAt === "string" ? parsed.profileSavedAt : null,
     orcidStartedAt: typeof parsed.orcidStartedAt === "string" ? parsed.orcidStartedAt : null,
     orcidLinkedAt: typeof parsed.orcidLinkedAt === "string" ? parsed.orcidLinkedAt : null,
     categories: categories ?? base.categories,
@@ -188,6 +206,7 @@ export function onboardingStepCompletion(
 ): Record<OnboardingStepId, boolean> {
   return {
     passkey: passkeyReady,
+    profile: persisted.profileSavedAt !== null,
     orcid: persisted.orcidLinkedAt !== null,
     categories: persisted.categories.length > 0,
     guardians: persisted.guardiansSavedAt !== null,
@@ -383,6 +402,240 @@ export async function checkOrcidLink(client: OnboardingClient, did: string): Pro
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Add your name (the erasable profile, PRD ID-7)
+// ---------------------------------------------------------------------------
+
+/** The profile fields onboarding collects. */
+export interface OnboardingProfile {
+  /** The display name shown on papers and reviews. */
+  name: string;
+  /** The optional affiliation shown next to the name. */
+  affiliation: string;
+  /** The address `PUT /v1/profiles/{did}` requires (and emails a link to). */
+  email: string;
+}
+
+/** Which profile input a problem belongs to; `null` for the form as a whole. */
+export type ProfileField = keyof OnboardingProfile;
+
+/** One thing wrong with the profile form, tied to an input when it can be. */
+export interface ProfileProblem {
+  /** The input the problem belongs to; `null` for the form as a whole. */
+  field: ProfileField | null;
+  /** One sentence the user can act on. */
+  message: string;
+}
+
+/** The name/affiliation/email limits the API enforces. */
+export const PROFILE_NAME_MAX = 200;
+export const PROFILE_AFFILIATION_MAX = 300;
+export const PROFILE_EMAIL_MAX = 254;
+
+/** Deliberately pragmatic, mirroring the API: one `@`, no spaces, a dotted domain. */
+const PROFILE_EMAIL_PATTERN = /^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$/;
+
+/** A profile could not be saved; {@link problems} says why, per input. */
+export class ProfileSaveError extends Error {
+  /** Every fault found, client-side or reported by the API. */
+  readonly problems: ProfileProblem[];
+
+  constructor(problems: ProfileProblem[], message = "The profile is not valid yet.") {
+    super(message);
+    this.name = "ProfileSaveError";
+    this.problems = problems;
+  }
+}
+
+/** Type guard for {@link ProfileSaveError}. */
+export function isProfileSaveError(error: unknown): error is ProfileSaveError {
+  return error instanceof ProfileSaveError;
+}
+
+/**
+ * Check a profile the way the API will, before anything is sent.
+ *
+ * `name` and `email` are required (the API stores and verifies the address);
+ * `affiliation` may be empty, for independent researchers. Every fault is
+ * reported, not just the first.
+ */
+export function validateProfile(draft: OnboardingProfile): ProfileProblem[] {
+  const name = typeof draft.name === "string" ? draft.name.trim() : "";
+  const affiliation =
+    typeof draft.affiliation === "string" ? draft.affiliation.trim() : "";
+  const email = typeof draft.email === "string" ? draft.email.trim() : "";
+  const problems: ProfileProblem[] = [];
+
+  if (name === "") {
+    problems.push({
+      field: "name",
+      message: "Enter the name you want readers to see.",
+    });
+  } else if (name.length > PROFILE_NAME_MAX) {
+    problems.push({
+      field: "name",
+      message: `Keep your name under ${PROFILE_NAME_MAX} characters.`,
+    });
+  }
+
+  if (affiliation.length > PROFILE_AFFILIATION_MAX) {
+    problems.push({
+      field: "affiliation",
+      message: `Keep your affiliation under ${PROFILE_AFFILIATION_MAX} characters.`,
+    });
+  }
+
+  if (email === "") {
+    problems.push({
+      field: "email",
+      message: "Enter an email address so Scholium can verify your account.",
+    });
+  } else if (email.length > PROFILE_EMAIL_MAX || !PROFILE_EMAIL_PATTERN.test(email)) {
+    problems.push({
+      field: "email",
+      message: "That does not look like an email address.",
+    });
+  }
+
+  return problems;
+}
+
+/** A profile read from `GET /v1/profiles/{did}`, with what it says. */
+export interface LoadedProfile {
+  /** The public profile document, for checks beyond the parsed fields. */
+  payload: unknown;
+  /** The display name as stored (empty when there is none). */
+  name: string;
+  /** The affiliation as stored (empty when there is none). */
+  affiliation: string;
+  /** The address — only the owner's own read carries it. */
+  email: string;
+  /** True when the profile already names the member. */
+  hasName: boolean;
+}
+
+function profileText(payload: Record<string, unknown>, field: string): string {
+  const value = payload[field];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Read the account's own profile (`GET /v1/profiles/{did}`).
+ *
+ * Best-effort: the profile route belongs to another plugin, so a node that
+ * does not serve it (or any other failure) reads as "nothing known" and the
+ * step simply starts blank rather than failing the page.
+ */
+export async function loadProfile(
+  client: OnboardingClient,
+  did: string,
+): Promise<LoadedProfile | null> {
+  try {
+    const payload = await client.get<unknown>(`/profiles/${encodeURIComponent(did)}`);
+    if (!isRecord(payload)) {
+      return null;
+    }
+    const name = profileText(payload, "name");
+    return {
+      payload,
+      name,
+      affiliation: profileText(payload, "affiliation"),
+      email: profileText(payload, "email"),
+      hasName: name !== "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The profile input an API field error points at, if any. */
+function profileFieldFromError(fieldError: {
+  loc?: Array<string | number>;
+  field?: string;
+}): ProfileField | null {
+  const candidates: string[] = [];
+  if (Array.isArray(fieldError.loc)) {
+    candidates.push(
+      ...fieldError.loc.filter((part): part is string => typeof part === "string"),
+    );
+  }
+  if (typeof fieldError.field === "string") {
+    candidates.push(...fieldError.field.split("."));
+  }
+  for (const candidate of candidates) {
+    if (candidate === "name" || candidate === "affiliation" || candidate === "email") {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/** Map a 422 problem document's `errors` onto profile inputs. */
+export function profileProblemsFromApiError(error: ApiError): ProfileProblem[] {
+  const problems: ProfileProblem[] = [];
+  for (const fieldError of error.fieldErrors) {
+    const message =
+      fieldError.message ??
+      (typeof fieldError.msg === "string" && fieldError.msg !== "" ? fieldError.msg : null) ??
+      error.detail;
+    if (message) {
+      problems.push({ field: profileFieldFromError(fieldError), message });
+    }
+  }
+  if (problems.length === 0) {
+    problems.push({ field: null, message: error.detail });
+  }
+  return problems;
+}
+
+/**
+ * Save the account's profile (`PUT /v1/profiles/{did}`, feature 28/ID-7).
+ *
+ * The PUT replaces the whole profile, so the email the API requires travels
+ * with the name and affiliation. The list is validated locally first, and the
+ * API's own 422 problem details are mapped back onto the inputs.
+ *
+ * @returns the profile as saved.
+ */
+export async function saveProfile(
+  client: OnboardingClient,
+  did: string,
+  draft: OnboardingProfile,
+): Promise<OnboardingProfile> {
+  const trimmed: OnboardingProfile = {
+    name: typeof draft.name === "string" ? draft.name.trim() : "",
+    affiliation: typeof draft.affiliation === "string" ? draft.affiliation.trim() : "",
+    email: typeof draft.email === "string" ? draft.email.trim() : "",
+  };
+  const localProblems = validateProfile(trimmed);
+  if (localProblems.length > 0) {
+    throw new ProfileSaveError(localProblems, "Check the highlighted fields.");
+  }
+
+  let payload: unknown;
+  try {
+    payload = await client.put<unknown>(`/profiles/${encodeURIComponent(did)}`, trimmed);
+  } catch (error) {
+    if (error instanceof ApiError && error.isValidationError) {
+      throw new ProfileSaveError(
+        profileProblemsFromApiError(error),
+        "The server rejected this profile.",
+      );
+    }
+    throw error;
+  }
+
+  // The response echoes what was stored; fall back to what was sent.
+  if (isRecord(payload)) {
+    return {
+      name: profileText(payload, "name") || trimmed.name,
+      affiliation: profileText(payload, "affiliation") || trimmed.affiliation,
+      email: profileText(payload, "email") || trimmed.email,
+    };
+  }
+  return trimmed;
 }
 
 // ---------------------------------------------------------------------------

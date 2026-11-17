@@ -11,6 +11,7 @@ import {
   ONBOARDING_STORAGE_KEY,
   GuardianSaveError,
   OnboardingError,
+  ProfileSaveError,
   checkOrcidLink,
   completeOrcidLink,
   countCompletedSteps,
@@ -20,16 +21,21 @@ import {
   guardianProblemsFromApiError,
   isGuardianSaveError,
   isOnboardingError,
+  isProfileSaveError,
   loadPersistedOnboarding,
+  loadProfile,
   normalizeCategory,
   onboardingStepCompletion,
   parseOrcidReturn,
   parseOrcidStart,
+  profileProblemsFromApiError,
   profileShowsLinkedOrcid,
   saveGuardians,
+  saveProfile,
   startOrcidLink,
   updatePersistedOnboarding,
   validateGuardians,
+  validateProfile,
   type OnboardingClient,
   type OrcidCompleteClient,
 } from "./onboarding";
@@ -62,6 +68,7 @@ describe("onboarding step model", () => {
   it("lists the steps in the order the design fixes", () => {
     expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual([
       "passkey",
+      "profile",
       "orcid",
       "categories",
       "guardians",
@@ -71,6 +78,7 @@ describe("onboarding step model", () => {
   it("marks a step done only for what has actually happened", () => {
     expect(onboardingStepCompletion(emptyPersistedOnboarding(), true)).toEqual({
       passkey: true,
+      profile: false,
       orcid: false,
       categories: false,
       guardians: false,
@@ -78,6 +86,7 @@ describe("onboarding step model", () => {
 
     const persisted = {
       ...emptyPersistedOnboarding(),
+      profileSavedAt: "2026-11-14T23:59:00Z",
       orcidLinkedAt: "2026-11-15T00:00:00Z",
       categories: ["cs.AI"],
       guardiansSavedAt: "2026-11-15T00:01:00Z",
@@ -85,11 +94,12 @@ describe("onboarding step model", () => {
     };
     expect(onboardingStepCompletion(persisted, true)).toEqual({
       passkey: true,
+      profile: true,
       orcid: true,
       categories: true,
       guardians: true,
     });
-    expect(countCompletedSteps(onboardingStepCompletion(persisted, true))).toBe(4);
+    expect(countCompletedSteps(onboardingStepCompletion(persisted, true))).toBe(5);
   });
 
   it("an ORCID round-trip that never confirmed does not complete the step", () => {
@@ -436,5 +446,109 @@ describe("set recovery guardians", () => {
       throw offline;
     });
     await expect(saveGuardians(down, OWNER, FIVE)).rejects.toBe(offline);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Add your name (the erasable profile)
+// ---------------------------------------------------------------------------
+
+describe("add your name", () => {
+  const PROFILE = {
+    name: "Ada Lovelace",
+    affiliation: "Analytical Engine Co.",
+    email: "ada@example.org",
+  };
+
+  it("reads the owner's profile and says whether it already names them", async () => {
+    const client = fakeClient(() => PROFILE);
+
+    const loaded = await loadProfile(client, OWNER);
+
+    expect(client.get).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(OWNER)}`);
+    expect(loaded).toMatchObject({ ...PROFILE, hasName: true });
+  });
+
+  it("treats a nameless or unreadable profile as nothing known", async () => {
+    const nameless = await loadProfile(fakeClient(() => ({ name: "  ", affiliation: null })), OWNER);
+    expect(nameless?.hasName).toBe(false);
+    expect(nameless?.name).toBe("");
+
+    const failing = fakeClient(() => {
+      throw apiErrorFrom(404, { detail: "Not Found" });
+    });
+    await expect(loadProfile(failing, OWNER)).resolves.toBeNull();
+  });
+
+  it("requires a name and a usable email, and allows an empty affiliation", () => {
+    expect(validateProfile({ name: "", affiliation: "", email: "" })).toEqual([
+      { field: "name", message: expect.stringContaining("name") },
+      { field: "email", message: expect.stringContaining("email") },
+    ]);
+    expect(validateProfile({ name: "Ada", affiliation: "", email: "not-an-email" })).toEqual([
+      { field: "email", message: expect.any(String) },
+    ]);
+    expect(
+      validateProfile({ name: "Ada", affiliation: "", email: "ada@example.org" }),
+    ).toEqual([]);
+  });
+
+  it("saves the trimmed profile through PUT /v1/profiles/{did}", async () => {
+    const client = fakeClient(undefined, () => ({ ...PROFILE, name: "Ada Lovelace" }));
+
+    const saved = await saveProfile(client, OWNER, {
+      name: "  Ada Lovelace ",
+      affiliation: " Analytical Engine Co. ",
+      email: " ada@example.org ",
+    });
+
+    expect(client.put).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(OWNER)}`, PROFILE);
+    expect(saved).toEqual(PROFILE);
+  });
+
+  it("refuses to send a profile the API would reject", async () => {
+    const client = fakeClient();
+
+    await expect(
+      saveProfile(client, OWNER, { name: " ", affiliation: "", email: "ada@example.org" }),
+    ).rejects.toBeInstanceOf(ProfileSaveError);
+    expect(client.put).not.toHaveBeenCalled();
+  });
+
+  it("maps the API's 422 problem details back onto the inputs", async () => {
+    const rejected = apiErrorFrom(422, {
+      detail: "The profile is not valid.",
+      errors: [
+        { loc: ["body", "email"], msg: "must be a valid email address" },
+        { loc: ["body", "name"], msg: "must not be blank" },
+      ],
+    });
+    const client = fakeClient(undefined, () => {
+      throw rejected;
+    });
+
+    const failure = await saveProfile(client, OWNER, PROFILE).catch((error: unknown) => error);
+
+    expect(isProfileSaveError(failure)).toBe(true);
+    expect((failure as ProfileSaveError).problems).toEqual([
+      { field: "email", message: "must be a valid email address" },
+      { field: "name", message: "must not be blank" },
+    ]);
+  });
+
+  it("turns a 422 without field errors into one form-level problem", () => {
+    const error = apiErrorFrom(422, { detail: "The profile is not valid." });
+    expect(profileProblemsFromApiError(error)).toEqual([
+      { field: null, message: "The profile is not valid." },
+    ]);
+  });
+
+  it("rethrows anything that is not a validation failure", async () => {
+    const offline = apiErrorFrom(503, { detail: "unavailable" });
+    const client = fakeClient(undefined, () => {
+      throw offline;
+    });
+
+    await expect(saveProfile(client, OWNER, PROFILE)).rejects.toBe(offline);
   });
 });

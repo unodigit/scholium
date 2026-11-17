@@ -6,11 +6,13 @@
  * finishing — is unit-testable without a JSX transform, exactly like
  * `use-signin.ts`.
  *
- * The hook owns four pieces of state:
+ * The hook owns these pieces of state:
  *
  * - the device-key check (passkey step) and the account's did,
  * - the persisted progress (`scholium.web-auth.onboarding` in browser
  *   storage) so a reload or the round-trip to ORCID keeps the checklist,
+ * - the profile draft (display name, affiliation, email) that the profile
+ *   step saves through `PUT /v1/profiles/{did}`,
  * - the in-progress editing state (selected categories, guardian inputs),
  * - one action error at a time, in plain language.
  *
@@ -35,22 +37,29 @@ import {
   GUARDIAN_COUNT,
   ONBOARDING_CATEGORY_CHOICES,
   ONBOARDING_STEPS,
-  checkOrcidLink,
   completeOrcidLink,
   countCompletedSteps,
   emptyPersistedOnboarding,
   followCategories,
   isGuardianSaveError,
+  isProfileSaveError,
   loadPersistedOnboarding,
+  loadProfile,
   normalizeCategory,
   onboardingStepCompletion,
   parseOrcidReturn,
+  profileShowsLinkedOrcid,
   saveGuardians,
+  savePersistedOnboarding,
+  saveProfile,
   startOrcidLink,
   updatePersistedOnboarding,
   type GuardianProblem,
+  type OnboardingProfile,
   type OnboardingStepId,
   type PersistedOnboarding,
+  type ProfileField,
+  type ProfileProblem,
 } from "./onboarding";
 import {
   CATEGORY_INVALID_MESSAGE,
@@ -99,6 +108,16 @@ export interface OnboardingOrcidState {
   starting: boolean;
 }
 
+/** The profile step's state. */
+export interface OnboardingProfileState extends OnboardingProfile {
+  /** The profile is being saved. */
+  saving: boolean;
+  /** True once a name has been observed on the account or saved here. */
+  saved: boolean;
+  /** Problems tied to the inputs (or the form as a whole). */
+  problems: ProfileProblem[];
+}
+
 /** The categories step's state. */
 export interface OnboardingCategoriesState {
   /** Every category offered as a chip, preset choices first. */
@@ -135,10 +154,11 @@ export interface UseOnboardingResult {
   did: string | null;
   /** The passkey step: a device key exists on this device. */
   passkeyReady: boolean;
+  profile: OnboardingProfileState;
   orcid: OnboardingOrcidState;
   categories: OnboardingCategoriesState;
   guardians: OnboardingGuardiansState;
-  /** The four steps in design order, each with its done flag. */
+  /** The five steps in design order, each with its done flag. */
   steps: Array<{ id: OnboardingStepId; done: boolean }>;
   /** How many steps are complete. */
   completedCount: number;
@@ -148,6 +168,10 @@ export interface UseOnboardingResult {
   canFinish: boolean;
   /** Why the last action failed, in plain language; `null` otherwise. */
   error: string | null;
+  /** Edit one profile input. */
+  setProfileField(field: ProfileField, value: string): void;
+  /** Save the profile (`PUT /v1/profiles/{did}`, which the app reads names from). */
+  saveProfileAction(): Promise<void>;
   /** Send the browser to ORCID to link the account's iD. */
   linkOrcid(): Promise<void>;
   /** Toggle a category chip. */
@@ -189,6 +213,14 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
   const [persisted, setPersisted] = useState<PersistedOnboarding>(
     emptyPersistedOnboarding,
   );
+  const [profile, setProfile] = useState<OnboardingProfileState>(() => ({
+    name: "",
+    affiliation: "",
+    email: "",
+    saving: false,
+    saved: false,
+    problems: [],
+  }));
   const [orcid, setOrcid] = useState<OnboardingOrcidState>(() => ({
     started: false,
     linked: false,
@@ -210,7 +242,7 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
   }));
   const [error, setError] = useState<string | null>(null);
 
-  const busyRef = useRef({ orcid: false, categories: false, guardians: false });
+  const busyRef = useRef({ profile: false, orcid: false, categories: false, guardians: false });
 
   // One pass on mount: what has this browser already done?
   useEffect(() => {
@@ -233,21 +265,50 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
         accountDid = null;
       }
 
-      // Best-effort: if the user was sent to ORCID earlier, the link may
-      // have completed since. A missing profile endpoint changes nothing.
+      // One read serves both the profile step and the ORCID check: the same
+      // `GET /v1/profiles/{did}` carries the display name and the linked iD.
+      // A missing profile endpoint changes nothing (best-effort).
+      const loadedProfile =
+        accountDid !== null
+          ? await loadProfile(services.client, accountDid)
+          : null;
       let linkedAt = stored.orcidLinkedAt;
-      if (linkedAt === null && stored.orcidStartedAt !== null && accountDid !== null) {
-        if (await checkOrcidLink(services.client, accountDid)) {
-          linkedAt = new Date().toISOString();
-        }
+      if (
+        linkedAt === null &&
+        stored.orcidStartedAt !== null &&
+        loadedProfile !== null &&
+        profileShowsLinkedOrcid(loadedProfile.payload)
+      ) {
+        linkedAt = new Date().toISOString();
+      }
+      let profileSavedAt = stored.profileSavedAt;
+      if (profileSavedAt === null && loadedProfile !== null && loadedProfile.hasName) {
+        profileSavedAt = new Date().toISOString();
       }
 
       if (!active) {
         return;
       }
-      const next =
-        linkedAt !== stored.orcidLinkedAt ? { ...stored, orcidLinkedAt: linkedAt } : stored;
+      const next: PersistedOnboarding = {
+        ...stored,
+        orcidLinkedAt: linkedAt,
+        profileSavedAt,
+      };
+      if (
+        next.profileSavedAt !== stored.profileSavedAt ||
+        next.orcidLinkedAt !== stored.orcidLinkedAt
+      ) {
+        savePersistedOnboarding(services.storage, next);
+      }
       setPersisted(next);
+      setProfile({
+        name: loadedProfile?.name ?? "",
+        affiliation: loadedProfile?.affiliation ?? "",
+        email: loadedProfile?.email ?? "",
+        saving: false,
+        saved: profileSavedAt !== null,
+        problems: [],
+      });
       setOrcid({
         started: next.orcidStartedAt !== null,
         linked: next.orcidLinkedAt !== null,
@@ -267,6 +328,51 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
   const applyPersisted = useCallback((patch: Partial<PersistedOnboarding>) => {
     setPersisted(updatePersistedOnboarding(servicesRef.current.storage, patch));
   }, []);
+
+  const setProfileField = useCallback((field: ProfileField, value: string) => {
+    setProfile((current) => ({
+      ...current,
+      [field]: value,
+      // Editing an input clears its own problem; form-level ones stay.
+      problems: current.problems.filter((problem) => problem.field !== field),
+    }));
+  }, []);
+
+  const saveProfileAction = useCallback(async (): Promise<void> => {
+    if (busyRef.current.profile || did === null) {
+      return;
+    }
+    busyRef.current.profile = true;
+    setError(null);
+    setProfile((current) => ({ ...current, problems: [], saving: true }));
+    try {
+      const saved = await saveProfile(servicesRef.current.client, did, {
+        name: profile.name,
+        affiliation: profile.affiliation,
+        email: profile.email,
+      });
+      applyPersisted({ profileSavedAt: new Date().toISOString() });
+      setProfile({
+        ...saved,
+        saving: false,
+        saved: true,
+        problems: [],
+      });
+    } catch (failure) {
+      if (isProfileSaveError(failure)) {
+        setProfile((current) => ({
+          ...current,
+          saving: false,
+          problems: failure.problems,
+        }));
+      } else {
+        setProfile((current) => ({ ...current, saving: false }));
+        setError(describeOnboardingError(failure));
+      }
+    } finally {
+      busyRef.current.profile = false;
+    }
+  }, [applyPersisted, did, profile.affiliation, profile.email, profile.name]);
 
   const linkOrcid = useCallback(async (): Promise<void> => {
     if (busyRef.current.orcid) {
@@ -399,6 +505,7 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
     ready,
     did,
     passkeyReady,
+    profile,
     orcid,
     categories,
     guardians,
@@ -409,6 +516,8 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
     // the one step the finish action is gated on.
     canFinish: completion.guardians,
     error,
+    setProfileField,
+    saveProfileAction,
     linkOrcid,
     toggleCategory,
     addCategory,
