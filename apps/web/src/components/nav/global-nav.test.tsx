@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   act,
   cleanup,
@@ -62,12 +65,32 @@ afterEach(() => {
    ------------------------------------------------------------------------- */
 
 describe("GlobalNav desktop header", () => {
-  it("shows the lowercase scholium wordmark linking home", () => {
+  it("shows the brand lockup linking home, named Scholium home", () => {
     render(<GlobalNav />);
 
-    const wordmark = screen.getByRole("link", { name: "scholium" });
-    expect(wordmark.getAttribute("href")).toBe("/");
-    expect(wordmark.textContent).toBe("scholium");
+    const logo = screen.getByRole("link", { name: "Scholium home" });
+    expect(logo.getAttribute("href")).toBe("/");
+
+    // BrandLogo size="sm": inline SVG mark + serif wordmark at a fixed 20px
+    // height. No <img>, so nothing loads in after paint and shifts the row.
+    const lockup = logo.querySelector(".sch-brand-logo") as HTMLElement;
+    expect(lockup).not.toBeNull();
+    expect(lockup.getAttribute("data-size")).toBe("sm");
+    expect(lockup.style.height).toBe("20px");
+    expect(lockup.querySelector("svg")).not.toBeNull();
+    expect(lockup.querySelector("img")).toBeNull();
+
+    const wordmark = lockup.querySelector(".sch-brand-logo__wordmark");
+    expect(wordmark?.getAttribute("aria-hidden")).toBe("true");
+    expect(wordmark?.textContent).toBe("scholium");
+  });
+
+  it("no longer renders the old text-only wordmark", () => {
+    const { container } = render(<GlobalNav />);
+
+    expect(container.querySelector(".gn-wordmark")).toBeNull();
+    // The bare wordmark is not the link's name any more.
+    expect(screen.queryByRole("link", { name: "scholium" })).toBeNull();
   });
 
   it("is a sticky translucent header shown from 640px up", () => {
@@ -312,6 +335,22 @@ describe("GlobalNav mobile tab bar", () => {
     }
   });
 
+  it("shows the brand tile at 24px on the Home tab", () => {
+    render(<GlobalNav />);
+
+    const bar = screen.getByRole("navigation", { name: "Primary" });
+    const home = within(bar).getByRole("link", { name: "Home" });
+    const tile = home.querySelector(".sch-brand-mark") as HTMLElement;
+
+    expect(tile).not.toBeNull();
+    expect(tile.getAttribute("data-variant")).toBe("tile");
+    expect(tile.style.height).toBe("24px");
+    expect(tile.querySelector("svg")).not.toBeNull();
+    // Decorative: the visible Home label names the link.
+    expect(tile.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(home.textContent).toContain("Home");
+  });
+
   it("marks the current tab, and only that tab", () => {
     pathnameValue = "/search";
     render(<GlobalNav signedIn />);
@@ -519,5 +558,31 @@ describe("GlobalNav sign out", () => {
     expect(new Headers(init.headers).get("Authorization")).toBe(
       "Bearer access-1",
     );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   Stylesheet contract
+   ------------------------------------------------------------------------- */
+
+describe("nav.css brand contract", () => {
+  const css = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "nav.css"),
+    "utf8",
+  );
+
+  it("gives the logo link a 2px accent keyboard focus ring", () => {
+    const rule = /\.gn-brand:focus-visible\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toContain("outline: 2px solid var(--accent)");
+    expect(rule).toContain("outline-offset: 2px");
+  });
+
+  it("keeps the 64px desktop header height", () => {
+    const rule = /\.gn-header\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toContain("height: 64px");
+  });
+
+  it("does not style the removed text-only wordmark", () => {
+    expect(css).not.toMatch(/\.gn-wordmark\b/);
   });
 });

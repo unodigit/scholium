@@ -5,10 +5,11 @@
  *
  * One component, two shapes, decided by the 640px breakpoint:
  *
- * - ≥640px: a sticky translucent header — `scholium` wordmark · search field ·
+ * - ≥640px: a sticky translucent header — Scholium lockup · search field ·
  *   Categories · Submit · notifications · avatar · Sign out.
  * - <640px: a fixed bottom tab bar — Home · Search · Submit · Inbox · Me, plus
- *   Sign out while signed in.
+ *   Sign out while signed in. The Home tab carries the brand's tile mark
+ *   because the wordmark does not fit at phone widths.
  *
  * Mount it once in a route-group layout and keep auth screens bare:
  *
@@ -33,6 +34,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { BrandLogo } from "../../features/ui-kit/brand-logo";
+import { BrandMark } from "../../features/ui-kit/brand-mark";
 import { api } from "../../lib/api";
 import {
   categoryHref,
@@ -272,8 +275,8 @@ function DesktopHeader({
 
   return (
     <header className="gn-header material-chrome hidden sm:flex">
-      <Link href="/" className="gn-wordmark">
-        scholium
+      <Link href="/" className="gn-brand" aria-label="Scholium home">
+        <BrandLogo size="sm" />
       </Link>
 
       <form
@@ -447,7 +450,9 @@ interface TabSpec {
   key: string;
   label: string;
   href: string;
-  icon: typeof HomeIcon;
+  icon?: typeof HomeIcon;
+  /** Home carries the brand tile instead of a house glyph at phone widths. */
+  brandMark?: boolean;
   current: boolean;
   badge?: string;
 }
@@ -475,7 +480,7 @@ function MobileTabBar({
       key: "home",
       label: "Home",
       href: "/",
-      icon: HomeIcon,
+      brandMark: true,
       current: pathname === "/",
     },
     {
@@ -514,24 +519,44 @@ function MobileTabBar({
       className="gn-tabbar material-chrome flex sm:hidden"
       aria-label="Primary"
     >
-      {tabs.map(({ key, label, href, icon: Icon, current, badge: tabBadge }) => (
-        <Link
-          key={key}
-          href={href}
-          className="gn-tab"
-          aria-current={current ? "page" : undefined}
-        >
-          <span className="gn-tab-icon">
-            <Icon size={22} />
-            {tabBadge ? (
-              <span className="gn-badge" aria-hidden="true">
-                {tabBadge}
-              </span>
-            ) : null}
-          </span>
-          <span className="gn-tab-label">{label}</span>
-        </Link>
-      ))}
+      {tabs.map(
+        ({
+          key,
+          label,
+          href,
+          icon: Icon,
+          brandMark,
+          current,
+          badge: tabBadge,
+        }) => (
+          <Link
+            key={key}
+            href={href}
+            className="gn-tab"
+            aria-current={current ? "page" : undefined}
+          >
+            <span className="gn-tab-icon">
+              {brandMark ? (
+                <BrandMark
+                  variant="tile"
+                  size="sm"
+                  decorative
+                  className="gn-tab-brand"
+                  style={{ height: "24px" }}
+                />
+              ) : Icon ? (
+                <Icon size={22} />
+              ) : null}
+              {tabBadge ? (
+                <span className="gn-badge" aria-hidden="true">
+                  {tabBadge}
+                </span>
+              ) : null}
+            </span>
+            <span className="gn-tab-label">{label}</span>
+          </Link>
+        ),
+      )}
 
       {signedIn ? (
         <button

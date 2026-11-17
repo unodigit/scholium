@@ -1,10 +1,12 @@
 /*
  * Global navigation — docs/design.md §4 (IA), §5.1 (feed header mock), §10.
  *
- * Desktop ≥640px: sticky translucent header — `scholium` wordmark · search
+ * Desktop ≥640px: sticky translucent header — Scholium lockup · search
  * field · Categories · Submit · notifications · avatar · Sign out. Below 640px
  * the header is hidden and a fixed bottom tab bar takes over (Home · Search ·
- * Submit · Inbox · Me, plus Sign out while signed in). Visibility at the 640px breakpoint is done with the
+ * Submit · Inbox · Me, plus Sign out while signed in); the Home tab carries
+ * the 24px brand tile because the wordmark does not fit at phone widths.
+ * Visibility at the 640px breakpoint is done with the
  * Tailwind `hidden` / `sm:flex` / `sm:hidden` utilities in the markup, so no
  * rule here sets `display` — unlayered CSS would otherwise outrank them.
  *
@@ -40,16 +42,35 @@
   text-decoration: none;
 }
 
-/* The lowercase wordmark is the brand: serif, set tight. */
-.gn-wordmark {
-  font-family: var(--family-serif);
-  font-size: var(--type-reading);
-  line-height: 1;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  text-transform: lowercase;
-  color: var(--ink);
-  white-space: nowrap;
+/* The Scholium lockup is the brand, drawn as inline SVG plus the serif
+   wordmark. The component supplies half-mark-height clear space as margins;
+   the header already has at least that much on both sides, so drop them here
+   to keep the lockup optically aligned where the old wordmark began.
+   `font-size-adjust` holds the wordmark's footprint steady while the
+   self-hosted serif swaps in, so the search field does not shift on load. */
+.gn-brand {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  box-sizing: border-box;
+  /* 44px tap target around the 20px lockup; the inline padding is pulled back
+     with a negative margin so the mark still starts on the header's 16px line. */
+  padding-block: 12px;
+  padding-inline: 4px;
+  margin-inline-start: -4px;
+  border-radius: var(--corner-control);
+  font-size-adjust: from-font;
+}
+
+.gn-brand .sch-brand-logo {
+  margin: 0;
+}
+
+/* Keyboard focus: the 2px accent ring, declared here as well as globally so
+   the logo keeps it if a page scopes outlines away. */
+.gn-brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ---- Search field -------------------------------------------------------- */
@@ -383,6 +404,14 @@
   display: grid;
   place-items: center;
   height: 24px;
+}
+
+/* The Home tab's brand tile. BrandMark ships half-height clear-space margins;
+   the 24px icon slot already provides that, so keep the tile inside the slot. */
+.gn-tab-icon .gn-tab-brand {
+  margin: 0;
+  min-height: 24px;
+  min-width: 24px;
 }
 
 .gn-tab-label {
