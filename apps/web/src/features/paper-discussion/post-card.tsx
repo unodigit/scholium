@@ -28,16 +28,18 @@
  * has no room for a staircase.
  */
 
+import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
 import { ComposeForm } from "./compose-form";
 import {
-  authorLabel,
   describeActionError,
   formatDate,
   formatDateTime,
   helpfulLabel,
+  postAuthorLabel,
+  profilePath,
   reportReason,
   type ActionFailure,
   type DiscussionPost,
@@ -51,6 +53,8 @@ import { ReportPanel } from "./report-panel";
 export interface PostActions {
   readonly signedIn: boolean;
   readonly signInHref: string;
+  /** The viewer's `did:key`, when the session names it; else `null`. */
+  readonly viewerDid: string | null;
   /** Posts this reader has marked helpful in this tab. */
   readonly voted: ReadonlySet<string>;
   /** Posts this reader has reported in this tab, with the reason given. */
@@ -75,7 +79,12 @@ type FocusTarget = "reply" | "report" | "post" | "reported";
 
 export function PostCard({ post, depth, actions }: PostCardProps) {
   const uid = useId();
-  const who = authorLabel(post.author);
+  const who = postAuthorLabel(post);
+  const authorName = post.author.trim() === "" ? "" : (post.authorName?.trim() ?? "");
+  const isOwn =
+    actions.viewerDid !== null &&
+    post.author !== "" &&
+    post.author === actions.viewerDid;
 
   const [panel, setPanel] = useState<Panel | null>(null);
   const [helpfulBusy, setHelpfulBusy] = useState(false);
@@ -147,9 +156,21 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
     <li className="pd-item" data-post={post.cid} data-depth={depth}>
       <div className="pd-post" ref={postRef} tabIndex={-1}>
         <header className="pd-post__head">
-          <p className="pd-post__author" title={post.author === "" ? undefined : post.author}>
-            {who}
-          </p>
+          {authorName !== "" ? (
+            <p className="pd-post__author">
+              <Link
+                className="pd-post__author-link"
+                href={profilePath(post.author)}
+                title={post.author}
+              >
+                {authorName}
+              </Link>
+            </p>
+          ) : (
+            <p className="pd-post__author" title={post.author === "" ? undefined : post.author}>
+              {who}
+            </p>
+          )}
           {post.createdAt !== null ? (
             <time
               className="pd-post__time"
@@ -183,16 +204,20 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
         ) : null}
 
         <div className="pd-post__actions" role="group" aria-label={`Actions for the post by ${who}`}>
-          <button
-            type="button"
-            className="pd-action"
-            data-action="helpful"
-            disabled={voted || helpfulBusy}
-            onClick={() => void markHelpful()}
-          >
-            {voted ? "Marked helpful" : "Mark helpful"}
-            <span className="pd-visually-hidden">{`, post by ${who}`}</span>
-          </button>
+          {/* A member cannot mark their own post helpful (the API refuses it
+              with 409), so the action is not offered on their own writing. */}
+          {isOwn ? null : (
+            <button
+              type="button"
+              className="pd-action"
+              data-action="helpful"
+              disabled={voted || helpfulBusy}
+              onClick={() => void markHelpful()}
+            >
+              {voted ? "Marked helpful" : "Mark helpful"}
+              <span className="pd-visually-hidden">{`, post by ${who}`}</span>
+            </button>
+          )}
 
           <button
             type="button"

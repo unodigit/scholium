@@ -42,8 +42,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useSignedIn } from "../../components/nav/session";
 import { Icon } from "../ui-kit";
+import { useViewer } from "../review-form/use-viewer";
+import type { Viewer } from "../review-form/viewer";
 import { ComposeForm } from "./compose-form";
 import {
   addPost,
@@ -58,6 +59,7 @@ import {
   postCountLabel,
   reportPostFlag,
   signInPath,
+  signInReturnPath,
   submitPost,
   withHelpful,
   type DiscussionData,
@@ -103,6 +105,12 @@ export interface DiscussionTabProps {
   actions?: Partial<DiscussionActions>;
   /** Pin the sign-in state instead of reading it from the stored session. */
   signedIn?: boolean;
+  /**
+   * Pin the viewer's DID instead of reading it from the stored session's
+   * token. It is how a post by the viewer is recognised, so that member is
+   * not offered a helpful mark on their own writing.
+   */
+  viewerDid?: string | null;
   /** Where "Sign in" goes; defaults to sign-in, then back to the paper page. */
   signInHref?: string;
 }
@@ -128,10 +136,34 @@ export function DiscussionTab({
   load,
   actions,
   signedIn: signedInOverride,
+  viewerDid: viewerDidOverride,
   signInHref: signInHrefOverride,
 }: DiscussionTabProps) {
-  const signedIn = useSignedIn(signedInOverride);
-  const signInHref = signInHrefOverride ?? signInPath(paperPagePath(paperId));
+  // The live session: the token lives in memory, so the DID and the signed-in
+  // state are only known after mount. A pinned viewer wins, for hosts/tests.
+  const pinnedViewer: Viewer | undefined =
+    signedInOverride === undefined && viewerDidOverride === undefined
+      ? undefined
+      : {
+          signedIn: signedInOverride ?? true,
+          did: viewerDidOverride ?? null,
+          tier: null,
+        };
+  const viewer = useViewer(pinnedViewer);
+  const signedIn = viewer.signedIn;
+  const viewerDid = viewer.did;
+
+  // The sign-in link follows the live address, so a signed-out reader comes
+  // back to the Discussion tab with its fragment (#discussion) rather than to
+  // the top of the paper page. Read after mount: the server has no address.
+  const [here, setHere] = useState<string | null>(null);
+  useEffect(() => {
+    const { pathname, search, hash } = window.location;
+    setHere(signInReturnPath(paperId, { pathname, search, hash }));
+  }, [paperId]);
+
+  const signInHref =
+    signInHrefOverride ?? signInPath(here ?? paperPagePath(paperId));
 
   const [view, setView] = useState<View>(() => initialView(initial, initialError));
   const [attempt, setAttempt] = useState(0);
@@ -245,6 +277,7 @@ export function DiscussionTab({
   const postActions: PostActions = {
     signedIn,
     signInHref,
+    viewerDid,
     voted,
     reported,
     reply: post,

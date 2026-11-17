@@ -12,6 +12,7 @@ import {
   type DiscussionData,
   type DiscussionPost,
   type LoadThreads,
+  type PostAccepted,
 } from "./discussion";
 
 const SHORT = "sch:6sel-2dio-orm6";
@@ -23,6 +24,7 @@ function post(cid: string, overrides: Partial<DiscussionPost> = {}): DiscussionP
   return {
     cid,
     author: ALICE,
+    authorName: null,
     text: `Text of ${cid}.`,
     createdAt: "2026-01-01T00:00:00Z",
     helpful: 0,
@@ -79,7 +81,11 @@ function seams(overrides: Partial<DiscussionActions> = {}) {
   const sign = vi.fn(async (type: string, body: Record<string, unknown>, prev: string | null) =>
     signedRecord(type, body, prev),
   );
-  const submit = vi.fn(async (_paperId: string, _record: SignedRecord) => ({ post_cid: "bafyrei-new" }));
+  const submit = vi.fn(
+    async (_paperId: string, _record: SignedRecord): Promise<PostAccepted> => ({
+      post_cid: "bafyrei-new",
+    }),
+  );
   const markHelpful = vi.fn(async (_cid: string): Promise<number | null> => null);
   const report = vi.fn(async (_cid: string, _reason: string) => ({ flagId: "flag-1" }));
   const actions: DiscussionActions = { sign, submit, markHelpful, report, ...overrides } as DiscussionActions;
@@ -120,7 +126,19 @@ function typeInto(textarea: HTMLElement, value: string): void {
   fireEvent.change(textarea, { target: { value } });
 }
 
-afterEach(cleanup);
+/** Stand-in for `window.location` at an address; records `assign`. */
+let assign: ReturnType<typeof vi.fn>;
+
+function stubLocation(address: string): void {
+  const { pathname, search, hash, origin } = new URL(address, "http://localhost");
+  assign = vi.fn();
+  vi.stubGlobal("location", { pathname, search, hash, origin, assign });
+}
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("DiscussionTab: order", () => {
   it("shows threads most helpful first, whatever order they arrive in", () => {
@@ -178,6 +196,40 @@ describe("DiscussionTab: what a post shows", () => {
   it("shows the full DID on hover, not the shortened one only", () => {
     renderTab();
     expect(within(card("loud")).getByText(authorLabel(BOB)).getAttribute("title")).toBe(BOB);
+  });
+
+  it("credits a post to the author's profile name, linked to their profile, when there is one", () => {
+    renderTab({}, {
+      ...threads(),
+      threads: [post("named", { author: BOB, authorName: "Sam Rivera" })],
+    });
+    const link = within(card("named")).getByRole("link", { name: "Sam Rivera" });
+    expect(link.getAttribute("href")).toBe(`/u/${encodeURIComponent(BOB)}`);
+    // The DID is still there, on hover, so a reader can check who it is.
+    expect(link.getAttribute("title")).toBe(BOB);
+    // Every action is named after what the reader sees.
+    expect(
+      within(card("named")).getByRole("button", { name: "Report post by Sam Rivera" }),
+    ).toBeTruthy();
+  });
+
+  it("falls back to the short DID for a member with no profile name", () => {
+    renderTab({}, { ...threads(), threads: [post("nameless", { author: BOB })] });
+    expect(within(card("nameless")).getByText(authorLabel(BOB))).toBeTruthy();
+    expect(within(card("nameless")).queryByRole("link")).toBeNull();
+  });
+
+  it("shows the poster's own name on the post just made, when the server says it", async () => {
+    const { submit, actions } = seams();
+    submit.mockResolvedValueOnce({ post_cid: "bafyrei-new", author_name: "Sam Rivera" });
+    renderTab({ actions });
+    fireEvent.click(screen.getByRole("button", { name: "Start a thread" }));
+    typeInto(screen.getByLabelText("Start a thread"), "A new question.");
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+
+    await waitFor(() => expect(rootOrder()).toContain("bafyrei-new"));
+    const link = within(card("bafyrei-new")).getByRole("link", { name: "Sam Rivera" });
+    expect(link.getAttribute("href")).toBe(`/u/${encodeURIComponent(ME)}`);
   });
 
   it("shows the passage an annotation quotes", () => {
@@ -629,6 +681,20 @@ describe("DiscussionTab: helpful marks", () => {
 
     expect(markHelpful).not.toHaveBeenCalled();
   });
+
+  it("does not offer Mark helpful on the viewer's own post", () => {
+    renderTab({ viewerDid: ME }, {
+      ...threads(),
+      threads: [post("mine", { author: ME }), post("theirs", { author: BOB })],
+    });
+    expect(within(card("mine")).queryByRole("button", { name: /^Mark helpful/ })).toBeNull();
+    expect(within(card("theirs")).getByRole("button", { name: /^Mark helpful/ })).toBeTruthy();
+  });
+
+  it("offers Mark helpful on posts by other members", () => {
+    renderTab({ viewerDid: ME });
+    expect(document.querySelectorAll('[data-action="helpful"]')).toHaveLength(5);
+  });
 });
 
 describe("DiscussionTab: reporting", () => {
@@ -778,6 +844,27 @@ describe("DiscussionTab: signed out", () => {
     renderTab({ signedIn: false, signInHref: "/signin?next=%2Fdiscussion%2F6sel-2dio-orm6" });
     expect(document.querySelector('.pd-start a[href^="/signin"]')?.getAttribute("href")).toBe(
       "/signin?next=%2Fdiscussion%2F6sel-2dio-orm6",
+    );
+  });
+
+  it("points the sign-in link back at the page the reader is on, fragment included", () => {
+    stubLocation("/p/6sel-2dio-orm6/v2?from=search#discussion");
+    renderTab({ signedIn: false });
+    expect(document.querySelector('.pd-start a[href^="/signin"]')?.getAttribute("href")).toBe(
+      `/signin?next=${encodeURIComponent("/p/6sel-2dio-orm6/v2?from=search#discussion")}`,
+    );
+  });
+
+  it("keeps the full address, fragment and all, when an action sends them to sign in", () => {
+    stubLocation("/p/6sel-2dio-orm6/v2?from=search#discussion");
+    const { markHelpful, actions } = seams();
+    renderTab({ actions, signedIn: false });
+
+    fireEvent.click(within(card("middle")).getByRole("button", { name: /^Mark helpful/ }));
+
+    expect(markHelpful).not.toHaveBeenCalled();
+    expect(assign).toHaveBeenCalledWith(
+      `/signin?next=${encodeURIComponent("/p/6sel-2dio-orm6/v2?from=search#discussion")}`,
     );
   });
 });

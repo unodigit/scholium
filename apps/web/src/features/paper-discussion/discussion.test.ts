@@ -9,6 +9,7 @@ import {
   POST_TEXT_MAX,
   PostInputError,
   REPORT_REASONS,
+  SELF_HELPFUL_TYPE,
   WrongPostRecordError,
   addPost,
   authorLabel,
@@ -28,13 +29,16 @@ import {
   orderThreads,
   paperPagePath,
   parseThreads,
+  postAuthorLabel,
   postBody,
   postCountLabel,
   postTextProblem,
+  profilePath,
   reportPostFlag,
   reportReason,
   shortDid,
   signInPath,
+  signInReturnPath,
   submitPost,
   threadsEndpoint,
   withHelpful,
@@ -43,11 +47,13 @@ import {
 } from "./discussion";
 
 const ME = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+const SHORT = "sch:6sel-2dio-orm6";
 
 function post(cid: string, overrides: Partial<DiscussionPost> = {}): DiscussionPost {
   return {
     cid,
     author: ME,
+    authorName: null,
     text: `text of ${cid}`,
     createdAt: "2026-01-01T00:00:00Z",
     helpful: 0,
@@ -123,6 +129,23 @@ describe("parseThreads", () => {
     expect(parsed.threads.map((thread) => thread.cid)).toEqual(["p1", "p2", "p3"]);
     expect(parsed.threads[0].author).toBe(ME);
     expect(parsed.threads[0].parent).toBe("gone");
+  });
+
+  it("reads the author's profile name the API supplies, when there is one", () => {
+    const parsed = parseThreads({
+      threads: [
+        { post_cid: "p1", author: ME, author_name: "Sam Rivera", text: "x" },
+        { post_cid: "p2", author: ME, authorName: "Sam Rivera", text: "y" },
+        { post_cid: "p3", author: ME, text: "z" },
+        { post_cid: "p4", author: ME, author_name: "   ", text: "w" },
+      ],
+    });
+    expect(parsed.threads.map((thread) => thread.authorName)).toEqual([
+      "Sam Rivera",
+      "Sam Rivera",
+      null,
+      null,
+    ]);
   });
 
   it("reads the quote of an annotation, and nothing from a plain-id anchor", () => {
@@ -441,6 +464,7 @@ describe("submitPost", () => {
     expect(made).toEqual({
       cid: "bafyrei-from-server",
       author: ME,
+      authorName: null,
       text: "The proof skips n = 0.",
       createdAt: "2026-02-03T04:05:06Z",
       helpful: 0,
@@ -450,6 +474,18 @@ describe("submitPost", () => {
       seq: null,
       replies: [],
     });
+  });
+
+  it("shows the poster's profile name when the acceptance answers with it", async () => {
+    const made = await submitPost({
+      paperId: "sch:6sel-2dio-orm6",
+      text: "Hello.",
+      target: "bafyrei-v1",
+      parent: null,
+      sign: signer(),
+      submit: vi.fn().mockResolvedValue({ post_cid: "bafyrei-new", author_name: "Sam Rivera" }),
+    });
+    expect(made.authorName).toBe("Sam Rivera");
   });
 
   it("names the parent when replying", async () => {
@@ -671,6 +707,16 @@ describe("describeActionError", () => {
     expect(describeActionError(problem(409), "post").alreadyDone).toBe(false);
   });
 
+  it("says a member cannot mark their own post helpful, from the API's own problem type", () => {
+    const failure = describeActionError(
+      problem(409, "You wrote this post.", { type: SELF_HELPFUL_TYPE }),
+      "helpful",
+    );
+    expect(failure.message).toBe("You cannot mark your own post helpful.");
+    // Nothing was recorded, so it is not "already done".
+    expect(failure.alreadyDone).toBe(false);
+  });
+
   it("says a post that vanished is no longer listed", () => {
     expect(describeActionError(problem(404), "helpful").message).toMatch(/no longer listed/);
   });
@@ -755,5 +801,46 @@ describe("words and formats", () => {
 
   it("sends a signed-out reader to sign in and back, with the way back encoded once", () => {
     expect(signInPath("/p/6sel-2dio-orm6")).toBe("/signin?next=%2Fp%2F6sel-2dio-orm6");
+  });
+});
+
+describe("who wrote a post", () => {
+  it("calls the author by their profile name, and by the short DID when there is none", () => {
+    expect(postAuthorLabel(post("named", { authorName: "Sam Rivera" }))).toBe("Sam Rivera");
+    expect(postAuthorLabel(post("nameless"))).toBe(authorLabel(ME));
+    expect(postAuthorLabel(post("erased", { author: "", authorName: "  " }))).toBe("Unknown author");
+  });
+
+  it("links a member to the page their profile is on", () => {
+    expect(profilePath(ME)).toBe(`/u/${encodeURIComponent(ME)}`);
+    expect(profilePath("")).toBe("/u/");
+  });
+});
+
+describe("signInReturnPath", () => {
+  it("keeps the page, its query and its fragment when the reader is on this paper's page", () => {
+    expect(
+      signInReturnPath(SHORT, {
+        pathname: "/p/6sel-2dio-orm6/v2",
+        search: "?from=search",
+        hash: "#discussion",
+      }),
+    ).toBe("/p/6sel-2dio-orm6/v2?from=search#discussion");
+  });
+
+  it("keeps the standalone discussion page too, with no fragment", () => {
+    expect(
+      signInReturnPath(SHORT, { pathname: "/discussion/6sel-2dio-orm6", search: "", hash: "" }),
+    ).toBe("/discussion/6sel-2dio-orm6");
+  });
+
+  it("falls back to the paper page anywhere else, or when there is no address", () => {
+    expect(signInReturnPath(SHORT, { pathname: "/", search: "", hash: "" })).toBe(
+      "/p/6sel-2dio-orm6",
+    );
+    expect(
+      signInReturnPath(SHORT, { pathname: "/p/other-paper-id/v2", search: "", hash: "#discussion" }),
+    ).toBe("/p/6sel-2dio-orm6");
+    expect(signInReturnPath(SHORT, null)).toBe("/p/6sel-2dio-orm6");
   });
 });

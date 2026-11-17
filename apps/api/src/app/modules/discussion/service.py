@@ -19,9 +19,15 @@ was installed is still listed and persisted.
 
 Feature 101: :func:`mark_helpful` records one member's "helpful" mark in
 ``discussion_helpful_votes`` and increments ``discussion_posts.helpful``.  A
-repeat by the same member raises :class:`AlreadyHelpful` (``409``); a vote
-only changes the ordering of a thread -- nothing here touches
-``papers.status``.
+repeat by the same member raises :class:`AlreadyHelpful` (``409``), and so does
+a mark by the post's own author (:class:`SelfHelpful`): a member cannot vote
+for their own post.  A vote only changes the ordering of a thread -- nothing
+here touches ``papers.status``.
+
+Every post is credited to its author's public profile name when one exists
+(plugin: profiles, feature 29), with the DID always there as the fallback --
+never the other way round.  An erased profile has no name, so its posts show
+the pseudonymous DID again.
 
 Feature 102: :func:`mute` remembers that a member mutes another DID, and
 :func:`threads_for` omits the muted DID's posts for that member.
@@ -54,7 +60,10 @@ __all__ = [
     "DISCUSSION_POST_TYPE",
     "PAPER_GENESIS_TYPE",
     "PAPER_VERSION_TYPE",
+    "SELF_HELPFUL_TYPE",
     "PaperRef",
+    "SelfHelpful",
+    "author_name",
     "handle_record",
     "mark_helpful",
     "mute",
@@ -77,6 +86,13 @@ PAPER_VERSION_TYPE = "paper.version"
 
 #: Problem-details type URN for a second "helpful" mark by the same member.
 ALREADY_HELPFUL_TYPE = "urn:scholium:problem:already-helpful"
+
+#: Problem-details type URN for a member marking their own post helpful.
+SELF_HELPFUL_TYPE = "urn:scholium:problem:self-helpful"
+
+
+class SelfHelpful(Exception):
+    """The caller wrote the post: a member cannot mark their own post helpful."""
 
 
 # --------------------------------------------------------------------------- #
@@ -113,6 +129,29 @@ def _ledger_entry(record_cid: Any) -> Any:
 def _record_type(record_cid: Any) -> Optional[str]:
     entry = _ledger_entry(record_cid)
     return None if entry is None else entry.record_type
+
+
+def author_name(did: Any) -> Optional[str]:
+    """The public profile name of ``did``, or ``None`` when there is none.
+
+    Posts are credited to the member's name when they saved one (plugin:
+    profiles, feature 29).  An account that never saved a profile, an erased
+    profile and an unreadable one all fall back to the DID-only display, and
+    none of them may take a whole thread list down: this never raises.
+    """
+    if not isinstance(did, str) or not did.strip():
+        return None
+    try:
+        from app.modules.profiles import read_profile
+
+        data = read_profile(did)
+    except Exception:
+        # Profiles is a sibling plugin: absent tables, a corrupt blob or any
+        # other failure means "no name to show", never a failed discussion.
+        return None
+    if data is None or not isinstance(data.name, str):
+        return None
+    return data.name.strip() or None
 
 
 # --------------------------------------------------------------------------- #
@@ -421,7 +460,9 @@ def _sort_key(item: Mapping[str, Any]) -> tuple[int, str, int]:
     return (-helpful, created, seq)
 
 
-def _post_document(row: DiscussionPost, entry: Any) -> dict[str, Any]:
+def _post_document(
+    row: DiscussionPost, entry: Any, author_name_value: Optional[str] = None
+) -> dict[str, Any]:
     """One post in the wire shape, with an empty ``replies`` list."""
     body = _body(entry)
     post_cid = row.post_cid
@@ -435,6 +476,8 @@ def _post_document(row: DiscussionPost, entry: Any) -> dict[str, Any]:
         "author": author,
         "author_did": author,
         "authorDid": author,
+        "author_name": author_name_value,
+        "authorName": author_name_value,
         "text": body.get("text"),
         "textCid": body.get("textCid"),
         "target": body.get("target"),
@@ -517,8 +560,14 @@ def threads_for(ref: PaperRef, *, viewer_did: Optional[str] = None) -> dict[str,
         visible = [row for row in rows if row.author_did not in muted]
 
         documents: dict[str, dict[str, Any]] = {}
+        names: dict[str, Optional[str]] = {}
         for row in visible:
-            documents[row.post_cid] = _post_document(row, entries.get(row.post_cid))
+            did = row.author_did or ""
+            if did not in names:
+                names[did] = author_name(did)
+            documents[row.post_cid] = _post_document(
+                row, entries.get(row.post_cid), names[did]
+            )
 
     threads = _nest(documents)
     return {
@@ -540,6 +589,8 @@ def mark_helpful(post_cid: str, voter_did: str) -> tuple[Optional[DiscussionPost
 
     ``(None, False)`` when no such post exists.  ``created`` is ``False`` when
     the member had already marked it (and the row is returned unchanged).
+    Raises :class:`SelfHelpful` when the caller wrote the post: a member cannot
+    mark their own post helpful.
     The vote and the counter move in one transaction, so a crash can never
     leave a vote without its increment.
     """
@@ -554,6 +605,10 @@ def mark_helpful(post_cid: str, voter_did: str) -> tuple[Optional[DiscussionPost
         row = session.get(DiscussionPost, post_cid)
         if row is None:
             return None, False
+        if row.author_did and row.author_did == voter_did:
+            # The author's own mark would be a self-vote, refused before any
+            # row is written so the count never moves.
+            raise SelfHelpful(f"{voter_did} wrote post {post_cid}")
         if session.get(HelpfulVote, (post_cid, voter_did)) is not None:
             session.expunge(row)
             return row, False

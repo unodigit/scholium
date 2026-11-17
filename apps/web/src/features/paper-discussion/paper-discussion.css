@@ -257,6 +257,19 @@
   overflow-wrap: anywhere;
 }
 
+/* A member's profile name: their name, printed in the body face; their DID
+   stays in the link's title. */
+.pd-post__author-link {
+  color: var(--ink);
+  font-family: var(--family-sans);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.pd-post__author-link:hover {
+  text-decoration: underline;
+}
+
 .pd-post__time {
   color: var(--ink-2);
   font-size: var(--type-meta);

@@ -217,6 +217,75 @@ def test_tier_1_post_is_201_and_appears_in_get(client):
     assert node["author_did"] == member.did
 
 
+def test_a_post_is_credited_to_its_authors_profile_name(client):
+    from app.modules.profiles import ProfileData, save_profile
+
+    author = Member(tier=1)
+    save_profile(
+        author.did,
+        ProfileData(
+            name="Sam Rivera",
+            affiliation="Example University",
+            email=f"{uuid.uuid4().hex}@example.org",
+        ),
+    )
+    paper = publish(author)
+    root = post(client, author, paper, f"named root {uuid.uuid4().hex}")
+    reply = post(client, author, paper, f"named reply {uuid.uuid4().hex}", parent=root["id"])
+
+    payload = threads(client, paper)
+
+    root_node = next(n for n in _walk(payload) if isinstance(n, dict) and n.get("post_cid") == root["id"])
+    assert root_node["author_name"] == "Sam Rivera"
+    assert root_node["author_did"] == author.did
+    assert root_node["replies"][0]["author_name"] == "Sam Rivera"
+    assert root_node["replies"][0]["post_cid"] == reply["id"]
+
+
+def test_a_post_by_a_member_without_a_profile_is_credited_to_the_did(client):
+    author = Member(tier=1)
+    paper = publish(author)
+    record = post(client, author, paper, f"nameless {uuid.uuid4().hex}")
+
+    payload = threads(client, paper)
+
+    node = next(n for n in _walk(payload) if isinstance(n, dict) and n.get("post_cid") == record["id"])
+    assert node["author_name"] is None
+    assert node["author_did"] == author.did
+
+
+def test_the_accepted_post_answers_with_its_authors_profile_name(client):
+    from app.modules.profiles import ProfileData, save_profile
+
+    author = Member(tier=1)
+    save_profile(
+        author.did,
+        ProfileData(
+            name="Sam Rivera",
+            affiliation="",
+            email=f"{uuid.uuid4().hex}@example.org",
+        ),
+    )
+    paper = publish(author)
+
+    response = client.post(
+        f"/v1/papers/{paper.short_id}/threads",
+        json=author.sign(
+            "discussion.post",
+            {
+                "target": paper.version_id,
+                "anchor": paper.version_id,
+                "text": f"just posted {uuid.uuid4().hex}",
+            },
+        ),
+        headers=author.headers,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["author_name"] == "Sam Rivera"
+    assert response.json()["author_did"] == author.did
+
+
 def test_accepted_post_is_persisted_to_discussion_posts(client):
     member = Member(tier=1)
     paper = publish(member)
@@ -402,14 +471,29 @@ def test_the_409_names_the_already_helpful_problem(client):
     assert repeat.json()["type"] == "urn:scholium:problem:already-helpful"
 
 
-def test_a_helpful_mark_by_the_author_is_one_vote_like_any_other(client):
+def test_the_author_cannot_mark_their_own_post_helpful(client):
     author = Member(tier=1)
     paper = publish(author)
     record = post(client, author, paper, f"my own post {uuid.uuid4().hex}")
     url = f"/v1/posts/{record['id']}/helpful"
 
-    assert client.post(url, headers=author.headers).status_code == 201
-    assert client.post(url, headers=author.headers).status_code == 409
+    response = client.post(url, headers=author.headers)
+
+    assert response.status_code == 409, response.text
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
+    assert response.json()["type"] == "urn:scholium:problem:self-helpful"
+    assert int(stored(record["id"]).helpful) == 0
+
+
+def test_another_member_can_still_mark_the_authors_post_helpful(client):
+    author = Member(tier=1)
+    voter = Member(tier=1)
+    paper = publish(author)
+    record = post(client, author, paper, f"vote my post {uuid.uuid4().hex}")
+
+    response = client.post(f"/v1/posts/{record['id']}/helpful", headers=voter.headers)
+
+    assert response.status_code == 201, response.text
     assert int(stored(record["id"]).helpful) == 1
 
 

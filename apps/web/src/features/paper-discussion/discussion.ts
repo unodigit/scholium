@@ -40,6 +40,9 @@ import { signRecord, type SignedRecord } from "../web-auth/sign-record";
 /** The record type a thread post or reply signs. */
 export const DISCUSSION_RECORD_TYPE = "discussion.post";
 
+/** Problem type the API answers with when a member marks their own post helpful. */
+export const SELF_HELPFUL_TYPE = "urn:scholium:problem:self-helpful";
+
 /** The longest post the tab will sign, in characters. */
 export const POST_TEXT_MAX = 4000;
 
@@ -52,6 +55,8 @@ export interface DiscussionPost {
   readonly cid: string;
   /** `did:key` of the author. */
   readonly author: string;
+  /** The author's public profile name, when the node has one; else `null`. */
+  readonly authorName: string | null;
   /** The post text; `null` when the node holds it separately (`textCid`). */
   readonly text: string | null;
   /** When the author signed it (ISO 8601, UTC); `null` when not stamped. */
@@ -157,6 +162,7 @@ function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPos
   return {
     cid,
     author: pickText(raw, "author", "author_did", "authorDid") ?? "",
+    authorName: pickText(raw, "author_name", "authorName"),
     text,
     createdAt: pickTimestamp(raw, "created", "createdAt", "created_at"),
     helpful: Math.max(0, pickInteger(raw, "helpful") ?? 0),
@@ -397,6 +403,8 @@ export interface PostAccepted {
   postCid?: string;
   cid?: string;
   id?: string;
+  author_name?: string;
+  authorName?: string;
 }
 
 /** Submits a signed post; `POST /v1/papers/{id}/threads` by default. */
@@ -481,6 +489,7 @@ export async function submitPost({
   return {
     cid,
     author: signed.author,
+    authorName: readText(accepted?.author_name) ?? readText(accepted?.authorName),
     text: String(body.text),
     createdAt: signed.created,
     helpful: 0,
@@ -617,6 +626,9 @@ export function describeActionError(error: unknown, action: DiscussionAction): A
       return failure("That post is no longer listed, so it could not be marked. Reload the tab.");
     }
     if (error.status === 409 && action === "helpful") {
+      if (error.type === SELF_HELPFUL_TYPE) {
+        return failure("You cannot mark your own post helpful.");
+      }
       return failure("You have already marked this post helpful.", { alreadyDone: true });
     }
     if (error.status === 422) {
@@ -686,6 +698,20 @@ export function authorLabel(did: string): string {
   return did.trim() === "" ? "Unknown author" : shortDid(did);
 }
 
+/**
+ * What to call a post's author: their public profile name when the node has
+ * one, and the short DID otherwise (never saved, erased, or unreadable).
+ */
+export function postAuthorLabel(post: Pick<DiscussionPost, "author" | "authorName">): string {
+  const name = post.authorName?.trim();
+  return name !== undefined && name !== "" ? name : authorLabel(post.author);
+}
+
+/** Where a member's public profile lives: `/u/{did}`. */
+export function profilePath(did: string): string {
+  return `/u/${encodeURIComponent(did)}`;
+}
+
 /** `No helpful marks yet`, `1 member found this helpful`, `3 members found this helpful`. */
 export function helpfulLabel(count: number): string {
   if (count <= 0) return "No helpful marks yet";
@@ -713,4 +739,46 @@ export function discussionPath(paperId: string, version?: number | null): string
 /** Sign-in with a way back: `/signin?next=%2Fp%2F…`. */
 export function signInPath(next: string): string {
   return `/signin?next=${encodeURIComponent(next)}`;
+}
+
+/** The address a browser is on, as far as a return path needs it. */
+export interface AddressLike {
+  readonly pathname: string;
+  readonly search?: string;
+  readonly hash?: string;
+}
+
+/** The id without its prefix and percent-encoding: `6sel-2dio-orm6`. */
+function barePaperId(value: string): string {
+  let id = value.trim();
+  try {
+    id = decodeURIComponent(id);
+  } catch {
+    // Not valid encoding: compare it as written.
+  }
+  return id.replace(/^sch:/i, "");
+}
+
+/**
+ * Whether `pathname` is a page about this paper: `/p/{id}[/vN]` or
+ * `/discussion/{id}[/vN]`.
+ */
+export function isPaperAddress(pathname: string, paperId: string): boolean {
+  const match = /^\/(?:p|discussion)\/([^/]+)(?:\/v\d+)?\/?$/.exec(pathname);
+  return match !== null && barePaperId(match[1] ?? "") === barePaperId(paperId);
+}
+
+/**
+ * Where a signed-out reader comes back to after signing in.
+ *
+ * When they are already on a page about this paper the whole address is kept
+ * -- query and fragment included, so the paper page's Discussion tab
+ * (`#discussion`) is still open -- because that is where they were. Anywhere
+ * else, the way back is the paper page itself.
+ */
+export function signInReturnPath(paperId: string, here?: AddressLike | null): string {
+  if (here === undefined || here === null || !isPaperAddress(here.pathname, paperId)) {
+    return paperPagePath(paperId);
+  }
+  return `${here.pathname}${here.search ?? ""}${here.hash ?? ""}`;
 }

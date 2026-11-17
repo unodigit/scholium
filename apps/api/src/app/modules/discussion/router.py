@@ -23,7 +23,8 @@ The module loader mounts this router under ``/v1``, so the routes below serve:
   answer ``201`` with its cid.  Only tier-1 (Member) and above may post.
 
 * ``POST /v1/posts/{cid}/helpful`` -- mark a post helpful; ``201`` the first
-  time, ``409`` when the same member repeats it.  A vote only reorders the
+  time, ``409`` when the same member repeats it or when the caller wrote the
+  post (a member cannot mark their own post helpful).  A vote only reorders the
   thread and never changes the paper's status.
 
 * ``POST /v1/me/mutes`` -- mute another DID for the caller; ``201``.
@@ -146,6 +147,8 @@ def post_thread(
     # canonical paper key when the URL resolved better than the record body.
     service.persist_record(record, paper_key=ref.paper_cid)
 
+    author = record.get("author") if isinstance(record.get("author"), str) else None
+    name = service.author_name(author)
     paper = ref.short_id or ref.paper_cid
     return {
         "id": result.record_id,
@@ -154,6 +157,11 @@ def post_thread(
         "postCid": result.record_id,
         "state": result.state,
         "anchor": result.anchor,
+        "author": author,
+        "author_did": author,
+        "authorDid": author,
+        "author_name": name,
+        "authorName": name,
         "paper": paper,
         "paper_cid": ref.paper_cid,
         "paperCid": ref.paper_cid,
@@ -174,8 +182,15 @@ def mark_helpful(
     post_cid: str,
     principal: Principal = Depends(require_tier(int(Tier.MEMBER))),
 ) -> dict[str, Any]:
-    """Record one member's helpful mark; a repeat by the same member is ``409``."""
-    post, created = service.mark_helpful(post_cid, principal.did)
+    """Record one member's helpful mark; a repeat or a self-vote is ``409``."""
+    try:
+        post, created = service.mark_helpful(post_cid, principal.did)
+    except service.SelfHelpful:
+        raise ProblemException(
+            409,
+            "The caller wrote this post and cannot mark it helpful.",
+            type=service.SELF_HELPFUL_TYPE,
+        ) from None
     if post is None:
         raise ProblemException(404, f"No discussion post {post_cid!r}.")
     if not created:
