@@ -90,3 +90,32 @@ describe("reviews-tab.css", () => {
     expect(tab.rules).toMatch(/@media\s*\(max-width:\s*30rem\)/);
   });
 });
+
+describe("the reviews page's reading layout (docs/design.md §4, §10)", () => {
+  it("widens the route shell, sized for one 360 px panel, to the reading column plus the margin panel", () => {
+    // The shell alone is 22.5rem + 16 units wide: about 375 px of content on a
+    // 1440 px desktop. A page that carries the tab is given the paper page's
+    // frame instead, and only a page that carries it.
+    expect(tab.rules).toMatch(
+      /\.prs-shell:has\(>\s*\.pr-tab\)\s*\{[^}]*max-width:\s*calc\(\s*var\(--reading-column\)\s*\+\s*var\(--margin-panel\)/,
+    );
+  });
+
+  it("puts the reading column beside the margin panel on a wide screen", () => {
+    expect(tab.rules).toMatch(/@media\s*\(min-width:\s*80rem\)/);
+    expect(tab.rules).toMatch(
+      /\.prs-shell\s+\.pr-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*var\(--reading-column\)\)\s+minmax\(0,\s*var\(--margin-panel\)\)/,
+    );
+  });
+
+  it("keeps a single column to the reading width below that, and reports to 72 characters", () => {
+    expect(tab.rules).toMatch(/\.prs-shell\s+\.pr-layout\s*\{[^}]*max-width:\s*var\(--reading-column\)/);
+    expect(tab.rules).toMatch(/\.pr-report__body[^{]*\{[^}]*max-width:\s*var\(--measure-reading\)/);
+  });
+
+  it("styles the rendered Markdown with tokens, not the browser's defaults", () => {
+    expect(tab.rules).toMatch(/\.pr-report__body\s+code[^{]*\{[^}]*font-family:\s*var\(--family-mono\)/);
+    expect(tab.rules).toMatch(/\.pr-report__body\s+a[^{]*\{[^}]*color:\s*var\(--accent\)/);
+  });
+});
+

@@ -391,6 +391,36 @@ export function formatReviewDate(value: string | null | undefined): string | nul
   return `${day} ${MONTHS[month - 1]} ${year}`;
 }
 
+/** Days after the first commit on a version that its reports unseal regardless (REV-4). */
+export const REPORT_GATE_DAYS = 21;
+
+/**
+ * The day the reports of the listed version unseal on the clock alone: 21 days
+ * after the first review counted on it, written like `formatReviewDate`.
+ *
+ * A review counts on the version when it is written against it or has been
+ * updated to it (the listing serves that as the review's `version`); the
+ * earlier reviews a later listing merely carries do not, so they never move the
+ * date. `null` when no counted review has a served commit date, and then the
+ * copy falls back to "21 days after the first".
+ */
+export function reportGateDate(
+  reviews: readonly Pick<Review, "committedAt" | "version">[],
+  version: number | null,
+): string | null {
+  let first: number | null = null;
+  for (const review of reviews) {
+    if (version !== null && review.version !== null && review.version !== version) continue;
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(textOf(review.committedAt) ?? "");
+    if (match === null) continue;
+    const day = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (Number.isNaN(day)) continue;
+    if (first === null || day < first) first = day;
+  }
+  if (first === null) return null;
+  return formatReviewDate(new Date(first + REPORT_GATE_DAYS * 86_400_000).toISOString());
+}
+
 /* -------------------------------------------------------------------------- */
 /* Parsing                                                                     */
 /* -------------------------------------------------------------------------- */

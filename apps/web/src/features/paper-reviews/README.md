@@ -47,7 +47,25 @@ page's `/p/{id}[/v{n}]`; the `sch:` prefix is optional.
   rounded away. Unrevealed or unscored reviews simply do not contribute.
 - **The report is an expander, not a wall.** `<details><summary>` keeps a
   long report out of the way until asked for. While the reveal gate is shut
-  the card says so in words instead of showing an empty expander.
+  the card says so in words instead of showing an empty expander. An update
+  (REV-5) is revealed at once but its written report stays sealed until this
+  version's gate opens: its card says “Updated report sealed until 2 reviews
+  are committed on this version, or on {date}”, and the gate note above the
+  cards says “Scores are public. Written reports on this version unseal…”, so
+  the note never contradicts a card that shows scores. `{date}` is 21 days
+  after the first review counted on the version (`reportGateDate`).
+- **A report is Markdown, rendered safely.** The form says “Markdown is
+  allowed”; the card renders a small subset (paragraphs, emphasis, lists,
+  links with `rel="nofollow noopener"`, code) through `ReportMarkdown`
+  (`review-form/report-markdown.tsx`). Raw HTML, images, headings and
+  non-`http(s)`/`mailto` links stay as the text the reviewer typed; no string
+  is ever handed to the DOM as HTML.
+- **On `/reviews/…` it is a reading layout**, not the 360 px panel: the shell
+  is widened (`.prs-shell:has(> .pr-tab)`) to the reading column plus the
+  margin panel, and from 1280 px the cards sit in the reading column with the
+  summary, gate note and median bar in the panel beside them. Below that it is
+  one column at the reading width. In the paper page's own margin panel it is
+  unchanged.
 - **Author replies travel with the card.** Point-by-point answers
   (`review.response` items, keyed by rubric dimension) are labelled with the
   dimension they answer; a plain reply is shown as prose.

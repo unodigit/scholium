@@ -89,6 +89,7 @@ import {
   type UpdateReview,
   type UpdateReviewResult,
 } from "./reveal";
+import { ReportMarkdown } from "./report-markdown";
 import {
   ReviewSessionProvider,
   useReviewSession,
@@ -273,9 +274,12 @@ function ReviewFormBody({
 
   // Tell the rest of the page where the form is, so the choice to sign and
   // the paper's Cite in review stop changing the draft once it is being signed.
+  // An accepted update is published, so the choice stays fixed for good: the
+  // form's own phase goes back to "editing" after it, the page's must not.
+  const reportedPhase: Phase = updated !== null ? "sealed" : phase;
   useEffect(() => {
-    reportPhase(phase);
-  }, [phase, reportPhase]);
+    reportPhase(reportedPhase);
+  }, [reportedPhase, reportPhase]);
   useEffect(() => () => reportPhase("editing"), [reportPhase]);
 
   // The paper hands a quote to the form through the session.
@@ -842,7 +846,7 @@ export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
       {report !== null ? (
         <section className="rf-updated__report">
           <h3 className="rf-updated__report-title">Written report</h3>
-          <p className="rf-updated__report-body">{report}</p>
+          <ReportMarkdown source={report} className="rf-updated__report-body" />
         </section>
       ) : null}
 

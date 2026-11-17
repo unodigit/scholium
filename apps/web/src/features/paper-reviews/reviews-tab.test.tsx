@@ -684,7 +684,7 @@ describe("a review carried from an earlier version, and one revised since", () =
     );
 
     expect(screen.queryByText(/No written report/)).toBeNull();
-    expect(screen.getByText(/Report sealed until two reviews are committed/)).toBeTruthy();
+    expect(screen.getByText(/Updated report sealed until 2 reviews are committed/)).toBeTruthy();
   });
 
   it("describes the reviews on this version, and says plainly that the earlier ones shown are revealed", () => {
@@ -716,6 +716,199 @@ describe("a review carried from an earlier version, and one revised since", () =
     );
 
     expect(screen.getByRole("note").textContent).not.toMatch(/already revealed/);
+  });
+});
+
+describe("the listing of a newer version once a review is updated to it", () => {
+  /**
+   * v2's gate is shut (one commit on it), yet the reviewer's update to v2 is
+   * revealed: its rubric and recommendation are public, its report is not
+   * served until the gate opens (REV-4).
+   */
+  function updatedListing(overrides: Record<string, unknown> = {}): ReviewsData {
+    return parseReviews({
+      paper: PAPER,
+      version: 2,
+      gate_open: false,
+      reviews: [
+        review({
+          version: 2,
+          committed_at: "2027-03-02T04:00:00",
+          revealed_at: "2027-04-01T00:00:00",
+          history: [
+            {
+              formal_cid: "bafy-formal-1",
+              version: 1,
+              revealed_at: "2027-03-02T05:00:00",
+              recommendation: "minor_revisions",
+              scores: { soundness: { score: 3 } },
+            },
+            {
+              formal_cid: "bafy-formal-2",
+              version: 2,
+              revealed_at: "2027-04-01T00:00:00",
+              recommendation: "minor_revisions",
+              scores: { soundness: { score: 4 } },
+            },
+          ],
+          ...overrides,
+        }),
+      ],
+    });
+  }
+
+  it("says the scores are public and only the written reports are waiting", () => {
+    renderTab(updatedListing());
+
+    const note = screen.getByRole("note").textContent ?? "";
+    expect(note).toContain(
+      "Scores are public. Written reports on this version unseal once 2 reviews are committed on it, or on 23 Mar 2027.",
+    );
+  });
+
+  it("does not say the review is yet to be revealed while its card shows the scores", () => {
+    renderTab(updatedListing());
+
+    const note = screen.getByRole("note").textContent ?? "";
+    expect(note).not.toMatch(/The review is revealed/);
+    expect(note).not.toMatch(/once one more independent review/);
+    expect(note).not.toMatch(/with its rubric and report/);
+    // The card it describes does show the rubric.
+    expect(screen.getByText("4 of 5")).toBeTruthy();
+    expect(screen.getByText("Minor revisions", { selector: ".pr-recommendation span" })).toBeTruthy();
+  });
+
+  it("names the date from the first commit counted on this version", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [
+          review({ review_cid: "bafy-b", label: "Reviewer B", version: 2, committed_at: "2027-03-10T00:00:00", revealed_at: "2027-04-01T00:00:00" }),
+          review({ review_cid: "bafy-a", version: 2, committed_at: "2027-03-05T23:30:00", revealed_at: "2027-04-02T00:00:00" }),
+          // An earlier version's review is carried, not counted.
+          review({ review_cid: "bafy-c", label: "Reviewer C", version: 1, committed_at: "2027-01-01T00:00:00", revealed_at: "2027-01-05T00:00:00" }),
+        ],
+      }),
+    );
+
+    expect(screen.getByRole("note").textContent).toContain("or on 26 Mar 2027.");
+  });
+
+  it("says an updated report is sealed, and until when, on the card", () => {
+    renderTab(updatedListing());
+
+    expect(
+      screen.getByText("Updated report sealed until 2 reviews are committed on this version, or on 23 Mar 2027."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/No written report/)).toBeNull();
+  });
+
+  it("still keeps the updated report out of the card (REV-4 is unchanged)", () => {
+    const { container } = renderTab(updatedListing());
+
+    expect(container.querySelector("details.pr-report")).toBeNull();
+    expect(screen.queryByText("Read the report")).toBeNull();
+  });
+
+  it("has no date to name until a review is committed on this version, and says so", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        // Only v1's review is carried; the earlier commit date is not v2's clock.
+        reviews: [review({ version: 1, committed_at: "2027-01-01T00:00:00", revealed_at: "2027-01-05T00:00:00" })],
+      }),
+    );
+
+    const note = screen.getByRole("note").textContent ?? "";
+    expect(note).toContain("No review has been committed on this version yet.");
+    expect(note).toContain("Scores are public.");
+    expect(note).toContain("or 21 days after the first commit.");
+    expect(note).not.toMatch(/Jan 2027|Feb 2027/);
+  });
+
+  it("does not claim scores are public when the listing carries a sealed review", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [review({ revealed_at: null, scores: null })],
+      }),
+    );
+
+    expect(screen.getByRole("note").textContent).not.toMatch(/Scores are public/);
+  });
+
+  it("tells a mixed listing which rubrics are public and which are not", () => {
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [
+          review({ version: 2, revealed_at: "2027-04-01T00:00:00" }),
+          review({ review_cid: "bafy-b", label: "Reviewer B", version: 2, revealed_at: null, scores: null }),
+        ],
+      }),
+    );
+
+    const note = screen.getByRole("note").textContent ?? "";
+    expect(note).toMatch(/Scores are public on the revealed reviews/);
+    expect(note).toMatch(/still sealed/);
+    expect(note).not.toMatch(/The review is revealed/);
+  });
+});
+
+describe("a report written in Markdown", () => {
+  const REPORT = "**Summary:** the method is *sound*.\n\n- clear claims\n- thin evidence\n\nSee [the data](https://example.org/d) and `run.sh`.";
+
+  it("is rendered, not shown with its asterisks", () => {
+    const { container } = renderTab(dataOf(review({ report: REPORT })));
+
+    const body = container.querySelector(".pr-report__body") as HTMLElement;
+    expect(body.textContent).not.toContain("**");
+    expect(body.querySelector("strong")?.textContent).toBe("Summary:");
+    expect(body.querySelector("em")?.textContent).toBe("sound");
+    expect(Array.from(body.querySelectorAll("li")).map((li) => li.textContent)).toEqual([
+      "clear claims",
+      "thin evidence",
+    ]);
+    expect(body.querySelector("code")?.textContent).toBe("run.sh");
+    const link = body.querySelector("a") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("https://example.org/d");
+    expect(link.getAttribute("rel")).toBe("nofollow noopener");
+  });
+
+  it("renders an earlier revision's report the same way", () => {
+    const { container } = renderTab(
+      dataOf(
+        review({
+          report: "The revised report.",
+          history: [
+            { formal_cid: "bafy-1", version: 1, revealed_at: "2027-03-02T05:00:00", recommendation: "minor_revisions", report: "**Thin** first draft." },
+            { formal_cid: "bafy-2", version: 2, revealed_at: "2027-04-01T00:00:00", recommendation: "minor_revisions", report: "The revised report." },
+          ],
+        }),
+      ),
+    );
+
+    const history = container.querySelector("details.pr-history") as HTMLElement;
+    expect(history.querySelector("strong")?.textContent).toBe("Thin");
+    expect(history.textContent).not.toContain("**");
+  });
+
+  it("never turns a report's HTML into elements", () => {
+    const { container } = renderTab(
+      dataOf(review({ report: '<img src=x onerror="alert(1)"> and [x](javascript:alert(1))' })),
+    );
+
+    const body = container.querySelector(".pr-report__body") as HTMLElement;
+    expect(body.querySelector("img, a, script")).toBeNull();
+    expect(body.textContent).toContain('<img src=x onerror="alert(1)">');
   });
 });
 

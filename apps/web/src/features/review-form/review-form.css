@@ -728,6 +728,55 @@
   overflow-wrap: anywhere;
 }
 
+/* The report is Markdown, rendered as elements (see report-markdown.tsx). */
+.rf-updated__report-body p {
+  margin: 0;
+}
+
+.rf-updated__report-body p + p,
+.rf-updated__report-body p + ul,
+.rf-updated__report-body p + ol,
+.rf-updated__report-body ul + p,
+.rf-updated__report-body ol + p,
+.rf-updated__report-body pre + p,
+.rf-updated__report-body p + pre {
+  margin-block-start: calc(var(--space-unit) * 3);
+}
+
+.rf-updated__report-body ul,
+.rf-updated__report-body ol {
+  margin: var(--space-unit) 0 0;
+  padding-inline-start: calc(var(--space-unit) * 5);
+}
+
+.rf-updated__report-body a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.rf-updated__report-body code {
+  padding: 0 var(--space-unit);
+  border-radius: var(--corner-control);
+  background-color: var(--bg);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+}
+
+.rf-updated__report-body pre {
+  margin: calc(var(--space-unit) * 3) 0 0;
+  padding: calc(var(--space-unit) * 3);
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-control);
+  background-color: var(--bg);
+  white-space: pre;
+}
+
+.rf-updated__report-body pre code {
+  padding: 0;
+  background: none;
+}
+
 /* The reveal action beneath the sealed card: what signing does, then the
    button. The quiet "Check again" sits the same way. */
 .rf-reveal {

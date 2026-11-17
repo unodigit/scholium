@@ -32,6 +32,7 @@ export {
   parseScores,
   recommendationLabel,
   recommendationTone,
+  reportGateDate,
   reviewerLabelAt,
   scoreFraction,
   scoreText,

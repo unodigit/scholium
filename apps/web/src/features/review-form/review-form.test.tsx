@@ -470,6 +470,34 @@ describe("ReviewForm update", () => {
     expect(screen.queryByRole("button", { name: UPDATE_LABEL })).toBeNull();
   });
 
+  it("renders the confirmed report as Markdown, not with its asterisks", async () => {
+    const result = updatedReview();
+    result.body.report = "**Summary:** the revised method is *sound*.\n\n- clear\n- tested\n\n<b>not bold</b>";
+    const update = vi.fn<UpdateReview>(async () => result);
+
+    const { container } = render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        prev="bafyformal"
+        update={update}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+    await screen.findByRole("heading", { name: "Your review is updated" });
+
+    const body = container.querySelector(".rf-updated__report-body") as HTMLElement;
+    expect(body.querySelector("strong")?.textContent).toBe("Summary:");
+    expect(body.querySelector("em")?.textContent).toBe("sound");
+    expect(body.querySelectorAll("li")).toHaveLength(2);
+    expect(body.textContent).not.toContain("**");
+    // Raw HTML stays text.
+    expect(body.querySelector("b")).toBeNull();
+    expect(body.textContent).toContain("<b>not bold</b>");
+  });
+
   it("shows an already-updated refusal in human words, not the API's `prev` message", async () => {
     const update = vi.fn<UpdateReview>(async () => {
       throw new ApiError(409, {

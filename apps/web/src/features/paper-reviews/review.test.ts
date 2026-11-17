@@ -13,6 +13,7 @@ import {
   parseScores,
   recommendationLabel,
   recommendationTone,
+  reportGateDate,
   reviewerLabelAt,
   scoreFraction,
   scoreText,
@@ -465,5 +466,37 @@ describe("emptyReviews", () => {
     expect(data.count).toBe(0);
     expect(data.gateOpen).toBe(false);
     expect(data.shortId).toBe("sch:k3f9-q2xz-7mwd");
+  });
+});
+
+describe("reportGateDate", () => {
+  const at = (committedAt: string | null, version: number | null) => ({ committedAt, version });
+
+  it("is 21 days after the first review counted on the version", () => {
+    expect(
+      reportGateDate([at("2027-03-10T00:00:00", 2), at("2027-03-05T23:30:00", 2)], 2),
+    ).toBe("26 Mar 2027");
+  });
+
+  it("crosses a month and a year", () => {
+    expect(reportGateDate([at("2027-12-20T12:00:00Z", 3)], 3)).toBe("10 Jan 2028");
+    expect(reportGateDate([at("2028-02-15T00:00:00", 3)], 3)).toBe("7 Mar 2028");
+  });
+
+  it("does not count the earlier versions' reviews a listing merely carries", () => {
+    expect(
+      reportGateDate([at("2027-01-01T00:00:00", 1), at("2027-03-05T00:00:00", 2)], 2),
+    ).toBe("26 Mar 2027");
+    expect(reportGateDate([at("2027-01-01T00:00:00", 1)], 2)).toBeNull();
+  });
+
+  it("counts a review that names no version, and every review for a listing with no version", () => {
+    expect(reportGateDate([at("2027-03-05T00:00:00", null)], 2)).toBe("26 Mar 2027");
+    expect(reportGateDate([at("2027-03-05T00:00:00", 1)], null)).toBe("26 Mar 2027");
+  });
+
+  it("is null when no counted review has a commit date", () => {
+    expect(reportGateDate([], 2)).toBeNull();
+    expect(reportGateDate([at(null, 2), at("sometime", 2)], 2)).toBeNull();
   });
 });

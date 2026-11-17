@@ -20,8 +20,9 @@ import {
   STYLOMETRY_TIP,
 } from "./identity";
 import type { ReviewPaper } from "./paper";
-import { COMMIT_LABEL, ReviewForm } from "./review-form";
+import { COMMIT_LABEL, ReviewForm, UPDATE_LABEL } from "./review-form";
 import { ReviewPage } from "./review-page";
+import type { UpdateReview, UpdateReviewResult } from "./reveal";
 import { ReviewSessionProvider } from "./review-session";
 import {
   RUBRIC_DIMENSIONS,
@@ -363,5 +364,95 @@ describe("a form on its own", () => {
     render(<ReviewForm />);
 
     expect(screen.getByText(STYLOMETRY_TIP)).toBeTruthy();
+  });
+});
+
+describe("updating a review", () => {
+  /** What a successful update returns: the body the reviewer now stands on. */
+  function updated(): UpdateReviewResult {
+    return {
+      revealCid: "bafyreveal2",
+      reviewCid: "bafycommitted",
+      body: {
+        target: "bafyversion",
+        scores: {},
+        confidence: "high",
+        recommendation: "sound_as_is",
+        aiAssisted: false,
+      },
+      record: {
+        v: 1,
+        type: "review.formal",
+        id: "bafyreveal2",
+        author: "did:key:z6Mkreview",
+        created: "2026-12-01T00:00:00Z",
+        prev: "bafyformal",
+        body: {},
+        proofs: [],
+        sig: "sig",
+      },
+    };
+  }
+
+  /** The notice above the update form, sharing one session as the page does. */
+  function NoticeAndUpdateForm({ update }: { update: UpdateReview }) {
+    return (
+      <ReviewSessionProvider>
+        <AnonymityNotice />
+        <ReviewForm
+          initialDraft={completeDraft()}
+          paperId={PAPER.shortId}
+          versionCid="bafyversion"
+          prev="bafyformal"
+          update={update}
+        />
+      </ReviewSessionProvider>
+    );
+  }
+
+  it("still offers the choice while the update is being written", () => {
+    render(<NoticeAndUpdateForm update={async () => updated()} />);
+
+    expect(signButton()).toBeTruthy();
+  });
+
+  it("stops offering Sign with my name instead once the update is accepted", async () => {
+    render(<NoticeAndUpdateForm update={async () => updated()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+    await screen.findByRole("heading", { name: "Your review is updated" });
+
+    // The update is published: an identity choice now would change nothing.
+    expect(screen.queryByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeNull();
+    expect(screen.queryByRole("button", { name: STAY_ANONYMOUS_LABEL })).toBeNull();
+    expect(screen.getByRole("note", { name: "Anonymity" }).textContent).toBe(
+      `${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`,
+    );
+  });
+
+  it("keeps a signed update's words, without the button, once it is accepted", async () => {
+    render(<NoticeAndUpdateForm update={async () => updated()} />);
+
+    fireEvent.click(signButton());
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+    await screen.findByRole("heading", { name: "Your review is updated" });
+
+    expect(screen.queryByRole("button", { name: STAY_ANONYMOUS_LABEL })).toBeNull();
+    expect(screen.queryByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeNull();
+    expect(screen.getByRole("note", { name: "Signed review" }).textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`,
+    );
+  });
+
+  it("gives the choice back when the update is refused", async () => {
+    const update = vi.fn<UpdateReview>(async () => {
+      throw new ApiError(409, { detail: "This review has already been updated." });
+    });
+    render(<NoticeAndUpdateForm update={update} />);
+
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+    await screen.findByRole("alert");
+
+    expect(signButton()).toBeTruthy();
   });
 });

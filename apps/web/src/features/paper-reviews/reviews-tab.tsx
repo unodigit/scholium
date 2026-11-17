@@ -23,7 +23,11 @@
  * the version, or 21 days after the first). The card says which state it is
  * in rather than showing an empty expander; the rubric scores are public
  * either way, which is what makes the median bar useful before the gate
- * opens.
+ * opens. The note above the cards says the same thing the cards do: scores are
+ * public, and it is the written reports that wait.
+ *
+ * A report is Markdown (the review form says so): a safe subset of it is
+ * rendered, and nothing else is, so a report cannot bring markup of its own.
  *
  * A reviewer whose newest review is of an earlier version is listed too: the
  * card says which version it is of, and offers its reviewer (and only them)
@@ -44,6 +48,7 @@ import {
   useViewer,
   type LoadMyReviews,
 } from "../review-form";
+import { ReportMarkdown } from "../review-form/report-markdown";
 import { SCORE_MAX } from "../review-form/rubric";
 import { EmptyState, Icon, type IconName } from "../ui-kit";
 import { tokenStore } from "../../lib/api";
@@ -53,6 +58,7 @@ import {
   isRevealed,
   medianText,
   recommendationTone,
+  reportGateDate,
   scoreFraction,
   scoreText,
   type AuthorReply,
@@ -223,12 +229,51 @@ function committedOnVersion(
   ).length;
 }
 
-/** What the gate note says: commits so far, what opens it, and the fallback. */
-function gateNote(commits: number, hasEarlierRevealed: boolean): string {
+/** What the gate note counts: how the listed reviews stand against the gate. */
+interface GateFacts {
+  /** Reviews committed on the listed version (not the earlier ones it carries). */
+  readonly commits: number;
+  /** Listed reviews whose rubric is public. */
+  readonly revealed: number;
+  /** Listed reviews still sealed, rubric included. */
+  readonly sealed: number;
+  /** An earlier version's revealed review is listed beside this one's. */
+  readonly hasEarlierRevealed: boolean;
+  /** The day the clock opens the gate, when a commit date is served. */
+  readonly date: string | null;
+}
+
+/** When the clock alone opens the gate: a date when one is known. */
+function unsealClock(date: string | null): string {
+  return date !== null ? `on ${date}` : "21 days after the first commit";
+}
+
+/**
+ * What the gate note says.
+ *
+ * It must agree with the cards under it. A revealed review's rubric and
+ * recommendation are public whether or not this version's gate is open (an
+ * update is revealed at once; its written report is what waits), so once any
+ * listed review is revealed the note says scores are public and that only the
+ * written reports unseal at the gate. Only a listing with nothing revealed
+ * speaks of reviews being revealed at the gate.
+ */
+function gateNote({ commits, revealed, sealed, hasEarlierRevealed, date }: GateFacts): string {
   const earlier =
     hasEarlierRevealed
       ? " The reviews shown below are from an earlier version and are already revealed."
       : "";
+
+  if (revealed > 0) {
+    const none = commits <= 0 ? "No review has been committed on this version yet. " : "";
+    const reports =
+      sealed > 0
+        ? "Written reports on this version, and the rubric of a review still sealed, unseal"
+        : "Written reports on this version unseal";
+    const scores = sealed > 0 ? "Scores are public on the revealed reviews." : "Scores are public.";
+    return `${none}${scores} ${reports} once 2 reviews are committed on it, or ${unsealClock(date)}.${earlier}`;
+  }
+
   if (commits <= 0) {
     return `No review has been committed on this version yet. Reviews are revealed, with their rubric and report, once two independent reviews are committed on this version, or 21 days after the first.${earlier}`;
   }
@@ -243,6 +288,16 @@ function gateNote(commits: number, hasEarlierRevealed: boolean): string {
 /** What a card says of a report the version's gate still withholds. */
 const SEALED_REPORT_NOTE =
   "Report sealed until two reviews are committed on this version, or 21 days after the first.";
+
+/**
+ * What a card says of an update whose rubric is public but whose report is not
+ * served until this version's gate opens (REV-4).
+ */
+function updatedReportNote(date: string | null): string {
+  return `Updated report sealed until 2 reviews are committed on this version, or ${
+    date !== null ? `on ${date}` : "21 days after the first"
+  }.`;
+}
 
 /** The earlier revisions of a revised review, oldest first. */
 function earlierRevisions(review: Review): readonly ReviewRevision[] {
@@ -279,6 +334,7 @@ function ReviewsView({
   // still sealed. A carried review of an earlier version is not a commit here.
   const commits = committedOnVersion(reviews, data.version);
   const sealed = reviews.filter((review) => !isRevealed(review)).length;
+  const gateDate = reportGateDate(reviews, data.version);
   const hasEarlierRevealed = reviews.some(
     (review) => review.version !== null && data.version !== null && review.version !== data.version && isRevealed(review),
   );
@@ -313,21 +369,32 @@ function ReviewsView({
   }
 
   return (
-    <>
-      <p className="pr-summary-line">
-        {data.version !== null ? `Version ${data.version} · ` : ""}
-        {reviews.length} {reviews.length === 1 ? "review" : "reviews"}
-        {!data.gateOpen && sealed > 0 ? " · reports sealed" : ""}
-      </p>
-
-      {!data.gateOpen ? (
-        <p className="pr-gate" role="note">
-          {gateNote(commits, hasEarlierRevealed)}
+    // The summary and the gate note are the margin panel; the cards are the
+    // reading column. On the page of its own they sit side by side.
+    <div className="pr-layout">
+      <div className="pr-margin">
+        <p className="pr-summary-line">
+          {data.version !== null ? `Version ${data.version} · ` : ""}
+          {reviews.length} {reviews.length === 1 ? "review" : "reviews"}
+          {!data.gateOpen && sealed > 0 ? " · reports sealed" : ""}
         </p>
-      ) : null}
 
-      {medians.length > 0 ? <MedianSummary rows={medians} /> : null}
+        {!data.gateOpen ? (
+          <p className="pr-gate" role="note">
+            {gateNote({
+              commits,
+              revealed: reviews.length - sealed,
+              sealed,
+              hasEarlierRevealed,
+              date: gateDate,
+            })}
+          </p>
+        ) : null}
 
+        {medians.length > 0 ? <MedianSummary rows={medians} /> : null}
+      </div>
+
+      <div className="pr-main">
       <ol className="pr-list">
         {reviews.map((review) => (
           <li className="pr-list__item" key={review.key}>
@@ -337,6 +404,7 @@ function ReviewsView({
               listedVersion={data.version}
               paperId={paperId}
               latestVersion={latest}
+              gateDate={gateDate}
               mine={viewer.signedIn && isMine(review)}
             />
           </li>
@@ -348,7 +416,8 @@ function ReviewsView({
           Read the paper
         </a>
       </p>
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -417,6 +486,7 @@ function ReviewCard({
   listedVersion,
   paperId,
   latestVersion,
+  gateDate,
   mine,
 }: {
   review: Review;
@@ -425,6 +495,8 @@ function ReviewCard({
   listedVersion: number | null;
   paperId: string;
   latestVersion: number | null;
+  /** The day the clock opens this version's gate, when a commit date is served. */
+  gateDate: string | null;
   /** The signed-in viewer wrote this review. */
   mine: boolean;
 }) {
@@ -504,7 +576,10 @@ function ReviewCard({
                         ? `Read the v${revision.version} report`
                         : "Read the report"}
                     </summary>
-                    <p className="pr-history__report-body">{revision.report}</p>
+                    <ReportMarkdown
+                      source={revision.report}
+                      className="pr-history__report-body"
+                    />
                   </details>
                 ) : null}
               </li>
@@ -517,10 +592,10 @@ function ReviewCard({
         review.report !== null ? (
           <details className="pr-report">
             <summary className="pr-report__summary">Read the report</summary>
-            <p className="pr-report__body">{review.report}</p>
+            <ReportMarkdown source={review.report} className="pr-report__body" />
           </details>
         ) : reportWithheld ? (
-          <p className="pr-report__sealed">{SEALED_REPORT_NOTE}</p>
+          <p className="pr-report__sealed">{updatedReportNote(gateDate)}</p>
         ) : (
           <p className="pr-report__none">No written report.</p>
         )
