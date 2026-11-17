@@ -37,8 +37,11 @@ Errors are RFC 9457 problem details via the app-wide handlers:
   out beyond its grace window (type :data:`INVALID_REFRESH_TOKEN_TYPE`).  The
   reason is not distinguished, so the endpoint cannot be probed for which
   tokens exist.  The cookie is cleared.
-* ``422`` -- neither a refresh cookie nor a string ``refresh_token`` in the
-  body was supplied.
+* ``401`` -- no refresh cookie and no body at all: the ordinary signed-out
+  page load (type :data:`NO_SESSION_TYPE`).  It answers the same status as a
+  dead cookie, which is what the web session bootstrap reads as "signed out".
+* ``422`` -- a body was sent but carries no string ``refresh_token`` (and
+  there is no cookie), or is not valid JSON / the wrong shape.
 """
 
 from __future__ import annotations
@@ -60,6 +63,7 @@ from .service import InvalidRefreshToken, refresh_access
 __all__ = [
     "ACCESS_TOKEN_EXPIRES_IN",
     "INVALID_REFRESH_TOKEN_TYPE",
+    "NO_SESSION_TYPE",
     "RefreshRequest",
     "RefreshResponse",
     "router",
@@ -70,6 +74,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 #: Problem-details type URN for a refresh token that cannot be used.
 INVALID_REFRESH_TOKEN_TYPE = "urn:scholium:problem:invalid-refresh-token"
+
+#: Problem-details type URN for a refresh with no cookie and no body: the
+#: caller simply is not signed in (nothing was presented, so nothing was wrong).
+NO_SESSION_TYPE = "urn:scholium:problem:no-session"
 
 #: Lifetime of the access token in the response body, in seconds.
 ACCESS_TOKEN_EXPIRES_IN = int(ACCESS_TOKEN_TTL.total_seconds())
@@ -111,6 +119,19 @@ def _unauthorized(request: Request):
     )
 
 
+def _no_session():
+    from app.errors import ProblemException
+
+    # No Set-Cookie: the browser holds no refresh cookie, so there is
+    # nothing to clear.
+    return ProblemException(
+        401,
+        "There is no session to refresh: the request carries no "
+        "scholium_refresh cookie.",
+        type=NO_SESSION_TYPE,
+    )
+
+
 def _missing_token():
     from app.errors import ProblemException
 
@@ -140,10 +161,14 @@ def post_refresh(
     body: Optional[RefreshRequest] = None,
 ) -> RefreshResponse:
     """Retire the presented refresh token and issue a fresh access/refresh pair."""
-    presented = refresh_token_from_request(request) or (
-        body.refresh_token if body is not None else None
-    )
+    cookie_token = refresh_token_from_request(request)
+    if cookie_token is None and body is None:
+        # Nothing presented at all -- the signed-out page load, not a
+        # malformed request.
+        raise _no_session()
+    presented = cookie_token or (body.refresh_token if body is not None else None)
     if not isinstance(presented, str) or not presented:
+        # A body was sent, but it names no token: malformed.
         raise _missing_token()
     try:
         access_token, refresh_token = refresh_access(presented)
