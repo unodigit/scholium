@@ -12,6 +12,19 @@
  *   block row by row);
  *
  * plus both versions' change notes, the sentence each author signed.
+
+A new version can change more than its paragraphs: the author may replace the
+PDF, add a source bundle, drop a dataset, or retitle the paper. The node's diff
+is paragraph-only, so `loadCompare` also reads both versions' file manifests
+(`GET /v1/papers/{id}/v/{n}/manifest`) and their title and abstract
+(`GET /v1/papers/{id}/v{n}`) and works out the rest here:
+
+- **files** — added, removed or *replaced* (same path, different bytes), each
+  with its size;
+- **details** — the title, abstract and change note as word-level text diffs.
+
+A read that fails is "we don't know" (`files: null`, `detailsRead: false`),
+never "nothing changed": the view says what it could not compare.
  *
  * Like the other data modules, a body that is not a paragraph diff at all is an
  * error ("we don't know"), never "nothing changed"; a single unreadable row or
@@ -23,6 +36,7 @@
  */
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+import { formatBytes, manifestEndpoint, parseManifest } from "../paper-meta/meta";
 
 /** One paragraph of one version, as the diff lists it. */
 export interface CompareParagraph {
@@ -37,6 +51,51 @@ export interface CompareParagraph {
 export interface CompareChange {
   readonly from: CompareParagraph;
   readonly to: CompareParagraph;
+}
+
+/** One file of one version, as its signed manifest lists it. */
+export interface CompareFile {
+  /** Path inside the version's bundle. */
+  readonly path: string;
+  /** The file id: its bytes differ exactly when this does. */
+  readonly cid: string;
+  /** Exact length in bytes. */
+  readonly size: number;
+  /** What the file is for: `manuscript`, `source`, `code`… */
+  readonly role: string;
+  readonly mediaType: string | null;
+}
+
+export type FileChangeKind = "added" | "removed" | "replaced";
+
+/** One file the two versions do not share. */
+export interface FileChange {
+  readonly kind: FileChangeKind;
+  readonly path: string;
+  /** The file in the older version; `null` when it was added. */
+  readonly from: CompareFile | null;
+  /** The file in the newer version; `null` when it was removed. */
+  readonly to: CompareFile | null;
+}
+
+export type TextSegmentKind = "same" | "added" | "removed";
+
+/** A run of words in a text diff. Joining every segment but the added ones gives the old text. */
+export interface TextSegment {
+  readonly kind: TextSegmentKind;
+  readonly text: string;
+}
+
+export type DetailField = "title" | "abstract" | "changeNote";
+
+/** One signed field whose text differs between the two versions. */
+export interface TextChange {
+  readonly field: DetailField;
+  /** The field in the reader's words: `Title`, `Abstract`, `Change note`. */
+  readonly label: string;
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly segments: readonly TextSegment[];
 }
 
 /** Everything the compare view shows. Plain JSON-able data. */
@@ -57,6 +116,15 @@ export interface CompareData {
   readonly removed: readonly CompareParagraph[];
   /** Replaced paragraphs, old paired with new, in diff order. */
   readonly changed: readonly CompareChange[];
+  /**
+   * The files that were added, removed or replaced; empty when the two file
+   * lists match, `null` when either could not be read.
+   */
+  readonly files: readonly FileChange[] | null;
+  /** The title, abstract and change note fields whose text differs. */
+  readonly details: readonly TextChange[];
+  /** True when both versions' title and abstract were read, so `details` is complete. */
+  readonly detailsRead: boolean;
 }
 
 /** The node answered, but not with a paragraph diff the view can show. */
@@ -274,7 +342,239 @@ export function parseCompare(
     changed: (changed ?? [])
       .map((item, order) => parseChange(item, order))
       .filter((item): item is CompareChange => item !== null),
+    // The paragraph diff knows nothing of files or the title; `loadCompare`
+    // reads those and fills them in.
+    files: null,
+    details: [],
+    detailsRead: false,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Files                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The files two versions do not share, matched by path.
+ *
+ * Same path and same bytes is no change. Same path and different bytes is a
+ * *replacement* — the author uploaded a new PDF under the old name. A path only
+ * the newer version has is *added*; one only the older version has is
+ * *removed*. A renamed file therefore reads as one removal and one addition,
+ * which is what the signed manifests say. Added and replaced files come in the
+ * newer version's order, then the removed ones in the older's.
+ */
+export function diffFiles(
+  from: readonly CompareFile[],
+  to: readonly CompareFile[],
+): FileChange[] {
+  const before = new Map(from.map((item) => [item.path, item]));
+  const after = new Set(to.map((item) => item.path));
+  const changes: FileChange[] = [];
+  for (const item of to) {
+    const old = before.get(item.path);
+    if (old === undefined) {
+      changes.push({ kind: "added", path: item.path, from: null, to: item });
+    } else if (old.cid !== item.cid) {
+      changes.push({ kind: "replaced", path: item.path, from: old, to: item });
+    }
+  }
+  for (const item of from) {
+    if (!after.has(item.path)) {
+      changes.push({ kind: "removed", path: item.path, from: item, to: null });
+    }
+  }
+  return changes;
+}
+
+/** `Added paper.pdf (2 KiB)`, `Replaced paper.pdf (2 KiB → 3 KiB)`: the change in words, size included. */
+export function describeFileChange(change: FileChange): string {
+  const size = (item: CompareFile | null): string => (item === null ? "" : formatBytes(item.size));
+  switch (change.kind) {
+    case "added":
+      return `Added ${change.path} (${size(change.to)})`;
+    case "removed":
+      return `Removed ${change.path} (${size(change.from)})`;
+    case "replaced":
+      return `Replaced ${change.path} (${size(change.from)} → ${size(change.to)})`;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Text                                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** Most words per side the word diff is worked out for; longer text is shown as replaced whole. */
+const DIFF_WORD_LIMIT = 1500;
+
+/**
+ * Words and punctuation marks, each with the whitespace that follows it, so
+ * joining the tokens restores the text exactly. Punctuation is its own token:
+ * `version.` becoming `version with the appendix.` adds words, it does not
+ * replace `version.`.
+ */
+function tokens(text: string): string[] {
+  return text.match(/[\p{L}\p{N}_'’-]+\s*|[^\p{L}\p{N}_\s]\s*|\s+/gu) ?? [];
+}
+
+/**
+ * A word-level diff of two texts.
+ *
+ * Joining the segments that are not `added` gives `from` back and joining the
+ * ones that are not `removed` gives `to`, whitespace included, so a reader sees
+ * exactly what the author typed. Adjacent words that went (or came) together
+ * are one segment: `and preference`, not `and`, `preference`.
+ */
+export function diffText(from: string, to: string): TextSegment[] {
+  if (from === to) {
+    return from === "" ? [] : [{ kind: "same", text: from }];
+  }
+  const a = tokens(from);
+  const b = tokens(to);
+  if (a.length > DIFF_WORD_LIMIT || b.length > DIFF_WORD_LIMIT) {
+    return [
+      ...(from === "" ? [] : [{ kind: "removed" as const, text: from }]),
+      ...(to === "" ? [] : [{ kind: "added" as const, text: to }]),
+    ];
+  }
+
+  // Longest common subsequence over the words (compared without their trailing
+  // space, so a word at the end of the text still matches one mid-sentence).
+  const key = (token: string): string => token.trimEnd();
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const table = new Uint16Array(rows * cols);
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      table[i * cols + j] =
+        key(a[i]) === key(b[j])
+          ? table[(i + 1) * cols + j + 1] + 1
+          : Math.max(table[(i + 1) * cols + j], table[i * cols + j + 1]);
+    }
+  }
+
+  const segments: TextSegment[] = [];
+  const push = (kind: TextSegmentKind, text: string): void => {
+    const last = segments[segments.length - 1];
+    if (last !== undefined && last.kind === kind) {
+      segments[segments.length - 1] = { kind, text: last.text + text };
+    } else {
+      segments.push({ kind, text });
+    }
+  };
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (key(a[i]) === key(b[j])) {
+      // Keep the newer spelling of the whitespace so "same" reads as the new text.
+      push("same", b[j]);
+      i += 1;
+      j += 1;
+    } else if (table[(i + 1) * cols + j] >= table[i * cols + j + 1]) {
+      push("removed", a[i]);
+      i += 1;
+    } else {
+      push("added", b[j]);
+      j += 1;
+    }
+  }
+  while (i < a.length) {
+    push("removed", a[i]);
+    i += 1;
+  }
+  while (j < b.length) {
+    push("added", b[j]);
+    j += 1;
+  }
+  return segments;
+}
+
+const DETAIL_LABELS: Record<DetailField, string> = {
+  title: "Title",
+  abstract: "Abstract",
+  changeNote: "Change note",
+};
+
+function textChange(
+  field: DetailField,
+  from: string | null,
+  to: string | null,
+): TextChange | null {
+  if ((from ?? "") === (to ?? "")) {
+    return null;
+  }
+  return {
+    field,
+    label: DETAIL_LABELS[field],
+    from,
+    to,
+    segments: diffText(from ?? "", to ?? ""),
+  };
+}
+
+/** The signed text fields whose words differ: title, abstract, then the change note. */
+function diffDetails(
+  text: { readonly from: VersionText; readonly to: VersionText } | null,
+  fromNote: string | null,
+  toNote: string | null,
+): TextChange[] {
+  const changes = [
+    text === null ? null : textChange("title", text.from.title, text.to.title),
+    text === null ? null : textChange("abstract", text.from.abstract, text.to.abstract),
+    textChange("changeNote", fromNote, toNote),
+  ];
+  return changes.filter((change): change is TextChange => change !== null);
+}
+
+/** Files, in the order a version lists them; `null` when the manifest could not be read. */
+async function readFiles(
+  shortId: string,
+  version: number,
+  client: CompareClient,
+): Promise<readonly CompareFile[] | null> {
+  try {
+    const payload = await client.get<unknown>(manifestEndpoint(shortId, version), {
+      auth: false,
+      cache: "no-store",
+    });
+    return parseManifest(payload).files.map((item) => ({
+      path: item.path,
+      cid: item.cid,
+      size: item.size,
+      role: item.role,
+      mediaType: item.mediaType,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+interface VersionText {
+  readonly title: string;
+  readonly abstract: string;
+}
+
+/** A version's title and abstract; `null` when it could not be read. */
+async function readVersionText(
+  shortId: string,
+  version: number,
+  client: CompareClient,
+): Promise<VersionText | null> {
+  try {
+    const payload = await client.get<unknown>(
+      `/papers/${encodeURIComponent(shortId.trim())}/v${version}`,
+      { auth: false, cache: "no-store" },
+    );
+    if (!isRecord(payload) || typeof payload.title !== "string") {
+      return null;
+    }
+    return {
+      title: payload.title.trim(),
+      abstract: typeof payload.abstract === "string" ? payload.abstract.trim() : "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Read a comparison through the shared API client. Public read. */
@@ -284,12 +584,33 @@ export async function loadCompare(
   to: number,
   client: CompareClient = api,
 ): Promise<CompareData> {
-  const payload = await client.get<unknown>(comparePath(shortId), {
-    query: { from, to },
-    auth: false,
-    cache: "no-store",
-  });
-  return parseCompare(payload, { from, to });
+  // The diff decides whether there is a page; the file lists and the title are
+  // read beside it and a failure there only leaves that part "not compared".
+  const [payload, fromFiles, toFiles, fromText, toText] = await Promise.all([
+    client.get<unknown>(comparePath(shortId), {
+      query: { from, to },
+      auth: false,
+      cache: "no-store",
+    }),
+    readFiles(shortId, from, client),
+    readFiles(shortId, to, client),
+    readVersionText(shortId, from, client),
+    readVersionText(shortId, to, client),
+  ]);
+  const paragraphs = parseCompare(payload, { from, to });
+  const detailsRead = fromText !== null && toText !== null;
+  return {
+    ...paragraphs,
+    files: fromFiles !== null && toFiles !== null ? diffFiles(fromFiles, toFiles) : null,
+    details: diffDetails(
+      detailsRead
+        ? { from: fromText, to: toText }
+        : null,
+      paragraphs.fromChangeNote,
+      paragraphs.toChangeNote,
+    ),
+    detailsRead,
+  };
 }
 
 /** One plain sentence for why the comparison could not be shown. */
@@ -320,6 +641,11 @@ function paragraphCount(count: number, verb: string): string {
   return `${count} ${count === 1 ? "paragraph" : "paragraphs"} ${verb}`;
 }
 
+/** `1 file replaced`, `2 files added`. */
+function fileCount(count: number, verb: string): string {
+  return `${count} ${count === 1 ? "file" : "files"} ${verb}`;
+}
+
 /** Join words with a final "and": `a`, `a and b`, `a, b and c`. */
 function joinWords(parts: readonly string[]): string {
   if (parts.length <= 1) {
@@ -328,10 +654,19 @@ function joinWords(parts: readonly string[]): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
+/** `title`, `title and abstract`, `title, abstract and change note`, each with "changed". */
+function detailsPhrase(details: readonly TextChange[]): string {
+  const names = details.map((change) => change.label.toLowerCase());
+  return `${joinWords(names)} changed`;
+}
+
 /**
  * The one-line summary above the diff:
- * "1 paragraph changed and 1 paragraph added between v1 and v2." A comparison
+ * "1 paragraph changed and 1 file replaced between v1 and v2." A comparison
  * with no differences says so plainly rather than showing an empty page.
+ *
+ * Only the *paragraphs* are said to match when nothing else differs — a
+ * comparison whose files or details could not be read does not claim more.
  */
 export function describeCompareSummary(data: CompareData): string {
   const parts: string[] = [];
@@ -344,8 +679,33 @@ export function describeCompareSummary(data: CompareData): string {
   if (data.removed.length > 0) {
     parts.push(paragraphCount(data.removed.length, "removed"));
   }
+  for (const kind of ["replaced", "added", "removed"] as const) {
+    const count = (data.files ?? []).filter((change) => change.kind === kind).length;
+    if (count > 0) {
+      parts.push(fileCount(count, kind));
+    }
+  }
+  // The change note is shown under its own heading; the summary names the
+  // signed fields a reader would otherwise miss.
+  const fields = data.details.filter((change) => change.field !== "changeNote");
+  if (fields.length > 0) {
+    parts.push(detailsPhrase(fields));
+  }
   if (parts.length === 0) {
     return "These two versions have the same paragraphs.";
   }
   return `${joinWords(parts)} between v${data.from} and v${data.to}.`;
+}
+
+/** True when nothing differs in anything this page compares — and all of it was read. */
+export function isUnchanged(data: CompareData): boolean {
+  return (
+    data.added.length === 0 &&
+    data.removed.length === 0 &&
+    data.changed.length === 0 &&
+    data.files !== null &&
+    data.files.length === 0 &&
+    data.detailsRead &&
+    data.details.every((change) => change.field === "changeNote")
+  );
 }

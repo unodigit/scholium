@@ -16,6 +16,12 @@
  *   − Old paragraph…
  * ```
  *
+ * A new version can change more than its paragraphs, so the page also lists
+ * the **files** that were added, removed or replaced (with their sizes) and the
+ * **title and abstract** as a word-level text diff; the change notes carry the
+ * same diff inline. A part the node could not read is said to be unread — the
+ * page never claims "Nothing changed" about something it did not compare.
+ *
  * It is a reading surface, not a code diff: paragraphs are set in the reading
  * serif at the reading size, in one column, so long prose stays readable. The
  * old and new sides are stacked, not squeezed side by side.
@@ -30,9 +36,16 @@
  * comparison reads before JavaScript runs.
  */
 
-import { changeNoteText } from "../paper-meta/meta";
-import type { CompareChange, CompareData, CompareParagraph } from "./compare";
-import { describeCompareSummary } from "./compare";
+import { changeNoteText, roleLabel } from "../paper-meta/meta";
+import type {
+  CompareChange,
+  CompareData,
+  CompareParagraph,
+  FileChange,
+  TextChange,
+  TextSegment,
+} from "./compare";
+import { describeCompareSummary, describeFileChange, isUnchanged } from "./compare";
 import { versionPagePath } from "./paper-links";
 import "./paper-page.css";
 
@@ -47,8 +60,11 @@ export interface CompareViewProps {
 export function CompareView({ shortId, data, paperTitle }: CompareViewProps) {
   const fromHref = versionPagePath(shortId, data.from);
   const toHref = versionPagePath(shortId, data.to);
-  const empty =
-    data.added.length === 0 && data.removed.length === 0 && data.changed.length === 0;
+  const empty = isUnchanged(data);
+  const fileChanges = data.files ?? [];
+  // The change note's diff is drawn inside the Change notes section below.
+  const noteChange = data.details.find((change) => change.field === "changeNote");
+  const fieldChanges = data.details.filter((change) => change.field !== "changeNote");
 
   return (
     <article className="ppg-compare" aria-labelledby="ppg-compare-heading">
@@ -78,12 +94,22 @@ export function CompareView({ shortId, data, paperTitle }: CompareViewProps) {
           <div className="ppg-compare-note">
             <dt>{`Version ${data.from}`}</dt>
             <dd>
-              {changeNoteText({ n: data.from, changeNote: data.fromChangeNote })}
+              {noteDiffers(noteChange) ? (
+                <Segments segments={noteChange.segments} side="from" />
+              ) : (
+                changeNoteText({ n: data.from, changeNote: data.fromChangeNote })
+              )}
             </dd>
           </div>
           <div className="ppg-compare-note">
             <dt>{`Version ${data.to}`}</dt>
-            <dd>{changeNoteText({ n: data.to, changeNote: data.toChangeNote })}</dd>
+            <dd>
+              {noteDiffers(noteChange) ? (
+                <Segments segments={noteChange.segments} side="to" />
+              ) : (
+                changeNoteText({ n: data.to, changeNote: data.toChangeNote })
+              )}
+            </dd>
           </div>
         </dl>
       </section>
@@ -92,6 +118,38 @@ export function CompareView({ shortId, data, paperTitle }: CompareViewProps) {
         <p className="ppg-compare-empty" data-testid="ppg-compare-empty">
           Nothing changed between these versions.
         </p>
+      ) : null}
+
+      {data.files === null || !data.detailsRead ? (
+        <p className="ppg-compare-empty ppg-compare-unread" role="note" data-testid="ppg-compare-unread">
+          {unreadSentence(data)}
+        </p>
+      ) : null}
+
+      {fileChanges.length > 0 ? (
+        <section className="ppg-compare-section" aria-labelledby="ppg-compare-files-heading">
+          <h2 id="ppg-compare-files-heading" className="ppg-section-title">
+            Files <span className="ppg-compare-count">({fileChanges.length})</span>
+          </h2>
+          <ol className="ppg-compare-list">
+            {fileChanges.map((change) => (
+              <FileRow key={`${change.kind}-${change.path}`} change={change} />
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {fieldChanges.length > 0 ? (
+        <section className="ppg-compare-section" aria-labelledby="ppg-compare-text-heading">
+          <h2 id="ppg-compare-text-heading" className="ppg-section-title">
+            {fieldChanges.map((change) => change.label).join(" and ")}
+          </h2>
+          <ol className="ppg-compare-list">
+            {fieldChanges.map((change) => (
+              <TextRow key={change.field} change={change} from={data.from} to={data.to} />
+            ))}
+          </ol>
+        </section>
       ) : null}
 
       {data.changed.length > 0 ? (
@@ -163,6 +221,93 @@ export function CompareView({ shortId, data, paperTitle }: CompareViewProps) {
         <a href={toHref}>{`Read v${data.to}`}</a>
       </footer>
     </article>
+  );
+}
+
+/** What the page could not compare, in a sentence. */
+function unreadSentence(data: CompareData): string {
+  const parts: string[] = [];
+  if (data.files === null) {
+    parts.push("the files");
+  }
+  if (!data.detailsRead) {
+    parts.push("the title and abstract");
+  }
+  return `${parts.join(" and ").replace(/^./, (letter) => letter.toUpperCase())} of these versions could not be compared, so differences there are not shown.`;
+}
+
+/** True when the change note has a text diff to draw (both versions wrote one). */
+function noteDiffers(change: TextChange | undefined): change is TextChange {
+  return change !== undefined && change.from !== null && change.to !== null;
+}
+
+/**
+ * One side of a word diff: unchanged words as text, the words that went (or
+ * came) in a real `<del>` (or `<ins>`). The other side's words are left out, so
+ * each side reads as the text it is.
+ */
+function Segments({
+  segments,
+  side,
+}: {
+  readonly segments: readonly TextSegment[];
+  readonly side: "from" | "to";
+}) {
+  return (
+    <>
+      {segments.map((segment, index) => {
+        if (segment.kind === "same") {
+          return <span key={index}>{segment.text}</span>;
+        }
+        if (segment.kind === "removed") {
+          return side === "from" ? <del key={index}>{segment.text}</del> : null;
+        }
+        return side === "to" ? <ins key={index}>{segment.text}</ins> : null;
+      })}
+    </>
+  );
+}
+
+function TextRow({
+  change,
+  from,
+  to,
+}: {
+  readonly change: TextChange;
+  readonly from: number;
+  readonly to: number;
+}) {
+  return (
+    <li className="ppg-compare-item" data-kind="changed" data-field={change.field}>
+      <p className="ppg-compare-item-label">{`${change.label} changed`}</p>
+      <div className="ppg-compare-side" data-side="from">
+        <p className="ppg-compare-side-label">{`In v${from}`}</p>
+        <p className="ppg-compare-text">
+          <Segments segments={change.segments} side="from" />
+        </p>
+      </div>
+      <div className="ppg-compare-side" data-side="to">
+        <p className="ppg-compare-side-label">{`In v${to}`}</p>
+        <p className="ppg-compare-text">
+          <Segments segments={change.segments} side="to" />
+        </p>
+      </div>
+    </li>
+  );
+}
+
+/** One file the versions do not share, said in words with its size, never by colour alone. */
+function FileRow({ change }: { readonly change: FileChange }) {
+  const role = roleLabel((change.to ?? change.from)?.role);
+  return (
+    <li
+      className="ppg-compare-item"
+      data-kind={change.kind === "replaced" ? "changed" : change.kind}
+      data-file-change={change.kind}
+    >
+      <p className="ppg-compare-item-label">{describeFileChange(change)}</p>
+      <p className="ppg-compare-side-label">{role}</p>
+    </li>
   );
 }
 

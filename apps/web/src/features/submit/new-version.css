@@ -5,8 +5,9 @@
    so light, dark and a scoped `data-theme` subtree all work. Everything the
    form shares with the wizard (fields, chips, buttons, notices, the summary
    card) is styled by submit.css; this sheet adds only what the form alone
-   shows: the carried-over facts, the byline, the loading line and the record
-   line after signing.
+   shows: the carried-over facts, the byline, the loading line, the record
+   line after signing, and the two blocks of "What changed" — the files (kept,
+   removed, replaced, added) and the response to each review.
 
    Unlayered on purpose, like the other feature stylesheets.
    ============================================================================ */
@@ -135,4 +136,146 @@
 .nv-inline-action:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* ---- Files and Response to reviewers ------------------------------------ */
+
+/* A block of the "What changed" step: a card like the wizard's file rows. */
+.nv-block {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 4);
+  box-sizing: border-box;
+  padding: calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background: var(--surface);
+}
+
+.nv-block__title {
+  margin: 0;
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+}
+
+.nv-block__lede {
+  max-width: var(--reading-column);
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* What the new version will list, in words: never a colour alone. */
+.nv-block__total {
+  margin: 0;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+}
+
+/* A previous file the author dropped reads as dropped, beside its "Removed" chip. */
+.nv-file[data-state="removed"] .sw-file__name {
+  text-decoration: line-through;
+}
+
+/* Remove and Keep are touch targets: at least 44 px tall. */
+.nv-file .sw-button--quiet {
+  min-height: calc(var(--space-unit) * 11);
+}
+
+.nv-reviews {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-review {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+  padding-top: calc(var(--space-unit) * 5);
+  border-top: 1px solid var(--rule);
+}
+
+.nv-review:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.nv-review__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--space-unit) * 3);
+  margin: 0;
+}
+
+.nv-review__label {
+  font-weight: 600;
+}
+
+.nv-review__recommendation {
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+.nv-review__sealed {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* The report sits behind a native disclosure: read it while you answer. */
+.nv-review__report summary {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--space-unit) * 11);
+  color: var(--accent);
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+
+.nv-review__report summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.nv-review__report p {
+  max-width: var(--reading-column);
+  margin: 0;
+  padding: calc(var(--space-unit) * 3);
+  border-inline-start: 2px solid var(--rule);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* How each answer to a review went, after signing. */
+.nv-outcomes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.nv-outcomes__list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+/* "not posted" is said in words; the weight only reinforces it. */
+.nv-outcomes__failed {
+  font-weight: 600;
 }

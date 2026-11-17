@@ -17,6 +17,7 @@ handler sees the same ``papers`` row and ledger entry production has.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -31,7 +32,7 @@ from scholium_record_core import (
 from sqlalchemy.exc import IntegrityError
 
 from app import db
-from app.modules import ingest, ledger
+from app.modules import content, ingest, ledger
 from app.modules.endorsements import save_endorsement
 from app.modules.identity.models import Account, ensure_account_table
 from app.modules.ingest import InvalidRecord
@@ -179,6 +180,30 @@ def publish_version(client, author: Author, paper_cid: str, n: int = 1, **overri
     response = client.post(URL, json=record, headers=author.headers)
     assert response.status_code == 201, response.text
     return record
+
+
+def publish_manifest(client, author: Author, *files: tuple[str, str]) -> tuple[str, list[dict]]:
+    """Post one accepted ``manifest`` of freshly stored files; return its cid and entries.
+
+    Each of ``files`` is ``(path, role)``.  The bytes are stored first, because a
+    manifest naming bytes the node does not hold is refused.
+    """
+    entries = []
+    for path, role in files:
+        blob = content.store_bytes(os.urandom(64), media_type="application/pdf")
+        entries.append(
+            {
+                "path": path,
+                "cid": blob.cid,
+                "size": blob.size,
+                "mediaType": "application/pdf",
+                "role": role,
+            }
+        )
+    record = author.record("manifest", {"files": entries})
+    response = client.post(URL, json=record, headers=author.headers)
+    assert response.status_code == 201, response.text
+    return record["id"], entries
 
 
 def assert_problem(response, status: int) -> dict:
@@ -385,6 +410,55 @@ def test_every_earlier_version_stays_resolvable(client, author, paper):
     assert get_version(second["id"]).n == 2
     assert get_version(third["id"]).n == 3
     assert [version.n for version in versions_for_paper(paper)] == [1, 2, 3]
+
+
+def test_a_second_version_may_name_a_new_manifest_of_replaced_and_added_files(client, author, paper):
+    # What the New version form posts when the author changes files: a manifest
+    # of the kept, replaced and added files first, then the version naming it.
+    first_manifest, first_files = publish_manifest(client, author, ("paper.pdf", "manuscript"))
+    publish_version(client, author, paper, 1, manifest=first_manifest)
+
+    second_manifest, second_files = publish_manifest(
+        client, author, ("paper.pdf", "manuscript"), ("paper.tex", "source")
+    )
+    assert second_manifest != first_manifest
+    publish_version(
+        client, author, paper, 2, manifest=second_manifest, changeNote="Replaces the PDF and adds the source."
+    )
+
+    # Each version keeps the file list it was signed with.
+    by_n = {int(version.n): version for version in versions_for_paper(paper)}
+    assert by_n[1].manifest_cid == first_manifest
+    assert by_n[2].manifest_cid == second_manifest
+    stored = client.get(f"/v1/records/{second_manifest}")
+    assert stored.status_code == 200, stored.text
+    named = [(item["path"], item["cid"]) for item in stored.json()["body"]["files"]]
+    assert named == [(item["path"], item["cid"]) for item in second_files]
+    # The replaced PDF is other bytes under the same path.
+    assert second_files[0]["path"] == first_files[0]["path"]
+    assert second_files[0]["cid"] != first_files[0]["cid"]
+
+
+def test_a_manifest_naming_bytes_the_node_does_not_hold_is_refused_before_the_version(client, author, paper):
+    # The form submits the manifest before the version, so a file that never
+    # finished uploading stops here and no version names a manifest nobody has.
+    record = author.record(
+        "manifest",
+        {
+            "files": [
+                {
+                    "path": "paper.pdf",
+                    "cid": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+                    "size": 10,
+                    "mediaType": "application/pdf",
+                    "role": "manuscript",
+                }
+            ]
+        },
+    )
+    response = client.post(URL, json=record, headers=author.headers)
+    assert_problem(response, 422)
+    assert_not_in_ledger(client, record["id"])
 
 
 def test_a_stale_prev_is_refused(client, author, paper):

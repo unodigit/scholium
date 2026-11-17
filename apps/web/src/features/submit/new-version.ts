@@ -26,6 +26,7 @@
  */
 
 import { ApiError, NetworkError, api } from "../../lib/api";
+import { parseReviews, recommendationLabel } from "../paper-reviews/review";
 // Not the `../web-auth` index: it re-exports hooks that are not client modules,
 // and this plain module must stay loadable on the server (see
 // server-boundary.test.ts). These two files hold only plain code.
@@ -34,12 +35,23 @@ import { signRecord, type SignedRecord } from "../web-auth/sign-record";
 import type { DraftAuthor, RecordAuthor } from "./authors";
 import { fetchRecord, type ComputeRecordId, type FetchRecord } from "./consent-version";
 import { DEFAULT_LICENCE_ID, detailsBlockers, type DetailsValues } from "./details";
+import type { FileRole } from "./file-roles";
+import type { SubmitFile } from "./upload-manager";
 
 /** The record type a new version signs. */
 export const NEW_VERSION_RECORD_TYPE = "paper.version";
 
 /** Longest change note, in characters. It is public and shown in the timeline. */
 export const CHANGE_NOTE_MAX = 500;
+
+/** The record type that lists a version's files. */
+export const MANIFEST_RECORD_TYPE = "manifest";
+
+/** The record type of an author's answer to a review. */
+export const REVIEW_RESPONSE_RECORD_TYPE = "review.response";
+
+/** The rubric slot for a reply that answers the review as a whole. */
+export const GENERAL_DIMENSION = "general";
 
 /** The API's problem type when a `paper.version` does not extend the chain. */
 export const VERSION_OUT_OF_SEQUENCE_TYPE = "urn:scholium:problem:version-out-of-sequence";
@@ -125,6 +137,37 @@ export interface NewVersionPaper {
   authors: NewVersionAuthor[];
   /** cid of the manifest record whose files the new version carries over. */
   manifest: string;
+  /**
+   * The files that manifest lists, as signed; `null` when this node would not
+   * give them (or they did not hash to the manifest's id), in which case the
+   * files are carried over by id and cannot be edited here.
+   */
+  files: readonly ManifestFile[] | null;
+  /** The revealed reviews of this version, each of which the author may answer. */
+  reviews: readonly ReviewToAnswer[];
+}
+
+/** One file of a version, spelled as the signed `manifest` record spells it. */
+export interface ManifestFile {
+  path: string;
+  cid: string;
+  size: number;
+  /** A bare lowercase `type/subtype`. */
+  mediaType: string;
+  /** `manuscript`, `source`, `code`, `dataset`, … */
+  role: string;
+}
+
+/** A revealed review of the previous version, which the author may answer. */
+export interface ReviewToAnswer {
+  /** The review's cid: what the response's `review` names. */
+  cid: string;
+  /** `Reviewer A`: reviewers stay pseudonymous. */
+  label: string;
+  /** `Minor revisions`, in words. */
+  recommendation: string;
+  /** The report, when its gate is open; `null` while it stays sealed. */
+  report: string | null;
 }
 
 export type NewVersionPaperErrorCode = "malformed" | "mismatch" | "no-manifest";
@@ -353,13 +396,129 @@ function paperFromEnvelope(envelope: unknown, located: LocatedVersion): NewVersi
     licence: text(body.licence) ?? "",
     authors: parseByline(body.authors),
     manifest,
+    // Read by `loadNewVersionPaper`, which asks for the manifest and the
+    // reviews beside the version.
+    files: null,
+    reviews: [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// The previous version's files and reviews
+// ---------------------------------------------------------------------------
+
+/** One entry of a manifest record's `files`, or `null` unless every field is there. */
+function manifestFileFrom(value: unknown): ManifestFile | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const path = text(value.path);
+  const cid = text(value.cid);
+  const mediaType = text(value.mediaType);
+  const role = text(value.role);
+  const size = value.size;
+  if (
+    path === null ||
+    cid === null ||
+    mediaType === null ||
+    role === null ||
+    typeof size !== "number" ||
+    !Number.isInteger(size) ||
+    size < 0
+  ) {
+    return null;
+  }
+  return { path, cid, size, mediaType, role };
+}
+
+/**
+ * The files the manifest record `manifestCid` lists, or `null` for "unknown".
+ *
+ * Checked the way the version is: the record's id is recomputed and must be the
+ * cid the version named, so the list shown (and carried into the next
+ * manifest) is what that cid commits to. Any problem — a failed read, a forged
+ * id, a record that is not a manifest, an unreadable entry — is "unknown", never
+ * an error: the form still carries the manifest over by id.
+ */
+async function loadPreviousFiles(
+  manifestCid: string,
+  fetcher: FetchRecord,
+  recordId: ComputeRecordId,
+  signal: AbortSignal | undefined,
+): Promise<ManifestFile[] | null> {
+  try {
+    const envelope = await fetcher(manifestCid, signal);
+    if ((await recordId(envelope)) !== manifestCid) {
+      return null;
+    }
+    if (!isRecord(envelope) || envelope.type !== MANIFEST_RECORD_TYPE || !isRecord(envelope.body)) {
+      return null;
+    }
+    const entries = envelope.body.files;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return null;
+    }
+    const files = entries.map(manifestFileFrom);
+    return files.every((file): file is ManifestFile => file !== null) ? files : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `GET /v1/papers/{id}/reviews`: the reviews of the paper's resolved listed version. Public read. */
+export type FetchReviews = (paperId: string, signal?: AbortSignal) => Promise<unknown>;
+
+export const fetchPaperReviews: FetchReviews = (paperId, signal) =>
+  api.get<unknown>(`/papers/${encodeURIComponent(paperId)}/reviews`, {
+    auth: false,
+    cache: "no-store",
+    signal,
+  });
+
+/**
+ * The reviews of version `n` the author can answer: each one that is revealed.
+ * A review still sealed has nothing to answer, and one written against an
+ * earlier version was answerable when that version was the latest.
+ */
+export function reviewsToAnswer(payload: unknown, n: number): ReviewToAnswer[] {
+  return parseReviews(payload).reviews.flatMap((review) => {
+    const revealed = review.revealedAt != null || review.formalCid != null;
+    if (review.reviewCid === null || !revealed) {
+      return [];
+    }
+    if (review.version !== null && review.version !== n) {
+      return [];
+    }
+    return [
+      {
+        cid: review.reviewCid,
+        label: review.label,
+        recommendation: review.recommendationLabel,
+        report: review.report,
+      },
+    ];
+  });
+}
+
+/** The reviews listing, or none: a paper this node does not list has no reviews to answer. */
+async function loadReviewsToAnswer(
+  paperId: string,
+  n: number,
+  fetcher: FetchReviews,
+  signal: AbortSignal | undefined,
+): Promise<ReviewToAnswer[]> {
+  try {
+    return reviewsToAnswer(await fetcher(paperId, signal), n);
+  } catch {
+    return [];
+  }
 }
 
 export interface LoadNewVersionOptions {
   fetchPaper?: FetchNewVersionPaper;
   fetchOwnPapers?: FetchOwnPapers;
   fetchRecord?: FetchRecord;
+  fetchReviews?: FetchReviews;
   recordId?: ComputeRecordId;
   signal?: AbortSignal;
 }
@@ -388,6 +547,7 @@ export async function loadNewVersionPaper(
   const ownPapers = options.fetchOwnPapers ?? fetchOwnPapers;
   const fetcher = options.fetchRecord ?? fetchRecord;
   const recordId = options.recordId ?? defaultRecordId;
+  const reviewsFetcher = options.fetchReviews ?? fetchPaperReviews;
   const { signal } = options;
 
   let located: LocatedVersion;
@@ -423,7 +583,15 @@ export async function loadNewVersionPaper(
       "The server sent a version record that does not match the one it listed, so it is not shown. Do not sign anything for it.",
     );
   }
-  return paperFromEnvelope(envelope, located);
+  const paper = paperFromEnvelope(envelope, located);
+  // What the form lets the author change or answer. Neither read can fail the
+  // load: unreadable files are carried over by id, and no listing means no
+  // reviews to answer.
+  const [files, reviews] = await Promise.all([
+    loadPreviousFiles(paper.manifest, fetcher, recordId, signal),
+    loadReviewsToAnswer(paper.shortId !== "" ? paper.shortId : id, paper.n, reviewsFetcher, signal),
+  ]);
+  return { ...paper, files, reviews };
 }
 
 /** A sentence for the author when the paper could not be loaded. */
@@ -447,16 +615,45 @@ export function newVersionLoadErrorMessage(error: unknown): string {
 // The draft
 // ---------------------------------------------------------------------------
 
-/** What the form collects: the details, pre-filled, and the required note. */
+/** What the author did to the previous version's files. */
+export interface FileChanges {
+  /** Paths of previous files the author dropped. */
+  readonly removed: readonly string[];
+  /**
+   * Files uploaded in this form that are on the node and match their
+   * fingerprints. One whose path is a previous file's replaces it.
+   */
+  readonly added: readonly SubmitFile[];
+  /** Why the files cannot be signed yet (an upload still moving, stopped or failed), or `null`. */
+  readonly pending: string | null;
+}
+
+/** The author left every file alone. */
+export function noFileChanges(): FileChanges {
+  return { removed: [], added: [], pending: null };
+}
+
+/** What the form collects: the details, pre-filled, the files, the replies and the required note. */
 export interface NewVersionDraft {
   details: DetailsValues;
   changeNote: string;
+  /**
+   * The previous version's files, as signed; `null` when they are unknown (the
+   * files are then carried over by id and cannot be edited). Absent in a draft
+   * built without them.
+   */
+  previousFiles?: readonly ManifestFile[] | null;
+  /** What the author did to those files. Absent means nothing. */
+  files?: FileChanges;
+  /** The author's answer to each review, by review cid. A blank box answers nothing. */
+  responses?: Readonly<Record<string, string>>;
 }
 
 /**
  * The pre-filled form: the title, abstract, categories and licence the latest
  * version signed. The licence falls back to the default only when the version
- * named none, so an author never quietly changes what they cannot see.
+ * named none, so an author never quietly changes what they cannot see. The
+ * files start out all kept and no review answered.
  */
 export function draftFromPaper(paper: NewVersionPaper): NewVersionDraft {
   return {
@@ -467,8 +664,121 @@ export function draftFromPaper(paper: NewVersionPaper): NewVersionDraft {
       licence: paper.licence === "" ? DEFAULT_LICENCE_ID : paper.licence,
     },
     changeNote: "",
+    previousFiles: paper.files,
+    files: noFileChanges(),
+    responses: {},
   };
 }
+
+/** The manifest's spelling of the role the author gave an upload. */
+export function manifestRole(role: FileRole): string {
+  switch (role) {
+    case "pdf":
+      return "manuscript";
+    case "source":
+      return "source";
+    case "code":
+      return "code";
+    case "data":
+      return "dataset";
+    default:
+      return "other";
+  }
+}
+
+/** An upload as a manifest entry: a bare lowercase media type, the generic one when the browser gave none. */
+function manifestFileOf(file: SubmitFile): ManifestFile {
+  const mediaType = file.mediaType.split(";")[0].trim().toLowerCase();
+  return {
+    path: file.path,
+    cid: file.cid,
+    size: file.size,
+    mediaType: mediaType === "" ? "application/octet-stream" : mediaType,
+    role: manifestRole(file.role),
+  };
+}
+
+/**
+ * The files the new version lists: the previous ones the author kept, with an
+ * upload standing in for the file whose path it takes, then the uploads that are
+ * new paths. An upload of the very bytes a file already has is no change.
+ */
+export function resultingFiles(
+  previous: readonly ManifestFile[],
+  changes: Pick<FileChanges, "removed" | "added">,
+): ManifestFile[] {
+  const uploads = new Map(changes.added.map((file) => [file.path, manifestFileOf(file)]));
+  const result: ManifestFile[] = [];
+  for (const file of previous) {
+    const upload = uploads.get(file.path);
+    if (upload !== undefined) {
+      result.push(upload.cid === file.cid ? file : upload);
+    } else if (!changes.removed.includes(file.path)) {
+      result.push(file);
+    }
+  }
+  const known = new Set(previous.map((file) => file.path));
+  for (const [path, upload] of uploads) {
+    if (!known.has(path)) {
+      result.push(upload);
+    }
+  }
+  return result;
+}
+
+/** True when `result` names the same paths and bytes as `previous`, in the same order. */
+export function filesUnchanged(
+  previous: readonly ManifestFile[],
+  result: readonly ManifestFile[],
+): boolean {
+  return (
+    previous.length === result.length &&
+    previous.every((file, index) => file.path === result[index].path && file.cid === result[index].cid)
+  );
+}
+
+/** How many of the previous files were kept, replaced or removed, and how many are new paths. */
+export function fileChangeCounts(
+  previous: readonly ManifestFile[],
+  result: readonly ManifestFile[],
+): { kept: number; replaced: number; added: number; removed: number; unchanged: boolean } {
+  const before = new Map(previous.map((file) => [file.path, file]));
+  const after = new Map(result.map((file) => [file.path, file]));
+  let kept = 0;
+  let replaced = 0;
+  let added = 0;
+  for (const file of result) {
+    const old = before.get(file.path);
+    if (old === undefined) {
+      added += 1;
+    } else if (old.cid === file.cid) {
+      kept += 1;
+    } else {
+      replaced += 1;
+    }
+  }
+  const removed = previous.filter((file) => !after.has(file.path)).length;
+  return { kept, replaced, added, removed, unchanged: filesUnchanged(previous, result) };
+}
+
+/** The body of the `manifest` record that lists `files`. */
+export function manifestBody(files: readonly ManifestFile[]): Record<string, unknown> {
+  return {
+    files: files.map((file) => ({
+      path: file.path,
+      cid: file.cid,
+      size: file.size,
+      mediaType: file.mediaType,
+      role: file.role,
+    })),
+  };
+}
+
+/** Roles that make a bundle a paper: the same two the `/submit` wizard asks for. */
+const PAPER_FILE_ROLES: ReadonlySet<string> = new Set(["manuscript", "source"]);
+
+/** Said when the files the author changed no longer include the paper. */
+export const PAPER_FILE_BLOCKER = "Keep or add your paper as a PDF or LaTeX source.";
 
 /** What still stands in the way of signing, in the order the author should fix it. */
 export function newVersionBlockers(draft: NewVersionDraft): string[] {
@@ -478,6 +788,23 @@ export function newVersionBlockers(draft: NewVersionDraft): string[] {
     blockers.push("Say what changed in this version.");
   } else if (note.length > CHANGE_NOTE_MAX) {
     blockers.push(`Shorten the change note to ${CHANGE_NOTE_MAX} characters or fewer.`);
+  }
+  const changes = draft.files ?? noFileChanges();
+  if (changes.pending !== null) {
+    blockers.push(changes.pending);
+  }
+  const previous = draft.previousFiles ?? null;
+  if (previous === null) {
+    if (changes.added.length > 0) {
+      blockers.push("The files of the previous version could not be read, so files cannot be changed here.");
+    }
+  } else {
+    // Files left alone are never refused: a version that never had a paper file
+    // can still say what else changed. Changing them must leave a paper.
+    const result = resultingFiles(previous, changes);
+    if (!filesUnchanged(previous, result) && !result.some((file) => PAPER_FILE_ROLES.has(file.role))) {
+      blockers.push(PAPER_FILE_BLOCKER);
+    }
   }
   return blockers;
 }
@@ -519,12 +846,15 @@ export function bylineAsDraft(authors: readonly NewVersionAuthor[], ownDid: stri
 
 /**
  * The `paper.version` body this form signs: the paper's genesis cid, the next
- * number, the edited details, the carried byline and manifest, and the note.
+ * number, the edited details, the carried byline, the manifest and the note.
+ * `manifest` is the previous version's unless a new one was signed for changed
+ * files.
  */
 export function newVersionBody(
   paper: NewVersionPaper,
   draft: NewVersionDraft,
   authors: readonly NewVersionAuthor[] = paper.authors,
+  manifest: string = paper.manifest,
 ): Record<string, unknown> {
   return {
     paper: paper.paperCid,
@@ -532,7 +862,7 @@ export function newVersionBody(
     title: draft.details.title,
     abstract: draft.details.abstract,
     authors: recordAuthorEntries(authors),
-    manifest: paper.manifest,
+    manifest,
     licence: draft.details.licence,
     changeNote: draft.changeNote.trim(),
     categories: draft.details.categories,
@@ -561,11 +891,26 @@ export type SubmitVersionRecord = (record: SignedRecord) => Promise<VersionRecor
 
 const defaultSubmit: SubmitVersionRecord = (record) => api.post<VersionRecordAccepted>("/records", record);
 
+/** Posts a signed `review.response` to the review it answers; `POST /v1/reviews/{cid}/response` by default. */
+export type RespondToReview = (reviewCid: string, record: SignedRecord) => Promise<unknown>;
+
+const defaultRespond: RespondToReview = (reviewCid, record) =>
+  api.post<unknown>(`/reviews/${encodeURIComponent(reviewCid)}/response`, record);
+
 export interface SubmitNewVersionOptions {
   paper: NewVersionPaper;
   draft: NewVersionDraft;
   sign?: SignVersionRecord;
   submit?: SubmitVersionRecord;
+  respond?: RespondToReview;
+}
+
+/** How one answer to a review went. */
+export interface ResponseOutcome {
+  reviewCid: string;
+  ok: boolean;
+  /** Why it was not posted, in words; present when `ok` is false. */
+  error?: string;
 }
 
 export interface NewVersionSubmitted {
@@ -573,6 +918,10 @@ export interface NewVersionSubmitted {
   versionId: string;
   /** The new version's number. */
   n: number;
+  /** The new `manifest` record's cid; present only when the files changed and one was signed. */
+  manifestId?: string;
+  /** One outcome per answered review; present only when the author answered any. */
+  responses?: ResponseOutcome[];
 }
 
 /** The signer came back with a record that is not the one this form asked for. */
@@ -583,24 +932,146 @@ export class WrongRecordError extends Error {
   }
 }
 
+/** Signs `type` and checks the signer returned that type, before anything is sent. */
+async function signAs(
+  sign: SignVersionRecord,
+  type: string,
+  body: Record<string, unknown>,
+  prev: string | null,
+): Promise<SignedRecord> {
+  const signed = await sign(type, body, prev);
+  if (signed.type !== type) {
+    throw new WrongRecordError(`The signer produced a ${signed.type} record, not a ${type}.`);
+  }
+  return signed;
+}
+
+/** What went wrong answering one review, in words. */
+export function describeResponseError(error: unknown): string {
+  if (isPasskeyCancellation(error)) {
+    return "Signing was cancelled, so this response was not posted.";
+  }
+  if (error instanceof WrongRecordError) {
+    return `${error.message} This response was not posted.`;
+  }
+  if (isDeviceKeyError(error)) {
+    return "Could not sign with this device's key, so this response was not posted.";
+  }
+  if (isRecordSigningError(error)) {
+    return "Could not prepare the response record, so it was not posted.";
+  }
+  if (error instanceof ApiError) {
+    if (error.status === 401) {
+      return "Your session has ended. Sign in again to post this response.";
+    }
+    if (error.status === 403) {
+      return "The server says this account may not answer that review, so the response was not posted.";
+    }
+    if (error.status === 404) {
+      return "The server does not hold that review, so the response was not posted.";
+    }
+    if (error.status === 422) {
+      return `The server did not accept the response: ${error.detail}`;
+    }
+    return "The server could not take the response just now. Try again in a moment.";
+  }
+  if (error instanceof NetworkError) {
+    return "Could not reach the server, so this response was not confirmed. Check your connection and try again.";
+  }
+  return "Something went wrong and this response was not posted. Try again.";
+}
+
+export interface SubmitReviewResponsesOptions {
+  /** The author's answer to each review, by review cid. A blank answer is skipped. */
+  responses: Readonly<Record<string, string>>;
+  sign?: SignVersionRecord;
+  respond?: RespondToReview;
+}
+
+/**
+ * Signs and posts one `review.response` per answered review, one passkey prompt
+ * each. The reply is filed under the rubric's `general` slot: the response
+ * answers the review as a whole, in the author's own words.
+ *
+ * Failures never throw: each is an outcome, so the answers that did land stay
+ * posted and the rest can be tried again. A dismissed passkey prompt or an ended
+ * session stops the run, because asking again would only ask for the same thing.
+ */
+export async function submitReviewResponses({
+  responses,
+  sign = signRecord,
+  respond = defaultRespond,
+}: SubmitReviewResponsesOptions): Promise<ResponseOutcome[]> {
+  const answered = Object.entries(responses)
+    .map(([reviewCid, reply]) => [reviewCid, reply.trim()] as const)
+    .filter(([, reply]) => reply !== "");
+  const outcomes: ResponseOutcome[] = [];
+  let stopped: string | null = null;
+  for (const [reviewCid, reply] of answered) {
+    if (stopped !== null) {
+      outcomes.push({ reviewCid, ok: false, error: stopped });
+      continue;
+    }
+    try {
+      const signed = await signAs(
+        sign,
+        REVIEW_RESPONSE_RECORD_TYPE,
+        { review: reviewCid, items: [{ dimension: GENERAL_DIMENSION, reply }] },
+        null,
+      );
+      await respond(reviewCid, signed);
+      outcomes.push({ reviewCid, ok: true });
+    } catch (error) {
+      const message = describeResponseError(error);
+      outcomes.push({ reviewCid, ok: false, error: message });
+      if (isPasskeyCancellation(error) || (error instanceof ApiError && error.status === 401)) {
+        stopped = `${message.replace(/\.$/, "")}; this response was not attempted.`;
+      }
+    }
+  }
+  return outcomes;
+}
+
 /**
  * Signs the next `paper.version` and submits it.
+ *
+ * When the author changed the files, a `manifest` record listing the new set is
+ * signed and submitted first and the version names its id; otherwise the version
+ * names the previous manifest and no manifest is signed. After the version is
+ * accepted, each answered review gets its `review.response`.
  *
  * `prev` is the cid of the paper's latest version (and `n` is one more), which
  * is the only pair the API's chain check accepts; both are checked on the
  * signed record before anything is sent, so a broken signer fails here rather
- * than forking the paper's timeline on the server.
+ * than forking the paper's timeline on the server. Responses are posted only
+ * once the version has landed, so a refused version (a stale chain, say)
+ * publishes none of what the author wrote.
  *
- * @throws {WrongRecordError} the signed record is not the version asked for; nothing is sent.
+ * @throws {WrongRecordError} the signed record is not the one asked for; nothing more is sent.
  */
 export async function submitNewVersion({
   paper,
   draft,
   sign = signRecord,
   submit = defaultSubmit,
+  respond = defaultRespond,
 }: SubmitNewVersionOptions): Promise<NewVersionSubmitted> {
   const prev = paper.versionCid;
-  const signed = await sign(NEW_VERSION_RECORD_TYPE, newVersionBody(paper, draft), prev);
+
+  let manifest = paper.manifest;
+  let manifestId: string | undefined;
+  const previous = draft.previousFiles ?? paper.files;
+  if (previous !== null && draft.files !== undefined) {
+    const files = resultingFiles(previous, draft.files);
+    if (!filesUnchanged(previous, files)) {
+      const signedManifest = await signAs(sign, MANIFEST_RECORD_TYPE, manifestBody(files), null);
+      const acceptedManifest = await submit(signedManifest);
+      manifest = acceptedManifest.id ?? signedManifest.id;
+      manifestId = manifest;
+    }
+  }
+
+  const signed = await sign(NEW_VERSION_RECORD_TYPE, newVersionBody(paper, draft, paper.authors, manifest), prev);
   if (signed.type !== NEW_VERSION_RECORD_TYPE) {
     throw new WrongRecordError(
       `The signer produced a ${signed.type} record, not a ${NEW_VERSION_RECORD_TYPE}.`,
@@ -612,7 +1083,24 @@ export async function submitNewVersion({
     );
   }
   const accepted = await submit(signed);
-  return { versionId: accepted.id ?? signed.id, n: paper.n + 1 };
+  const submitted: NewVersionSubmitted = { versionId: accepted.id ?? signed.id, n: paper.n + 1 };
+  if (manifestId !== undefined) {
+    submitted.manifestId = manifestId;
+  }
+
+  // The version has landed. Answer the reviews in the order the form lists them.
+  const rank = (cid: string): number => {
+    const index = paper.reviews.findIndex((review) => review.cid === cid);
+    return index === -1 ? paper.reviews.length : index;
+  };
+  const responses = Object.fromEntries(
+    Object.entries(draft.responses ?? {}).sort(([a], [b]) => rank(a) - rank(b)),
+  );
+  const outcomes = await submitReviewResponses({ responses, sign, respond });
+  if (outcomes.length > 0) {
+    submitted.responses = outcomes;
+  }
+  return submitted;
 }
 
 // ---------------------------------------------------------------------------
