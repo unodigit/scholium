@@ -12,14 +12,14 @@ from .settings import settings
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # With JOBS_EAGER=0 jobs are queued in the jobs table; something must run
-    # them. In eager mode (tests, local dev) enqueue runs each job inline.
-    if not jobs.is_eager():
+    # In thread mode an in-process worker drains the queue. Eager mode runs
+    # jobs inline on enqueue; external mode leaves them for a separate worker.
+    if jobs.is_thread():
         jobs.start_worker()
     try:
         yield
     finally:
-        if not jobs.is_eager():
+        if jobs.is_thread():
             jobs.stop_worker()
 
 

@@ -36,6 +36,9 @@ _ENV_ALIASES = {"dev": "dev", "prod": "production", "production": "production"}
 #: from the sandbox module so production validation never has to import it.
 _SANDBOX_BACKENDS = ("docker", "podman", "remote", "none")
 
+#: Accepted values of ``JOBS_MODE`` (see :attr:`Settings.jobs_mode`).
+_JOBS_MODES = ("eager", "thread", "external")
+
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
@@ -226,6 +229,12 @@ class Settings:
     OLLAMA_URL: str = field(default_factory=lambda: _env("OLLAMA_URL", "http://localhost:11434"))
     SMTP_URL: str = field(default_factory=lambda: _env("SMTP_URL", ""))
     JOBS_EAGER: int = field(default_factory=lambda: _int("JOBS_EAGER", 1))
+    # JOBS_MODE picks how queued jobs get run: ``eager`` runs them inline on the
+    # caller, ``thread`` on the API's own in-process worker, ``external`` not at
+    # all -- the API only writes queued rows for a separate worker process.
+    # Unset, the mode follows JOBS_EAGER (see ``jobs_mode``), so eager stays the
+    # default and the older JOBS_EAGER=0 still means "thread".
+    JOBS_MODE: str = field(default_factory=lambda: _env("JOBS_MODE", "").strip().lower())
     # The reproducibility sandbox's runner: docker (default), podman, remote or
     # none.  "remote" posts the bundle cid and limits to SANDBOX_URL with the
     # bearer token SANDBOX_TOKEN (at least 32 characters in production); "none"
@@ -291,9 +300,30 @@ class Settings:
     def web_origins(self) -> list[str]:
         return [o.strip() for o in self.WEB_ORIGINS.split(",") if o.strip()]
 
+    @property
+    def jobs_mode(self) -> str:
+        """The effective job mode: ``eager``, ``thread`` or ``external``.
+
+        An explicit ``JOBS_MODE`` wins; otherwise ``JOBS_EAGER`` decides (unset
+        or 1 -> ``eager``, 0 -> ``thread``).  Resolved on every read so both
+        knobs can be changed after construction.  An unrecognised ``JOBS_MODE``
+        is returned as written; :meth:`validate_for_environment` refuses it.
+        """
+        explicit = (self.JOBS_MODE or "").strip().lower()
+        if explicit:
+            return explicit
+        return "eager" if self.JOBS_EAGER else "thread"
+
     def validate_for_environment(self) -> None:
         """Refuse to run production with development-only defaults."""
         environment = _normalise_environment(self.SCHOLIUM_ENV)
+        if self.jobs_mode not in _JOBS_MODES:
+            # A typo must not silently fall back to running jobs inline (or not
+            # at all), in any environment.
+            raise RuntimeError(
+                f"Unknown JOBS_MODE {self.JOBS_MODE!r}; expected one of "
+                + ", ".join(_JOBS_MODES) + "."
+            )
         if environment != "production":
             if environment != "dev":
                 raise RuntimeError(
@@ -334,8 +364,11 @@ class Settings:
             problems.append("ORCID_MOCK must be 0")
         if self.ARXIV_MOCK:
             problems.append("ARXIV_MOCK must be 0")
-        if self.JOBS_EAGER:
-            problems.append("JOBS_EAGER must be 0 (jobs run on the background worker)")
+        if self.jobs_mode == "eager":
+            problems.append(
+                "JOBS_EAGER must be 0 (jobs run on the background worker), "
+                "or JOBS_MODE must be thread or external"
+            )
         sandbox_backend = (self.SANDBOX_BACKEND or "docker").strip().lower()
         if sandbox_backend not in _SANDBOX_BACKENDS:
             problems.append(
