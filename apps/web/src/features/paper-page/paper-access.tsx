@@ -27,7 +27,7 @@
  * The page never decides access itself; it reads what the node answered.
  */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 
 import { ApiError, bootstrapSession, tokenStore } from "../../lib/api";
@@ -35,6 +35,10 @@ import { licenceLabel } from "../paper-meta/meta";
 import { loadProfile, type AuthorProfile } from "../search-page/paper";
 import { checksErrorMessage, fetchVersionChecks, type FetchChecks, type VersionChecks } from "../submit/checks";
 import { StatusTracker } from "../submit/status-tracker";
+import { trackerFromReport } from "../submit/consents";
+import { withProfileNames } from "../submit/profile-names";
+import { useProfileNames } from "../submit/use-profile-names";
+import { viewerFromToken } from "../review-form/viewer";
 import { appealStatus, filedAppeal, type FiledAppeal } from "./appeal-dialog";
 import type { LoadPdfjs } from "./pdf-render";
 import { PdfView } from "./pdf-view";
@@ -431,6 +435,41 @@ export function PaperAccessView({
   const checks = useChecks(version, fetchChecks);
   const paperId = version.shortId ?? "";
 
+  // The status tracker shows co-authors by name (profile) with the DID as
+  // secondary text, marks the signed-in viewer as "(you)", and offers a
+  // "Sign your consent" link when that viewer still owes a consent — the same
+  // construction the submit page uses.
+  const viewerDid = viewerFromToken(tokenStore.get()?.accessToken).did;
+  const consentAuthorDids = useMemo(
+    () => (consents === null ? [] : consents.authors.map((author) => author.did)),
+    [consents],
+  );
+  const profileNames = useProfileNames(consentAuthorDids);
+  const trackerAuthors = useMemo(() => {
+    if (consents === null) return [];
+    const base = [...consents.authors]
+      .sort((a, b) => a.position - b.position)
+      .map((entry) => {
+        const versionAuthor = version.authors.find((author) => author.did === entry.did);
+        return {
+          key: entry.did,
+          kind: "did" as const,
+          identifier: entry.did,
+          did: entry.did,
+          name: "",
+          orcid: null,
+          creditRoles: [...(entry.creditRoles ?? versionAuthor?.creditRoles ?? [])],
+          isSubmitter: viewerDid !== null && entry.did === viewerDid,
+          match: "matched" as const,
+        };
+      });
+    return withProfileNames(base, profileNames);
+  }, [consents, version.authors, profileNames, viewerDid]);
+  const trackerEntries = useMemo(
+    () => (consents === null ? [] : trackerFromReport(consents, trackerAuthors)),
+    [consents, trackerAuthors],
+  );
+
   return (
     <div className="ppg ppg-access">
       <UnlistedStatusBanner banner={banner} />
@@ -525,9 +564,12 @@ export function PaperAccessView({
       {consents !== null ? (
         <StatusTracker
           report={consents}
+          authors={trackerAuthors}
+          trackerEntries={trackerEntries}
           checks={checks.message === null ? checks.report : undefined}
           paper={paperId}
           version={version.n}
+          versionCid={version.versionCid}
         />
       ) : null}
       {checks.message !== null ? (
