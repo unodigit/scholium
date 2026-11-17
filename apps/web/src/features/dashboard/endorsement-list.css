@@ -1,0 +1,86 @@
+/* ==========================================================================
+   The endorsements a person holds, on their public profile (/u/{did}) —
+   docs/design.md §3, §9.
+
+   Its own stylesheet, like endorse-button.css, whose `.endorse-section` and
+   `.endorse-heading` frame it. Colour comes from tokens only. Nothing here
+   moves, so there is no motion to reduce. An endorser is a link: it keeps its
+   underline, so it never rests on colour alone.
+   ========================================================================== */
+
+.endorsement-groups {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(var(--space-unit) * 3);
+  inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.endorsement-group {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  min-inline-size: 0;
+}
+
+.endorsement-category {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.endorsement-rows {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The endorser and the date share a line while they fit and wrap otherwise. */
+.endorsement-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--space-unit) * 2);
+  min-inline-size: 0;
+}
+
+.endorsement-endorser {
+  min-inline-size: 0;
+  color: var(--accent);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  /* A pseudonymous endorser is a long DID: let it break rather than overflow. */
+  overflow-wrap: anywhere;
+}
+
+.endorsement-endorser:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.endorsement-date {
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  white-space: nowrap;
+}
+
+/* ---- Touch ---------------------------------------------------------------- */
+
+@media (pointer: coarse) {
+  .endorsement-endorser {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 44px;
+  }
+}

@@ -43,10 +43,21 @@ Feature 42 exposes the endorsement *for submission*:
 
 * :func:`active_endorsements` backs ``GET /v1/me/endorsements``: every
   endorsement of one DID that has not expired, each carrying its expiry.
+
+An endorsement is a standing fact, so repeating it adds nothing: a record
+whose endorser, endorsee and category already have an *active* endorsement is
+refused with ``409`` (:class:`DuplicateEndorsement`).  Once the earlier
+endorsement has expired it no longer stands in the way, so a lapsed one can be
+renewed.
+
+:func:`public_endorsements` backs ``GET /v1/profiles/{did}/endorsements``: the
+active endorsements a DID holds, each with the endorser's public name and the
+date the node accepted it, for the profile page to list.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
@@ -54,22 +65,28 @@ from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.errors import ProblemException
+from app.modules import ledger
 from app.modules.identity.models import Account, ensure_account_table
 from app.modules.ingest.errors import InvalidRecord
+from app.modules.profiles import read_profile
+from app.modules.profiles.crypto import ProfileDecryptionError
 from app.security import MAX_TIER, MIN_TIER, Tier
 
 from .models import Endorsement, ensure_tables
 
 __all__ = [
     "AUTHOR_TIER",
+    "DuplicateEndorsement",
     "ENDORSEMENT_TYPE",
     "ENDORSER_MIN_TIER",
     "InsufficientEndorserTier",
+    "PublicEndorsement",
     "account_tier",
     "active_endorsements",
     "can_submit",
     "handle_endorsement",
     "normalise_expiry",
+    "public_endorsements",
     "save_endorsement",
 ]
 
@@ -83,6 +100,8 @@ ENDORSER_MIN_TIER = int(Tier.REVIEWER)
 AUTHOR_TIER = int(Tier.AUTHOR)
 
 INSUFFICIENT_TIER_TYPE = "urn:scholium:problem:insufficient-tier"
+
+DUPLICATE_ENDORSEMENT_TYPE = "urn:scholium:problem:duplicate-endorsement"
 
 
 class InsufficientEndorserTier(ProblemException):
@@ -119,6 +138,29 @@ class InsufficientEndorserTier(ProblemException):
         self.author = author
         self.required_tier = required
         self.caller_tier = tier
+
+
+class DuplicateEndorsement(ProblemException):
+    """409: the endorser already has an active endorsement of this endorsee here.
+
+    One active endorsement per (endorser, endorsee, category) is all there is
+    to say; a second record would only add a row to every list that shows it.
+    """
+
+    def __init__(self, endorser: str, endorsee: str, category: str) -> None:
+        detail = (
+            f"The endorser {endorser} has already endorsed {endorsee} in {category}."
+        )
+        super().__init__(
+            409,
+            detail,
+            type=DUPLICATE_ENDORSEMENT_TYPE,
+            endorsee=endorsee,
+            category=category,
+        )
+        self.endorser = endorser
+        self.endorsee = endorsee
+        self.category = category
 
 
 def _describe(tier: int) -> str:
@@ -234,11 +276,14 @@ def handle_endorsement(record: Mapping[str, Any]) -> str:
     * the endorser -- the record's author -- must hold tier 3 or higher;
     * ``expiry``, when present, must be an ISO 8601 string (the shipped JSON
       Schema permits any string, so the format is checked here);
+    * the endorser must not already have an active endorsement of this
+      endorsee in this category (:class:`DuplicateEndorsement`, 409);
     * accepting the record writes the ``endorsements`` row and grants the
       endorsee tier 2.
 
-    Raises :class:`InsufficientEndorserTier` (403) or
-    :class:`~app.modules.ingest.errors.InvalidRecord` (422); either escapes
+    Raises :class:`InsufficientEndorserTier` (403),
+    :class:`DuplicateEndorsement` (409) or
+    :class:`~app.modules.ingest.errors.InvalidRecord` (422); each escapes
     ``POST /v1/records`` as an RFC 9457 problem document, and because the
     handler runs before the ledger append, the refused record is never stored.
     """
@@ -275,6 +320,7 @@ def handle_endorsement(record: Mapping[str, Any]) -> str:
         endorsee_did=endorsee,
         category=category,
         expires_at=expires_at,
+        reject_duplicate=True,
     )
     return "accepted"
 
@@ -286,12 +332,21 @@ def save_endorsement(
     endorsee_did: str,
     category: str,
     expires_at: Any = None,
+    reject_duplicate: bool = False,
 ) -> Endorsement:
     """Store one endorsement and grant the endorsee tier 2 in one transaction.
 
     ``expires_at`` may be a ``datetime`` or an ISO 8601 string (or ``None``).
     Writing is idempotent per ``record_cid``: applying the same record twice
     leaves a single row and does not change the tier again.
+
+    With ``reject_duplicate`` a *new* record is refused with
+    :class:`DuplicateEndorsement` when the endorser already has an active
+    endorsement of this endorsee in this category.  The look-up shares the
+    transaction that writes the row, so nothing lands between the check and
+    the insert on this connection.  Only the ingest handler asks for it:
+    callers that store endorsements directly (fixtures, imports) keep the
+    plain write.
 
     Two endorsements for an endorsee who has no account row yet can race to
     create that account; the loser's transaction is rolled back whole and the
@@ -315,6 +370,10 @@ def save_endorsement(
             try:
                 row = session.get(Endorsement, record_cid)
                 if row is None:
+                    if reject_duplicate and _has_active_endorsement(
+                        session, endorser_did, endorsee_did, category
+                    ):
+                        raise DuplicateEndorsement(endorser_did, endorsee_did, category)
                     row = Endorsement(
                         record_cid=record_cid,
                         endorser_did=endorser_did,
@@ -332,6 +391,23 @@ def save_endorsement(
                 if attempt == 2:
                     raise
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _has_active_endorsement(
+    session: Any, endorser_did: str, endorsee_did: str, category: str
+) -> bool:
+    """Whether ``endorser_did`` holds an unexpired endorsement of ``endorsee_did``."""
+    found = (
+        session.query(Endorsement.record_cid)
+        .filter(
+            Endorsement.endorser_did == endorser_did,
+            Endorsement.endorsee_did == endorsee_did,
+            Endorsement.category == category,
+            _active_clause(_utcnow()),
+        )
+        .first()
+    )
+    return found is not None
 
 
 def _grant_author(session: Any, did: str) -> None:
@@ -424,3 +500,79 @@ def active_endorsements(
             .order_by(Endorsement.category, Endorsement.record_cid)
             .all()
         )
+
+
+# --------------------------------------------------------------------------- #
+# The public list a profile shows
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class PublicEndorsement:
+    """One endorsement a DID holds, as its public profile lists it.
+
+    ``endorser_name`` is the name the endorser made public on their own
+    profile -- ``None`` when they never saved one or erased it, in which case
+    the page shows the pseudonymous DID.  ``endorsed_at`` is when this node
+    accepted the record (the ledger's ``received_at``), ``None`` for a row
+    that was stored without going through the ledger.
+    """
+
+    record_cid: str
+    endorser_did: str
+    endorser_name: Optional[str]
+    endorsee_did: str
+    category: str
+    endorsed_at: Optional[datetime]
+    expires_at: Optional[datetime]
+
+
+def _public_name(did: str) -> Optional[str]:
+    """The name ``did`` shows on their profile, or ``None`` when there is none.
+
+    Erasure shreds the key, so an erased profile reads as no profile and its
+    name is never listed.  A blob that will not decrypt is corruption in the
+    *endorser's* profile; it must not take the endorsee's list down with it,
+    so the endorser is listed by DID alone.
+    """
+    try:
+        profile = read_profile(did)
+    except (ProfileDecryptionError, ValueError):
+        return None
+    if profile is None:
+        return None
+    return (profile.name or "").strip() or None
+
+
+def _accepted_at(record_cid: str) -> Optional[datetime]:
+    entry = ledger.entry_by_cid(record_cid)
+    return None if entry is None else entry.received_at
+
+
+def public_endorsements(
+    did: object, *, now: Optional[datetime] = None
+) -> list[PublicEndorsement]:
+    """Return the active endorsements ``did`` holds, ready for a profile page.
+
+    The rows are those of :func:`active_endorsements` -- unexpired, ordered by
+    category then cid -- each joined with its endorser's public name and the
+    date it was accepted.  Names are read once per endorser.
+    """
+    rows = active_endorsements(did, now=now)
+    names: dict[str, Optional[str]] = {}
+    listed: list[PublicEndorsement] = []
+    for row in rows:
+        if row.endorser_did not in names:
+            names[row.endorser_did] = _public_name(row.endorser_did)
+        listed.append(
+            PublicEndorsement(
+                record_cid=row.record_cid,
+                endorser_did=row.endorser_did,
+                endorser_name=names[row.endorser_did],
+                endorsee_did=row.endorsee_did,
+                category=row.category,
+                endorsed_at=_accepted_at(row.record_cid),
+                expires_at=row.expires_at,
+            )
+        )
+    return listed

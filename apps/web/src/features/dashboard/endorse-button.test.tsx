@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, tokenStore } from "../../lib/api";
@@ -7,7 +7,12 @@ import { ApiError, tokenStore } from "../../lib/api";
 // The page module the `/u/{did}` route renders — the bug is on that page.
 import { ProfilePage } from "./profile-page";
 import { EndorseSection } from "./endorse-button";
-import type { EndorseResult, ViewerEndorsement, ViewerIdentity } from "./endorse";
+import type {
+  EndorseResult,
+  ProfileEndorsement,
+  ViewerEndorsement,
+  ViewerIdentity,
+} from "./endorse";
 
 afterEach(() => {
   cleanup();
@@ -353,5 +358,268 @@ describe("EndorseSection: a tier-3 viewer may endorse in any category", () => {
     // Native validation: the placeholder option is empty, so the form refuses.
     expect(form?.checkValidity()).toBe(false);
     expect(endorse).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/* Bug: endorsements were not shown, and the button forgot it had been used. */
+/* ------------------------------------------------------------------------- */
+
+const OKAFOR = "did:key:z6MkOkafor";
+
+/** One row of `GET /v1/profiles/{did}/endorsements`, in the API's shape. */
+function heldRow(overrides: Record<string, unknown> = {}) {
+  return {
+    record_cid: "bafyreiOkafor1",
+    endorser_did: OKAFOR,
+    endorser_name: "Tunde Okafor",
+    endorsee_did: NEWCOMER,
+    category: "cs.AI",
+    endorsed_at: "2026-11-17T09:30:00Z",
+    expires_at: null,
+    ...overrides,
+  };
+}
+
+/** The same row as the parsed type the section's seam takes. */
+function heldEndorsement(overrides: Partial<ProfileEndorsement> = {}): ProfileEndorsement {
+  return {
+    recordCid: "bafyreiOkafor1",
+    endorserDid: OKAFOR,
+    endorserName: "Tunde Okafor",
+    endorseeDid: NEWCOMER,
+    category: "cs.AI",
+    endorsedAt: "2026-11-17T09:30:00Z",
+    expiresAt: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Stubs both reads the profile makes: the viewer's own endorsements and the
+ * public list of what the profile's person holds. `held` is a function so a
+ * test can change the answer between the page load and the read-back.
+ */
+function stubEndorsementApi(options: {
+  mine?: ViewerEndorsement[];
+  held: () => unknown[];
+}): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    const json = (payload: unknown) =>
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    if (url.pathname === "/v1/me/endorsements") {
+      return json(
+        (options.mine ?? []).map((row) => ({
+          record_cid: row.recordCid,
+          endorser_did: row.endorserDid,
+          endorsee_did: row.endorseeDid,
+          category: row.category,
+          expires_at: row.expiresAt,
+          expiry: row.expiresAt,
+        })),
+      );
+    }
+    if (url.pathname === `/v1/profiles/${encodeURIComponent(NEWCOMER)}/endorsements`) {
+      return json(options.held());
+    }
+    throw new Error(`unexpected request ${url.pathname}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("ProfilePage: the Endorse button remembers an endorsement (bug: duplicates)", () => {
+  it("after a reload shows Endorsed in cs.AI and offers only categories not yet endorsed", async () => {
+    // Reproduce: okafor endorses a newcomer in cs.AI and reloads /u/{did}.
+    // The page starts over, so everything it knows must come from the API.
+    tokenStore.set({ accessToken: accessJwt({ sub: OKAFOR, tier: 3 }) });
+    stubEndorsementApi({
+      mine: [{ ...endorsedInCsAi()[0], endorseeDid: OKAFOR }],
+      held: () => [heldRow()],
+    });
+    const endorse = vi.fn();
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} endorse={endorse} />);
+
+    const done = await screen.findByRole("button", { name: "✓ Endorsed in cs.AI" });
+    expect(done.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(done);
+    expect(endorse).not.toHaveBeenCalled();
+    // The default action is gone, not shown beside the done state.
+    expect(screen.queryByRole("button", { name: "Endorse in cs.AI" })).toBeNull();
+
+    // The picker no longer offers cs.AI, and still offers the rest.
+    const picker = screen.getByLabelText("Category");
+    expect(
+      within(picker).queryByRole("option", { name: "Artificial intelligence (cs.AI)" }),
+    ).toBeNull();
+    expect(within(picker).getByRole("option", { name: "Machine learning (cs.LG)" })).toBeTruthy();
+  });
+
+  it("does not hold another reviewer's endorsement against the viewer", async () => {
+    tokenStore.set({ accessToken: accessJwt({ sub: MEI, tier: 3 }) });
+    stubEndorsementApi({ held: () => [heldRow()] }); // endorsed by okafor, not by mei
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
+
+    const picker = await screen.findByLabelText("Category");
+    expect(
+      within(picker).getByRole("option", { name: "Artificial intelligence (cs.AI)" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /✓ Endorsed/ })).toBeNull();
+  });
+
+  it("lets an endorsement the viewer gave join the list as soon as it is accepted", async () => {
+    tokenStore.set({ accessToken: accessJwt({ sub: OKAFOR, tier: 3 }) });
+    let held: unknown[] = [];
+    stubEndorsementApi({
+      mine: [{ ...endorsedInCsAi()[0], endorseeDid: OKAFOR }],
+      held: () => held,
+    });
+    const endorse = vi.fn(async (): Promise<EndorseResult> => {
+      held = [heldRow()]; // the accepted record, as the API now lists it
+      return { recordCid: "bafyreiOkafor1", category: "cs.AI", state: "accepted" };
+    });
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} endorse={endorse} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Endorse in cs.AI" }));
+
+    expect(await screen.findByRole("button", { name: "✓ Endorsed in cs.AI" })).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "Tunde Okafor" })).toBeTruthy();
+  });
+});
+
+describe("ProfilePage: the endorsements a person holds", () => {
+  it("lists them per category with the endorser (a link to their profile) and the date", async () => {
+    stubEndorsementApi({
+      held: () => [
+        heldRow(),
+        heldRow({
+          record_cid: "bafyreiMei1",
+          category: "cs.LG",
+          endorser_did: MEI,
+          endorser_name: null,
+          endorsed_at: "2026-11-18T10:00:00Z",
+        }),
+      ],
+    });
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
+
+    const heading = await screen.findByRole("heading", { name: "Endorsements" });
+    const section = heading.closest("section") as HTMLElement;
+    expect(section).not.toBeNull();
+
+    // Category groups, in order, each naming its endorsers.
+    const groups = within(section).getAllByRole("heading", { level: 4 });
+    expect(groups.map((group) => group.textContent)).toEqual(["cs.AI", "cs.LG"]);
+
+    // The endorser is a link to their own profile: by name, else by DID.
+    const named = within(section).getByRole("link", { name: "Tunde Okafor" });
+    expect(named.getAttribute("href")).toBe(`/u/${encodeURIComponent(OKAFOR)}`);
+    const pseudonymous = within(section).getByRole("link", { name: MEI });
+    expect(pseudonymous.getAttribute("href")).toBe(`/u/${encodeURIComponent(MEI)}`);
+
+    // The date, readable and machine-readable.
+    const date = within(section).getByText("17 Nov 2026");
+    expect(date.tagName).toBe("TIME");
+    expect(date.getAttribute("datetime")).toBe("2026-11-17T09:30:00Z");
+    expect(within(section).getByText("18 Nov 2026")).toBeTruthy();
+  });
+
+  it("shows the list to a signed-out reader, who is offered nothing to do", async () => {
+    stubEndorsementApi({ held: () => [heldRow()] });
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
+
+    expect(await screen.findByRole("link", { name: "Tunde Okafor" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Endorse" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Endorse/ })).toBeNull();
+  });
+
+  it("shows the list to the person themself, who may not endorse themself", async () => {
+    tokenStore.set({ accessToken: accessJwt({ sub: NEWCOMER, tier: 3 }) });
+    stubEndorsementApi({ held: () => [heldRow()] });
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
+
+    expect(await screen.findByRole("link", { name: "Tunde Okafor" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Endorse" })).toBeNull();
+  });
+
+  it("shows no Endorsements section for a person who holds none", async () => {
+    stubEndorsementApi({ held: () => [] });
+
+    render(<ProfilePage did={NEWCOMER} initialProfile={tierOneProfile()} />);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.queryByRole("heading", { name: "Endorsements" })).toBeNull();
+  });
+});
+
+describe("EndorseSection: reading what is already endorsed", () => {
+  const reviewer: ViewerIdentity = { signedIn: true, did: OKAFOR, tier: 3 };
+
+  it("keeps the offers, and shows no list, when the list cannot be read", async () => {
+    // A failed read must not hide what the tier grants; the API still
+    // refuses a duplicate (see the 409 case below).
+    render(
+      <EndorseSection
+        did={NEWCOMER}
+        viewer={reviewer}
+        loadEndorsements={() => Promise.resolve([])}
+        loadProfileEndorsements={() => Promise.reject(new Error("offline"))}
+      />,
+    );
+
+    expect(await screen.findByLabelText("Category")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Endorsements" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("offers nothing until the list has been read, so a used category is never clickable", async () => {
+    let finish: ((rows: ProfileEndorsement[]) => void) | null = null;
+    render(
+      <EndorseSection
+        did={NEWCOMER}
+        viewer={reviewer}
+        loadEndorsements={() => Promise.resolve([])}
+        loadProfileEndorsements={() => new Promise((resolve) => (finish = resolve))}
+      />,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.queryByLabelText("Category")).toBeNull();
+
+    await waitFor(() => expect(finish).not.toBeNull());
+    finish!([heldEndorsement()]);
+    expect(await screen.findByRole("button", { name: "✓ Endorsed in cs.AI" })).toBeTruthy();
+  });
+
+  it("treats the API's 409 as already endorsed: says so and shows the done state", async () => {
+    // The viewer's DID is unknown (an opaque token), so the list cannot say
+    // they already endorsed; the API's refusal does.
+    const refusal = "The endorser did:key:z6MkOkafor has already endorsed did:key:z6MkNewcomer in cs.AI.";
+    const endorse = vi.fn().mockRejectedValue(new ApiError(409, { detail: refusal }));
+    render(
+      <EndorseSection
+        did={NEWCOMER}
+        viewer={{ signedIn: true, did: null, tier: 3 }}
+        loadEndorsements={() => Promise.resolve([])}
+        loadProfileEndorsements={() => Promise.resolve([])}
+        endorse={endorse}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText("Category"), { target: { value: "cs.AI" } });
+    fireEvent.click(screen.getByRole("button", { name: "Endorse" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("already endorsed");
+    expect(screen.getByRole("button", { name: "✓ Endorsed in cs.AI" })).toBeTruthy();
   });
 });

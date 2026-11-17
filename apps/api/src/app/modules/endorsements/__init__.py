@@ -7,6 +7,8 @@ cid and the signature, and then calls :func:`handle_endorsement`, which
 
 * refuses the record with ``403`` problem details unless the endorser -- the
   record's author -- holds trust tier 3 (Reviewer) or higher;
+* refuses it with ``409`` when that endorser already has an active
+  endorsement of the same endorsee in the same category;
 * saves the endorsement to the ``endorsements`` table, keyed by the record's
   cid, with the endorser, endorsee, category and expiry;
 * grants the endorsee trust tier 2 (Author), never demoting a higher tier.
@@ -20,7 +22,10 @@ Feature 42 turns an endorsement into a submission right and exposes it:
   exactly when it holds an active (unexpired) endorsement for that category;
 * :func:`active_endorsements` lists those endorsements;
 * ``GET /v1/me/endorsements`` serves the caller's own active endorsements,
-  with their expiry, through the ``router`` exported here.
+  with their expiry, through the ``router`` exported here;
+* ``GET /v1/profiles/{did}/endorsements`` serves the public list a profile
+  shows: the active endorsements a DID holds, each with its endorser (DID and
+  public name) and the date it was accepted (:func:`public_endorsements`).
 
 Other plugins gate on the same helper::
 
@@ -39,17 +44,20 @@ from app.modules.ingest import register
 
 from .models import Endorsement, ensure_tables
 from .router import router
-from .schemas import EndorsementOut
+from .schemas import EndorsementOut, ProfileEndorsementOut
 from .service import (
     AUTHOR_TIER,
     ENDORSEMENT_TYPE,
     ENDORSER_MIN_TIER,
+    DuplicateEndorsement,
     InsufficientEndorserTier,
+    PublicEndorsement,
     account_tier,
     active_endorsements,
     can_submit,
     handle_endorsement,
     normalise_expiry,
+    public_endorsements,
     save_endorsement,
 )
 
@@ -61,17 +69,21 @@ register(ENDORSEMENT_TYPE, handle_endorsement, min_tier=ENDORSER_MIN_TIER)
 
 __all__ = [
     "AUTHOR_TIER",
+    "DuplicateEndorsement",
     "ENDORSEMENT_TYPE",
     "ENDORSER_MIN_TIER",
     "Endorsement",
     "EndorsementOut",
     "InsufficientEndorserTier",
+    "ProfileEndorsementOut",
+    "PublicEndorsement",
     "account_tier",
     "active_endorsements",
     "can_submit",
     "ensure_tables",
     "handle_endorsement",
     "normalise_expiry",
+    "public_endorsements",
     "router",
     "save_endorsement",
 ]

@@ -1,13 +1,31 @@
 "use client";
 
 /**
- * The Endorse actions on a member's public profile (`/u/{did}`) — ID-5.
+ * The endorsements on a member's public profile (`/u/{did}`) — ID-5.
  *
  * ```text
- * Endorse
- * [ Endorse in cs.AI ] [ Endorse in cs.MA ]      ← the viewer's categories
- * Category [ cs.AI ▾ ] [ Endorse ]               ← tier 3 may pick any
+ * Endorsements                                   ← what the person holds,
+ *   cs.AI                                           shown to everyone
+ *     Tunde Okafor · 17 Nov 2026
+ *
+ * Endorse                                        ← what the viewer may do
+ * [ ✓ Endorsed in cs.AI ] [ Endorse in cs.MA ]   ← the viewer's categories
+ * Category [ Choose a category ▾ ] [ Endorse ]   ← tier 3 may pick any
  * ```
+ *
+ * **What the person holds** is the public list from
+ * `GET /v1/profiles/{did}/endorsements` (see `./endorse`): per category, who
+ * endorsed (their public name, else their DID, linking to their profile) and
+ * the date. It is shown to every reader, signed in or not, and to the person
+ * themself.
+ *
+ * **What the viewer already did** comes from the same list, never from page
+ * state: an endorsement the viewer gave is a row whose endorser is them, so it
+ * is still there after a reload. Such a category shows `✓ Endorsed in cs.AI`
+ * and is not offered again — not as a shortcut and not in the picker. The
+ * actions wait for that list before they appear, so a used category is never
+ * briefly clickable. If the list cannot be read the actions are offered as the
+ * tier grants them and the API's `409` for a duplicate has the last word.
  *
  * What is offered comes from the API, never a guess: only a viewer at the
  * API's endorser tier (or one whose tier the token does not name, whom the
@@ -32,26 +50,34 @@
  * nothing to endorse in, and never offers a viewer their own profile.
  */
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
-import { tokenStore } from "../../lib/api";
+import { ApiError, tokenStore } from "../../lib/api";
 import { CATEGORY_GROUPS } from "../submit/details";
 
 import {
   SIGNED_OUT_VIEWER,
+  categoriesEndorsedBy,
   describeEndorseError,
   endorseActionLabel,
   endorseResearcher,
   endorsedActionLabel,
   endorseOffer,
+  endorserLabel,
+  formatEndorsementDate,
+  groupEndorsementsByCategory,
+  loadProfileEndorsements as loadHeldEndorsements,
   loadViewerEndorsements,
   viewerFromAccessToken,
   type EndorseResult,
+  type ProfileEndorsement,
   type ViewerEndorsement,
   type ViewerIdentity,
 } from "./endorse";
+import { profilePath } from "./profile";
 
 import "./endorse-button.css";
+import "./endorsement-list.css";
 
 /** What one picker category offers: its id and its plain-language name. */
 export interface EndorseCategoryOption {
@@ -70,6 +96,8 @@ export interface EndorseSectionProps {
   readonly viewer?: ViewerIdentity;
   /** Replace the read of the viewer's endorsements, for tests. */
   readonly loadEndorsements?: () => Promise<readonly ViewerEndorsement[]>;
+  /** Replace the read of the endorsements this profile's person holds, for tests. */
+  readonly loadProfileEndorsements?: (did: string) => Promise<readonly ProfileEndorsement[]>;
   /** Replace the sign-and-post call, for tests. */
   readonly endorse?: (endorseeDid: string, category: string) => Promise<EndorseResult>;
   /** The categories the picker offers; the submit wizard's taxonomy by default. */
@@ -82,17 +110,24 @@ function sameViewer(left: ViewerIdentity, right: ViewerIdentity): boolean {
   return left.signedIn === right.signedIn && left.did === right.did && left.tier === right.tier;
 }
 
-/** The Endorse actions for one profile, offered to whoever is looking at it. */
+/**
+ * The endorsements one profile holds, and the Endorse actions offered to
+ * whoever is looking at it.
+ */
 export function EndorseSection({
   did,
   viewer: pinnedViewer,
   loadEndorsements = loadViewerEndorsements,
+  loadProfileEndorsements = loadHeldEndorsements,
   endorse = endorseAndPost,
   pickerCategories = CATEGORY_GROUPS,
   onEndorsed,
 }: EndorseSectionProps) {
   const [storedViewer, setStoredViewer] = useState<ViewerIdentity>(SIGNED_OUT_VIEWER);
   const [endorsements, setEndorsements] = useState<readonly ViewerEndorsement[] | null>(null);
+  // What this profile's person holds. `null` until read; a failed read is
+  // `[]`, so the actions are not held back by a list that will not come.
+  const [held, setHeld] = useState<readonly ProfileEndorsement[] | null>(null);
   const [done, setDone] = useState<readonly string[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,16 +169,46 @@ export function EndorseSection({
     };
   }, [viewer.signedIn, loadEndorsements]);
 
+  // The endorsements the person holds are public, so they are read whoever
+  // is looking — and they are where "already endorsed" comes from.
+  useEffect(() => {
+    if (did === "") return;
+    let cancelled = false;
+    setHeld(null);
+    loadProfileEndorsements(did).then(
+      (rows) => {
+        if (!cancelled) setHeld(rows);
+      },
+      () => {
+        if (!cancelled) setHeld([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [did, loadProfileEndorsements]);
+
   const offer = endorseOffer(viewer.tier, endorsements ?? []);
 
+  // The categories the viewer has already endorsed this person in, from the
+  // API's list — still there after a reload — plus any this visit just did.
+  const endorsedBefore = useMemo(
+    () => categoriesEndorsedBy(viewer.did, held ?? []),
+    [viewer.did, held],
+  );
+  const used = useMemo(
+    () => [...new Set([...endorsedBefore, ...done])].sort(),
+    [endorsedBefore, done],
+  );
+
   const isSelf = viewer.did !== null && viewer.did === did;
-  const hidden =
-    !viewer.signedIn || isSelf || endorsements === null ||
-    (offer.categories.length === 0 && !offer.anyCategory);
+  const mayEndorse =
+    viewer.signedIn && !isSelf && endorsements !== null && held !== null &&
+    (offer.categories.length > 0 || offer.anyCategory);
 
   const endorseIn = useCallback(
     async (category: string) => {
-      if (pending !== null || done.includes(category) || did === "") {
+      if (pending !== null || used.includes(category) || did === "") {
         return;
       }
       setPending(category);
@@ -155,22 +220,126 @@ export function EndorseSection({
         );
         setNotice(`${endorsedActionLabel(category)}. The tier on this profile is refreshed.`);
         onEndorsed?.();
+        // Read the list back so the new endorsement shows with its endorser
+        // and date; a failed read keeps the list on screen.
+        loadProfileEndorsements(did).then(setHeld, () => {});
       } catch (failure: unknown) {
+        if (failure instanceof ApiError && failure.status === 409) {
+          // The API says this endorsement already stands — reflect that.
+          setDone((current) =>
+            current.includes(category) ? current : [...current, category],
+          );
+        }
         setError(describeEndorseError(failure));
       } finally {
         setPending(null);
       }
     },
-    [did, done, endorse, onEndorsed, pending],
+    [did, endorse, loadProfileEndorsements, onEndorsed, pending, used],
   );
 
-  if (hidden) {
+  const groups = groupEndorsementsByCategory(held ?? []);
+
+  if (!mayEndorse && groups.length === 0) {
     return null;
   }
 
-  // The category actions: one per offered category, plus any this visit has
+  return (
+    <>
+      {groups.length > 0 ? <EndorsementList groups={groups} /> : null}
+      {mayEndorse ? (
+        <EndorseActions
+          pickerId={pickerId}
+          offeredCategories={offer.categories}
+          anyCategory={offer.anyCategory}
+          used={used}
+          pending={pending}
+          error={error}
+          notice={notice}
+          pickerCategories={pickerCategories}
+          onEndorse={(category) => void endorseIn(category)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** The public list: per category, who endorsed and when. */
+function EndorsementList({
+  groups,
+}: {
+  readonly groups: ReturnType<typeof groupEndorsementsByCategory>;
+}) {
+  return (
+    <section className="endorse-section">
+      <h3 className="endorse-heading">Endorsements</h3>
+      {/* role="list": Safari drops list semantics once the markers are gone. */}
+      <ul className="endorsement-groups" role="list">
+        {groups.map((group) => (
+          <li className="endorsement-group" key={group.category}>
+            <h4 className="endorsement-category">{group.category}</h4>
+            <ul className="endorsement-rows" role="list">
+              {group.endorsements.map((row) => {
+                const date = formatEndorsementDate(row.endorsedAt);
+                return (
+                  <li
+                    className="endorsement-row"
+                    key={row.recordCid || `${row.endorserDid}/${row.category}`}
+                  >
+                    <a className="endorsement-endorser" href={profilePath(row.endorserDid)}>
+                      {endorserLabel(row)}
+                    </a>
+                    {date !== null && row.endorsedAt !== null ? (
+                      <time className="endorsement-date" dateTime={row.endorsedAt}>
+                        {date}
+                      </time>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The actions: one per category the viewer may endorse in, and the picker. */
+function EndorseActions({
+  pickerId,
+  offeredCategories,
+  anyCategory,
+  used,
+  pending,
+  error,
+  notice,
+  pickerCategories,
+  onEndorse,
+}: {
+  readonly pickerId: string;
+  readonly offeredCategories: readonly string[];
+  readonly anyCategory: boolean;
+  /** Categories already endorsed: before this visit, or during it. */
+  readonly used: readonly string[];
+  readonly pending: string | null;
+  readonly error: string | null;
+  readonly notice: string;
+  readonly pickerCategories: NonNullable<EndorseSectionProps["pickerCategories"]>;
+  readonly onEndorse: (category: string) => void;
+}) {
+  // The category actions: one per offered category, plus any already
   // endorsed (a picked category joins the list in its done state).
-  const listed = [...new Set([...offer.categories, ...done])];
+  const listed = [...new Set([...offeredCategories, ...used])].sort();
+
+  // The picker offers only what is not yet endorsed; a group left with
+  // nothing is dropped rather than shown empty.
+  const choices = pickerCategories
+    .map((group) => ({
+      label: group.label,
+      categories: group.categories.filter((category) => !used.includes(category.id)),
+    }))
+    .filter((group) => group.categories.length > 0);
 
   return (
     <section className="endorse-section" aria-labelledby={`${pickerId}-heading`}>
@@ -181,7 +350,7 @@ export function EndorseSection({
       {listed.length > 0 ? (
         <ul className="endorse-actions">
           {listed.map((category) => {
-            const isDone = done.includes(category);
+            const isDone = used.includes(category);
             const busy = pending === category;
             return (
               <li key={category}>
@@ -191,7 +360,7 @@ export function EndorseSection({
                   aria-disabled={isDone || busy}
                   aria-busy={busy}
                   onClick={() => {
-                    if (!isDone) void endorseIn(category);
+                    if (!isDone) onEndorse(category);
                   }}
                 >
                   {isDone ? endorsedActionLabel(category) : endorseActionLabel(category)}
@@ -202,7 +371,7 @@ export function EndorseSection({
         </ul>
       ) : null}
 
-      {offer.anyCategory ? (
+      {anyCategory ? (
         <form
           className="endorse-picker"
           onSubmit={(event) => {
@@ -210,14 +379,19 @@ export function EndorseSection({
             event.preventDefault();
             const chosen = new FormData(event.currentTarget).get("category");
             if (typeof chosen === "string" && chosen !== "") {
-              void endorseIn(chosen);
+              onEndorse(chosen);
             }
           }}
         >
           <label className="endorse-picker-label" htmlFor={`${pickerId}-category`}>
             Category
           </label>
+          {/* Keyed on what is used: when an option is removed under it, a
+              select quietly moves to the next enabled one, and a stray Enter
+              would endorse in a category nobody chose. A fresh select starts
+              again at the placeholder. */}
           <select
+            key={used.join(",")}
             className="endorse-select"
             id={`${pickerId}-category`}
             name="category"
@@ -227,7 +401,7 @@ export function EndorseSection({
             <option value="" disabled>
               Choose a category
             </option>
-            {pickerCategories.map((group) => (
+            {choices.map((group) => (
               <optgroup key={group.label} label={group.label}>
                 {group.categories.map((category) => (
                   <option key={category.id} value={category.id}>

@@ -14,8 +14,16 @@ import {
   endorsedActionLabel,
   endorseOffer,
   endorseResearcher,
+  categoriesEndorsedBy,
+  endorserLabel,
+  formatEndorsementDate,
+  groupEndorsementsByCategory,
+  loadProfileEndorsements,
+  parseProfileEndorsements,
   parseViewerEndorsements,
+  profileEndorsementsEndpoint,
   viewerFromAccessToken,
+  type ProfileEndorsement,
 } from "./endorse";
 
 /** A signed record as `web-auth`'s signer returns one. */
@@ -240,5 +248,157 @@ describe("labels", () => {
 
   it("exposes the endpoint the viewer's endorsements come from", () => {
     expect(MY_ENDORSEMENTS_ENDPOINT).toBe("/me/endorsements");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* What a profile shows: the endorsements its person holds                     */
+/* -------------------------------------------------------------------------- */
+
+function profileRow(overrides: Partial<ProfileEndorsement> = {}): ProfileEndorsement {
+  return {
+    recordCid: "bafyrei1",
+    endorserDid: "did:key:z6MkOkafor",
+    endorserName: "Tunde Okafor",
+    endorseeDid: "did:key:z6MkNewcomer",
+    category: "cs.AI",
+    endorsedAt: "2026-11-17T09:30:00Z",
+    expiresAt: null,
+    ...overrides,
+  };
+}
+
+describe("profileEndorsementsEndpoint", () => {
+  it("names the DID once, percent-encoded, under /profiles", () => {
+    expect(profileEndorsementsEndpoint("did:key:z6MkNewcomer")).toBe(
+      "/profiles/did%3Akey%3Az6MkNewcomer/endorsements",
+    );
+  });
+});
+
+describe("parseProfileEndorsements", () => {
+  it("reads category, endorser (DID and public name) and the date", () => {
+    const rows = parseProfileEndorsements([
+      {
+        record_cid: "bafyrei1",
+        endorser_did: "did:key:z6MkOkafor",
+        endorser_name: "Tunde Okafor",
+        endorsee_did: "did:key:z6MkNewcomer",
+        category: "cs.AI",
+        endorsed_at: "2026-11-17T09:30:00Z",
+        expires_at: null,
+      },
+    ]);
+    expect(rows).toEqual([profileRow()]);
+  });
+
+  it("reads an endorser with no public name or date as null, not as an empty string", () => {
+    const [row] = parseProfileEndorsements([
+      {
+        record_cid: "bafyrei2",
+        endorser_did: "did:key:z6MkOkafor",
+        endorser_name: "  ",
+        endorsee_did: "did:key:z6MkNewcomer",
+        category: "cs.MA",
+        endorsed_at: null,
+      },
+    ]);
+    expect(row.endorserName).toBeNull();
+    expect(row.endorsedAt).toBeNull();
+  });
+
+  it("skips a row without a category or an endorser, and refuses a payload that is not a list", () => {
+    const rows = parseProfileEndorsements([
+      { record_cid: "a", endorser_did: "did:key:z6MkOkafor", category: "cs.AI" },
+      { record_cid: "b", endorser_did: "did:key:z6MkOkafor", category: " " },
+      { record_cid: "c", category: "cs.AI" },
+      "cs.AI",
+    ]);
+    expect(rows.map((row) => row.recordCid)).toEqual(["a"]);
+    expect(() => parseProfileEndorsements({ items: [] })).toThrow(EndorseInputError);
+  });
+});
+
+describe("loadProfileEndorsements", () => {
+  it("reads the public list for the DID without a token, fresh every time", async () => {
+    const get = vi.fn().mockResolvedValue([
+      {
+        record_cid: "bafyrei1",
+        endorser_did: "did:key:z6MkOkafor",
+        endorser_name: "Tunde Okafor",
+        endorsee_did: "did:key:z6MkNewcomer",
+        category: "cs.AI",
+        endorsed_at: "2026-11-17T09:30:00Z",
+        expires_at: null,
+      },
+    ]);
+
+    const rows = await loadProfileEndorsements("did:key:z6MkNewcomer", { get });
+
+    expect(get).toHaveBeenCalledExactlyOnceWith(
+      "/profiles/did%3Akey%3Az6MkNewcomer/endorsements",
+      { auth: false, cache: "no-store" },
+    );
+    expect(rows).toEqual([profileRow()]);
+  });
+});
+
+describe("categoriesEndorsedBy", () => {
+  const rows = [
+    profileRow({ recordCid: "1", category: "cs.MA" }),
+    profileRow({ recordCid: "2", category: "cs.AI" }),
+    profileRow({ recordCid: "3", category: "cs.AI", endorserDid: "did:key:z6MkMei" }),
+    profileRow({ recordCid: "4", category: "cs.LG", endorserDid: "did:key:z6MkMei" }),
+  ];
+
+  it("lists, sorted and once each, the categories this viewer has already endorsed in", () => {
+    expect(categoriesEndorsedBy("did:key:z6MkOkafor", rows)).toEqual(["cs.AI", "cs.MA"]);
+    expect(categoriesEndorsedBy("did:key:z6MkMei", rows)).toEqual(["cs.AI", "cs.LG"]);
+  });
+
+  it("is empty for a viewer who endorsed nobody here, and for a viewer whose DID is unknown", () => {
+    expect(categoriesEndorsedBy("did:key:z6MkStranger", rows)).toEqual([]);
+    expect(categoriesEndorsedBy(null, rows)).toEqual([]);
+  });
+});
+
+describe("groupEndorsementsByCategory", () => {
+  it("groups by category in category order, keeping each endorser", () => {
+    const groups = groupEndorsementsByCategory([
+      profileRow({ recordCid: "1", category: "cs.LG" }),
+      profileRow({ recordCid: "2", category: "cs.AI" }),
+      profileRow({ recordCid: "3", category: "cs.AI", endorserDid: "did:key:z6MkMei" }),
+    ]);
+    expect(groups.map((group) => group.category)).toEqual(["cs.AI", "cs.LG"]);
+    expect(groups[0].endorsements.map((row) => row.recordCid)).toEqual(["2", "3"]);
+  });
+});
+
+describe("endorserLabel", () => {
+  it("shows the endorser's public name when they have one", () => {
+    expect(endorserLabel(profileRow())).toBe("Tunde Okafor");
+  });
+
+  it("shows the DID, shortened, when they do not", () => {
+    expect(
+      endorserLabel(
+        profileRow({
+          endorserName: null,
+          endorserDid: "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+        }),
+      ),
+    ).toBe("did:key:z6MkpTHR…sdvktH");
+  });
+});
+
+describe("formatEndorsementDate", () => {
+  it("writes the UTC day the same way in every time zone", () => {
+    expect(formatEndorsementDate("2026-11-17T23:30:00Z")).toBe("17 Nov 2026");
+    expect(formatEndorsementDate("2026-01-02T00:00:00Z")).toBe("2 Jan 2026");
+  });
+
+  it("is null for no date or one that is not a date", () => {
+    expect(formatEndorsementDate(null)).toBeNull();
+    expect(formatEndorsementDate("soon")).toBeNull();
   });
 });

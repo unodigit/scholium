@@ -251,6 +251,156 @@ export function endorsedActionLabel(category: string): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* What a profile shows: the endorsements its person holds                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One endorsement a profile's person holds, as
+ * `GET /v1/profiles/{did}/endorsements` serves it. The list is public, so it
+ * is also where the Endorse button learns what the viewer has already done:
+ * an endorsement they gave is a row here whose endorser is them, and it is
+ * still there after a reload.
+ */
+export interface ProfileEndorsement {
+  readonly recordCid: string;
+  readonly endorserDid: string;
+  /** The name the endorser made public, or `null` — show the DID then. */
+  readonly endorserName: string | null;
+  readonly endorseeDid: string;
+  readonly category: string;
+  /** ISO 8601 instant the node accepted the endorsement, when it knows. */
+  readonly endorsedAt: string | null;
+  /** ISO 8601 instant the endorsement lapses, or `null` when it never does. */
+  readonly expiresAt: string | null;
+}
+
+/** `GET` path (under `/v1`) of the endorsements `did` holds. */
+export function profileEndorsementsEndpoint(did: string): string {
+  return `/profiles/${encodeURIComponent(did)}/endorsements`;
+}
+
+/**
+ * Validate a `GET /v1/profiles/{did}/endorsements` body.
+ *
+ * A row without a category or an endorser is skipped rather than fatal — it
+ * cannot be shown or attributed — and a payload that is not a list is
+ * refused, so "no endorsements" never means "could not read them".
+ */
+export function parseProfileEndorsements(payload: unknown): ProfileEndorsement[] {
+  if (!Array.isArray(payload)) {
+    throw new EndorseInputError("The API did not return a list of endorsements.");
+  }
+  const rows: ProfileEndorsement[] = [];
+  for (const entry of payload) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+    const raw = entry as Record<string, unknown>;
+    const category = readText(raw.category);
+    const endorserDid = readText(raw.endorser_did) ?? readText(raw.endorserDid);
+    if (category === null || endorserDid === null) continue;
+    rows.push({
+      recordCid: readText(raw.record_cid) ?? readText(raw.recordCid) ?? "",
+      endorserDid,
+      endorserName: readText(raw.endorser_name) ?? readText(raw.endorserName),
+      endorseeDid: readText(raw.endorsee_did) ?? readText(raw.endorseeDid) ?? "",
+      category,
+      endorsedAt: readText(raw.endorsed_at) ?? readText(raw.endorsedAt),
+      expiresAt: readText(raw.expires_at) ?? readText(raw.expiresAt),
+    });
+  }
+  return rows;
+}
+
+/** Load the endorsements `did` holds. Public: no token is sent, none is needed. */
+export async function loadProfileEndorsements(
+  did: string,
+  client: Pick<ApiClient, "get"> = api,
+): Promise<ProfileEndorsement[]> {
+  const payload = await client.get<unknown>(profileEndorsementsEndpoint(did), {
+    auth: false,
+    cache: "no-store",
+  });
+  return parseProfileEndorsements(payload);
+}
+
+/**
+ * The categories `viewerDid` has already endorsed this profile's person in,
+ * sorted, once each. Empty when the viewer's DID is unknown (an opaque
+ * token): nothing is guessed, and the API still refuses a duplicate.
+ */
+export function categoriesEndorsedBy(
+  viewerDid: string | null,
+  endorsements: readonly ProfileEndorsement[],
+): string[] {
+  if (viewerDid === null) return [];
+  return [
+    ...new Set(
+      endorsements.filter((row) => row.endorserDid === viewerDid).map((row) => row.category),
+    ),
+  ].sort();
+}
+
+/** One category's endorsements, for the profile's list. */
+export interface EndorsementGroup {
+  readonly category: string;
+  readonly endorsements: readonly ProfileEndorsement[];
+}
+
+/** The endorsements grouped by category, categories in order, rows as given. */
+export function groupEndorsementsByCategory(
+  endorsements: readonly ProfileEndorsement[],
+): EndorsementGroup[] {
+  const groups = new Map<string, ProfileEndorsement[]>();
+  for (const row of endorsements) {
+    const group = groups.get(row.category);
+    if (group === undefined) groups.set(row.category, [row]);
+    else group.push(row);
+  }
+  return [...groups.keys()]
+    .sort()
+    .map((category) => ({ category, endorsements: groups.get(category) ?? [] }));
+}
+
+/** A DID short enough to read, the way the other pages abbreviate one. */
+function shortDid(did: string): string {
+  return did.length <= 24 ? did : `${did.slice(0, 16)}…${did.slice(-6)}`;
+}
+
+/** What to call an endorser: their public name, else their shortened DID. */
+export function endorserLabel(
+  row: Pick<ProfileEndorsement, "endorserName" | "endorserDid">,
+): string {
+  return row.endorserName ?? shortDid(row.endorserDid);
+}
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/**
+ * `17 Nov 2026` for an ISO 8601 instant, or `null` for none or a non-date.
+ *
+ * Built by hand from UTC fields, as the rest of the dashboard does, so the
+ * day is the same in every browser and time zone.
+ */
+export function formatEndorsementDate(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Signing and posting                                                        */
 /* -------------------------------------------------------------------------- */
 
