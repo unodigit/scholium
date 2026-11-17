@@ -1,13 +1,8 @@
-import type { Metadata } from "next";
-
 import { SessionProvider } from "../lib/api/session-provider";
 
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "Scholium",
-  description: "Decentralized preprint and peer-review network",
-};
+export { metadata, viewport } from "./site-metadata";
 
 export default function RootLayout({
   children,

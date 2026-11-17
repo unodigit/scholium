@@ -15,6 +15,6 @@ describe("the app icon", () => {
 
     expect(svg.trimStart()).toMatch(/^<svg[\s>]/);
     expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
-    expect(svg).toContain('viewBox="0 0 64 64"');
+    expect(svg).toContain('viewBox="0 0 32 32"');
   });
 });
