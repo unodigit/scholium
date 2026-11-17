@@ -34,17 +34,18 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
+import { formatBytes } from "../submit/limits";
 import {
   SCAN_STATUS_SPECS,
   contentUrl,
   describeMetaError,
-  formatBytes,
   isDownloadable,
   licenceLabel,
   loadManifest,
   roleLabel,
   type LoadManifest,
   type ManifestData,
+  type ManifestFile,
   type ScanStatus,
 } from "./meta";
 import "./paper-meta.css";
@@ -81,6 +82,51 @@ function initialView(initial: ManifestData | undefined, initialError: string | u
 export function fileName(path: string): string {
   const name = path.split("/").filter((part) => part !== "").at(-1);
   return name ?? path;
+}
+
+/**
+ * The URL a download link uses: the content address with `?download=1`.
+ *
+ * The bytes live on the API's origin, so the HTML `download` attribute is
+ * ignored there; the query is what makes the API answer
+ * `Content-Disposition: attachment` with the manifest's file name. Existing
+ * query parameters are kept, and a fragment stays at the end.
+ */
+export function downloadHref(url: string): string {
+  const hashAt = url.indexOf("#");
+  const address = hashAt === -1 ? url : url.slice(0, hashAt);
+  const fragment = hashAt === -1 ? "" : url.slice(hashAt);
+  const separator = address.includes("?") ? "&" : "?";
+  return `${address}${separator}download=1${fragment}`;
+}
+
+/**
+ * The artefact name a row shows: the manuscript is the paper's PDF, whether
+ * the manifest calls its role `manuscript` or says `application/pdf`; every
+ * other role reads the way {@link roleLabel} spells it.
+ */
+export function fileRoleLabel(file: Pick<ManifestFile, "role" | "mediaType">): string {
+  const role = file.role.trim().toLowerCase();
+  if (role === "manuscript" || (file.mediaType ?? "").toLowerCase() === "application/pdf") {
+    return "PDF";
+  }
+  return roleLabel(role);
+}
+
+/** The roles that together make a paper's code, data and reproduction log. */
+const SUPPLEMENTARY_ROLES: ReadonlySet<string> = new Set([
+  "code",
+  "data",
+  "dataset",
+  "reproduction-log",
+  "reproduction_log",
+]);
+
+/** Whether the version published any code, data or reproduction log. */
+export function hasSupplementaryArtefacts(
+  files: readonly Pick<ManifestFile, "role">[],
+): boolean {
+  return files.some((file) => SUPPLEMENTARY_ROLES.has(file.role.trim().toLowerCase()));
 }
 
 /** Why a file the node will not serve has no download link. */
@@ -216,7 +262,7 @@ function FileList({
               </div>
 
               <p className="pm-file__meta">
-                <span className="pm-file__role">{roleLabel(file.role)}</span>
+                <span className="pm-file__role">{fileRoleLabel(file)}</span>
                 <span className="pm-file__size">{formatBytes(file.size)}</span>
                 <span className="pm-file__licence">{licenceLabel(file.licence)}</span>
               </p>
@@ -224,7 +270,7 @@ function FileList({
               {isDownloadable(file) ? (
                 <a
                   className="pm-download"
-                  href={downloadUrl(file.cid)}
+                  href={downloadHref(downloadUrl(file.cid))}
                   download={fileName(file.path)}
                   aria-label={`Download ${file.path}`}
                 >
@@ -237,6 +283,11 @@ function FileList({
           );
         })}
       </ul>
+      {!hasSupplementaryArtefacts(files) ? (
+        <p className="pm-empty">
+          No code, data or reproduction log was published with this version.
+        </p>
+      ) : null}
     </>
   );
 }

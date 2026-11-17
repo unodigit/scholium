@@ -12,7 +12,9 @@
  * The archive is `GET /v1/export/paper/{id}.car`: every signed record, file and
  * log entry of the paper (all its versions, not only the one on screen) as one
  * file. The node sends it as an attachment, so choosing the item saves it
- * instead of opening it.
+ * instead of opening it. The item also says how the saved archive can be
+ * checked without a network ("Verifies offline: scholium verify …"), and a
+ * second item links to the Proof tab's explanation of that command.
  *
  * **Without JavaScript it is still a link.** The server's HTML (and the first
  * client render, so hydration matches) is a plain link to the archive; once the
@@ -44,12 +46,48 @@ export const ARCHIVE_ITEM_LABEL = "Paper archive";
 export const ARCHIVE_ITEM_HINT =
   "The whole paper as one file: its signed records, files and log entries.";
 
+/** The line that says the archive can be checked without a network. */
+export const VERIFY_OFFLINE_LABEL = "Verifies offline:";
+
+/** The second item: where the offline verification is explained. */
+export const VERIFY_HELP_LABEL = "How to verify";
+
+/** The Proof tab of the paper page, where the offline command is explained. */
+export const DEFAULT_VERIFY_HREF = "#proof";
+
+/**
+ * The file name the archive is saved under, from its URL.
+ *
+ * ``/v1/export/paper/sch%3A6sel-2dio-orm6.car`` is saved as
+ * ``sch-6sel-2dio-orm6.car`` (the node's ``Content-Disposition``), so the URL
+ * segment is decoded and every character the node does not allow in the name
+ * becomes a hyphen.
+ */
+export function archiveFileName(href: string): string {
+  try {
+    const url = new URL(href, "https://node.invalid");
+    const last = url.pathname.split("/").filter((part) => part !== "").at(-1) ?? "";
+    const decoded = decodeURIComponent(last);
+    return decoded.replace(/[^A-Za-z0-9._-]+/g, "-");
+  } catch {
+    return "paper.car";
+  }
+}
+
+/** The command that checks the downloaded archive offline. */
+export function verifyCommand(href: string): string {
+  const name = archiveFileName(href);
+  return `scholium verify ${name === "" ? "paper.car" : name}`;
+}
+
 export interface DownloadMenuProps {
   /** The paper's archive: `GET /v1/export/paper/{id}.car`. */
   readonly href: string;
+  /** Where "How to verify" goes; defaults to the paper page's Proof tab. */
+  readonly verifyHref?: string;
 }
 
-export function DownloadMenu({ href }: DownloadMenuProps) {
+export function DownloadMenu({ href, verifyHref = DEFAULT_VERIFY_HREF }: DownloadMenuProps) {
   const enhanced = useEnhanced();
 
   if (!enhanced) {
@@ -59,10 +97,13 @@ export function DownloadMenu({ href }: DownloadMenuProps) {
       </a>
     );
   }
-  return <DownloadMenuButton href={href} />;
+  return <DownloadMenuButton href={href} verifyHref={verifyHref} />;
 }
 
-function DownloadMenuButton({ href }: DownloadMenuProps) {
+function DownloadMenuButton({
+  href,
+  verifyHref = DEFAULT_VERIFY_HREF,
+}: DownloadMenuProps) {
   const uid = useId();
   const menuId = `${uid}-menu`;
   const [open, setOpen] = useState(false);
@@ -74,7 +115,9 @@ function DownloadMenuButton({ href }: DownloadMenuProps) {
   const focusOnOpen = useRef<"first" | "last">("first");
 
   const items = (): HTMLElement[] =>
-    Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    Array.from(
+      menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"], a[href]') ?? [],
+    );
 
   const focusItem = (which: "first" | "last"): void => {
     const stops = items();
@@ -214,6 +257,21 @@ function DownloadMenuButton({ href }: DownloadMenuProps) {
         >
           <span className="ppg-menu-item-name">{ARCHIVE_ITEM_LABEL}</span>
           <span className="ppg-menu-item-hint">{ARCHIVE_ITEM_HINT}</span>
+          <span className="ppg-menu-item-hint">
+            {VERIFY_OFFLINE_LABEL} <code>{verifyCommand(href)}</code>
+          </span>
+        </a>
+        <a
+          className="ppg-menu-item"
+          tabIndex={-1}
+          href={verifyHref}
+          aria-label={VERIFY_HELP_LABEL}
+          onClick={() => hide(true)}
+        >
+          <span className="ppg-menu-item-name">{VERIFY_HELP_LABEL}</span>
+          <span className="ppg-menu-item-hint">
+            The Proof tab explains the offline check step by step.
+          </span>
         </a>
       </div>
     </div>

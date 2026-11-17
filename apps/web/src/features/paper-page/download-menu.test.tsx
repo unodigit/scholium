@@ -6,8 +6,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ARCHIVE_ITEM_HINT,
   ARCHIVE_ITEM_LABEL,
+  DEFAULT_VERIFY_HREF,
   DOWNLOAD_LABEL,
   DownloadMenu,
+  VERIFY_HELP_LABEL,
+  VERIFY_OFFLINE_LABEL,
+  archiveFileName,
+  verifyCommand,
 } from "./download-menu";
 
 /**
@@ -23,6 +28,7 @@ const button = () => screen.getByRole("button", { name: DOWNLOAD_LABEL });
 /** Hidden menus are not in the accessibility tree, so ask for them by id. */
 const list = () => document.getElementById(button().getAttribute("aria-controls") as string) as HTMLElement;
 const item = () => screen.getByRole("menuitem", { name: new RegExp(ARCHIVE_ITEM_LABEL) });
+const verifyLink = () => screen.getByRole("link", { name: VERIFY_HELP_LABEL });
 
 function show() {
   return render(<DownloadMenu href={ARCHIVE} />);
@@ -90,6 +96,31 @@ describe("opening", () => {
     expect(item().textContent).toContain(ARCHIVE_ITEM_HINT);
   });
 
+  it("says the archive verifies offline, with the command that does it", () => {
+    show();
+    fireEvent.click(button());
+
+    expect(item().textContent).toContain(
+      `${VERIFY_OFFLINE_LABEL} scholium verify sch-6sel-2dio-orm6.car`,
+    );
+  });
+
+  it("links How to verify to the Proof tab", () => {
+    show();
+    fireEvent.click(button());
+
+    const help = verifyLink();
+    expect(help.getAttribute("href")).toBe(DEFAULT_VERIFY_HREF);
+    expect(help.textContent).toContain(VERIFY_HELP_LABEL);
+  });
+
+  it("takes its verify href from the host", () => {
+    render(<DownloadMenu href={ARCHIVE} verifyHref="#proof-technical" />);
+    fireEvent.click(button());
+
+    expect(verifyLink().getAttribute("href")).toBe("#proof-technical");
+  });
+
   it("moves focus to the first item", () => {
     show();
 
@@ -126,7 +157,7 @@ describe("opening", () => {
     fireEvent.keyDown(button(), { key: "ArrowUp" });
 
     expect(button().getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement).toBe(item());
+    expect(document.activeElement).toBe(verifyLink());
   });
 
   it("moves focus to the item when an arrow key is pressed on a menu that is already open", () => {
@@ -141,30 +172,40 @@ describe("opening", () => {
 });
 
 describe("keyboard inside the menu", () => {
-  it.each(["ArrowDown", "ArrowUp", "Home", "End"])("keeps focus on the only item for %s", (key) => {
-    show();
-    fireEvent.click(button());
+  it.each(["ArrowDown", "ArrowUp", "Home", "End"])(
+    "keeps focus on a menu item for %s",
+    (key) => {
+      show();
+      fireEvent.click(button());
+      const stops = Array.from(
+        list().querySelectorAll<HTMLElement>('[role="menuitem"], a[href]'),
+      );
+      // ArrowUp and End move to the last item; ArrowDown and Home to the first.
+      const from = key === "ArrowUp" ? stops[stops.length - 1] : stops[0];
+      const expected = key === "ArrowUp" || key === "Home" ? stops[0] : stops[stops.length - 1];
+      from.focus();
 
-    const prevented = !fireEvent.keyDown(item(), { key });
+      const prevented = !fireEvent.keyDown(from, { key });
 
-    expect(prevented).toBe(true);
-    expect(document.activeElement).toBe(item());
-  });
+      expect(prevented).toBe(true);
+      expect(document.activeElement).toBe(expected);
+    },
+  );
 
   describe("with more than one item", () => {
-    /** The menu has one item today; give it three to check the arrows go round. */
+    /** The menu has two stops today; give it a third to check the arrows go round. */
     function withThreeItems(): HTMLElement[] {
       show();
       fireEvent.click(button());
-      for (const name of ["Second", "Third"]) {
-        const extra = document.createElement("a");
-        extra.setAttribute("role", "menuitem");
-        extra.setAttribute("tabindex", "-1");
-        extra.setAttribute("href", `#${name}`);
-        extra.textContent = name;
-        list().appendChild(extra);
-      }
-      return Array.from(list().querySelectorAll<HTMLElement>('[role="menuitem"]'));
+      const extra = document.createElement("a");
+      extra.setAttribute("role", "menuitem");
+      extra.setAttribute("tabindex", "-1");
+      extra.setAttribute("href", "#Third");
+      extra.textContent = "Third";
+      list().appendChild(extra);
+      return Array.from(
+        list().querySelectorAll<HTMLElement>('[role="menuitem"], a[href]'),
+      );
     }
 
     it("moves down and wraps from the last to the first", () => {
@@ -255,6 +296,18 @@ describe("keyboard inside the menu", () => {
     expect(prevented).toBe(false);
     expect(button().getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(button());
+  });
+});
+
+describe("offline command", () => {
+  it("names the file the node saves the archive as", () => {
+    expect(archiveFileName(ARCHIVE)).toBe("sch-6sel-2dio-orm6.car");
+    expect(verifyCommand(ARCHIVE)).toBe("scholium verify sch-6sel-2dio-orm6.car");
+  });
+
+  it("falls back to paper.car when the address names no file", () => {
+    expect(archiveFileName("paper.car")).toBe("paper.car");
+    expect(verifyCommand("")).toBe("scholium verify paper.car");
   });
 });
 

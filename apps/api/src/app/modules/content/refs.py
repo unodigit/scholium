@@ -9,14 +9,17 @@ entry on every download made the cost of a request grow with the node.
 This module keeps the answer in a table instead::
 
     content_refs(content_cid TEXT, manifest_cid TEXT,
+                 path TEXT, media_type TEXT, role TEXT,
                  PRIMARY KEY (content_cid, manifest_cid))
 
 One row per file a manifest lists, so "which manifests list this cid" is a
-primary-key lookup.  The index is a pure projection of the ledger's
-``manifest`` records -- exactly the set the scan used to read -- which is what
-keeps who-may-read-what unchanged.  The second hop, from a manifest to the
-versions that name it, stays a read of ``paper_versions`` (the source of truth
-for versions, which are saved *before* their ledger entry is appended); it is
+primary-key lookup, and the entry's signed `path`, `mediaType` and `role`
+travel with it so a download can name the file without reading the manifest
+body again.  The index is a pure projection of the ledger's ``manifest``
+records -- exactly the set the scan used to read -- which is what keeps
+who-may-read-what unchanged.  The second hop, from a manifest to the versions
+that name it, stays a read of ``paper_versions`` (the source of truth for
+versions, which are saved *before* their ledger entry is appended); it is
 made an indexed lookup too, see :func:`ensure_tables`.
 
 Keeping the index complete
@@ -73,6 +76,7 @@ __all__ = [
     "backfill",
     "ensure_tables",
     "file_cids",
+    "file_entries",
     "install",
     "on_manifest_record",
     "sync",
@@ -106,16 +110,30 @@ _PROGRESS_ID = 1
 
 
 class ContentRef(db.Base):
-    """One file a ``manifest`` record lists: the file's cid and the manifest's."""
+    """One file a ``manifest`` record lists: the file's cid and the manifest's.
+
+    The entry's signed ``path``, ``mediaType`` and ``role`` are copied here
+    too, so serving a download can name the file without reading the
+    manifest's body from the ledger on every request.
+    """
 
     __tablename__ = "content_refs"
 
     # The composite primary key is the lookup index: ``content_cid`` leads it.
     content_cid = Column(Text, primary_key=True)
     manifest_cid = Column(Text, primary_key=True)
+    #: The signed path inside the paper's bundle.
+    path = Column(Text, nullable=True)
+    #: The signed bare ``type/subtype``, when the entry names one.
+    media_type = Column(Text, nullable=True)
+    #: What the file is for: ``manuscript``, ``source``, ``code``, ``data``…
+    role = Column(Text, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return f"<ContentRef content_cid={self.content_cid!r} manifest_cid={self.manifest_cid!r}>"
+        return (
+            f"<ContentRef content_cid={self.content_cid!r} "
+            f"manifest_cid={self.manifest_cid!r} path={self.path!r}>"
+        )
 
 
 class ContentRefProgress(db.Base):
@@ -174,6 +192,7 @@ def ensure_tables() -> None:
                 if not inspect(db.engine).has_table(table.name):
                     raise
         _ensure_version_progress_column()
+        _ensure_ref_metadata_columns()
         _seed_progress()
         _index_versions_by_manifest()
         _table_engine = db.engine
@@ -199,6 +218,46 @@ def _ensure_version_progress_column() -> None:
             column["name"] for column in inspect(db.engine).get_columns(ContentRefProgress.__tablename__)
         }:
             raise
+
+
+def _ensure_ref_metadata_columns() -> None:
+    """Add ``path``/``media_type``/``role`` to an older ``content_refs`` table.
+
+    The columns let a download name the file without reading the manifest's
+    body.  Adding them to a table built before they existed starts the index
+    over (the progress marks go back to zero), which re-reads every manifest
+    and fills the new columns in; without that, old rows would never gain
+    them.  The re-read happens once, on the first start after the upgrade.
+    """
+    if not inspect(db.engine).has_table(ContentRef.__tablename__):
+        return
+    columns = {column["name"] for column in inspect(db.engine).get_columns(ContentRef.__tablename__)}
+    added = False
+    for name in ("path", "media_type", "role"):
+        if name in columns:
+            continue
+        try:
+            with db.engine.begin() as connection:
+                connection.execute(
+                    text(f"ALTER TABLE {ContentRef.__tablename__} ADD COLUMN {name} TEXT")
+                )
+            added = True
+        except (OperationalError, ProgrammingError):
+            # Another process added it between the check and the DDL.
+            if name not in {
+                column["name"]
+                for column in inspect(db.engine).get_columns(ContentRef.__tablename__)
+            }:
+                raise
+    if not added:
+        return
+    with db.engine.begin() as connection:
+        connection.execute(
+            text(
+                f"UPDATE {ContentRefProgress.__tablename__} "
+                "SET last_seq = 0, last_version_seq = 0"
+            )
+        )
 
 
 def _seed_progress() -> None:
@@ -266,6 +325,22 @@ def file_cids(body: Any) -> list[str]:
     this index replaces made of it.  A file listed twice (two paths, one
     content) is one reference.
     """
+    return [entry["content_cid"] for entry in file_entries(body)]
+
+
+def _optional_text(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) and value.strip() != "" else None
+
+
+def file_entries(body: Any) -> list[dict[str, Any]]:
+    """The distinct file entries a manifest body lists, with what names them.
+
+    One dict per distinct ``cid`` (the first occurrence wins, as the scan this
+    index replaces did), carrying the signed ``path``, ``mediaType`` and
+    ``role`` alongside the cid.  A malformed field is no value rather than an
+    error: the entry still names its file, and the download falls back to the
+    blob's own media type.
+    """
     body = _inline_manifest_body(body)
     if isinstance(body, Mapping):
         files = body.get("files")
@@ -275,8 +350,27 @@ def file_cids(body: Any) -> list[str]:
         return []
     if not isinstance(files, list):
         return []
-    cids = (item.get("cid") for item in files if isinstance(item, Mapping))
-    return list(dict.fromkeys(cid for cid in cids if isinstance(cid, str) and cid))
+
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in files:
+        if not isinstance(item, Mapping):
+            continue
+        cid = item.get("cid")
+        if not isinstance(cid, str) or not cid or cid in seen:
+            continue
+        seen.add(cid)
+        entries.append(
+            {
+                "content_cid": cid,
+                "path": _optional_text(item.get("path")),
+                "media_type": _optional_text(
+                    item.get("mediaType", item.get("media_type"))
+                ),
+                "role": _optional_text(item.get("role")),
+            }
+        )
+    return entries
 
 
 # --------------------------------------------------------------------------- #
@@ -347,12 +441,12 @@ def sync() -> int:
                 continue
 
             references = [
-                {"content_cid": content_cid, "manifest_cid": row.record_cid}
+                {**entry, "manifest_cid": row.record_cid}
                 for row in page
-                for content_cid in file_cids(row.body)
+                for entry in file_entries(row.body)
             ]
             if references:
-                session.execute(_insert_ignoring_duplicates(session), references)
+                session.execute(_insert_references(session), references)
             session.commit()
             indexed += len(page)
 
@@ -411,26 +505,36 @@ def _sync_inline_versions() -> int:
                 continue
 
             references = [
-                {"content_cid": content_cid, "manifest_cid": row.record_cid}
+                {**entry, "manifest_cid": row.record_cid}
                 for row in page
-                for content_cid in file_cids(row.body)
+                for entry in file_entries(row.body)
             ]
             if references:
-                session.execute(_insert_ignoring_duplicates(session), references)
+                session.execute(_insert_references(session), references)
             session.commit()
             indexed += sum(1 for row in page if file_cids(row.body))
 
 
-def _insert_ignoring_duplicates(session: Any) -> Any:
-    """An INSERT into ``content_refs`` that tolerates a row already being there.
+def _insert_references(session: Any) -> Any:
+    """An INSERT into ``content_refs`` that fills in an existing row's metadata.
 
-    Rows can pre-exist only if someone reset the progress row without emptying
-    the table; ignoring them lets the rebuild finish instead of failing every
-    download.  SQLite is the project's database (see
-    :mod:`app.modules.ledger.triggers`); elsewhere a plain INSERT is used.
+    Rows can pre-exist when someone reset the progress row without emptying
+    the table, and the ``path``/``media_type``/``role`` columns arrived after
+    the first rows did; upserting is what lets a rebuild complete and fill
+    those in instead of failing or leaving them missing.  SQLite is the
+    project's database (see :mod:`app.modules.ledger.triggers`); elsewhere a
+    plain INSERT is used.
     """
     if session.get_bind().dialect.name == "sqlite":
-        return sqlite_insert(ContentRef.__table__).on_conflict_do_nothing()
+        statement = sqlite_insert(ContentRef.__table__)
+        return statement.on_conflict_do_update(
+            index_elements=[ContentRef.content_cid, ContentRef.manifest_cid],
+            set_={
+                "path": statement.excluded.path,
+                "media_type": statement.excluded.media_type,
+                "role": statement.excluded.role,
+            },
+        )
     return ContentRef.__table__.insert()
 
 

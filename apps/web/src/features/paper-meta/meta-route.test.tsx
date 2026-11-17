@@ -114,7 +114,7 @@ describe("/meta/[id]", () => {
     expect(html).toContain("Anchor pending");
     expect(html).toContain("paper.pdf");
     expect(html).toContain("Scan passed");
-    expect(html).toContain("1 MiB");
+    expect(html).toContain("1.0 MB");
     expect(html).toContain("Download");
     expect(html).toContain("sch:6sel-2dio-orm6");
   });

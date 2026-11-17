@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FilesTab, fileName, unavailableReason } from "./files-tab";
+import { FilesTab, downloadHref, fileName, fileRoleLabel, hasSupplementaryArtefacts, unavailableReason } from "./files-tab";
 import type { ManifestData } from "./meta";
 
 const SHORT = "sch:6sel-2dio-orm6";
@@ -75,21 +75,35 @@ describe("FilesTab", () => {
 
     const pdf = rows[0];
     expect(pdf.textContent).toContain("paper.pdf");
-    expect(pdf.textContent).toContain("Manuscript");
-    expect(pdf.textContent).toContain("1 MiB");
+    expect(pdf.textContent).toContain("PDF");
+    expect(pdf.textContent).toContain("1.0 MB");
     expect(pdf.textContent).toContain("CC BY 4.0");
     expect(pdf.textContent).toContain("Scan passed");
 
     const code = rows[1];
     expect(code.textContent).toContain("code/repro.zip");
     expect(code.textContent).toContain("Reproduction log");
-    expect(code.textContent).toContain("2 KiB");
+    expect(code.textContent).toContain("2.0 KB");
     expect(code.textContent).toContain("Scanning");
 
     expect(rows[2].textContent).toContain("Scan failed");
     expect(rows[2].textContent).toContain("CC BY-NC 4.0");
     expect(rows[3].textContent).toContain("Not available");
-    expect(rows[3].textContent).toContain("0 bytes");
+    expect(rows[3].textContent).toContain("0 B");
+  });
+
+  it("links a download through the API so the node names the saved file", () => {
+    render(
+      <FilesTab
+        paperId={SHORT}
+        version={2}
+        initial={MANIFEST}
+        downloadUrl={(cid) => `/content/${cid}`}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: /Download paper\.pdf/ });
+    expect(link.getAttribute("href")).toBe("/content/bafkrei-pdf?download=1");
   });
 
   it("offers a download only for a file the node will serve", () => {
@@ -103,7 +117,7 @@ describe("FilesTab", () => {
     );
 
     const link = screen.getByRole("link", { name: /Download paper\.pdf/ });
-    expect(link.getAttribute("href")).toBe("/content/bafkrei-pdf");
+    expect(link.getAttribute("href")).toBe("/content/bafkrei-pdf?download=1");
     expect(link.getAttribute("download")).toBe("paper.pdf");
 
     // The scanning, failed and missing files are not linked.
@@ -122,7 +136,7 @@ describe("FilesTab", () => {
   it("uses the node's content URL by default", () => {
     render(<FilesTab paperId={SHORT} version={2} initial={MANIFEST} />);
     const link = screen.getByRole("link", { name: /Download paper\.pdf/ });
-    expect(link.getAttribute("href")).toMatch(/\/v1\/content\/bafkrei-pdf$/);
+    expect(link.getAttribute("href")).toMatch(/\/v1\/content\/bafkrei-pdf\?download=1$/);
   });
 
   it("shows a retryable message when the file list cannot be read", async () => {
@@ -168,6 +182,59 @@ describe("FilesTab", () => {
       />,
     );
     expect(screen.getByText("No files are listed for this version.")).toBeTruthy();
+  });
+
+  it("says when no code, data or reproduction log was published", () => {
+    render(
+      <FilesTab
+        paperId={SHORT}
+        version={2}
+        initial={{ ...MANIFEST, files: [MANIFEST.files[0]] }}
+      />,
+    );
+
+    expect(
+      screen.getByText("No code, data or reproduction log was published with this version."),
+    ).toBeTruthy();
+  });
+
+  it("does not claim anything is missing when code, data or a log is published", () => {
+    for (const role of ["code", "data", "reproduction-log"]) {
+      const { unmount } = render(
+        <FilesTab
+          paperId={SHORT}
+          version={2}
+          initial={{
+            ...MANIFEST,
+            files: [{ ...MANIFEST.files[0], role }],
+          }}
+        />,
+      );
+      expect(
+        screen.queryByText("No code, data or reproduction log was published with this version."),
+      ).toBeNull();
+      unmount();
+    }
+  });
+
+  it("names the manuscript row PDF and the other artefact roles in words", () => {
+    expect(fileRoleLabel({ role: "manuscript", mediaType: "application/pdf" })).toBe("PDF");
+    expect(fileRoleLabel({ role: "source", mediaType: "text/x-tex" })).toBe("Source");
+    expect(fileRoleLabel({ role: "code", mediaType: "application/zip" })).toBe("Code");
+    expect(fileRoleLabel({ role: "data", mediaType: "text/csv" })).toBe("Data");
+    expect(fileRoleLabel({ role: "reproduction-log", mediaType: null })).toBe(
+      "Reproduction log",
+    );
+    expect(
+      hasSupplementaryArtefacts([{ role: "manuscript" }, { role: "dataset" }]),
+    ).toBe(true);
+    expect(hasSupplementaryArtefacts([{ role: "manuscript" }])).toBe(false);
+  });
+
+  it("adds the download query to a URL without disturbing its own query or fragment", () => {
+    expect(downloadHref("/content/abc")).toBe("/content/abc?download=1");
+    expect(downloadHref("/content/abc?rev=2")).toBe("/content/abc?rev=2&download=1");
+    expect(downloadHref("/content/abc#page=1")).toBe("/content/abc?download=1#page=1");
   });
 
   it("server-renders the file list in the first HTML response", () => {

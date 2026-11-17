@@ -43,22 +43,28 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, ConfigDict
 from starlette.responses import FileResponse
 
 from app.security import InvalidAccessToken, Principal, decode_access_token
 
-from . import service
+from . import references, service
 from .models import SCAN_PASSED, SCAN_SCANNING
 from .store import blob_path
 from .visibility import may_read
 
 __all__ = [
     "CONTENT_SECURITY_POLICY",
+    "ContentVersionOut",
+    "ContentVersionsOut",
     "NOSNIFF",
+    "content_disposition",
     "router",
+    "safe_file_name",
     "SECURITY_HEADERS",
 ]
 
@@ -121,12 +127,150 @@ def _optional_principal(
         return None
 
 
+class ContentVersionOut(BaseModel):
+    """One listed version whose manifest names a blob."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Canonical paper id (``sch:xxxx-xxxx-xxxx``).
+    paper: str
+    #: Alias of ``paper``.
+    shortId: str
+    #: cid of the paper's ``paper.genesis`` record.
+    paperCid: str
+    #: cid of the ``paper.version`` record.
+    versionCid: str
+    #: Version number (1-based).
+    n: int
+    #: Alias of ``n``.
+    version: int
+    #: The version's title.
+    title: str
+    #: The file's signed path inside the bundle.
+    path: str
+    #: The last path segment: what the file is saved as.
+    fileName: str
+    #: Alias of ``fileName`` under snake_case.
+    file_name: str
+    #: What the file is for: ``manuscript``, ``source``, ``code``, ``data``…
+    role: str
+
+
+class ContentVersionsOut(BaseModel):
+    """The response body of ``GET /v1/content/{cid}/versions``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The blob the versions describe.
+    cid: str
+    #: The public listed versions naming it, listed versions first.
+    versions: list[ContentVersionOut]
+
+
+def _safe_ascii(value: str) -> str:
+    """The ASCII fallback of a file name: printable, never a header break."""
+    return "".join(
+        character if character.isascii() and character.isprintable() else "_"
+        for character in value
+    )
+
+
+def safe_file_name(path: str) -> str:
+    """A file name safe to send in ``Content-Disposition``.
+
+    Only the last path segment is used, so a manifest path can never escape
+    the browser's download directory.  Control characters, quotes and
+    backslashes -- the characters that could break the header -- become
+    underscores; ``.`` and ``..`` are not names at all.
+    """
+    name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    name = "".join(
+        "_" if ord(character) < 32 or ord(character) == 127 or character in '"\\' else character
+        for character in name
+    ).strip()
+    if name in ("", ".", ".."):
+        return "download"
+    return name
+
+
+def content_disposition(file_name: str, *, attachment: bool) -> str:
+    """An RFC 6266 ``Content-Disposition`` value for ``file_name``.
+
+    ``attachment`` selects a save dialog; otherwise the browser shows the
+    file inline.  The header always carries an ASCII ``filename`` and, when
+    the name is not ASCII, a percent-encoded ``filename*`` as well, so every
+    browser and every non-ASCII name gets a usable file name.
+    """
+    disposition = "attachment" if attachment else "inline"
+    name = safe_file_name(file_name)
+    fallback = _safe_ascii(name) or "download"
+    value = f'{disposition}; filename="{fallback}"'
+    if fallback != name:
+        value += "; filename*=UTF-8''" + quote(name, safe="")
+    return value
+
+
+@router.get("/{cid}/versions")
+def get_content_versions(
+    cid: str,
+    principal: Optional[Principal] = Depends(_optional_principal),
+) -> "ContentVersionsOut":
+    """Return the public listed versions whose manifest names ``cid``.
+
+    This is what ``/verify`` uses to name a file a reader dropped in: the
+    caller has the bytes but not the paper.  Only *listed* versions are
+    returned; a blob whose every referencing version is unlisted answers the
+    same ``404`` as a content read, so the endpoint never reveals pre-listing
+    content.  A well-formed cid no manifest names answers an empty list.
+    """
+    try:
+        blob_path(cid)
+    except ValueError:
+        raise _not_found(cid) from None
+    if (
+        service.get_blob(cid) is None
+        or service.is_tombstoned(cid)
+        or not may_read(cid, principal)
+    ):
+        raise _not_found(cid)
+    return ContentVersionsOut(
+        cid=cid,
+        versions=[
+            ContentVersionOut(
+                paper=row.paper_short_id,
+                shortId=row.paper_short_id,
+                paperCid=row.paper_cid,
+                versionCid=row.version_cid,
+                n=row.n,
+                version=row.n,
+                title=row.title,
+                fileName=row.file_name,
+                file_name=row.file_name,
+                path=row.path,
+                role=row.role,
+            )
+            for row in references.listed_versions(cid)
+        ],
+    )
+
+
 @router.get("/{cid}")
 def get_content(
     cid: str,
+    download: bool = Query(
+        default=False,
+        description="save as an attachment named by the version manifest, not inline",
+    ),
     principal: Optional[Principal] = Depends(_optional_principal),
 ) -> FileResponse:
-    """Return the stored bytes for ``cid`` when (and only when) they are safe."""
+    """Return the stored bytes for ``cid`` when (and only when) they are safe.
+
+    The signed manifest names the file: its ``path`` supplies the download
+    name, its ``mediaType`` the response media type, and a manifest entry is
+    what makes the response carry a ``Content-Disposition`` at all (``inline``
+    by default, ``attachment`` with ``?download=1``).  A blob no manifest
+    names still serves, typed by the uploader's hint or ``octet-stream``.
+    """
     try:
         path = blob_path(cid)
     except ValueError:
@@ -174,9 +318,23 @@ def get_content(
             f"Content {cid!r} is unavailable: its bytes have been removed.",
         ) from None
 
+    # The version manifest is the source of truth for what the file is; the
+    # store's media type is only the uploader's hint, and is often absent.
+    reference = references.download_reference(cid)
+    media_type = (
+        (reference.media_type if reference is not None else None)
+        or blob.media_type
+        or DEFAULT_MEDIA_TYPE
+    )
+    headers = dict(SECURITY_HEADERS)
+    if reference is not None:
+        headers["Content-Disposition"] = content_disposition(
+            reference.file_name, attachment=download
+        )
+
     return FileResponse(
         path,
-        media_type=blob.media_type or DEFAULT_MEDIA_TYPE,
-        headers=SECURITY_HEADERS,
+        media_type=media_type,
+        headers=headers,
         stat_result=stat_result,
     )
