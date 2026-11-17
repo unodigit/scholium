@@ -16,8 +16,9 @@
  * Pure data and functions, no React: the markup lives in `verify-badge.ts`.
  * Deciding *which* state a paper is in (from verify-core's report and the
  * anchor proof) belongs to the Proof tab; the badge only shows the answer.
- * The counts a finished check adds to the indicator's words — "Verified · 3
- * versions · 4 signatures" (PRD §9 journey 3) — are `countedLabel` below.
+ * The counts a finished check adds to the indicator's words — "Verified · 4
+ * author signatures across 2 versions" (PRD §9 journey 3) — are `countedLabel`
+ * below.
  */
 
 import type { IconName } from "./icons";
@@ -136,8 +137,13 @@ export function verifyBadgeTitle(state: VerifyState): string {
 
 /**
  * The counts a finished check can add to the indicator: how many versions the
- * paper has, and how many distinct signatures were checked (PRD §9 journey 3:
+ * paper has, and how many author signatures were checked (PRD §9 journey 3:
  * "Verified: 3 versions, 4 signatures, anchored 2027-03-02").
+ *
+ * `signatures` counts each author signature on a version or consent record,
+ * not distinct signers: the indicator says what it counted
+ * ("4 author signatures across 2 versions"), so two authors over two versions
+ * do not read as "2 signatures" with nothing to say what the number means.
  */
 export interface VerifyCounts {
   readonly versions: number;
@@ -150,9 +156,13 @@ function isCounted(value: number): boolean {
 }
 
 /**
- * The indicator's words for a finished check: "Verified · 3 versions ·
- * 4 signatures" when the check passed and the counts are known, whatever the
- * anchor state is (that follows the indicator as its own line).
+ * The indicator's words for a finished check: "Verified · 4 author signatures
+ * across 2 versions" when the check passed and the counts are known, whatever
+ * the anchor state is (that follows the indicator as its own line).
+ *
+ * The words say *what* was counted: the signatures are author signatures on
+ * version and consent records, so "2 versions · 2 signatures" for two authors
+ * no longer leaves a reader guessing (bug_spec_verify5 bug 5).
  *
  * Anything else — no counts, a check that failed or could not run — keeps the
  * state's own label, so a count is never printed next to a failure and
@@ -168,6 +178,8 @@ export function countedLabel(state: VerifyState, counts: VerifyCounts | null): s
     return VERIFY_BADGE_SPECS[state].label;
   }
   const versions = `${counts.versions} ${counts.versions === 1 ? "version" : "versions"}`;
-  const signatures = `${counts.signatures} ${counts.signatures === 1 ? "signature" : "signatures"}`;
-  return `Verified · ${versions} · ${signatures}`;
+  const signatures = `${counts.signatures} ${
+    counts.signatures === 1 ? "author signature" : "author signatures"
+  }`;
+  return `Verified · ${signatures} across ${versions}`;
 }

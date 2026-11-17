@@ -312,14 +312,14 @@ describe("describeMetaError", () => {
 
 describe("words and formats", () => {
   it("formats sizes in binary units a reader knows", () => {
-    expect(formatBytes(0)).toBe("0 bytes");
-    expect(formatBytes(1)).toBe("1 byte");
-    expect(formatBytes(1023)).toBe("1023 bytes");
-    expect(formatBytes(1024)).toBe("1 KiB");
-    expect(formatBytes(1536)).toBe("1.5 KiB");
-    expect(formatBytes(1048576)).toBe("1 MiB");
-    expect(formatBytes(1024 * 1024 * 1024)).toBe("1 GiB");
-    expect(formatBytes(Number.NaN)).toBe("Unknown size");
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(1)).toBe("1 B");
+    expect(formatBytes(1023)).toBe("1023 B");
+    expect(formatBytes(1024)).toBe("1.0 KB");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(1048576)).toBe("1.0 MB");
+    expect(formatBytes(1024 * 1024 * 1024)).toBe("1.0 GB");
+    expect(formatBytes(Number.NaN)).toBe("—");
   });
 
   it("formats dates in UTC, the same words in every locale", () => {
@@ -346,7 +346,9 @@ describe("words and formats", () => {
 
   it("writes the anchor as a state, with the design's wording", () => {
     expect(anchorSpec({ status: "pending" })).toMatchObject({
-      label: "Anchor pending",
+      // The Versions tab and the margin show this one string, so it carries the
+      // reason anchoring is pending (bug_spec_verify5 bug 5), not just "pending".
+      label: "Anchor pending. Anchoring is not enabled on this node yet",
       icon: "pending",
       tone: "pending",
     });

@@ -26,8 +26,17 @@ export type ParsedVersionRef =
   | { readonly ok: true; readonly ref: VersionRef }
   | { readonly ok: false; readonly message: string };
 
-/** An example id for placeholders and messages (a real id from the shared vectors). */
+/** An example id for messages (a real id from the shared vectors). */
 export const EXAMPLE_VERSION_ID = "sch:6sel-2dio-orm6/v2";
+
+/**
+ * The id field's neutral placeholder: the shape of a version id, with no
+ * checksum and therefore no paper behind it. The field's old placeholder was a
+ * real vector id that no node holds, so it looked like a paper a reader could
+ * try (bug_spec_verify5 bug 5). A link that carries an id fills the field
+ * anyway; this is only what an empty field suggests.
+ */
+export const PLACEHOLDER_VERSION_ID = "sch:xxxx-xxxx-xxxx/v2";
 
 const SHAPE = /^sch:(?:[a-z2-7]{4}-){2}[a-z2-7]{4}(?:\/v[1-9][0-9]{0,8})?$/i;
 

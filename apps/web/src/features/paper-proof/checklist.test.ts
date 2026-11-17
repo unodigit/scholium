@@ -7,6 +7,7 @@ import { verifyPaper, type VerifyPaperOptions } from "../verify-core";
 import { PENDING_PROOF, type RecordProofInfo } from "./anchor";
 import {
   abbreviateId,
+  archiveCommand,
   buildChecklist,
   checkLines,
   cliWording,
@@ -158,6 +159,34 @@ describe("plain-language lines", () => {
       preservation: LOCAL_PRESERVATION,
     });
     expect(items[0]).toMatchObject({ state: "pass", text: "Signed by the listed author" });
+  });
+
+  it("says 'both listed authors' for two authors, not the ungrammatical 'all 2'", () => {
+    const paper = buildPaper({ authors: 2 });
+    const report = verifyPaper(paper.records, { paper: paper.shortId });
+    const items = buildChecklist({
+      report,
+      manifest: versionManifest(paper.records, report),
+      fileResults: [],
+      proof: PENDING_PROOF,
+      preservation: LOCAL_PRESERVATION,
+    });
+    expect(items[0]).toMatchObject({ state: "pass", text: "Signed by both listed authors" });
+  });
+
+  it("rewords the checks' own counts: one previous-version link, two listed authors", () => {
+    const paper = buildPaper({ authors: 2, versions: 1 });
+    const report = verifyPaper(paper.records, { paper: paper.shortId });
+    const lines = Object.fromEntries(checkLines(report).map((line) => [line.name, line.message]));
+
+    // verify-core writes "All 1 prev link match…" and "Signed by all 2…";
+    // the technical details say the same fact in grammatical English.
+    expect(lines.prev_hashes).toBe(
+      "The previous-version link matches the hash of the record it names",
+    );
+    expect(lines.consents).toBe(
+      "Signed by both listed authors (every version has a consent from each of its authors)",
+    );
   });
 
   it("explains a tampered record in words, with the technical finding underneath", () => {
@@ -360,6 +389,16 @@ describe("technical details", () => {
 });
 
 describe("the offline command", () => {
+  it("names the downloaded archive the way the Download menu does", () => {
+    expect(archiveCommand("sch:k3f9-q2xz-7mwd/v2")).toBe(
+      "scholium verify sch-k3f9-q2xz-7mwd.car",
+    );
+    expect(archiveCommand("sch:k3f9-q2xz-7mwd")).toBe(
+      "scholium verify sch-k3f9-q2xz-7mwd.car",
+    );
+    expect(archiveCommand("")).toBe("scholium verify paper.car");
+  });
+
   it("names the version and the node, so it runs as printed", () => {
     expect(offlineCommand("sch:k3f9-q2xz-7mwd/v2", "https://node.example")).toBe(
       "scholium verify sch:k3f9-q2xz-7mwd/v2 --node https://node.example",
@@ -395,11 +434,11 @@ describe("verdictCopy", () => {
     // The anchor state follows as the summary, so a paper that is signed but
     // not anchored says so instead of promising a time.
     expect(verdictCopy("verified", { versions: 3, signatures: 4 })).toEqual({
-      headline: "Verified · 3 versions · 4 signatures",
+      headline: "Verified · 4 author signatures across 3 versions",
       summary: "Every check passed and the public timestamp is in place.",
     });
     expect(verdictCopy("anchor_pending", { versions: 2, signatures: 3 })).toEqual({
-      headline: "Verified · 2 versions · 3 signatures",
+      headline: "Verified · 3 author signatures across 2 versions",
       summary: "Signed. Anchoring is not enabled on this node yet.",
     });
   });

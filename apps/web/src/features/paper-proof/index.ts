@@ -68,6 +68,7 @@ export {
 } from "./files";
 
 export {
+  archiveCommand,
   buildChecklist,
   noticeKindWord,
   offlineCommand,

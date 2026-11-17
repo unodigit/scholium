@@ -17,7 +17,7 @@
 import { useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 
-import { formatBytes } from "../submit/limits";
+import { formatBytes } from "../ui-kit/format-bytes";
 
 export interface FileDropProps {
   /** The file now being checked, so the zone can say what it holds. */
@@ -37,6 +37,23 @@ function collectDrop(transfer: DataTransfer): { files: File[]; folders: string[]
   }
   const files = Array.from(transfer.files ?? []).filter((file) => !folders.has(file.name));
   return { files, folders: [...folders] };
+}
+
+/** A `.car` archive is a whole paper, not a file a version's manifest can list. */
+const PAPER_ARCHIVE = /\.car$/i;
+
+/** `my paper.car` → `'my paper.car'`, so the printed command runs as written. */
+function shellWord(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * What a dropped paper archive is told: it is checked offline, not against a
+ * version's file list, so "does not match" would be misleading. The command is
+ * the one the Proof tab and the Download menu show for an archive.
+ */
+export function archiveNotice(name: string): string {
+  return `This is a paper archive - verify it offline with: scholium verify ${shellWord(name)}`;
 }
 
 export function FileDrop({ current, privacyId, onFile }: FileDropProps) {
@@ -75,6 +92,12 @@ export function FileDrop({ current, privacyId, onFile }: FileDropProps) {
           ? `${folders[0]} is a folder. Scholium checks one file at a time: drop a file from inside it.`
           : null,
       );
+      return;
+    }
+    if (PAPER_ARCHIVE.test(first.name)) {
+      // Do not fingerprint it: comparing a whole archive with a version's file
+      // list can only ever say "does not match", which is the wrong question.
+      setNotice(archiveNotice(first.name));
       return;
     }
     setNotice(

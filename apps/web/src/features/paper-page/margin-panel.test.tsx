@@ -427,7 +427,9 @@ describe("the badge", () => {
       }),
     );
     await waitFor(() =>
-      expect(badge().textContent).toBe("Verified · 2 versions · 3 signatures"),
+      expect(badge().textContent).toBe(
+        "Verified · 3 author signatures across 2 versions",
+      ),
     );
     // The anchor state stays its own line below the badge, not part of its words.
     expect(badge().textContent).not.toContain("anchor pending");
@@ -471,7 +473,8 @@ describe("the top of the panel", () => {
     unmount();
 
     render(<MarginPanel {...props({ version: 1, versionId: `${SHORT_ID}/v1` })} />);
-    expect(screen.getByText("Anchor pending")).toBeTruthy();
+    const pending = screen.getByText(/^Anchor pending/);
+    expect(pending.textContent).toContain("Anchoring is not enabled on this node yet");
   });
 
   it("says nothing about the anchor when the timeline could not be read", () => {

@@ -27,7 +27,9 @@ describe("/verify route (server render)", () => {
     expect(html).toContain('type="file"');
     expect(html).toContain("Drop a file here");
     expect(html).toContain("Your file stays on this device");
-    expect(html).toContain("Enter a version id and drop a file to compare them.");
+    expect(html).toContain(
+      "Drop a file to check it against what the authors signed. A version id is optional.",
+    );
   });
 
   it("never claims a verdict before a file has been read in the browser", async () => {

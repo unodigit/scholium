@@ -34,7 +34,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
-import { formatBytes } from "../submit/limits";
+import { formatBytes } from "../ui-kit/format-bytes";
 import {
   SCAN_STATUS_SPECS,
   contentUrl,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { EXAMPLE_VERSION_ID, parseVersionRef, proofHref } from "./version-ref";
+import { EXAMPLE_VERSION_ID, PLACEHOLDER_VERSION_ID, parseVersionRef, proofHref } from "./version-ref";
 
 const GOOD = "sch:6sel-2dio-orm6/v2"; // a real id from the shared vectors
 
@@ -65,6 +65,13 @@ describe("parseVersionRef", () => {
 
   it("gives the example in the placeholder an id that is itself valid", () => {
     expect(parseVersionRef(EXAMPLE_VERSION_ID).ok).toBe(true);
+  });
+
+  it("keeps the field's placeholder neutral: a shape, not a paper that does not exist", () => {
+    // A reader could copy the placeholder and look for a paper no node holds;
+    // the shape alone teaches the format without pretending to be an id.
+    expect(PLACEHOLDER_VERSION_ID).toMatch(/^sch:(?:x{4}-){2}x{4}\/v2$/);
+    expect(PLACEHOLDER_VERSION_ID).not.toBe(EXAMPLE_VERSION_ID);
   });
 });
 

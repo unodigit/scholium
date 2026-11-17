@@ -245,6 +245,16 @@
   line-height: var(--leading-meta);
 }
 
+/* The one line above each command in "Offline check"; the same type role as
+   the subhead, one step quieter. Tokens only, so both themes and forced-colour
+   follow the rest of the panel. */
+.pt-offline__hint {
+  margin: 0 0 var(--space-unit);
+  color: var(--ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
 .pt-checks {
   margin: 0;
   padding: 0;

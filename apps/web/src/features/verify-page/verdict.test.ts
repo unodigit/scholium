@@ -4,10 +4,12 @@ import { compareFile, baseName, type FileFacts } from "./compare";
 import {
   CANNOT_CHECK_HEADLINE,
   CHECKING_HEADLINE,
+  IDLE_HINT,
   MATCH_HEADLINE,
   MISMATCH_HEADLINE,
   UNREADABLE_HEADLINE,
   VERDICT_LOOKS,
+  deriveContentVerdict,
   deriveVerdict,
   filesPhrase,
   manifestStateFor,
@@ -16,6 +18,7 @@ import {
 } from "./verdict";
 import { SIGNED_BYTES, VERSION_ID, manifest, versionRef } from "./verify-fixtures";
 import { fileCid } from "../paper-proof/files";
+import { formatBytes } from "../ui-kit/format-bytes";
 
 const REF = versionRef();
 const MANIFEST = manifest();
@@ -98,7 +101,7 @@ describe("deriveVerdict", () => {
     expect(empty).toMatchObject({
       kind: "idle",
       headline: null,
-      summary: "Enter a version id and drop a file to compare them.",
+      summary: "Drop a file to check it against what the authors signed. A version id is optional.",
     });
 
     const idOnly = deriveVerdict({ ref: REF, manifest: READY, file: { status: "idle" } });
@@ -112,10 +115,10 @@ describe("deriveVerdict", () => {
     expect(idLoading.summary).toBe(`Drop a file to compare it with the files signed for ${VERSION_ID}.`);
   });
 
-  it("asks for the id when the file is read but no version is named", () => {
+  it("asks for the id when the file is read but no version is named, and says it is optional", () => {
     const verdict = deriveVerdict({ ref: null, manifest: { status: "idle" }, file: readFile(MAIN, "main.pdf") });
     expect(verdict.kind).toBe("idle");
-    expect(verdict.summary).toContain("Enter the version id");
+    expect(verdict.summary).toContain("A version id is optional");
   });
 
   it("shows progress while the file is read, and says it is not uploaded", () => {
@@ -185,7 +188,7 @@ describe("deriveVerdict", () => {
       const sameSize = new Uint8Array(MAIN.length).fill(7);
       const equal = deriveVerdict({ ref: REF, manifest: READY, file: readFile(sameSize, "main.pdf") });
       expect(equal.details[0]).toBe(
-        `main.pdf is signed for this version and is also ${MAIN.length} bytes, but its contents differ.`,
+        `main.pdf is signed for this version and is also ${formatBytes(MAIN.length)}, but its contents differ.`,
       );
     });
 
@@ -243,6 +246,38 @@ describe("deriveVerdict", () => {
     // Each state has a silhouette of its own: colour is never the only signal.
     const icons = Object.values(VERDICT_LOOKS).map((look) => look.icon);
     expect(new Set(icons).size).toBe(icons.length);
+  });
+});
+
+describe("when no version id is given", () => {
+  it("starts with the same hint: drop a file, the version is optional", () => {
+    const verdict = deriveContentVerdict({
+      file: { status: "idle" },
+      content: { status: "idle", versions: [] },
+    });
+    expect(verdict.kind).toBe("idle");
+    expect(verdict.summary).toBe(IDLE_HINT);
+    expect(verdict.summary).toContain("A version id is optional");
+  });
+
+  it("uses a dash, not a hyphen, between the version and the claim", () => {
+    const verdict = deriveContentVerdict({
+      file: readFile(MAIN, "main.pdf"),
+      content: {
+        status: "ready",
+        versions: [
+          {
+            title: "A Paper",
+            n: 2,
+            paper: "sch:6sel-2dio-orm6",
+            fileName: "main.pdf",
+            schId: VERSION_ID,
+          },
+        ],
+      },
+    });
+    expect(verdict.summary).toContain(") — signed by its authors");
+    expect(verdict.summary).not.toContain(") - signed by its authors");
   });
 });
 

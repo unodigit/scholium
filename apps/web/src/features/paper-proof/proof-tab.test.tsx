@@ -101,7 +101,7 @@ describe("while it checks", () => {
     await waitFor(() => expect(before.dataset.state).toBe("anchor_pending"));
 
     expect(verdictOf(container)).toBe(before);
-    expect(before.textContent).toContain("Verified · 2 versions · 3 signatures");
+    expect(before.textContent).toContain("Verified · 8 author signatures across 2 versions");
   });
 });
 
@@ -145,7 +145,7 @@ describe("a paper that verifies", () => {
 
     expect(verdict.dataset.state).toBe("anchor_pending");
     expect(verdict.dataset.tone).toBe("pending");
-    expect(verdict.textContent).toContain("Verified · 2 versions · 3 signatures");
+    expect(verdict.textContent).toContain("Verified · 8 author signatures across 2 versions");
     expect(verdict.textContent).toContain("Anchoring is not enabled on this node yet");
     expect(verdict.textContent).not.toContain("within the hour");
     expect(container.querySelector("section")!.getAttribute("aria-busy")).toBe("false");
@@ -172,7 +172,7 @@ describe("a paper that verifies", () => {
     expect(verdict.dataset.state).toBe("verified");
     expect(verdict.dataset.tone).toBe("verified");
     expect(verdict.textContent).toContain("Verified in your browser");
-    expect(verdict.textContent).toContain("Verified · 2 versions · 3 signatures");
+    expect(verdict.textContent).toContain("Verified · 8 author signatures across 2 versions");
 
     const link = container.querySelector<HTMLAnchorElement>('.pt-item[data-key="anchor"] .pt-link')!;
     expect(link.textContent).toContain("View transaction");
@@ -235,10 +235,18 @@ describe("technical details", () => {
       "manifests",
       "supersession",
     ]);
-    expect(details.querySelector(".pt-offline")!.textContent).toContain("Verify offline:");
-    expect(details.querySelector(".pt-offline .pt-copy__value")!.textContent).toBe(
-      `scholium verify ${V2} --node ${NODE}`,
+    // The "How to verify" item of the Download menu sends readers here, so the
+    // section has both commands: the archive they downloaded (no network) and
+    // the online form. The archive name matches the menu's own command.
+    const offline = details.querySelector<HTMLElement>(".pt-offline")!;
+    expect(offline.textContent).toContain("Offline check");
+    const commands = Array.from(offline.querySelectorAll<HTMLElement>(".pt-copy__value")).map(
+      (value) => value.textContent,
     );
+    expect(commands).toEqual([
+      `scholium verify sch-${paper.shortId.replace(/^sch:/, "")}.car`,
+      `scholium verify ${V2} --node ${NODE}`,
+    ]);
   });
 
   it("shows long ids shortened, with the whole id as the tooltip and the button's name", async () => {
@@ -267,7 +275,11 @@ describe("technical details", () => {
     const { source } = sourceOf();
     const { container } = await renderTab({ source });
 
-    fireEvent.click(container.querySelector<HTMLButtonElement>(".pt-offline .pt-copy")!);
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>(
+        '.pt-offline [aria-label^="Copy the online command"]',
+      )!,
+    );
 
     await waitFor(() =>
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`scholium verify ${V2} --node ${NODE}`),
@@ -362,9 +374,14 @@ describe("a check that could not run", () => {
     const { container } = await renderTab({ source });
 
     expect(container.querySelector<HTMLDetailsElement>(".pt-details")!.open).toBe(true);
-    expect(container.querySelector(".pt-offline .pt-copy__value")!.textContent).toBe(
+    // Both ways forward are shown: the archive (no network) and the node.
+    const values = Array.from(
+      container.querySelectorAll<HTMLElement>(".pt-offline .pt-copy__value"),
+    ).map((value) => value.textContent);
+    expect(values).toEqual([
+      `scholium verify sch-${paper.shortId.replace(/^sch:/, "")}.car`,
       `scholium verify ${paper.shortId}/v2 --node ${NODE}`,
-    );
+    ]);
     expect(container.querySelector(".pt-checks")).toBeNull();
   });
 });

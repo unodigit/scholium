@@ -36,7 +36,8 @@ never "nothing changed": the view says what it could not compare.
  */
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
-import { formatBytes, manifestEndpoint, parseManifest } from "../paper-meta/meta";
+import { formatBytes } from "../ui-kit/format-bytes";
+import { manifestEndpoint, parseManifest } from "../paper-meta/meta";
 
 /** One paragraph of one version, as the diff lists it. */
 export interface CompareParagraph {
@@ -387,7 +388,7 @@ export function diffFiles(
   return changes;
 }
 
-/** `Added paper.pdf (2 KiB)`, `Replaced paper.pdf (2 KiB → 3 KiB)`: the change in words, size included. */
+/** `Added paper.pdf (2.0 KB)`, `Replaced paper.pdf (2.0 KB → 3.0 KB)`: the change in words, size included. */
 export function describeFileChange(change: FileChange): string {
   const size = (item: CompareFile | null): string => (item === null ? "" : formatBytes(item.size));
   switch (change.kind) {

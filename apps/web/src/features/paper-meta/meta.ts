@@ -391,20 +391,13 @@ export function changeNoteText(version: { n: number; changeNote: string | null }
   return version.n === 1 ? "First version." : "No change note was given.";
 }
 
-/** `850 bytes`, `12 KiB`, `1.5 MiB`, `2.3 GiB`. */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "Unknown size";
-  const units = ["bytes", "KiB", "MiB", "GiB", "TiB"] as const;
-  if (bytes < 1024) return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${rounded} ${units[unit]}`;
-}
+/**
+ * One size format for the whole product (`759 B`, `3.0 KB`, `1.5 MB`). The
+ * Files tab, the compare view and `/verify` share it so the same signed file
+ * reads the same everywhere (bug_spec_verify5 bug 5); see
+ * `ui-kit/format-bytes.ts`.
+ */
+export { formatBytes } from "../ui-kit/format-bytes";
 
 /** `2 Mar 2027`, in UTC and the same words in every locale. */
 export function formatDate(iso: string): string {
@@ -556,7 +549,10 @@ export function anchorSpec(anchor: VersionAnchor): AnchorSpec {
     };
   }
   return {
-    label: "Anchor pending",
+    // The reader is told *why* there is no date, in the same sentence every
+    // page uses (bug_spec_verify5 bug 5), rather than a bare "pending" that
+    // reads like something is about to happen.
+    label: "Anchor pending. Anchoring is not enabled on this node yet",
     icon: "pending",
     tone: "pending",
     // This node has no anchoring configured (phase 1), so pending never

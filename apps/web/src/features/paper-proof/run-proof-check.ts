@@ -21,6 +21,7 @@
 
 import { resolveApiBaseUrl } from "../../lib/api";
 import {
+  CONSENT_TYPE,
   GENESIS_TYPE,
   VERSION_TYPE,
   deriveShortId,
@@ -172,6 +173,39 @@ function cannotVerify(reason: string, ref: PaperRef, nodeUrl: string): ProofOutc
   };
 }
 
+/**
+ * How many author signatures the check verified: one on each of the paper's
+ * version records and one on each of its consent records (bug_spec_verify5
+ * bug 5). The indicator says "4 author signatures across 2 versions", not
+ * "2 signatures", so a reader can tell what the number counts.
+ *
+ * Records of other papers may be mixed into `records` (the source's contract),
+ * so versions are matched to this paper's genesis and consents to those
+ * versions.
+ */
+export function authorSignatureCount(
+  records: readonly SignedRecord[],
+  report: VerificationReport,
+): number {
+  const genesis = report.genesis;
+  const versions = records.filter(
+    (record) =>
+      record.type === VERSION_TYPE &&
+      (genesis === null || bodyOf(record).paper === genesis),
+  );
+  const versionIds = new Set(
+    versions
+      .map((record) => record.id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const consents = records.filter(
+    (record) =>
+      record.type === CONSENT_TYPE &&
+      versionIds.has(bodyOf(record).version as string),
+  );
+  return versions.length + consents.length;
+}
+
 /** A check that ran: the checklist, the verdict and the technical details. */
 async function checkRecords(
   records: readonly SignedRecord[],
@@ -226,7 +260,7 @@ async function checkRecords(
   // state follows as the verdict's summary line.
   const counts: VerifyCounts = {
     versions: report.version_count,
-    signatures: report.signers.length,
+    signatures: authorSignatureCount(records, report),
   };
   const schId = versionLabel(records, report, ref);
   return {

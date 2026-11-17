@@ -214,21 +214,27 @@ describe("countedLabel", () => {
     signatures,
   });
 
-  it("reads the PRD's journey-3 line: Verified, the versions, the signatures", () => {
+  it("says what the counts are: author signatures across versions", () => {
     expect(countedLabel("verified", counts(3, 4))).toBe(
-      "Verified · 3 versions · 4 signatures",
+      "Verified · 4 author signatures across 3 versions",
     );
   });
 
   it("counts a check that passed but is not anchored the same way", () => {
     expect(countedLabel("anchor_pending", counts(2, 3))).toBe(
-      "Verified · 2 versions · 3 signatures",
+      "Verified · 3 author signatures across 2 versions",
     );
   });
 
   it("pluralises one version and one signature honestly", () => {
     expect(countedLabel("verified", counts(1, 1))).toBe(
-      "Verified · 1 version · 1 signature",
+      "Verified · 1 author signature across 1 version",
+    );
+  });
+
+  it("reads naturally for two of each, the journey's two authors over two versions", () => {
+    expect(countedLabel("anchor_pending", counts(2, 4))).toBe(
+      "Verified · 4 author signatures across 2 versions",
     );
   });
 

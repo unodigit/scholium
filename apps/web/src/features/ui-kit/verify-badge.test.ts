@@ -52,10 +52,12 @@ describe("VerifyBadge", () => {
       }),
     );
 
-    expect(badge.textContent).toBe("Verified · 3 versions · 4 signatures");
+    expect(badge.textContent).toBe("Verified · 4 author signatures across 3 versions");
     // The link's accessible name is still the visible words.
     expect(
-      screen.getByRole("link", { name: "Verified · 3 versions · 4 signatures" }),
+      screen.getByRole("link", {
+        name: "Verified · 4 author signatures across 3 versions",
+      }),
     ).toBeTruthy();
     // The state itself is unchanged, so the styling and the live region stay right.
     expect(badge.dataset.state).toBe("verified");
@@ -69,7 +71,7 @@ describe("VerifyBadge", () => {
           counts: { versions: 2, signatures: 3 },
         }),
       ).textContent,
-    ).toBe("Verified · 2 versions · 3 signatures");
+    ).toBe("Verified · 3 author signatures across 2 versions");
 
     cleanup();
     expect(

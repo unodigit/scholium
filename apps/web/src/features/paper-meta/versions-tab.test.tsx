@@ -49,6 +49,8 @@ describe("VersionsTab", () => {
     expect(rows[1].textContent).toContain("Fixed the proof of Lemma 2.");
     expect(rows[0].textContent).toContain("Anchored 2 Mar 2027 04:00 UTC");
     expect(rows[1].textContent).toContain("Anchor pending");
+    // The row says *why* it is pending, in the same words as the Proof tab.
+    expect(rows[1].textContent).toContain("Anchoring is not enabled on this node yet");
     expect(rows[1].textContent).toContain("1 Feb 2026");
   });
 

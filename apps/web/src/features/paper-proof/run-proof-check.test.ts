@@ -62,9 +62,9 @@ describe("a paper that verifies", () => {
     expect(outcome.state).toBe("anchor_pending");
     // The indicator carries the PRD's counts; the anchor state follows as the
     // summary (a promise of a time only when an anchor is actually scheduled).
-    expect(outcome.headline).toBe("Verified · 2 versions · 3 signatures");
+    expect(outcome.headline).toBe("Verified · 8 author signatures across 2 versions");
     // The same counts reach the header badge, which words them itself.
-    expect(outcome.counts).toEqual({ versions: 2, signatures: 3 });
+    expect(outcome.counts).toEqual({ versions: 2, signatures: 8 });
     expect(outcome.summary).toBe("Signed. Anchoring is not enabled on this node yet.");
     expect(outcome.items.map((entry) => [entry.key, entry.state])).toEqual([
       ["authors", "pass"],
@@ -96,7 +96,7 @@ describe("a paper that verifies", () => {
     });
 
     expect(outcome.state).toBe("verified");
-    expect(outcome.headline).toBe("Verified · 2 versions · 3 signatures");
+    expect(outcome.headline).toBe("Verified · 8 author signatures across 2 versions");
     expect(line(outcome, "anchor")).toMatchObject({
       state: "pass",
       text: "Timestamp anchored: 2 Mar 2027 04:00 UTC",

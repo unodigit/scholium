@@ -32,13 +32,13 @@
  */
 
 import { Icon } from "../ui-kit";
-import { formatBytes } from "../submit/limits";
+import { formatBytes } from "../ui-kit/format-bytes";
 import { CopyValue } from "./copy-value";
 import { FileDrop } from "./file-drop";
 import type { ContentVersion, LoadContentVersions, LoadManifest, VersionManifest } from "./manifest-source";
 import { useFileCheck } from "./use-file-check";
 import { VERDICT_LOOKS, type Verdict } from "./verdict";
-import { EXAMPLE_VERSION_ID, proofHref, type VersionRef } from "./version-ref";
+import { PLACEHOLDER_VERSION_ID, proofHref, type VersionRef } from "./version-ref";
 import "./verify-page.css";
 
 export interface VerifyPageProps {
@@ -97,7 +97,11 @@ export function VerifyPage({
           className="vp-input"
           type="text"
           value={check.idText}
-          placeholder={EXAMPLE_VERSION_ID}
+          placeholder={
+            initialId !== undefined && initialId.trim() !== ""
+              ? initialId.trim()
+              : PLACEHOLDER_VERSION_ID
+          }
           autoComplete="off"
           autoCapitalize="off"
           spellCheck={false}

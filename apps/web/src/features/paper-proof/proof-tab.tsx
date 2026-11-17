@@ -13,9 +13,9 @@
  * says the result as a plain-language checklist,
  *
  * ```text
- * ✓ Verified · 3 versions · 4 signatures                     [Re-run check]
+ * ✓ Verified · 4 author signatures across 2 versions            [Re-run check]
  *   Signed. Anchoring is not enabled on this node yet.
- * ✓ Signed by all 4 listed authors
+ * ✓ Signed by both listed authors
  * ✓ Version history is intact (v1 → v2)
  * ✓ Files match what the authors signed (3 files)
  * ✓ Recorded in the node's public log (entry #41)
@@ -26,10 +26,14 @@
  * ```
  *
  * with the technical details (record ids, anchor, signers, the six checks) and
- * the command that repeats the check offline, `scholium verify …`, under a
- * disclosure. The result is the CLI's: both fail on exactly the same failed
+ * an "Offline check" section that gives both ways to repeat the check: the
+ * downloaded archive (`scholium verify sch-{id}.car`, no network) and the
+ * online form (`scholium verify sch:…/vN --node …`), under a disclosure. The
+ * Download menu's "How to verify" item promises exactly this explanation. The
+ * result is the CLI's: both fail on exactly the same failed
  * checks (see `checklist.ts`). The indicator's headline carries the PRD's
- * counts (journey 3: "Verified: 3 versions, 4 signatures") with the anchor
+ * counts (journey 3: "Verified: 3 versions, 4 signatures", said as "4 author
+ * signatures across 3 versions" so the number has a name) with the anchor
  * state as the line under it, and the checklist names people and records in
  * words — raw ids stay in the technical details.
  *
@@ -66,6 +70,7 @@ import {
 } from "../ui-kit";
 import {
   abbreviateId,
+  archiveCommand,
   verdictCopy,
   type ChecklistItem,
   type ItemState,
@@ -276,7 +281,12 @@ function ChecklistLine({ item }: { item: ChecklistItem }) {
 }
 
 /**
- * Record ids, anchor, signers, the six checks and the offline command.
+ * Record ids, anchor, signers, the six checks and the offline check.
+ *
+ * The offline check names both forms, because the Download menu's "How to
+ * verify" sends readers here: the archive they already downloaded (no network
+ * at all) and the same check against the node. They are the same command the
+ * menu shows for the archive, so the two pages cannot disagree.
  *
  * Collapsed when all is well, as in the design. Open when the reader most
  * needs it: after a failure (the findings) and after "Could not check" (the
@@ -312,8 +322,17 @@ function TechnicalDetails({ outcome }: { outcome: ProofOutcome }) {
       ) : null}
 
       <div className="pt-offline">
-        <p className="pt-subhead">Verify offline:</p>
-        <CopyValue value={outcome.command} label="the offline command" block />
+        <p className="pt-subhead">Offline check</p>
+        <p className="pt-offline__hint">
+          Verifies offline: the paper archive you downloaded checks with this command.
+        </p>
+        <CopyValue
+          value={archiveCommand(outcome.schId)}
+          label="the offline command for the downloaded archive"
+          block
+        />
+        <p className="pt-offline__hint">Or verifies online, against the node:</p>
+        <CopyValue value={outcome.command} label="the online command" block />
       </div>
     </details>
   );

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../lib/api";
 import { fileCid } from "../paper-proof/files";
 import { TOAST_REGION_ID } from "../ui-kit";
+import { archiveNotice } from "./file-drop";
 import { parseManifestResponse, type LoadManifest, type VersionManifest } from "./manifest-source";
 import { MATCH_HEADLINE, MISMATCH_HEADLINE } from "./verdict";
 import { SIGNED_BYTES, VERSION_ID, fileOf, manifestBody } from "./verify-fixtures";
@@ -56,15 +57,22 @@ afterEach(() => {
 });
 
 describe("before a file is dropped", () => {
-  it("asks for a version id and a file, and states no verdict", () => {
+  it("asks for a file, and says the version id is optional", () => {
     const { container, loadManifest } = renderPage();
 
     expect(kindOf(container)).toBe("idle");
-    expect(verdictOf(container).textContent).toBe("Enter a version id and drop a file to compare them.");
+    expect(verdictOf(container).textContent).toBe(
+      "Drop a file to check it against what the authors signed. A version id is optional.",
+    );
     expect(container.querySelector(".vp-verdict__headline")).toBeNull();
     expect(container.querySelector(".vp-verdict__icon")).toBeNull();
     expect(container.querySelector("details")).toBeNull();
     expect(loadManifest).not.toHaveBeenCalled();
+  });
+
+  it("suggests the shape of a version id, not a paper no node holds", () => {
+    const { container } = renderPage();
+    expect(idInput(container).getAttribute("placeholder")).toBe("sch:xxxx-xxxx-xxxx/v2");
   });
 
   it("tells the reader up front that the file stays on their device", () => {
@@ -497,6 +505,45 @@ describe("the drop zone", () => {
     expect(zone(container).querySelector(".vp-drop__notice")!.textContent).toBe(
       "You dropped 2 files. Checking main.pdf; drop the others one at a time.",
     );
+  });
+
+  it("recognises a paper archive and says how to check it offline", () => {
+    const { container, loadManifest } = renderPage();
+
+    chooseFile(container, fileOf(new TextEncoder().encode("an exported paper"), "sch-6sel-2dio-orm6.car"));
+
+    expect(zone(container).querySelector(".vp-drop__notice")!.textContent).toBe(
+      "This is a paper archive - verify it offline with: scholium verify sch-6sel-2dio-orm6.car",
+    );
+    // It is not fingerprinted or compared: a whole archive is not a file one
+    // version's manifest can list, so "does not match" would be the wrong answer.
+    expect(kindOf(container)).toBe("idle");
+    expect(zone(container).textContent).toContain("Drop a file here");
+    expect(container.querySelector("details")).toBeNull();
+    expect(loadManifest).not.toHaveBeenCalled();
+  });
+
+  it("prints an archive command that runs as written, whatever the name's case or spaces", () => {
+    // The extension is recognised whatever its case, and a name with spaces is
+    // quoted so the reader can paste the command into a shell unchanged.
+    expect(archiveNotice("EXPORT.CAR")).toBe(
+      "This is a paper archive - verify it offline with: scholium verify EXPORT.CAR",
+    );
+    expect(archiveNotice("my paper.car")).toBe(
+      "This is a paper archive - verify it offline with: scholium verify 'my paper.car'",
+    );
+  });
+
+  it("recognises a paper archive whatever the extension's case", () => {
+    const { container, loadManifest } = renderPage();
+
+    chooseFile(container, fileOf(new Uint8Array([1, 2, 3]), "EXPORT.CAR"));
+
+    expect(zone(container).querySelector(".vp-drop__notice")!.textContent).toContain(
+      "This is a paper archive",
+    );
+    expect(kindOf(container)).toBe("idle");
+    expect(loadManifest).not.toHaveBeenCalled();
   });
 
   it("names a dropped folder instead of checking it", async () => {

@@ -44,6 +44,8 @@ export {
 
 export { VerifyBadge, type VerifyBadgeProps } from "./verify-badge";
 
+export { formatBytes } from "./format-bytes";
+
 export {
   PROOF_TAB_HREF,
   VERIFY_BADGE_SPECS,

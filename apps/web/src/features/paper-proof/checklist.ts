@@ -142,7 +142,10 @@ function authorsItem(report: VerificationReport): ChecklistItem {
       ? consents.message
       : count === 1
         ? "Signed by the listed author"
-        : `Signed by all ${count} listed authors`;
+        // Two authors have a word of their own: "both", never "all 2".
+        : count === 2
+          ? "Signed by both listed authors"
+          : `Signed by all ${count} listed authors`;
   return fromChecks("authors", text, [signatures, consents]);
 }
 
@@ -407,9 +410,9 @@ export interface VerdictCopy {
 
 /**
  * Headline and summary for each state. For a check that passed, the headline
- * carries the PRD's counts ("Verified · 3 versions · 4 signatures") and the
- * anchor state follows as the summary, so a signed-but-not-anchored paper says
- * so instead of promising a time. The words otherwise come from the
+ * carries the PRD's counts ("Verified · 4 author signatures across 2 versions")
+ * and the anchor state follows as the summary, so a signed-but-not-anchored
+ * paper says so instead of promising a time. The words otherwise come from the
  * VerifyBadge's own table (docs/design.md §5.3) so the badge in the paper
  * header and this tab always agree.
  */
@@ -509,12 +512,47 @@ export function technicalRows(input: TechnicalInput): TechnicalRow[] {
   return rows;
 }
 
+/**
+ * A passed check's message in words a reader can read. verify-core's messages
+ * name their count ("All 1 prev link match…", "Signed by all 2 listed
+ * authors"), which is precise but ungrammatical; the technical details show
+ * the same fact with the count pluralised naturally (bug_spec_verify5 bug 5).
+ *
+ * Only the passing messages are rewritten: a failure's message says what went
+ * wrong and is shown as verify-core wrote it.
+ */
+function passedCheckWording(check: CheckResult, report: VerificationReport): string | null {
+  if (check.name === "prev_hashes") {
+    const count = report.version_count;
+    return count === 1
+      ? "The previous-version link matches the hash of the record it names"
+      : `All ${count} previous-version links match the hash of the record they name`;
+  }
+  if (check.name === "consents") {
+    // verify-core names the newest version's listed authors; keep its count so
+    // the rewording cannot disagree with the check that produced it.
+    const named = /^Signed by all (\d+) listed authors/.exec(check.message);
+    const count = named === null ? report.authors.length : Number(named[1]);
+    if (count === 0) return null;
+    const who =
+      count === 1
+        ? "the listed author"
+        : count === 2
+          ? "both listed authors"
+          : `all ${count} listed authors`;
+    return `Signed by ${who} (every version has a consent from each of its authors)`;
+  }
+  return null;
+}
+
 /** Every check verify-core ran, in report order. */
 export function checkLines(report: VerificationReport): CheckLine[] {
   return Object.values(report.checks).map((check) => ({
     name: check.name,
     passed: check.passed,
-    message: cliWording(check.message),
+    message: check.passed
+      ? (passedCheckWording(check, report) ?? cliWording(check.message))
+      : cliWording(check.message),
   }));
 }
 
@@ -537,4 +575,22 @@ function shellQuote(value: string): string {
  */
 export function offlineCommand(schId: string, nodeUrl: string): string {
   return `scholium verify ${shellQuote(schId)} --node ${shellQuote(nodeUrl.replace(/\/+$/, ""))}`;
+}
+
+/**
+ * The command that checks the paper's *downloaded archive* with no network at
+ * all: `scholium verify sch-k3f9-q2xz-7mwd.car`.
+ *
+ * The Download menu names the archive `sch-{id}.car` (see
+ * `paper-page/download-menu.tsx`), so the Proof tab spells the command the same
+ * way: the "How to verify" item in that menu promises this explanation.
+ */
+export function archiveCommand(schId: string): string {
+  const paper = schId
+    .trim()
+    .replace(/^sch:/i, "")
+    .split("/")[0];
+  return paper === ""
+    ? "scholium verify paper.car"
+    : `scholium verify sch-${paper}.car`;
 }

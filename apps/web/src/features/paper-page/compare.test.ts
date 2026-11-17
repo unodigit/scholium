@@ -301,14 +301,14 @@ describe("diffFiles", () => {
 
   it("writes each change in words, with the size, never by colour alone", () => {
     expect(describeFileChange(diffFiles([], [file("paper.pdf", "c1", 2048)])[0])).toBe(
-      "Added paper.pdf (2 KiB)",
+      "Added paper.pdf (2.0 KB)",
     );
     expect(describeFileChange(diffFiles([file("paper.pdf", "c1", 2048)], [])[0])).toBe(
-      "Removed paper.pdf (2 KiB)",
+      "Removed paper.pdf (2.0 KB)",
     );
     expect(
       describeFileChange(diffFiles([file("paper.pdf", "c1", 2048)], [file("paper.pdf", "c2", 3072)])[0]),
-    ).toBe("Replaced paper.pdf (2 KiB → 3 KiB)");
+    ).toBe("Replaced paper.pdf (2.0 KB → 3.0 KB)");
   });
 });
 
@@ -523,8 +523,8 @@ describe("CompareView — files and details", () => {
 
   it("shows each file change with the sizes on both sides", () => {
     const html = render({ files: diffFiles(V1_FILES, V2_FILES) });
-    expect(html).toContain("471 KiB");
-    expect(html).toContain("518 KiB");
+    expect(html).toContain("470.8 KB");
+    expect(html).toContain("517.6 KB");
   });
 
   it("shows a changed abstract as a text diff, old words struck and new words inserted", () => {

@@ -22,6 +22,7 @@ export { VERIFY_PATH, verifyHref } from "./verify-href";
 
 export {
   EXAMPLE_VERSION_ID,
+  PLACEHOLDER_VERSION_ID,
   parseVersionRef,
   proofHref,
   type ParsedVersionRef,

@@ -23,11 +23,15 @@
  * Pure data and functions, no React.
  */
 
-import { formatBytes } from "../submit/limits";
+import { formatBytes } from "../ui-kit/format-bytes";
 import type { IconName } from "../ui-kit";
 import { baseName, compareFile, type FileFacts } from "./compare";
 import type { VersionManifest } from "./manifest-source";
 import type { VersionRef } from "./version-ref";
+
+/** The hint before anything has been dropped: a file is enough, the version is optional. */
+export const IDLE_HINT =
+  "Drop a file to check it against what the authors signed. A version id is optional.";
 
 /** The sentence the reader is shown when a file matches a signed file. */
 export const MATCH_HEADLINE = "This file matches what the authors signed";
@@ -173,7 +177,7 @@ function matchVerdict(file: FileFacts, manifest: VersionManifest): Verdict {
   if (named !== null) {
     details.push(
       file.size === named.size
-        ? `${named.path} is signed for this version and is also ${file.size} bytes, but its contents differ.`
+        ? `${named.path} is signed for this version and is also ${formatBytes(file.size)}, but its contents differ.`
         : `${named.path} is signed for this version, but yours is ${formatBytes(file.size)} and the signed file is ${formatBytes(named.size)}.`,
     );
   }
@@ -206,8 +210,8 @@ export function deriveVerdict({ ref, manifest, file }: VerdictInput): Verdict {
       "idle",
       null,
       file.status === "ready"
-        ? "Enter the version id to compare this file with what the authors signed."
-        : "Enter a version id and drop a file to compare them.",
+        ? "This file is ready. A version id is optional; without one, Scholium finds the paper that contains it."
+        : IDLE_HINT,
     );
   }
 
@@ -257,7 +261,7 @@ export function deriveContentVerdict({ file, content }: ContentVerdictInput): Ve
     return build("cannot_check", UNREADABLE_HEADLINE, file.message);
   }
   if (file.status === "idle") {
-    return build("idle", null, "Enter a version id and drop a file to compare them.");
+    return build("idle", null, IDLE_HINT);
   }
   if (content.status === "loading" || content.status === "idle") {
     return build("checking", CHECKING_HEADLINE, "Looking up which listed paper contains this file…");
@@ -279,6 +283,6 @@ export function deriveContentVerdict({ file, content }: ContentVerdictInput): Ve
   return build(
     "match",
     MATCH_HEADLINE,
-    `This file is ${match.fileName} of ${match.title}, version ${match.n} (${schId}) - signed by its authors`,
+    `This file is ${match.fileName} of ${match.title}, version ${match.n} (${schId}) — signed by its authors`,
   );
 }
