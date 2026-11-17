@@ -9,7 +9,9 @@
  * ```
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { ReportPanel } from "../paper-discussion";
 import {
@@ -74,6 +76,61 @@ export function ReportPaper(props: ReportPaperProps) {
   const [open, setOpen] = useState(false);
   const [reported, setReported] = useState<ReportReason | null>(null);
 
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    trigger.current?.focus();
+  }, []);
+
+  const FOCUSABLE =
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  // Take focus on open, and keep the page behind from scrolling under the scrim.
+  useEffect(() => {
+    if (!open) return;
+    panel.current?.focus();
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = overflow;
+    };
+  }, [open]);
+
+  // Escape closes the dialog wherever focus is inside the page.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, close]);
+
+  const keepFocusInside = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Tab" || panel.current === null) return;
+    const stops = Array.from(panel.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+    if (stops.length === 0) {
+      event.preventDefault();
+      panel.current.focus();
+      return;
+    }
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === panel.current)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   // The live session, like the rest of the header: the access token lives in
   // memory and is restored after the page has rendered, so it cannot be read
   // once at render. A pinned `signedIn` wins, for hosts and tests.
@@ -122,28 +179,63 @@ export function ReportPaper(props: ReportPaperProps) {
     setOpen(true);
   };
 
+  const titleId = "report-paper-title";
+
   return (
     <>
       <button
+        ref={trigger}
         type="button"
         className="ppg-action pd-action pd-action--report"
         data-action="report"
+        aria-haspopup="dialog"
         onClick={click}
       >
         Report
       </button>
-      {open ? (
-        <div className="pd-panel">
-          <ReportPanel
-            authorLabel="this paper"
-            legend="Why are you reporting this paper?"
-            reasons={PAPER_REPORT_REASONS}
-            signInHref={props.signInHref ?? signInHereHref()}
-            onCancel={() => setOpen(false)}
-            onReport={file}
-          />
-        </div>
-      ) : null}
+      {open && isSignedIn
+        ? createPortal(
+            <div
+              className="ppg-dialog-backdrop"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) close();
+              }}
+            >
+              <div
+                ref={panel}
+                className="ppg-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                tabIndex={-1}
+                onKeyDown={keepFocusInside}
+              >
+                <div className="ppg-dialog-header">
+                  <h2 id={titleId} className="ppg-dialog-title">
+                    Report this paper
+                  </h2>
+                  <button
+                    type="button"
+                    className="ppg-dialog-close"
+                    aria-label="Close"
+                    onClick={close}
+                  >
+                    ×
+                  </button>
+                </div>
+                <ReportPanel
+                  authorLabel="this paper"
+                  legend="Why are you reporting this paper?"
+                  reasons={PAPER_REPORT_REASONS}
+                  signInHref={props.signInHref ?? signInHereHref()}
+                  onCancel={close}
+                  onReport={file}
+                />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

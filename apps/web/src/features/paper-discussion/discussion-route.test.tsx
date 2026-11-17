@@ -149,7 +149,7 @@ describe("/discussion/[id]", () => {
     const fetchMock = stubApi();
     await render(["6sel-2dio-orm6"]);
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
-    expect(urls).toHaveLength(2);
+    expect(urls).toHaveLength(3);
     expect(urls.some((url) => url.endsWith(`/v1/papers/${encoded}/threads`))).toBe(true);
     expect(urls.some((url) => url.endsWith(`/v1/papers/${encoded}/versions`))).toBe(true);
   });

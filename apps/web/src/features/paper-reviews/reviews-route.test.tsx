@@ -104,7 +104,7 @@ describe("/reviews/[id]", () => {
 
     const html = await render(["6sel-2dio-orm6"]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(html).toContain("Reviewer A");
     expect(html).toContain("Reviewer B");
     expect(html).toContain("Minor revisions");
@@ -162,7 +162,7 @@ describe("/reviews/[id]", () => {
     const props = await tabProps(["6sel-2dio-orm6", "v1"]);
 
     // The version number is resolved to its cid: the endpoint takes one segment.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(String((fetchMock.mock.calls[1] as unknown[])[0])).toContain(v1Path);
     // The tab asks for that version's reviews; a later fetch keeps the suffix.
     expect(props.paperId).toBe(versioned);

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 
 import {
   PaperRefError,
@@ -9,6 +10,7 @@ import {
   ProofNotice,
   ProofTab,
 } from "../../../../features/paper-proof/proof-tab";
+import { loadPaper } from "../../../../features/search-page/paper";
 
 interface ProofPageProps {
   /** `/proof/k3f9-q2xz-7mwd` or `/proof/k3f9-q2xz-7mwd/v2` (Next 15: a promise). */
@@ -27,10 +29,27 @@ function parse(segments: string[]): Parsed {
   }
 }
 
+const readPaperTitle = cache(async (shortId: string, version: number | null): Promise<string | null> => {
+  try {
+    const paper = await loadPaper({ id: shortId, version });
+    return paper.title;
+  } catch {
+    return null;
+  }
+});
+
 export async function generateMetadata({ params }: ProofPageProps): Promise<Metadata> {
   const parsed = parse((await params).ref);
+  if (!("ref" in parsed)) {
+    return {
+      title: "Proof",
+      description:
+        "Check in your browser that a Scholium paper is signed by all its authors, its history is intact and its files match.",
+    };
+  }
+  const title = await readPaperTitle(parsed.ref.shortId, parsed.ref.version);
   return {
-    title: "ref" in parsed ? `Proof of ${parsed.ref.schId}` : "Proof",
+    title: title !== null ? `Proof of ${title}` : `Proof of ${parsed.ref.schId}`,
     description:
       "Check in your browser that a Scholium paper is signed by all its authors, its history is intact and its files match.",
   };
@@ -48,9 +67,19 @@ export async function generateMetadata({ params }: ProofPageProps): Promise<Meta
 export default async function ProofPage({ params }: ProofPageProps) {
   const parsed = parse((await params).ref);
 
+  const paperTitle =
+    "ref" in parsed ? await readPaperTitle(parsed.ref.shortId, parsed.ref.version) : null;
+  const bare =
+    "ref" in parsed ? parsed.ref.shortId.trim().replace(/^sch:/i, "").split("/")[0] : "";
+
   return (
     <>
       <header className="ppf-header">
+        {paperTitle ? (
+          <p className="ppf-paper">
+            <a href={`/p/${encodeURIComponent(bare)}`}>{paperTitle}</a>
+          </p>
+        ) : null}
         <p className="ppf-kicker mono-id">
           scholium / proof{"ref" in parsed ? ` / ${parsed.ref.schId}` : ""}
         </p>

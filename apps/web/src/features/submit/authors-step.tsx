@@ -46,7 +46,7 @@ import {
 import { ConsentTracker } from "./consent-tracker";
 import { trackerFromDraft, trackerFromReport, type FetchConsents, type VersionRef } from "./consents";
 import { ArrowDownIcon, ArrowUpIcon, CheckIcon, InfoIcon, PersonIcon, PlusIcon } from "./icons";
-import { withProfileNames, type FetchProfileName } from "./profile-names";
+import { fetchProfileName as defaultFetchProfileName, withProfileNames, type FetchProfileName } from "./profile-names";
 import { useConsents } from "./use-consents";
 import { useProfileNames } from "./use-profile-names";
 import "./submit.css";
@@ -217,7 +217,19 @@ export function AuthorsStep({
     setIdentifier("");
     setName("");
     identifierRef.current?.focus();
-    setAnnouncement(`Added ${authorLabel(result.added)}. Choose their CRediT roles below.`);
+    const added = result.added;
+    const nameFetcher = fetchProfileName ?? defaultFetchProfileName;
+    setAnnouncement(`Added ${authorLabel(added)}. Choose their CRediT roles below.`);
+    // A co-author added by DID carries no name in the draft; ask their public
+    // profile so the confirmation says who they are, with the DID as secondary.
+    if (added.kind === "did" && added.name.trim() === "" && added.identifier !== null) {
+      const did = added.identifier;
+      void nameFetcher(did).then((profileName) => {
+        if (profileName !== null && profileName.trim() !== "") {
+          setAnnouncement(`Added ${profileName.trim()}. Choose their CRediT roles below.`);
+        }
+      });
+    }
     if (resolveAuthor !== undefined && result.added.kind !== "did") {
       void lookUp(result.added.key);
     }

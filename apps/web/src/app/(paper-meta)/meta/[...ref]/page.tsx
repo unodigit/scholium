@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 
 import {
   FilesTab,
@@ -13,6 +14,7 @@ import {
   type MetaRef,
   type VersionsData,
 } from "../../../../features/paper-meta";
+import { loadPaper } from "../../../../features/search-page/paper";
 
 /**
  * `/meta/{id}[/v{n}]` — the Versions and Files tabs on a page of their own.
@@ -52,21 +54,41 @@ function parse(segments: string[]): Parsed {
   }
 }
 
+const readPaperTitle = cache(async (shortId: string, version: number | null): Promise<string | null> => {
+  try {
+    const paper = await loadPaper({ id: shortId, version });
+    return paper.title;
+  } catch {
+    return null;
+  }
+});
+
 export async function generateMetadata({ params }: MetaPageProps): Promise<Metadata> {
   const parsed = parse((await params).ref);
+  if (parsed.ref === undefined) {
+    return {
+      title: "Versions and files",
+      description:
+        "Every listed version of a Scholium paper, with its change note and public timestamp, and the signed files of one version with their size, licence, scan status and download links.",
+    };
+  }
+  const title = await readPaperTitle(parsed.ref.shortId, parsed.ref.version);
   return {
-    title:
-      parsed.ref !== undefined
-        ? `Versions and files of ${parsed.ref.schId}`
-        : "Versions and files",
+    title: title !== null ? `Versions and files of ${title}` : `Versions and files of ${parsed.ref.schId}`,
     description:
       "Every listed version of a Scholium paper, with its change note and public timestamp, and the signed files of one version with their size, licence, scan status and download links.",
   };
 }
 
-function Header({ schId }: { schId?: string }) {
+function Header({ schId, paperId, title }: { schId?: string; paperId?: string; title?: string | null }) {
+  const bare = (paperId ?? schId ?? "").trim().replace(/^sch:/i, "").split("/")[0];
   return (
     <header className="pmeta-header">
+      {title ? (
+        <p className="pmeta-paper">
+          <a href={`/p/${encodeURIComponent(bare)}`}>{title}</a>
+        </p>
+      ) : null}
       <p className="pmeta-kicker mono-id">
         scholium / versions &amp; files{schId !== undefined ? ` / ${schId}` : ""}
       </p>
@@ -118,9 +140,11 @@ export default async function MetaPage({ params }: MetaPageProps) {
     }
   }
 
+  const paperTitle = await readPaperTitle(ref.shortId, ref.version);
+
   return (
     <>
-      <Header schId={ref.schId} />
+      <Header schId={ref.schId} paperId={ref.shortId} title={paperTitle} />
 
       <section className="pmeta-section" aria-labelledby="pmeta-versions">
         <h2 className="pmeta-section-title" id="pmeta-versions">

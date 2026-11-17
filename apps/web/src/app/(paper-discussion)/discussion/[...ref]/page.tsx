@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 
 import {
   DiscussionTab,
@@ -15,6 +16,7 @@ import {
   metaRefFromSegments,
   type MetaRef,
 } from "../../../../features/paper-meta";
+import { loadPaper } from "../../../../features/search-page/paper";
 
 /**
  * `/discussion/{id}[/v{n}]` — the Discussion tab on a page of its own.
@@ -61,21 +63,41 @@ function parse(segments: string[]): Parsed {
   }
 }
 
+const readPaperTitle = cache(async (shortId: string, version: number | null): Promise<string | null> => {
+  try {
+    const paper = await loadPaper({ id: shortId, version });
+    return paper.title;
+  } catch {
+    return null;
+  }
+});
+
 export async function generateMetadata({ params }: DiscussionPageProps): Promise<Metadata> {
   const parsed = parse((await params).ref);
+  if (parsed.ref === undefined) {
+    return {
+      title: "Discussion",
+      description:
+        "Open discussion threads on a Scholium paper, most helpful first, with replies and a way to report any post.",
+    };
+  }
+  const title = await readPaperTitle(parsed.ref.shortId, parsed.ref.version);
   return {
-    title:
-      parsed.ref !== undefined
-        ? `Discussion of ${parsed.ref.schId}`
-        : "Discussion",
+    title: title !== null ? `Discussion of ${title}` : `Discussion of ${parsed.ref.schId}`,
     description:
       "Open discussion threads on a Scholium paper, most helpful first, with replies and a way to report any post.",
   };
 }
 
-function Header({ schId }: { schId?: string }) {
+function Header({ schId, paperId, title }: { schId?: string; paperId?: string; title?: string | null }) {
+  const bare = (paperId ?? schId ?? "").trim().replace(/^sch:/i, "").split("/")[0];
   return (
     <header className="pdisc-header">
+      {title ? (
+        <p className="pdisc-paper">
+          <a href={`/p/${encodeURIComponent(bare)}`}>{title}</a>
+        </p>
+      ) : null}
       <p className="pdisc-kicker mono-id">
         scholium / discussion{schId !== undefined ? ` / ${schId}` : ""}
       </p>
@@ -126,9 +148,11 @@ export default async function DiscussionPage({ params }: DiscussionPageProps) {
     versionCid = versions.value.versions.find((version) => version.n === shown)?.cid;
   }
 
+  const paperTitle = await readPaperTitle(ref.shortId, ref.version);
+
   return (
     <>
-      <Header schId={ref.schId} />
+      <Header schId={ref.schId} paperId={ref.shortId} title={paperTitle} />
       <DiscussionTab
         paperId={ref.shortId}
         versionCid={versionCid}

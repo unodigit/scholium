@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 
 import {
   ReviewsTab,
@@ -14,6 +15,7 @@ import {
   metaRefFromSegments,
   type MetaRef,
 } from "../../../../features/paper-meta";
+import { loadPaper } from "../../../../features/search-page/paper";
 
 /**
  * `/reviews/{id}[/v{n}]` — the Reviews tab on a page of its own.
@@ -57,21 +59,41 @@ function parse(segments: string[]): Parsed {
   }
 }
 
+const readPaperTitle = cache(async (shortId: string, version: number | null): Promise<string | null> => {
+  try {
+    const paper = await loadPaper({ id: shortId, version });
+    return paper.title;
+  } catch {
+    return null;
+  }
+});
+
 export async function generateMetadata({ params }: ReviewsPageProps): Promise<Metadata> {
   const parsed = parse((await params).ref);
+  if (parsed.ref === undefined) {
+    return {
+      title: "Reviews",
+      description:
+        "The formal reviews of a Scholium paper: reviewer label, recommendation, rubric scores and the report, with the median score per rubric dimension.",
+    };
+  }
+  const title = await readPaperTitle(parsed.ref.shortId, parsed.ref.version);
   return {
-    title:
-      parsed.ref !== undefined
-        ? `Reviews of ${parsed.ref.schId}`
-        : "Reviews",
+    title: title !== null ? `Reviews of ${title}` : `Reviews of ${parsed.ref.schId}`,
     description:
       "The formal reviews of a Scholium paper: reviewer label, recommendation, rubric scores and the report, with the median score per rubric dimension.",
   };
 }
 
-function Header({ schId }: { schId?: string }) {
+function Header({ schId, paperId, title }: { schId?: string; paperId?: string; title?: string | null }) {
+  const bare = (paperId ?? schId ?? "").trim().replace(/^sch:/i, "").split("/")[0];
   return (
     <header className="prs-header">
+      {title ? (
+        <p className="prs-paper">
+          <a href={`/p/${encodeURIComponent(bare)}`}>{title}</a>
+        </p>
+      ) : null}
       <p className="prs-kicker mono-id">
         scholium / reviews{schId !== undefined ? ` / ${schId}` : ""}
       </p>
@@ -118,9 +140,11 @@ export default async function ReviewsPage({ params }: ReviewsPageProps) {
     }
   }
 
+  const paperTitle = await readPaperTitle(ref.shortId, ref.version);
+
   return (
     <>
-      <Header schId={ref.schId} />
+      <Header schId={ref.schId} paperId={ref.shortId} title={paperTitle} />
       <ReviewsTab
         paperId={ref.schId}
         initial={initial}
