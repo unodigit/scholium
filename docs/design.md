@@ -25,12 +25,84 @@ The name sets the visual idea: a *scholium* is a note in the margin of a text. T
 
 ## 2. Brand
 
-| Element | Direction |
-| --- | --- |
-| Name | Scholium; lowercase wordmark `scholium` |
-| Mark | A text block with a bracket-shaped margin note to its right: `▤⌉` rendered as a simple two-part glyph |
-| Voice | Plain, precise, collegial. Short sentences. No hype words ("revolutionary", "trustless"). |
-| ID style | `sch:k3f9-q2xz-7mwd/v3`, monospace, always copyable |
+Summary: delivered assets (each file in docs/brand and where it is used in the app); construction of the mark (page block, text lines, bracket, margin-note strip); light and dark lockups; minimum sizes (mark 16px, lockup 20px tall); clear space (half the mark height); colour usage (accent, paper, ink, dark-mode equivalents from §3); wordmark typography (Source Serif 4 semibold, always lowercase); do/don't (no recolouring, no stretching, no effects, never put the tile on a busy background); keep the existing clearance note.
+
+### Name and voice
+
+- Name: **Scholium**; the wordmark is always lowercase `scholium`.
+- Voice: plain, precise, collegial. Short sentences. No hype words ("revolutionary", "trustless").
+- ID style: `sch:k3f9-q2xz-7mwd/v3`, monospace, always copyable.
+
+### Delivered assets
+
+The files in `docs/brand` are the source of truth for the brand. Each is used in the app as follows.
+
+| File | What it is | Where it is used in the app |
+| --- | --- | --- |
+| `docs/brand/scholium-favicon.svg` | 32×32 SVG of the tile mark (accent tile, light page block with text lines and closing bracket) | `apps/web/src/app/icon.svg` (browser tab favicon); geometry source for `BrandMark` variant "tile" |
+| `docs/brand/favicon.ico` | Multi-size ICO (16×16, 32×32) | `apps/web/src/app/favicon.ico` |
+| `docs/brand/apple-touch-icon.png` | 180×180 PNG tile mark | `apps/web/src/app/apple-icon.png` (home-screen icon) |
+| `docs/brand/scholium-favicon-tile.jpeg` | 1024×1024 high-res tile mark | Source for `apps/web/public/brand/icon-192.png`, `icon-512.png` and `icon-maskable-512.png` (web manifest icons) |
+| `docs/brand/scholium-logo-light.jpeg` | Light lockup reference (1376×768) | Source for `apps/web/public/brand/scholium-logo-light.png`; reference for the light lockup and `BrandLogo` |
+| `docs/brand/scholium-logo-dark.jpeg` | Dark lockup reference (1376×768) | Source for `apps/web/public/brand/scholium-logo-dark.png`; reference for the dark lockup |
+
+The mark is also rendered as inline SVG by `BrandMark` / `BrandLogo` (`apps/web/src/features/ui-kit/brand-mark.tsx`, `brand-logo.tsx`) and used in the global navigation, the sign-in/onboarding/recovery layout, the root not-found and error pages, branded social share images, and the notification email header.
+
+### Construction of the mark
+
+The mark has two parts: a **page block** (an ink-blue rectangle standing in for a page of text) and a **closing bracket** to its right, the "margin note" that gives Scholium its name.
+
+- **Tile variant** (favicon / app icon): a rounded accent square (corner radius 6 px) with the page block and bracket cut out in the paper colour. The page block carries **four text lines**, the last one short, followed by the closing bracket.
+- **Glyph variant** (lockup): an accent-filled **page block** with **four light text lines** (the last one short), a thin **margin-note strip** in the margin-note colour between the page block and the accent **closing bracket** to its right.
+
+The margin-note strip is the signature detail: it is the scholium in the margin, the annotation that sits beside the text.
+
+### Light and dark lockups
+
+- **Light lockup**: page block and bracket in accent `#2F4BA0`; text lines in paper `#FBFAF7`; margin-note strip in `#FFF6D6`; wordmark in ink `#1B1D22` on paper `#FBFAF7`.
+- **Dark lockup**: page block and bracket in accent `#8FA6F0` (the dark-mode equivalent from §3); text lines in paper `#14151A`; margin-note strip in `#3A3320`; wordmark in ink `#ECEBE6` on paper `#14151A`.
+
+Because every colour is read from the design tokens (`--accent`, `--bg`, `--ink`, `--margin-note`), the mark re-themes automatically between light and dark; no separate dark artwork is needed at runtime.
+
+### Minimum sizes
+
+- **Mark**: never rendered smaller than **16px** (16 px).
+- **Lockup**: never shorter than **20px tall**.
+
+### Clear space
+
+Clear space around the mark equals **half the mark height** on all sides. Nothing may intrude into this space.
+
+### Colour usage
+
+Colour roles follow §3 (Colour). The mark uses only these tokens, with their dark-mode equivalents from §3:
+
+| Role | Light | Dark | Use in the mark |
+| --- | --- | --- | --- |
+| Accent | `#2F4BA0` | `#8FA6F0` | Page block, closing bracket, tile background |
+| Paper | `#FBFAF7` | `#14151A` | Text lines cut out of the mark |
+| Ink | `#1B1D22` | `#ECEBE6` | Wordmark colour |
+| Margin note | `#FFF6D6` | `#3A3320` | Margin-note strip between page and bracket |
+
+No other colour may be used in the mark or tile.
+
+### Wordmark typography
+
+The wordmark is set in **Source Serif 4 semibold**, always lowercase (`scholium`), in the ink colour, with optical spacing so the cap height of the wordmark aligns with the page block. It is never set in any other face, weight, case or colour.
+
+### Do / don't
+
+Do:
+- Use the delivered geometry and the token colours exactly.
+- Keep the clear space of half the mark height.
+- Use the wordmark in Source Serif 4 semibold, always lowercase.
+
+Don't:
+- **No recolouring** — do not change any colour of the mark, tile or wordmark.
+- **No stretching** — do not distort the aspect ratio of the mark or tile.
+- **No effects** — no shadows, gradients, outlines, glows or other decoration.
+- **Never put the tile on a busy background** — the tile needs a calm, solid surface.
+- Do not separate the margin-note strip from the mark or recolour it independently.
 
 Clearance note: the name passed a web search for conflicting publishing products, but trademark and domain clearance are still required before the brand is used publicly.
 
