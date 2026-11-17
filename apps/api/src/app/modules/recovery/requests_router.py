@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from sqlalchemy import select
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -47,7 +48,7 @@ from . import problems
 from . import approvals as _approvals
 from .opening import InvalidRecoveryRequest, NoGuardians, UnknownAccount, open_recovery_request
 from .models import RecoveryRequest, ensure_requests_table
-from .service import GUARDIAN_COUNT
+from .service import GUARDIAN_COUNT, get_guardians
 
 __all__ = ["RecoveryRequestCreated", "RecoveryRequestIn", "requests_router"]
 
@@ -175,6 +176,80 @@ async def post_recovery_approval(
         "contest_until": result.contest_until.isoformat() + "Z" if result.contest_until else None,
         "opened_contest_window": result.opened_contest_window,
     }
+
+
+@requests_router.get("/requests/{request_id}")
+def get_recovery_request(request_id: str):
+    ensure_requests_table()
+    with db.SessionLocal() as session:
+        row = session.get(RecoveryRequest, request_id)
+        if row is None:
+            raise problems.recovery_request_not_found()
+        approvals = list(row.approvals or [])
+        count = len(approvals)
+        contest_until = (
+            row.contest_until.isoformat() + "Z" if row.contest_until is not None else None
+        )
+        return {
+            "request_id": row.id,
+            "id": row.id,
+            "status": row.status,
+            "did": row.did,
+            "account_did": row.did,
+            "accountDid": row.did,
+            "new_public_key": row.new_public_key,
+            "newPublicKey": row.new_public_key,
+            "new_key": row.new_public_key,
+            "newKey": row.new_public_key,
+            "approvals": approvals,
+            "approval_count": count,
+            "approvals_count": count,
+            "count": count,
+            "contest_until": contest_until,
+            "contestUntil": contest_until,
+            "threshold": _approvals.APPROVAL_THRESHOLD,
+        }
+
+
+@requests_router.get("/requests")
+def list_recovery_requests(principal: Principal = Depends(get_current_principal)):
+    ensure_requests_table()
+    result = []
+    with db.SessionLocal() as session:
+        rows = session.scalars(select(RecoveryRequest)).all()
+        for row in rows:
+            guardians = get_guardians(row.did)
+            if principal.did not in guardians:
+                continue
+            if row.status not in ("pending", "contest"):
+                continue
+            approvals = list(row.approvals or [])
+            count = len(approvals)
+            contest_until = (
+                row.contest_until.isoformat() + "Z" if row.contest_until is not None else None
+            )
+            result.append(
+                {
+                    "request_id": row.id,
+                    "id": row.id,
+                    "status": row.status,
+                    "did": row.did,
+                    "account_did": row.did,
+                    "accountDid": row.did,
+                    "new_public_key": row.new_public_key,
+                    "newPublicKey": row.new_public_key,
+                    "new_key": row.new_public_key,
+                    "newKey": row.new_public_key,
+                    "approvals": approvals,
+                    "approval_count": count,
+                    "approvals_count": count,
+                    "count": count,
+                    "contest_until": contest_until,
+                    "contestUntil": contest_until,
+                    "threshold": _approvals.APPROVAL_THRESHOLD,
+                }
+            )
+    return result
 
 
 _SIGNATURE_FIELDS_CANCEL = ("signature", "sig", "proof", "proofValue")

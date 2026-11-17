@@ -290,6 +290,14 @@ function ProgressBody({
         </p>
       ) : null}
 
+      {snapshot.status === "finalized" ? (
+        <p className="wa-meta">
+          <a className="wa-button" href="/signin">
+            Sign in with your new passkey
+          </a>
+        </p>
+      ) : null}
+
       <p className="wa-meta">
         <button type="button" className="wa-link wa-link-button" onClick={recover.reset}>
           {RECOVER_RESET_ACTION}

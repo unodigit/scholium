@@ -222,6 +222,7 @@ describe("loadGuardians", () => {
       required: 3,
       total: 5,
       dids: GUARDIANS,
+      localDids: [],
       source: "server",
     });
   });

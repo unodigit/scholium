@@ -152,6 +152,7 @@ export function SecurityPage({
           <div className="db-grid">
             <DevicesCard data={state.data} />
             <GuardiansCard guardians={state.data.guardians} />
+            <RecoveryRequestsCard requests={state.data.recoveryRequests ?? []} />
             <KeyRotationCard data={state.data} rotate={rotate} onRotated={onRotated} />
           </div>
           <EraseProfileCard did={state.data.did} eraseProfile={eraseProfile} />
@@ -247,6 +248,9 @@ function GuardiansCard({ guardians }: { guardians: GuardianState }) {
           {guardians.dids.map((did) => (
             <li className="db-cred-id mono-id" key={did}>
               {did}
+              {(guardians.localDids ?? []).includes(did) ? (
+                <span className="db-cred-note meta"> (also on this device)</span>
+              ) : null}
             </li>
           ))}
         </ol>
@@ -262,6 +266,31 @@ function GuardiansCard({ guardians }: { guardians: GuardianState }) {
 }
 
 // ---- Key rotation ----------------------------------------------------------
+
+
+function RecoveryRequestsCard({ requests }: { requests: readonly { requestId: string; accountDid: string; status: string; approvals: number; threshold: number }[] }) {
+  return (
+    <Card title="Recovery requests" anchor="recovery-requests">
+      {requests.length > 0 ? (
+        <ul className="db-list">
+          {requests.map((request) => (
+            <li key={request.requestId}>
+              <a className="db-link" href={`/me/recovery/${encodeURIComponent(request.requestId)}`}>
+                {request.accountDid || request.requestId}
+              </a>
+              <span className="db-cred-note meta">
+                {" "}
+                {request.approvals} of {request.threshold} approvals
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <EmptyState sentence="No recovery requests need your approval right now." action={{ label: "Manage security", href: "/me/security" }} />
+      )}
+    </Card>
+  );
+}
 
 function KeyRotationCard({
   data,

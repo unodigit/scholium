@@ -50,6 +50,7 @@ export {
 
 export {
   GUARDIANS_ENDPOINT,
+  RECOVERY_REQUESTS_ENDPOINT,
   GUARDIANS_SETUP_HREF,
   GUARDIAN_SCHEME,
   GUARDIAN_THRESHOLD,
@@ -68,12 +69,15 @@ export {
   guardiansSet,
   loadDevices,
   loadGuardians,
+  loadRecoveryRequests,
+  parseRecoveryRequests,
   loadSecurity,
   parseGuardianList,
   parseKeyState,
   type DeviceInfo,
   type GuardianSource,
   type GuardianState,
+  type RecoveryRequestSummary,
   type KeyRotation,
   type KeyState,
   type LoadSecurityOptions,
@@ -211,3 +215,5 @@ export {
   type EndorseCategoryOption,
   type EndorseSectionProps,
 } from "./endorse-button";
+
+export { GuardianApprovalPage, GuardianApproval, default as GuardianApprovalDefault } from "./guardian-approval";

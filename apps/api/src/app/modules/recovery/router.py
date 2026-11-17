@@ -50,9 +50,13 @@ from fastapi import APIRouter, Depends
 from pydantic import AliasChoices, BaseModel, Field
 
 from app.modules.notifications import notify
+from app import db
 from app.security import Principal, get_current_principal
 
 from . import problems, signatures
+from sqlalchemy import select
+
+from .models import RecoveryRequest, ensure_requests_table
 from .service import (
     GUARDIANS_CHANGED_KIND,
     InvalidGuardians,
@@ -118,6 +122,68 @@ def _notify_owner(did: str, previous: list[str], guardians: list[str]) -> None:
         )
     except Exception:
         logger.exception("could not notify %s that their guardians changed", did)
+
+
+@router.get(
+    "/guardians",
+    response_model=GuardiansResponse,
+    summary="Read the signed-in account's recovery guardians",
+)
+def get_my_guardians(
+    principal: Principal = Depends(get_current_principal),
+) -> GuardiansResponse:
+    return GuardiansResponse(guardians=get_guardians(principal.did))
+
+
+
+@router.get("/recovery/requests")
+def list_my_recovery_requests(
+    principal: Principal = Depends(get_current_principal),
+):
+    ensure_requests_table()
+    result = []
+    with db.SessionLocal() as session:
+        rows = session.scalars(select(RecoveryRequest)).all()
+        for row in rows:
+            guardians = get_guardians(row.did)
+            if principal.did not in guardians:
+                continue
+            if row.status not in ("pending", "contest"):
+                continue
+            approvals = list(row.approvals or [])
+            count = len(approvals)
+            contest_until = (
+                row.contest_until.isoformat() + "Z" if row.contest_until is not None else None
+            )
+            result.append(
+                {
+                    "request_id": row.id,
+                    "id": row.id,
+                    "status": row.status,
+                    "did": row.did,
+                    "account_did": row.did,
+                    "accountDid": row.did,
+                    "new_public_key": row.new_public_key,
+                    "newPublicKey": row.new_public_key,
+                    "new_key": row.new_public_key,
+                    "newKey": row.new_public_key,
+                    "approvals": approvals,
+                    "approval_count": count,
+                    "approvals_count": count,
+                    "count": count,
+                    "contest_until": contest_until,
+                    "contestUntil": contest_until,
+                    "threshold": 3,
+                }
+            )
+    return result
+
+
+@router.get("/recovery-requests")
+def list_my_recovery_requests_alias(
+    principal: Principal = Depends(get_current_principal),
+):
+    return list_my_recovery_requests(principal)
 
 
 @router.put(

@@ -44,6 +44,9 @@ export const GUARDIANS_SETUP_HREF = "/onboarding";
 /** Guardian list endpoint, relative to `/v1`. Only `PUT` exists server-side today. */
 export const GUARDIANS_ENDPOINT = "/me/guardians";
 
+/** Pending recovery requests for the signed-in guardian. */
+export const RECOVERY_REQUESTS_ENDPOINT = "/recovery/requests";
+
 /** Approvals a recovery needs: the "3" in "3 of 5" (the API's threshold). */
 export const GUARDIAN_THRESHOLD = RECOVERY_APPROVAL_THRESHOLD;
 
@@ -173,6 +176,8 @@ export interface GuardianState {
   readonly total: number;
   /** The guardians' DIDs, in the order they were set. Empty when unknown. */
   readonly dids: readonly string[];
+  /** Guardians this browser also has saved from setting them up. */
+  readonly localDids?: readonly string[];
   readonly source: GuardianSource;
 }
 
@@ -194,8 +199,58 @@ export function parseGuardianList(payload: unknown): string[] | null {
   return list.map(readText).filter((did): did is string => did !== null);
 }
 
-function guardianState(dids: readonly string[], source: GuardianSource): GuardianState {
-  return { required: GUARDIAN_THRESHOLD, total: GUARDIAN_TOTAL, dids, source };
+function guardianState(
+  dids: readonly string[],
+  source: GuardianSource,
+  localDids: readonly string[] = [],
+): GuardianState {
+  return { required: GUARDIAN_THRESHOLD, total: GUARDIAN_TOTAL, dids, localDids, source };
+}
+
+
+/**
+ * Read a list of recovery requests out of an API body.
+ */
+export function parseRecoveryRequests(payload: unknown): RecoveryRequestSummary[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : isRecord(payload)
+      ? (payload.requests ?? payload.items ?? payload.recovery_requests)
+      : undefined;
+  if (!Array.isArray(list)) return [];
+  const out: RecoveryRequestSummary[] = [];
+  for (const item of list) {
+    if (!isRecord(item)) continue;
+    const requestId = readText(item.request_id) ?? readText(item.requestId) ?? readText(item.id);
+    if (!requestId) continue;
+    const accountDid =
+      readText(item.did) ?? readText(item.account_did) ?? readText(item.accountDid) ?? "";
+    const newPublicKey =
+      readText(item.new_public_key) ?? readText(item.newPublicKey) ?? readText(item.new_key) ?? readText(item.newKey) ?? "";
+    const approvals =
+      typeof item.approval_count === "number"
+        ? item.approval_count
+        : typeof item.approvals_count === "number"
+          ? item.approvals_count
+          : Array.isArray(item.approvals)
+            ? item.approvals.length
+            : 0;
+    const threshold = typeof item.threshold === "number" ? item.threshold : GUARDIAN_THRESHOLD;
+    const status = readText(item.status) ?? "pending";
+    out.push({ requestId, accountDid, status, approvals, threshold, newPublicKey });
+  }
+  return out;
+}
+
+export async function loadRecoveryRequests(
+  client: SecurityClient = api,
+): Promise<RecoveryRequestSummary[]> {
+  try {
+    const payload = await client.get<unknown>(RECOVERY_REQUESTS_ENDPOINT, { cache: "no-store" });
+    return parseRecoveryRequests(payload);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -208,20 +263,20 @@ export async function loadGuardians(
   client: SecurityClient = api,
   storage?: Parameters<typeof loadPersistedOnboarding>[0],
 ): Promise<GuardianState> {
+  const saved = loadPersistedOnboarding(storage);
   try {
     const list = parseGuardianList(
       await client.get<unknown>(GUARDIANS_ENDPOINT, { cache: "no-store" }),
     );
     if (list !== null) {
-      return guardianState(list, "server");
+      return guardianState(list, "server", saved.guardians);
     }
   } catch {
     // No read route yet (404/405/501), or the read failed: use what we saved.
   }
-  const saved = loadPersistedOnboarding(storage);
   return saved.guardians.length > 0
-    ? guardianState(saved.guardians, "this-browser")
-    : guardianState([], "unknown");
+    ? guardianState(saved.guardians, "this-browser", saved.guardians)
+    : guardianState([], "unknown", saved.guardians);
 }
 
 /** How many guardians are named, capped at the scheme's total. */
@@ -232,6 +287,17 @@ export function guardiansSet(state: GuardianState): number {
 /** True when the account has all of its guardians. */
 export function guardiansComplete(state: GuardianState): boolean {
   return guardiansSet(state) >= state.total;
+}
+
+
+/** One recovery request a guardian is asked to approve. */
+export interface RecoveryRequestSummary {
+  readonly requestId: string;
+  readonly accountDid: string;
+  readonly status: string;
+  readonly approvals: number;
+  readonly threshold: number;
+  readonly newPublicKey: string;
 }
 
 /** A key held by one of the member's devices. */
@@ -290,6 +356,8 @@ export interface SecurityData {
   /** The most recent rotation, or `null` when the key has never changed. */
   readonly lastRotation: KeyRotation | null;
   readonly guardians: GuardianState;
+  /** Recovery requests this guardian is asked to approve. */
+  readonly recoveryRequests?: readonly RecoveryRequestSummary[];
   /** Keys held by devices Scholium can see: this browser's, when it has one. */
   readonly devices: readonly DeviceInfo[];
   /** False when this browser's key store could not be read. */
@@ -315,9 +383,10 @@ export async function loadSecurity(options: LoadSecurityOptions = {}): Promise<S
   const client = options.client ?? api;
   const { did } = await loadDashboard(client);
 
-  const [key, guardians] = await Promise.all([
+  const [key, guardians, recoveryRequests] = await Promise.all([
     client.get<unknown>(didEndpoint(did), { cache: "no-store" }).then(parseKeyState),
     loadGuardians(client, options.storage),
+    loadRecoveryRequests(client),
   ]);
   const { devices, readable } = await loadDevices(options.device ?? deviceKey, key.activeKey);
 
@@ -328,6 +397,7 @@ export async function loadSecurity(options: LoadSecurityOptions = {}): Promise<S
     rotations: key.rotations,
     lastRotation: key.rotations.length > 0 ? key.rotations[key.rotations.length - 1]! : null,
     guardians,
+    recoveryRequests,
     devices,
     devicesReadable: readable,
   };
