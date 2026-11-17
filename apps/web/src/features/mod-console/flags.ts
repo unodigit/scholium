@@ -145,8 +145,9 @@ export function flagSignal(flag: FlagEntry): Signal {
 /**
  * The decision view for what was flagged: `/mod/{target}`.
  *
- * It loads the target's signed record, so it suits a flagged paper version;
- * for a post or review it says the record is not a paper version.
+ * The target may be a paper version, a discussion post, an annotation or a
+ * review; the detail view reads the target's signed record and shows the
+ * decision that fits it.
  */
 export function flagDecisionHref(flag: FlagEntry): string {
   return modDetailHref(flag.targetCid);
@@ -173,6 +174,30 @@ export async function loadFlag(
   );
   return parseFlag(payload);
 }
+
+/**
+ * Load every flag filed against one target, open and already decided.
+ *
+ * `GET /v1/flags?target={cid}&state=all` lists the flags on a version, a post,
+ * a review or an annotation, so the decision view can show what the moderator
+ * is deciding and how earlier flags on the same record ended. Tier 4 only,
+ * like the list.
+ */
+export async function loadFlagsForTarget(
+  target: string,
+  client: FlagsClient = api,
+): Promise<FlagEntry[]> {
+  const query = `?target=${encodeURIComponent(target)}&state=all`;
+  const payload = await client.get<unknown>(`${FLAGS_ENDPOINT}${query}`, {
+    cache: "no-store",
+  });
+  return parseFlags(payload);
+}
+
+/** Reads the flags against one target; replaceable in tests. */
+export type LoadTargetFlags = (
+  target: string,
+) => Promise<readonly FlagEntry[]>;
 
 /** Why flags cannot be shown. */
 export type FlagsFailure =

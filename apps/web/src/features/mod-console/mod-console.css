@@ -1054,6 +1054,66 @@
   margin-top: calc(var(--space-unit) * 4);
 }
 
+/* ------------------------------------------------------------------------- */
+/* A flagged post, annotation or review (not a paper version)                 */
+/* ------------------------------------------------------------------------- */
+
+/* The author's own words: the line breaks they typed are kept. */
+.mc-record-text {
+  white-space: pre-wrap;
+}
+
+.mc-record-quote {
+  margin: calc(var(--space-unit) * 4) 0 0;
+  padding-inline-start: calc(var(--space-unit) * 4);
+  border-inline-start: 3px solid var(--rule);
+}
+
+.mc-record-quote blockquote {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--family-serif);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  white-space: pre-wrap;
+}
+
+.mc-record-flags {
+  margin-top: calc(var(--space-unit) * 6);
+}
+
+.mc-record-flags-title {
+  margin: 0 0 calc(var(--space-unit) * 3);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: var(--weight-title);
+}
+
+/* What a flag card says was flagged: the type, the paper and the first words. */
+.mc-flag-target dd {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+}
+
+.mc-flag-target-type {
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mc-flag-excerpt {
+  color: var(--ink);
+  font-family: var(--family-serif);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
 @media (max-width: 40rem) {
   .mc-case {
     padding: calc(var(--space-unit) * 5);

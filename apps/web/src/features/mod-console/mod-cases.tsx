@@ -26,6 +26,7 @@ import {
 } from "./appeals-section";
 import { FlagsSection, type LoadFlag, type LoadFlags } from "./flags-section";
 import type { VoteCaster } from "./panel-vote";
+import type { LoadFlagTarget } from "./record";
 import "./mod-console.css";
 
 /** Props for {@link ModCases}. Everything is optional. */
@@ -37,6 +38,8 @@ export interface ModCasesProps {
   signedIn?: boolean;
   loadFlags?: LoadFlags;
   loadFlag?: LoadFlag;
+  /** Reads what each flag is about (record type, paper title, excerpt). */
+  loadTarget?: LoadFlagTarget;
   loadAppeals?: LoadAppeals;
   castVote?: VoteCaster;
 }
@@ -52,6 +55,7 @@ export function ModCases({
   signedIn,
   loadFlags,
   loadFlag,
+  loadTarget,
   loadAppeals,
   castVote,
 }: ModCasesProps = {}) {
@@ -81,7 +85,11 @@ export function ModCases({
         </p>
       ) : (
         <>
-          <FlagsSection loadFlags={loadFlags} loadFlag={loadFlag} />
+          <FlagsSection
+            loadFlags={loadFlags}
+            loadFlag={loadFlag}
+            loadTarget={loadTarget}
+          />
           <AppealsSection loadAppeals={loadAppeals} castVote={castVote} />
         </>
       )}

@@ -78,6 +78,14 @@ function quiet() {
   return {
     loadFlags: vi.fn(async () => [] as FlagEntry[]),
     loadFlag: vi.fn(async () => flag()),
+    loadTarget: vi.fn(async (cid: string) => ({
+      cid,
+      type: "paper.version",
+      typeLabel: "Paper version",
+      paperTitle: null,
+      paperHref: null,
+      excerpt: null,
+    })),
     loadAppeals: vi.fn(async () => load([appeal()])),
     castVote: vi.fn<VoteCaster>(),
   };

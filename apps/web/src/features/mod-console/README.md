@@ -50,7 +50,7 @@ out (or let a stale one in). `ModConsole` therefore just asks for the queue:
 A body that is not a list is an error, never an empty table: an empty table
 would say "nothing is waiting" when the truth is "we don't know".
 
-## The decision detail view (`/mod/{versionCid}`)
+## The decision detail view (`/mod/{cid}`)
 
 A queue title opens `/mod/{versionCid}`: the paper on the left, the decision
 form on the right (stacked on a phone). `docs/design.md` §5.7 asks for
@@ -67,6 +67,49 @@ the record says: title, authors, categories, version (`sch:…/vN`), licence,
 change note and abstract. The route passes the `{cid}`; the browser fetches
 the record and the policy clauses after mount, so the server HTML is the shell
 and "Loading the paper…" (as on `/mod`).
+
+### When the flag names something that is not a paper version
+
+A member can flag a discussion post, an inline annotation or a review as well
+as a paper version, and "Decide on it" opens `/mod/{cid}` for whatever the
+flag named. The detail view therefore loads the *record* and branches on its
+signed type (`record.ts`, `loadModerationItem`):
+
+| Record type | What the page shows | Decision form |
+| --- | --- | --- |
+| `paper.version` | the paper pane, PDF and text, as above | the paper form (list/hold/reclassify/reject/delist, plus tombstone) |
+| `discussion.post` (thread post) | the record pane: author DID, post text, owning paper link | the record form: dismiss the flag (`list`), hide the post (`delist`), tombstone |
+| `discussion.post` (annotation) | the record pane plus the quoted passage | the record form, named for the annotation |
+| `review.formal`, `review.commit`, `review.response`, `review.rating` | the record pane: reviewer DID, report/response text, owning paper link | the record form, named for the review |
+
+The record pane resolves the owning paper from the record itself (`body.paper`,
+a `paper.genesis` target) and, for a post or review whose target is a version,
+by reading that version's record and then the paper's genesis. The paper's
+title links to `/p/{sch: id}`. A paper the node cannot resolve leaves the link
+out but still shows the record: a gap in what the node holds must not hide a
+flag from the moderator.
+
+Under the record pane, **Flags against this record** reads `GET
+/v1/flags?target={cid}&state=all`, so the moderator sees the reports that
+named the record and how earlier ones ended; it reloads after a decision is
+published. The decision form on the right signs the same
+`moderation.decision` record the paper form signs (same passkey, same
+`POST /v1/moderation/decisions`) with the flagged record as `target`:
+
+| Action | Reads as | What it records |
+| --- | --- | --- |
+| `list` | Dismiss the flag (leave the post as it is) | the record stays; the flag is settled |
+| `delist` | Hide the post from the discussion | the record leaves the listing |
+| `tombstone` | Legal takedown (tombstone) of the post | the content may not be served again |
+
+The action labels name the record ("post", "annotation", "review"), and the
+preview says what happens to *that record* rather than to a paper. The
+required fields are the paper form's: an action, a policy clause and a reason.
+
+Flags in `/mod` now also say what they are about: each card reads its target's
+record (`loadFlagTargetSummary`) and shows the record type, the owning paper's
+title (linked) and a short excerpt, beside the cid it already showed. A record
+the node cannot read leaves the cid as the description.
 
 ### The PDF and the text
 
@@ -252,6 +295,16 @@ reported as shared edits:
 2. `GET /v1/appeals` (and ideally `viewer_on_panel: bool` per appeal, from
    `appeal_panels`): replaces the log replay, and would let the form show only
    to the members who are drawn instead of to everyone.
+3. The moderation handler (`apps/api/src/app/modules/moderation/decisions.py`)
+   still resolves `body.target` as a version for every action except
+   `tombstone` (which accepts a paper, a version or a file id). A decision on
+   a post, annotation or review is signed and posted exactly like a paper
+   decision — the schema's `target` is already "the version or record being
+   decided on" and `flags/flag_sync.py` already settles a flag on any target —
+   and the console shows the API's answer when the handler refuses it. The
+   handler accepting a flaggable record target (`discussion.post`, a review
+   type) for `list`/`delist` is what lets the flag reporter receive their
+   outcome; it belongs to the moderation plugin, not this feature.
 
 ## Rendering
 
@@ -275,7 +328,10 @@ The table is wider than a phone, so it scrolls inside a focusable
 | `mod-console.tsx` | The queue page component: header, state machine, notices, empty state, refresh. |
 | `decision.ts` | The version record (`parseVersionRecord`, `loadModeratedPaper`), actions and labels, required-field rules (`validateDecisionDraft`), the signed body (`buildDecisionBody`), the author preview (`authorPreview`), the passkey signing and endpoint submit, and one-sentence failures. Pure apart from the default loaders. |
 | `decision-form.tsx` | The decision form and published-decision panel: required fields, live author preview, the public-record statement, signing state and failures. Client-only. |
-| `mod-detail.tsx` | The detail view: sign-in/failed/loading states, the paper pane, the detail grid and its header. Client-only. |
+| `record.ts` | Any flaggable record: `parseRecord`, `loadModerationItem` (paper version vs. record), owning-paper resolution, kind/noun wording, flag-target summaries and excerpts. Pure apart from the loaders. |
+| `record-decision-form.tsx` | The decision form for a flagged post, annotation or review: dismiss/hide/tombstone, the same clause + reason rules, signing and the published panel. Client-only. |
+| `record-flags.tsx` | The flags filed against one record, with its own load/failure/retry states. Client-only. |
+| `mod-detail.tsx` | The detail view: sign-in/failed/loading states, the paper pane or the record pane, the flags against the record and the matching decision form. Client-only. |
 | `mod-console.css` | Table, signal, notice, detail-grid, form, preview and statement styles; every value is a design token. |
 | `wire.ts` | Small `unknown` → clean-value readers (`readText`, `readReasons`, `formatDate`) shared by the modules below. |
 | `flags.ts` | Flag shape (`parseFlag`, `parseFlags`), `loadFlags`/`loadFlag`, status wording, and `classifyFlagsError` (including the `unsupported` kind). Pure, no React. |
@@ -293,6 +349,10 @@ The table is wider than a phone, so it scrolls inside a focusable
 | `decision.test.ts` | Record parsing, action set, required-field rules, body building, preview wording, accepted-response parsing, submit request, error messages. |
 | `decision-form.test.tsx` | Required fields, exact public-record statement, live preview, reclassify category, validation, signing/submitting, passkey cancellation and API refusal. |
 | `mod-detail.test.tsx` | Signed-out, loading, paper-beside-form, token-store session, 403, retry and 404 states. |
+| `mod-detail-record.test.tsx` | A flagged post, annotation and review render as records (not the paper-version error), with their flags and a matching form; the default loader reads a post. |
+| `record.test.ts` | Record parsing, owning-paper resolution, kind wording, summaries and excerpts. |
+| `record-decision-form.test.tsx` | Record actions and labels, outcome preview, validation, signing the record target and the published panel. |
+| `record-flags.test.tsx` / `flags-section.test.tsx` | The flags against a record and the type/title/excerpt added to every flag card. |
 | `mod-detail-route.test.tsx` | Server render of `/mod/{cid}`: shell and loading line, no API call. |
 | `flags.test.ts` | Flag parsing and ordering, wording, request shape, every failure kind (list vs lookup). |
 | `appeals.test.ts` | The log join, ordering, paging, truncation, non-advancing and malformed pages, wording. |
@@ -309,6 +369,10 @@ The table is wider than a phone, so it scrolls inside a focusable
 
 - The detail view shows the signed metadata and abstract, not a PDF/HTML
   rendition: an unlisted version has no public reading endpoint yet.
+- A decision on a post, annotation or review is signed and posted, but the
+  moderation handler still resolves every non-tombstone target as a version
+  (see "API gaps" #3): until it accepts record targets, the console reports
+  the API's refusal instead of claiming the flag was settled.
 - The flag list shows open flags only (the API's default); decided flags are
   reached by id. Appeals are read by replaying the public log until the API
   lists them.

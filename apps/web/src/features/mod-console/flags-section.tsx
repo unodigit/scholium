@@ -37,6 +37,11 @@ import {
   type FlagsFailure,
 } from "./flags";
 import { SIGNIN_HREF } from "./queue";
+import {
+  loadFlagTargetSummary,
+  type FlagTargetSummary,
+  type LoadFlagTarget,
+} from "./record";
 import { SignalCell } from "./queue-table";
 import "./mod-console.css";
 
@@ -50,6 +55,11 @@ export type LoadFlag = (id: string) => Promise<FlagEntry>;
 export interface FlagsSectionProps {
   loadFlags?: LoadFlags;
   loadFlag?: LoadFlag;
+  /**
+   * Reads what a flag is about (record type, owning paper title and a short
+   * excerpt). Defaults to reading the flagged record from the public log.
+   */
+  loadTarget?: LoadFlagTarget;
 }
 
 type ListState =
@@ -58,7 +68,11 @@ type ListState =
   | { status: "failed"; failure: FlagsFailure };
 
 /** The flag list, the lookup by id, and every reason either might not show. */
-export function FlagsSection({ loadFlags, loadFlag }: FlagsSectionProps = {}) {
+export function FlagsSection({
+  loadFlags,
+  loadFlag,
+  loadTarget,
+}: FlagsSectionProps = {}) {
   const [state, setState] = useState<ListState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const headingId = useId();
@@ -122,10 +136,11 @@ export function FlagsSection({ loadFlags, loadFlag }: FlagsSectionProps = {}) {
           flags={state.flags}
           refreshing={state.refreshing}
           onRefresh={reload}
+          loadTarget={loadTarget}
         />
       ) : null}
 
-      <FlagLookup loadFlag={loadFlag} />
+      <FlagLookup loadFlag={loadFlag} loadTarget={loadTarget} />
     </section>
   );
 }
@@ -134,10 +149,12 @@ function FlagList({
   flags,
   refreshing,
   onRefresh,
+  loadTarget,
 }: {
   flags: readonly FlagEntry[];
   refreshing: boolean;
   onRefresh: () => void;
+  loadTarget?: LoadFlagTarget;
 }) {
   if (flags.length === 0) {
     return (
@@ -173,7 +190,7 @@ function FlagList({
       <ul className="mc-case-list" aria-label="Flags">
         {flags.map((flag) => (
           <li key={flag.id}>
-            <FlagCard flag={flag} />
+            <FlagCard flag={flag} loadTarget={loadTarget} />
           </li>
         ))}
       </ul>
@@ -181,10 +198,43 @@ function FlagList({
   );
 }
 
-/** One flag: why it was raised, what it is about, and where it stands. */
-export function FlagCard({ flag }: { flag: FlagEntry }) {
+/**
+ * One flag: why it was raised, what it is about, and where it stands.
+ *
+ * The list names only the flagged cid, so the card also reads the record it
+ * names and says what was flagged: the record type, the owning paper's title
+ * and the first words of the text. A record this node cannot read leaves the
+ * cid as the description, never an empty card.
+ */
+export function FlagCard({
+  flag,
+  loadTarget,
+}: {
+  flag: FlagEntry;
+  loadTarget?: LoadFlagTarget;
+}) {
   const open = isFlagOpen(flag);
   const headingId = `flag-${flag.id}-title`;
+  const [summary, setSummary] = useState<FlagTargetSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSummary(null);
+    const load = loadTarget ?? loadFlagTargetSummary;
+    load(flag.targetCid).then(
+      (target) => {
+        if (!cancelled) setSummary(target);
+      },
+      () => {
+        // A record this node does not hold is not a reason to hide the flag;
+        // the cid stays as the description.
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [flag.targetCid, loadTarget]);
+
   return (
     <article className="mc-case" aria-labelledby={headingId}>
       <header className="mc-case-header">
@@ -202,6 +252,29 @@ export function FlagCard({ flag }: { flag: FlagEntry }) {
           <dt>Flagged record</dt>
           <dd className="mono-id mc-case-id">{flag.targetCid}</dd>
         </div>
+        {summary !== null ? (
+          <div className="mc-flag-target">
+            <dt>What was flagged</dt>
+            <dd>
+              <span className="mc-flag-target-type">{summary.typeLabel}</span>
+              {summary.paperTitle !== null ? (
+                <>
+                  {" · "}
+                  {summary.paperHref === null ? (
+                    summary.paperTitle
+                  ) : (
+                    <a className="mc-link" href={summary.paperHref}>
+                      {summary.paperTitle}
+                    </a>
+                  )}
+                </>
+              ) : null}
+              {summary.excerpt !== null ? (
+                <span className="mc-flag-excerpt">{`“${summary.excerpt}”`}</span>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
         {flag.reporterDid !== null ? (
           <div>
             <dt>Reported by</dt>
@@ -295,7 +368,13 @@ type LookupState =
   | { status: "failed"; message: string };
 
 /** Open one flag by its id (`GET /v1/flags/{id}`). */
-function FlagLookup({ loadFlag }: { loadFlag: LoadFlag | undefined }) {
+function FlagLookup({
+  loadFlag,
+  loadTarget,
+}: {
+  loadFlag: LoadFlag | undefined;
+  loadTarget: LoadFlagTarget | undefined;
+}) {
   const [id, setId] = useState("");
   const [state, setState] = useState<LookupState>({ status: "idle" });
   const baseId = useId();
@@ -365,7 +444,7 @@ function FlagLookup({ loadFlag }: { loadFlag: LoadFlag | undefined }) {
 
       {state.status === "found" ? (
         <div className="mc-lookup-result">
-          <FlagCard flag={state.flag} />
+          <FlagCard flag={state.flag} loadTarget={loadTarget} />
         </div>
       ) : null}
     </form>

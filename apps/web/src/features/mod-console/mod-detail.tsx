@@ -1,20 +1,22 @@
 "use client";
 
 /**
- * The moderation detail view (docs/design.md §5.7): the paper beside the
- * decision form.
+ * The moderation detail view (docs/design.md §5.7): what was flagged beside
+ * the decision form.
  *
- * The route `/mod/{versionCid}` opens one version waiting in the queue. The
- * paper pane is read from the version's signed record
- * (`GET /v1/records/{cid}`); the form cites one of the clauses from
- * `GET /v1/moderation/policies`. Both are public reads, but the console is a
- * tier-4 surface, so a visitor with no session is asked to sign in before any
- * request is made, and the API still refuses a decision from a non-moderator.
+ * The route `/mod/{cid}` opens whatever a flag named — a paper version, a
+ * discussion post, an inline annotation or a review. The item is read from
+ * its signed record (`GET /v1/records/{cid}`): a paper version becomes the
+ * paper pane with its PDF and extracted text, anything else becomes a record
+ * pane (author, text, owning paper) with the flags against it. The form cites
+ * one of the clauses from `GET /v1/moderation/policies`. The reads are
+ * public, but the console is a tier-4 surface, so a visitor with no session is
+ * asked to sign in before any request is made, and the API still refuses a
+ * decision from a non-moderator.
  *
- * Beside the record's metadata the pane shows the version's PDF and its
- * extracted text ({@link VersionContent}). Those are not public while the
- * version waits, so they are fetched with the moderator's token, each on its
- * own: a PDF or text that cannot be read never hides the form.
+ * The version's PDF and text are not public while it waits, so they are
+ * fetched with the moderator's token, each on its own: a PDF or text that
+ * cannot be read never hides the form.
  *
  * The first paint is the shell and a loading line (as on `/mod`): the record
  * and clauses are fetched in the browser so the server HTML never depends on
@@ -22,16 +24,17 @@
  * flash of the sign-in prompt.
  */
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
 import type { PolicyClause } from "../policies-page";
 import { RecordLink } from "../ui-kit";
+import { formatDate } from "./wire";
 import {
   PAPER_SIGNED_OUT_FAILURE,
   classifyPaperError,
   loadDecisionClauses,
-  loadModeratedPaper,
+  shortenDid,
   type ModeratedPaper,
   type PaperFailure,
   type DecisionSigner,
@@ -44,6 +47,19 @@ import {
   type LoadText,
 } from "./version-content";
 import { MOD_PATH, modDetailSignInHref } from "./queue";
+import {
+  loadModerationItem,
+  recordHeading,
+  recordKindLabel,
+  recordPaperHref,
+  type LoadFlagTarget,
+  type LoadItem,
+  type ModerationItem,
+  type ModeratedRecord,
+} from "./record";
+import type { LoadTargetFlags } from "./flags";
+import { RecordDecisionForm } from "./record-decision-form";
+import { RecordFlags } from "./record-flags";
 import type { LoadPdfjs } from "../paper-page/pdf-render";
 import "./mod-console.css";
 
@@ -55,17 +71,30 @@ export type LoadClauses = () => Promise<readonly PolicyClause[]>;
 
 /** Props for {@link ModDetail}. */
 export interface ModDetailProps {
-  /** The version being decided (the route's `[cid]`). */
+  /** The record being decided (the route's `[cid]`). */
   versionCid: string;
   /**
    * Pin the sign-in state. When omitted it is read from the shared token
    * store on mount.
    */
   signedIn?: boolean;
-  /** Replace the paper loader, for tests or an alternate API client. */
+  /**
+   * Replace the whole item loader, for tests or an alternate API client. By
+   * default the record is read from `GET /v1/records/{cid}`: a paper version
+   * becomes the paper pane, anything else a record pane.
+   */
+  loadItem?: LoadItem;
+  /**
+   * Replace the paper loader alone, for tests that only ever decide a paper
+   * version. An explicit {@link loadItem} wins.
+   */
   loadPaper?: LoadPaper;
   /** Replace the clause loader, for tests or an alternate API client. */
   loadClauses?: LoadClauses;
+  /** Replace the flags-against-this-record loader, for tests. */
+  loadFlags?: LoadTargetFlags;
+  /** Replace the flag-target summary loader, for tests. */
+  loadTarget?: LoadFlagTarget;
   /** Replace the text loader, for tests or an alternate API client. */
   loadText?: LoadText;
   /** Replace the PDF finder, for tests or an alternate API client. */
@@ -87,17 +116,20 @@ type DetailState =
   | { status: "loading" }
   | {
       status: "ready";
-      paper: ModeratedPaper;
+      item: ModerationItem;
       clauses: readonly PolicyClause[];
     }
   | { status: "failed"; failure: PaperFailure };
 
-/** The paper, the decision form, and every reason either might not appear. */
+/** The record, the decision form, and every reason either might not appear. */
 export function ModDetail({
   versionCid,
   signedIn,
-  loadPaper = loadModeratedPaper,
+  loadItem,
+  loadPaper,
   loadClauses = loadDecisionClauses,
+  loadFlags,
+  loadTarget,
   loadText,
   loadPdfFile,
   loadPdfjs,
@@ -107,10 +139,21 @@ export function ModDetail({
 }: ModDetailProps) {
   const [state, setState] = useState<DetailState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [flagsRefresh, setFlagsRefresh] = useState(0);
 
   const retry = useCallback(() => {
     setAttempt((count) => count + 1);
   }, []);
+
+  const load = useMemo<LoadItem>(() => {
+    if (loadItem !== undefined) {
+      return loadItem;
+    }
+    if (loadPaper !== undefined) {
+      return async (cid) => ({ kind: "paper", paper: await loadPaper(cid) });
+    }
+    return loadModerationItem;
+  }, [loadItem, loadPaper]);
 
   useEffect(() => {
     // The token store is only readable in the browser, so it is read here
@@ -124,10 +167,10 @@ export function ModDetail({
     let cancelled = false;
     setState({ status: "loading" });
 
-    Promise.all([loadPaper(versionCid), loadClauses()]).then(
-      ([paper, clauses]) => {
+    Promise.all([load(versionCid), loadClauses()]).then(
+      ([item, clauses]) => {
         if (!cancelled) {
-          setState({ status: "ready", paper, clauses });
+          setState({ status: "ready", item, clauses });
         }
       },
       (error: unknown) => {
@@ -140,7 +183,7 @@ export function ModDetail({
     return () => {
       cancelled = true;
     };
-  }, [attempt, loadClauses, loadPaper, signedIn, versionCid]);
+  }, [attempt, load, loadClauses, signedIn, versionCid]);
 
   return (
     <div className="mc-detail">
@@ -160,23 +203,44 @@ export function ModDetail({
         />
       ) : null}
 
-      {state.status === "ready" ? (
+      {state.status === "ready" && state.item.kind === "paper" ? (
         <div className="mc-detail-grid">
           <div className="mc-detail-paper">
-            <PaperPane paper={state.paper} />
+            <PaperPane paper={state.item.paper} />
             <VersionContent
-              paper={state.paper}
+              paper={state.item.paper}
               loadText={loadText}
               loadPdfFile={loadPdfFile}
               loadPdfjs={loadPdfjs}
             />
           </div>
           <DecisionForm
-            versionCid={state.paper.versionCid}
+            versionCid={state.item.paper.versionCid}
             clauses={state.clauses}
             tier={tier}
             signDecision={signDecision}
             submitDecision={submitDecision}
+          />
+        </div>
+      ) : null}
+
+      {state.status === "ready" && state.item.kind === "record" ? (
+        <div className="mc-detail-grid">
+          <div className="mc-detail-paper">
+            <RecordPane record={state.item.record} />
+            <RecordFlags
+              targetCid={state.item.record.cid}
+              loadFlags={loadFlags}
+              loadTarget={loadTarget}
+              refreshKey={flagsRefresh}
+            />
+          </div>
+          <RecordDecisionForm
+            record={state.item.record}
+            clauses={state.clauses}
+            signDecision={signDecision}
+            submitDecision={submitDecision}
+            onPublished={() => setFlagsRefresh((count) => count + 1)}
           />
         </div>
       ) : null}
@@ -191,14 +255,14 @@ function DetailHeader({ versionCid }: { versionCid: string }) {
       <p className="mc-kicker mono-id">scholium / mod</p>
       <h1 className="mc-title">Moderation decision</h1>
       <p className="mc-lede">
-        Read the paper, then record a decision. Every decision cites a policy
-        clause and gives the author a reason.
+        Read what was flagged, then record a decision. Every decision cites a
+        policy clause and gives a reason.
       </p>
       <p className="mc-detail-back">
         <a className="mc-link" href={MOD_PATH}>
           ← Back to the queue
         </a>
-        <span className="mc-sr-only">Version {versionCid}</span>
+        <span className="mc-sr-only">Record {versionCid}</span>
       </p>
     </header>
   );
@@ -271,6 +335,97 @@ export function PaperPane({ paper }: { paper: ModeratedPaper }) {
           cid={paper.versionCid}
           label="View the signed version record"
         />
+      </div>
+    </article>
+  );
+}
+
+/**
+ * A flagged record that is not a paper version: a post, an annotation or a
+ * review.
+ *
+ * The moderator sees what the reporter saw — the author's pseudonymous DID,
+ * the text or quoted passage, and the paper the record belongs to, linked —
+ * rather than an error. The record is public and signed, so its own window is
+ * one click away. A record whose owning paper the node cannot resolve is
+ * still shown; only the link is missing.
+ */
+export function RecordPane({ record }: { record: ModeratedRecord }) {
+  const titleId = useId();
+  const textId = useId();
+  const kind = recordKindLabel(record);
+  const paperHref = recordPaperHref(record);
+  const signed = formatDate(record.created);
+
+  return (
+    <article className="mc-paper-card mc-record-card" aria-labelledby={titleId}>
+      <p className="mc-section-kicker">{kind}</p>
+      <h2 id={titleId} className="mc-paper-title-lg">
+        {recordHeading(record)}
+      </h2>
+
+      <dl className="mc-paper-facts">
+        <div>
+          <dt>Author</dt>
+          <dd title={record.authorDid === "" ? undefined : record.authorDid}>
+            {record.authorDid === "" ? "Not listed" : shortenDid(record.authorDid)}
+          </dd>
+        </div>
+        <div>
+          <dt>Record type</dt>
+          <dd>{record.type}</dd>
+        </div>
+        {record.paperTitle !== null ? (
+          <div>
+            <dt>Paper</dt>
+            <dd>
+              {paperHref === null ? (
+                record.paperTitle
+              ) : (
+                <a className="mc-link" href={paperHref}>
+                  {record.paperTitle}
+                </a>
+              )}
+            </dd>
+          </div>
+        ) : null}
+        {record.versionId !== null ? (
+          <div>
+            <dt>Version</dt>
+            <dd className="mono-id">{record.versionId}</dd>
+          </div>
+        ) : null}
+        {signed !== null ? (
+          <div>
+            <dt>Signed</dt>
+            <dd>{signed}</dd>
+          </div>
+        ) : null}
+      </dl>
+
+      {record.quote !== null ? (
+        <section className="mc-record-quote" aria-label="Quoted passage">
+          <h3 className="mc-abstract-title">Quoted passage</h3>
+          <blockquote>{record.quote}</blockquote>
+        </section>
+      ) : null}
+
+      <section className="mc-paper-abstract" aria-labelledby={textId}>
+        <h3 id={textId} className="mc-abstract-title">
+          What was flagged
+        </h3>
+        {record.text === null ? (
+          <p className="mc-paper-muted">
+            This record carries no inline text. Open the signed record to read
+            it in full.
+          </p>
+        ) : (
+          <p className="mc-abstract-text mc-record-text">{record.text}</p>
+        )}
+      </section>
+
+      <div className="mc-paper-record">
+        <RecordLink cid={record.cid} label="View the signed record" />
       </div>
     </article>
   );

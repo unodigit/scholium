@@ -103,10 +103,55 @@ export {
 export {
   ModDetail,
   PaperPane,
+  RecordPane,
   type LoadClauses,
   type LoadPaper,
   type ModDetailProps,
 } from "./mod-detail";
+
+export {
+  DISCUSSION_POST_TYPE,
+  EXCERPT_LIMIT,
+  PAPER_GENESIS_TYPE,
+  PAPER_VERSION_TYPE,
+  REVIEW_COMMIT_TYPE,
+  REVIEW_FORMAL_TYPE,
+  REVIEW_RATING_TYPE,
+  REVIEW_RESPONSE_TYPE,
+  RecordReadError,
+  excerptOf,
+  isAnnotation,
+  loadFlagTargetSummary,
+  loadModerationItem,
+  parseRecord,
+  recordHeading,
+  recordKindLabel,
+  recordNoun,
+  recordPaperHref,
+  resolveOwningPaper,
+  summarizePaper,
+  summarizeRecord,
+  type FlagTargetSummary,
+  type LoadFlagTarget,
+  type LoadItem,
+  type ModerationItem,
+  type ModeratedRecord,
+  type RecordClient,
+} from "./record";
+
+export {
+  RECORD_DECISION_ACTIONS,
+  RecordDecisionForm,
+  recordActionLabel,
+  recordOutcome,
+  type RecordDecisionAction,
+  type RecordDecisionFormProps,
+} from "./record-decision-form";
+
+export {
+  RecordFlags,
+  type RecordFlagsProps,
+} from "./record-flags";
 
 export {
   LOG_PAGE_SIZE,
@@ -166,11 +211,13 @@ export {
   isFlagOpen,
   loadFlag,
   loadFlags,
+  loadFlagsForTarget,
   parseFlag,
   parseFlags,
   type FlagEntry,
   type FlagsClient,
   type FlagsFailure,
+  type LoadTargetFlags,
 } from "./flags";
 
 export {

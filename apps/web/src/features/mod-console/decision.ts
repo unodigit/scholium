@@ -668,7 +668,7 @@ export function classifyPaperError(error: unknown): PaperFailure {
       return {
         kind: "error",
         message:
-          "This paper is not on this server. It may have been removed or already decided.",
+          "This record is not on this server. It may have been removed or already decided.",
       };
     }
     return {
