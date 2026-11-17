@@ -35,6 +35,7 @@ import { licenceLabel } from "../paper-meta/meta";
 import { loadProfile, type AuthorProfile } from "../search-page/paper";
 import { checksErrorMessage, fetchVersionChecks, type FetchChecks, type VersionChecks } from "../submit/checks";
 import { StatusTracker } from "../submit/status-tracker";
+import { appealStatus, filedAppeal, type FiledAppeal } from "./appeal-dialog";
 import type { LoadPdfjs } from "./pdf-render";
 import { PdfView } from "./pdf-view";
 import { parsePaperAddress } from "./paper-address";
@@ -56,8 +57,10 @@ import {
   unlistedBanner,
   type AccessLoaders,
   type AccessView,
+  type ModerationFact,
   type TombstoneFacts,
   type UnlistedAuthor,
+  type UnlistedBanner,
   type UnlistedPdf,
   type UnlistedVersion,
 } from "./unlisted-paper";
@@ -88,6 +91,37 @@ type Phase =
   | { readonly kind: "notice" }
   | { readonly kind: "tombstone"; readonly facts: TombstoneFacts }
   | { readonly kind: "paper"; readonly view: AccessView };
+
+/**
+ * The banner, with what the author's appeal says (design.md §8).
+ *
+ * A refusal banner invites an appeal only until one is filed: afterwards it
+ * reports the appeal — filed and awaiting a panel, or the panel's outcome —
+ * and keeps the moderator's reason. An overturn appends a `release` that puts
+ * the version back in its prior state, so the hold is no longer the standing
+ * decision; the appeal is then joined through the release record and its
+ * outcome is said alongside the state the release restored.
+ */
+function bannerWithAppeal(
+  banner: UnlistedBanner,
+  decision: ModerationFact | null,
+  appeal: FiledAppeal | null,
+): UnlistedBanner {
+  if (decision === null || appeal === null) {
+    return banner;
+  }
+  if (decision.action === "hold" || decision.action === "reject") {
+    const reason = decision.reason?.trim().replace(/[.!?…]+$/, "") ?? "";
+    return {
+      ...banner,
+      detail: `${reason === "" ? "" : `${reason}. `}${appealStatus(appeal)}`,
+    };
+  }
+  if (decision.action === "release") {
+    return { ...banner, detail: `${banner.detail} ${appealStatus(appeal)}` };
+  }
+  return banner;
+}
 
 export interface PaperAccessProps {
   /** The paper the page is for; the boundary reads it from the address. */
@@ -169,6 +203,7 @@ export function PaperAccess({
       // cid, else the one in the address. The view uses the same one.
       const readId = version.shortId ?? address.id;
       const decision = latestDecision(entries, version.versionCid);
+      const appeal = filedAppeal(entries, decision);
       try {
         const [text, consents] = await Promise.all([
           loaders.text(readId, version.n),
@@ -181,7 +216,11 @@ export function PaperAccess({
           kind: "paper",
           view: {
             version: { ...version, shortId: readId },
-            banner: unlistedBanner(consents?.state, decision),
+            banner: bannerWithAppeal(
+              unlistedBanner(consents?.state, decision),
+              decision,
+              appeal,
+            ),
             consents,
             text,
           },

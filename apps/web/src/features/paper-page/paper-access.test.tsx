@@ -17,10 +17,13 @@ import {
   ALICE,
   BARE_ID,
   CHECKS_BODY,
+  GENESIS_CID,
   MANIFEST_RECORD_BODY,
   TEXT_BODY,
+  VERSION_CID,
   consentsBody,
   decisionEntry,
+  entry,
   json,
   notFound,
   stubApi,
@@ -101,6 +104,55 @@ function heldView(
       paragraphs: [{ id: "para-1", text }],
     },
   };
+}
+
+/** A signed `appeal` of the held decision: what `POST /v1/appeals` appends. */
+function appealEntry(seq = 11, target = "bafyrei-decision-10"): unknown {
+  return entry(
+    "appeal",
+    `bafyrei-appeal-${seq}`,
+    seq,
+    {
+      target,
+      grounds: "The paper is in scope; MOD-01 applies to a different field.",
+      paper: GENESIS_CID,
+    },
+  );
+}
+
+/** The panel's node-signed `appeal.decision` for the appeal above. */
+function verdictEntry(outcome: string, seq = 12): unknown {
+  return entry(
+    "appeal.decision",
+    `bafyrei-verdict-${seq}`,
+    seq,
+    {
+      target: "bafyrei-appeal-11",
+      outcome,
+      reasons: ["The paper is in scope of MOD-01."],
+    },
+    "did:key:z6MkNodeDecisionSigner00000000000000000000000",
+  );
+}
+
+/** The `release` the node appends when a panel overturns the held decision. */
+function releaseEntry(seq = 13): unknown {
+  return entry(
+    "moderation.decision",
+    `bafyrei-release-${seq}`,
+    seq,
+    {
+      target: VERSION_CID,
+      action: "release",
+      state: "moderation",
+      clause: "MOD-01",
+      reason: "Appeal bafyrei-appeal-11 was overturned by the panel.",
+      paper: GENESIS_CID,
+      appeal: "bafyrei-appeal-11",
+      appeal_restoration: "bafyrei-appeal-11",
+    },
+    "did:key:z6MkNodeDecisionSigner00000000000000000000000",
+  );
 }
 
 afterEach(() => {
@@ -228,6 +280,86 @@ describe("the paper's author", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Can a Meta-Agent Choose the Safer Branch?" }),
     ).toBeTruthy();
+  });
+});
+
+describe("an appeal the author has filed", () => {
+  /** The banner's own status region, not the tracker's below it. */
+  async function banner(): Promise<HTMLElement> {
+    const word = await screen.findByText("Held from listing");
+    const region = word.closest('[role="status"]');
+    if (region === null) throw new Error("the banner is not a status region");
+    return region as HTMLElement;
+  }
+
+  it("says the appeal is filed and awaiting a panel, after a reload", async () => {
+    // The appeal is in the paper's public records: a full page load must read
+    // it from there, not remember it from the dialog that filed it.
+    stubHeldPaper({
+      records: [versionEntry(), decisionEntry("hold", 10), appealEntry()],
+    });
+
+    signIn(ALICE);
+    render(<PaperAccess address={{ id: BARE_ID, version: null }} />);
+
+    const region = await banner();
+    expect(region.textContent).toContain("Outside the category's scope.");
+    expect(region.textContent).toContain(
+      "Appeal filed on 5 March 2027 — awaiting panel.",
+    );
+    // The invitation is for a paper no one has appealed, and there is exactly
+    // one appeal: neither the sentence nor the action may still be offered.
+    expect(region.textContent).not.toContain("You can appeal once.");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "File an appeal" })).toBeNull(),
+    );
+  });
+
+  it("says what the panel decided, once it has", async () => {
+    stubHeldPaper({
+      records: [
+        versionEntry(),
+        decisionEntry("hold", 10),
+        appealEntry(),
+        verdictEntry("upheld"),
+      ],
+    });
+
+    signIn(ALICE);
+    render(<PaperAccess address={{ id: BARE_ID, version: null }} />);
+
+    const region = await banner();
+    expect(region.textContent).toContain(
+      "Appeal filed on 5 March 2027 — the panel upheld the decision on 5 March 2027.",
+    );
+    expect(region.textContent).not.toContain("You can appeal once.");
+  });
+
+  it("says an overturn on the banner the release restores", async () => {
+    // An overturn appends a `release` that puts the version back in moderation;
+    // the hold is no longer the standing decision, so the appeal is joined
+    // through the release record's `appeal` field.
+    stubHeldPaper({
+      state: "moderation",
+      records: [
+        versionEntry(),
+        decisionEntry("hold", 10),
+        appealEntry(),
+        verdictEntry("overturned"),
+        releaseEntry(),
+      ],
+    });
+
+    signIn(ALICE);
+    render(<PaperAccess address={{ id: BARE_ID, version: null }} />);
+
+    const word = await screen.findByText("In moderation");
+    const region = word.closest('[role="status"]');
+    if (region === null) throw new Error("the banner is not a status region");
+    expect(region.textContent).toContain(
+      "Appeal filed on 5 March 2027 — the panel overturned the decision on 5 March 2027.",
+    );
+    expect(region.textContent).not.toContain("You can appeal once.");
   });
 });
 

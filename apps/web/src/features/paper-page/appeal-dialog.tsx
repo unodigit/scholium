@@ -44,6 +44,7 @@ import {
 } from "../web-auth/errors";
 import { signRecord, type SignedRecord } from "../web-auth/sign-record";
 import { Icon } from "../ui-kit/icons";
+import { formatRemovalDate } from "./unlisted-paper";
 
 /** The words on the action that opens the dialog. */
 export const APPEAL_LABEL = "File an appeal";
@@ -252,6 +253,180 @@ export function parseAppealAccepted(
     status: readText(body.status),
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* The appeal a decision already has                                           */
+/* -------------------------------------------------------------------------- */
+
+/** The decision a page is about: its cid and the action it took. */
+export interface DecisionRef {
+  /** cid of the `moderation.decision`. */
+  readonly decisionCid: string;
+  /** The action it took (`hold`, `reject`, `release`, …). */
+  readonly action: string;
+}
+
+/** An appeal the paper's public records hold, with the panel's verdict. */
+export interface FiledAppeal {
+  /** cid of the `appeal` record. */
+  readonly appealCid: string;
+  /** cid of the `moderation.decision` it appeals. */
+  readonly decisionCid: string;
+  /** When the node received the appeal (ISO), when the record says. */
+  readonly filedAt: string | null;
+  /** The panel's outcome, or `null` while the appeal awaits one. */
+  readonly outcome: string | null;
+  /** cid of the deciding `appeal.decision`, once there is one. */
+  readonly verdictCid: string | null;
+  /** When the node received the panel's decision (ISO), when it says. */
+  readonly decidedAt: string | null;
+}
+
+function seqOf(item: Record<string, unknown>): number {
+  return typeof item.seq === "number" && Number.isFinite(item.seq) ? item.seq : 0;
+}
+
+/**
+ * The appeal of `decision` in the paper's public records, or `null`.
+ *
+ * A decision is appealed once, so an `appeal` whose `target` is its cid is the
+ * appeal — and an `appeal.decision` targeting that appeal is the panel's
+ * verdict (the same join `apps/web/src/features/mod-console/appeals.ts` makes).
+ * An overturn appends a `release` that restores the version: the hold is then
+ * no longer the standing decision, and the appeal is found through the release
+ * record's `appeal` field instead. Entries the page cannot read are skipped,
+ * never guessed.
+ */
+export function filedAppeal(
+  entries: readonly unknown[],
+  decision: DecisionRef | null,
+): FiledAppeal | null {
+  if (decision === null) return null;
+
+  const appeals = new Map<
+    string,
+    { decisionCid: string; filedAt: string | null; seq: number }
+  >();
+  const verdicts = new Map<
+    string,
+    { cid: string; outcome: string; decidedAt: string | null; seq: number }
+  >();
+  let restoredAppeal: string | null = null;
+
+  for (const item of entries) {
+    if (!isRecord(item)) continue;
+    const type = readText(item.record_type);
+    const cid = readText(item.record_cid) ?? readText(item.id);
+    if (type === null || cid === null || !isRecord(item.body)) continue;
+
+    if (type === "appeal") {
+      const target = readText(item.body.target) ?? readText(item.body.decision);
+      if (target === null) continue;
+      const seq = seqOf(item);
+      const seen = appeals.get(cid);
+      if (seen !== undefined && seen.seq > seq) continue;
+      appeals.set(cid, {
+        decisionCid: target,
+        filedAt: readText(item.received_at ?? item.receivedAt),
+        seq,
+      });
+      continue;
+    }
+
+    if (type === "appeal.decision") {
+      const target =
+        readText(item.body.target) ?? readText(item.body.appeal);
+      const outcome = readText(item.body.outcome);
+      if (target === null || outcome === null) continue;
+      const seq = seqOf(item);
+      const seen = verdicts.get(target);
+      if (seen !== undefined && seen.seq <= seq) continue;
+      verdicts.set(target, {
+        cid,
+        outcome,
+        decidedAt: readText(item.received_at ?? item.receivedAt),
+        seq,
+      });
+      continue;
+    }
+
+    if (type === "moderation.decision" && cid === decision.decisionCid) {
+      // The restoring `release` names the appeal whose overturn it applies.
+      restoredAppeal =
+        readText(item.body.appeal) ?? readText(item.body.appeal_restoration);
+    }
+  }
+
+  let wanted: {
+    cid: string;
+    decisionCid: string;
+    filedAt: string | null;
+    seq: number;
+  } | null = null;
+
+  if (decision.action === "release") {
+    const restored = restoredAppeal === null ? undefined : appeals.get(restoredAppeal);
+    if (restored !== undefined && restoredAppeal !== null) {
+      wanted = { cid: restoredAppeal, ...restored };
+    }
+  } else {
+    // A decision is appealed once; should a log hold more, the newest stands.
+    for (const [cid, appeal] of appeals) {
+      if (appeal.decisionCid !== decision.decisionCid) continue;
+      if (wanted === null || appeal.seq > wanted.seq) {
+        wanted = { cid, ...appeal };
+      }
+    }
+  }
+
+  if (wanted === null) return null;
+  const verdict = verdicts.get(wanted.cid) ?? null;
+
+  return {
+    appealCid: wanted.cid,
+    decisionCid: wanted.decisionCid,
+    filedAt: wanted.filedAt,
+    outcome: verdict?.outcome ?? null,
+    verdictCid: verdict?.cid ?? null,
+    decidedAt: verdict?.decidedAt ?? null,
+  };
+}
+
+/**
+ * How a panel's outcome reads after "the panel" in the author's banner.
+ * The vocabulary is `appeal.decision`'s schema enum.
+ */
+const OUTCOME_PHRASES: Readonly<Record<string, string>> = {
+  upheld: "upheld the decision",
+  overturned: "overturned the decision",
+  modified: "modified the decision",
+  remanded: "sent the decision back to the moderators",
+  granted: "granted the appeal",
+  grant: "granted the appeal",
+  denied: "denied the appeal",
+  deny: "denied the appeal",
+  allowed: "allowed the appeal",
+  dismissed: "dismissed the appeal",
+};
+
+/**
+ * The banner sentence for a filed appeal: when it was filed and whether a
+ * panel is still to decide it, or the panel's outcome. Dates read as the paper
+ * page writes them (`5 March 2027`).
+ */
+export function appealStatus(appeal: FiledAppeal): string {
+  const filed = formatRemovalDate(appeal.filedAt);
+  const opened = filed === null ? "Appeal filed" : `Appeal filed on ${filed}`;
+  if (appeal.outcome === null) {
+    return `${opened} — awaiting panel.`;
+  }
+  const decided = formatRemovalDate(appeal.decidedAt);
+  const phrase =
+    OUTCOME_PHRASES[appeal.outcome] ??
+    `recorded the outcome “${appeal.outcome}”`;
+  return `${opened} — the panel ${phrase}${decided === null ? "" : ` on ${decided}`}.`;
+}
+
 
 /**
  * Sign an `appeal` with the device key behind a passkey prompt.

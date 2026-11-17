@@ -9,6 +9,7 @@ import {
   APPEAL_EMPTY_GROUNDS,
   AppealDialog,
   describeAppealError,
+  filedAppeal,
   latestAppealableDecision,
   loadAppealableDecision,
   submitAppeal,
@@ -261,6 +262,87 @@ describe("joining the paper's public records", () => {
       `/export/paper/${encodeURIComponent(PAPER)}/records`,
       expect.objectContaining({ auth: false }),
     );
+  });
+});
+
+describe("the appeal a decision already has", () => {
+  const hold = {
+    decisionCid: "bafyrei-held",
+    action: "hold",
+  };
+  const filed = (seq = 5, target = "bafyrei-held") => ({
+    seq,
+    record_cid: `bafyrei-appeal-${seq}`,
+    record_type: "appeal",
+    author_did: "did:key:author",
+    received_at: "2027-03-05T10:00:00Z",
+    body: { target, grounds: "Why.", paper: "bafyrei-genesis" },
+  });
+  const verdict = (seq = 6, outcome = "upheld") => ({
+    seq,
+    record_cid: `bafyrei-verdict-${seq}`,
+    record_type: "appeal.decision",
+    author_did: "did:key:node",
+    received_at: "2027-03-06T10:00:00Z",
+    body: { target: "bafyrei-appeal-5", outcome, reasons: ["In scope."] },
+  });
+  const release = (seq = 7) => ({
+    seq,
+    record_cid: `bafyrei-release-${seq}`,
+    record_type: "moderation.decision",
+    author_did: "did:key:node",
+    received_at: "2027-03-06T10:00:00Z",
+    body: {
+      target: "bafyrei-version-2",
+      action: "release",
+      state: "moderation",
+      appeal: "bafyrei-appeal-5",
+      appeal_restoration: "bafyrei-appeal-5",
+    },
+  });
+
+  it("finds the appeal of the decision, with when it was filed", () => {
+    expect(filedAppeal([hold, filed(5)], hold)).toEqual({
+      appealCid: "bafyrei-appeal-5",
+      decisionCid: "bafyrei-held",
+      filedAt: "2027-03-05T10:00:00Z",
+      outcome: null,
+      verdictCid: null,
+      decidedAt: null,
+    });
+  });
+
+  it("adds the panel's outcome once there is one", () => {
+    expect(filedAppeal([filed(5), verdict(6, "overturned")], hold)).toMatchObject({
+      appealCid: "bafyrei-appeal-5",
+      outcome: "overturned",
+      verdictCid: "bafyrei-verdict-6",
+      decidedAt: "2027-03-06T10:00:00Z",
+    });
+  });
+
+  it("is null when the decision has no appeal, or another one was appealed", () => {
+    expect(filedAppeal([hold], hold)).toBeNull();
+    expect(filedAppeal([hold, filed(5, "bafyrei-something-else")], hold)).toBeNull();
+    expect(filedAppeal([hold], null)).toBeNull();
+  });
+
+  it("finds the appeal an overturning release restored", () => {
+    expect(
+      filedAppeal(
+        [filed(5), verdict(6, "overturned"), release(7)],
+        { decisionCid: "bafyrei-release-7", action: "release" },
+      ),
+    ).toMatchObject({
+      appealCid: "bafyrei-appeal-5",
+      outcome: "overturned",
+    });
+  });
+
+  it("skips entries it cannot read rather than guessing", () => {
+    expect(
+      filedAppeal([null, "nope", { seq: 1 }, filed(5), verdict(6)], hold),
+    ).toMatchObject({ appealCid: "bafyrei-appeal-5", outcome: "upheld" });
   });
 });
 
