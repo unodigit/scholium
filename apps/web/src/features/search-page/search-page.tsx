@@ -30,6 +30,7 @@
  */
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useRef,
@@ -39,7 +40,8 @@ import {
 } from "react";
 
 import { StatusChip, isPaperStatus } from "../ui-kit";
-import { authorLine } from "../feed/feed";
+import { profilePath } from "../dashboard/profile";
+import { authorLabel, authorLine } from "../feed/feed";
 import { SaveSearchButton, type SaveSearchButtonProps } from "./save-search-button";
 import {
   EMPTY_SEARCH_STATE,
@@ -656,9 +658,9 @@ function ResultRow({
   semantic: boolean;
 }) {
   const listed = formatListedAt(hit.listedAt);
-  const byline = authorLine(hit.authors ?? []);
-  const bylineText =
-    byline.shown.join(", ") + (byline.more > 0 ? `, +${byline.more}` : "");
+  const authors = hit.authors ?? [];
+  const byline = authorLine(authors);
+  const hasByline = byline.shown.length > 0;
   const meta = [
     hit.categories.length > 0 ? hit.categories.join(", ") : "",
     `v${hit.n}`,
@@ -671,17 +673,23 @@ function ResultRow({
         <a href={resultHref(hit)}>{hit.title}</a>
       </h2>
 
-      {bylineText !== "" || meta.length > 0 ? (
+      {hasByline || meta.length > 0 ? (
         <p className="sp-result-meta">
-          {bylineText !== "" ? (
+          {hasByline ? (
             <span
               className="sp-result-authors"
               title={byline.more > 0 ? byline.all.join(", ") : undefined}
             >
-              {bylineText}
+              {authors.slice(0, byline.shown.length).map((author, index) => (
+                <Fragment key={author.did}>
+                  {index > 0 ? ", " : null}
+                  <a href={profilePath(author.did)}>{authorLabel(author)}</a>
+                </Fragment>
+              ))}
+              {byline.more > 0 ? `, +${byline.more}` : null}
             </span>
           ) : null}
-          {bylineText !== "" && meta.length > 0 ? " · " : null}
+          {hasByline && meta.length > 0 ? " · " : null}
           {meta.join(" · ")}
         </p>
       ) : null}

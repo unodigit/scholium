@@ -33,14 +33,21 @@ the route answers that with ``503``.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
 
 from app import db
-from app.modules.submissions import LISTED, Paper, PaperVersion, ensure_tables
+from app.modules.submissions import (
+    LISTED,
+    Authorship,
+    Paper,
+    PaperVersion,
+    authorship_for,
+    ensure_tables,
+)
 
 from .embedder import cosine_similarity, get_embedder
 from .embeddings import Embedding, decode_vector, embed_versions, ensure_table
@@ -62,6 +69,8 @@ class SemanticHit:
     status: Optional[str]
     listed_at: Optional[datetime]
     score: float
+    #: The version's authors, in byline order (Authorship rows).
+    authors: list[Authorship] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -139,6 +148,7 @@ def _describe(ranked: list[tuple[float, str]]) -> list[SemanticHit]:
             status=paper.status if paper is not None else None,
             listed_at=version.listed_at,
             score=scores[version.version_cid],
+            authors=authorship_for(version.version_cid),
         )
         for version, paper in rows
     }

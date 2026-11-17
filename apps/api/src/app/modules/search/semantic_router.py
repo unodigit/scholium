@@ -33,6 +33,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.modules.catalog.router import AuthorOut, _author_out
+
 from .embedder import EmbedderError
 from .semantic import SemanticHit, semantic_search
 
@@ -55,6 +57,8 @@ class SemanticResultOut(BaseModel):
     n: int
     title: str
     abstract: str
+    #: The version's authors, in byline order.
+    authors: list[AuthorOut]
     categories: list[str]
     status: Optional[str] = None
     listed_at: Optional[datetime] = None
@@ -77,6 +81,7 @@ def _out(hit: SemanticHit) -> SemanticResultOut:
         n=hit.n,
         title=hit.title,
         abstract=hit.abstract,
+        authors=[_author_out(row) for row in hit.authors],
         categories=hit.categories,
         status=hit.status,
         listed_at=hit.listed_at,

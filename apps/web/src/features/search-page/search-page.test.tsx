@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -101,11 +102,92 @@ describe("SearchPage with server data", () => {
   });
 
   it("shows the author line the feed shows", () => {
+    const { container } = render(
+      <SearchPage initialState={state()} initialResult={RESULT} updateUrl={vi.fn()} />,
+    );
+
+    // One byline per result. Each name is its own link, so the line is read
+    // from the element's text rather than from a single text node.
+    const bylines = [...container.querySelectorAll(".sp-result-authors")].map(
+      (line) => line.textContent,
+    );
+    expect(bylines).toEqual(["M. Zhang, A. Okafor", "M. Zhang, A. Okafor"]);
+  });
+
+  it("links each author name to their profile, in byline order", () => {
     render(
       <SearchPage initialState={state()} initialResult={RESULT} updateUrl={vi.fn()} />,
     );
 
-    expect(screen.getAllByText("M. Zhang, A. Okafor").length).toBeGreaterThanOrEqual(1);
+    const row = screen
+      .getByRole("heading", { level: 2, name: HIT.title })
+      .closest("li") as HTMLElement;
+    const authorLinks = within(row)
+      .getAllByRole("link")
+      .filter((link) => (link.getAttribute("href") ?? "").startsWith("/u/"));
+
+    expect(
+      authorLinks.map((link) => [link.textContent, link.getAttribute("href")]),
+    ).toEqual([
+      ["M. Zhang", "/u/did%3Akey%3Az6Mkha"],
+      ["A. Okafor", "/u/did%3Akey%3Az6MkOka"],
+    ]);
+  });
+
+  it("links a name-less author by their short DID", () => {
+    const nameless = {
+      ...HIT,
+      authors: [{ did: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", name: null }],
+    };
+    render(
+      <SearchPage
+        initialState={state()}
+        initialResult={{ ...RESULT, total: 1, results: [nameless] }}
+        updateUrl={vi.fn()}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "z6Mkha…2doK" });
+    expect(link.getAttribute("href")).toBe(
+      "/u/did%3Akey%3Az6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    );
+  });
+
+  it("names the first two of four authors as links and counts the rest", () => {
+    const many = {
+      ...HIT,
+      authors: ["A", "B", "C", "D"].map((name) => ({
+        did: `did:key:z6Mk${name}`,
+        name: `Author ${name}`,
+      })),
+    };
+    const { container } = render(
+      <SearchPage
+        initialState={state()}
+        initialResult={{ ...RESULT, total: 1, results: [many] }}
+        updateUrl={vi.fn()}
+      />,
+    );
+
+    const line = container.querySelector(".sp-result-authors") as HTMLElement;
+    expect(line.textContent).toBe("Author A, Author B, +2");
+    expect(
+      [...line.querySelectorAll("a")].map((link) => link.textContent),
+    ).toEqual(["Author A", "Author B"]);
+    expect(line.getAttribute("title")).toBe("Author A, Author B, Author C, Author D");
+  });
+
+  it("shows no byline for a result with no authors", () => {
+    const { container } = render(
+      <SearchPage
+        initialState={state()}
+        initialResult={{ ...RESULT, total: 1, results: [{ ...HIT, authors: [] }] }}
+        updateUrl={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector(".sp-result-authors")).toBeNull();
+    expect(container.querySelector(".sp-result-meta")?.textContent).toContain("v2");
   });
 
   it("offers Save this search for the query on screen", () => {
@@ -310,6 +392,23 @@ describe("SearchPage semantic toggle", () => {
     );
     expect(await screen.findByText(/results by meaning/)).toBeTruthy();
     expect(screen.getByText(/ranked by hashing-v1-1024/)).toBeTruthy();
+  });
+
+  it("links each author of a semantic result to their profile", () => {
+    render(
+      <SearchPage
+        initialState={state({ mode: "semantic" })}
+        initialResult={SEMANTIC}
+        updateUrl={vi.fn()}
+      />,
+    );
+
+    const row = screen
+      .getByRole("heading", { level: 2, name: HIT.title })
+      .closest("li") as HTMLElement;
+    expect(
+      within(row).getByRole("link", { name: "A. Okafor" }).getAttribute("href"),
+    ).toBe("/u/did%3Akey%3Az6MkOka");
   });
 
   it("disables the facet filters in semantic mode and says why", () => {

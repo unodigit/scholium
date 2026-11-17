@@ -53,6 +53,7 @@ from app.modules.submissions import (
     REJECTED,
     SCANNING,
     Paper,
+    VersionAuthor,
     get_version,
     save_version,
     transition_version,
@@ -87,7 +88,12 @@ def new_cid() -> str:
 
 
 def make_version(
-    title: str, abstract: str = "An abstract.", *, state: str = AWAITING_CONSENT, paper: str | None = None
+    title: str,
+    abstract: str = "An abstract.",
+    *,
+    state: str = AWAITING_CONSENT,
+    paper: str | None = None,
+    authors: tuple[VersionAuthor, ...] = (),
 ) -> str:
     cid = new_cid()
     save_version(
@@ -99,6 +105,7 @@ def make_version(
         manifest_cid=f"bafkreimanifest{uuid.uuid4().hex}",
         licence="CC-BY-4.0",
         prev_cid=None,
+        authors=authors,
         state=state,
     )
     return cid
@@ -561,6 +568,37 @@ def test_a_word_from_a_listed_title_finds_that_version_first(client):
     assert body["results"][0]["version_cid"] == cid
     assert body["results"][0]["title"] == f"On the nature of {w}"
     assert body["results"][0]["score"] > 0.3
+
+
+def test_a_result_carries_its_authors_in_byline_order(client):
+    # Regression: result rows named no authors because the API sent none.
+    w = word()
+    first, second = "did:key:z6Mk" + uuid.uuid4().hex, "did:key:z6Mk" + uuid.uuid4().hex
+    cid = listed(
+        f"On the nature of {w}",
+        authors=(
+            VersionAuthor(did=second, position=2, credit_roles=None),
+            VersionAuthor(did=first, position=1, credit_roles=("Conceptualization",)),
+        ),
+    )
+
+    result = client.get(URL, params={"q": w}).json()["results"][0]
+
+    assert result["version_cid"] == cid
+    assert result["authors"] == [
+        {"did": first, "author": first, "position": 1, "creditRoles": ["Conceptualization"]},
+        {"did": second, "author": second, "position": 2, "creditRoles": None},
+    ]
+
+
+def test_a_result_with_no_authorship_rows_has_an_empty_author_list(client):
+    w = word()
+    cid = listed(f"Anonymous {w}")
+
+    result = client.get(URL, params={"q": w}).json()["results"][0]
+
+    assert result["version_cid"] == cid
+    assert result["authors"] == []
 
 
 def test_a_word_from_an_abstract_or_the_text_finds_the_version(client):

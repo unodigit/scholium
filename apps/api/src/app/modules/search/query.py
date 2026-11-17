@@ -47,7 +47,7 @@ from sqlalchemy import text
 
 from app import db
 from app.modules import ledger
-from app.modules.submissions import LISTED, ensure_tables
+from app.modules.submissions import LISTED, Authorship, authorship_for, ensure_tables
 
 from .index import TABLE_NAME, ensure_table
 
@@ -83,6 +83,8 @@ class SearchHit:
     has_code: bool
     #: Relevance, higher is better (``-bm25``); comparable only within a query.
     score: float
+    #: The version's authors, in byline order (Authorship rows).
+    authors: list[Authorship] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -391,6 +393,7 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
                 listed_at=_listed_at(row.listed_at),
                 has_code=code_cache[row.version_cid],
                 score=round(-float(getattr(row, "rank", 0.0)), 6),
+                authors=authorship_for(row.version_cid),
             )
         )
     return SearchResult(query=query, total=len(matched), hits=hits, facets=facets)

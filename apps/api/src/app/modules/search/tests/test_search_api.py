@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,6 +33,8 @@ from app.modules.submissions import (
     LISTED,
     MODERATION,
     SCANNING,
+    VersionAuthor,
+    authorship_for,
     save_paper,
     save_version,
     transition_version,
@@ -107,6 +109,7 @@ class Listing:
         status: str = "preprint",
         has_code: bool = False,
         listed_at: Optional[datetime] = None,
+        authors: Sequence[VersionAuthor] = (),
     ) -> None:
         self.paper_cid = new_cid()
         self.version_cid = new_cid()
@@ -121,6 +124,7 @@ class Listing:
             manifest_cid=code_manifest() if has_code else new_cid(),
             licence="CC-BY-4.0",
             prev_cid=self.paper_cid,
+            authors=authors,
         )
         transition_version(self.version_cid, SCANNING)
         transition_version(self.version_cid, MODERATION)
@@ -183,6 +187,69 @@ def test_a_word_of_a_listed_title_returns_it(client):
     assert hit["categories"] == ["cs.CR"]
     assert hit["status"] == "preprint"
     assert hit["has_code"] is False
+
+
+def author_did() -> str:
+    """A DID no other test's version names."""
+    return "did:key:z6Mk" + uuid.uuid4().hex
+
+
+def test_a_hit_carries_its_authors_in_byline_order(client):
+    # Regression: result rows showed "cs.LG - v1 - date" and no names because
+    # the API sent no authors at all, while the feed's rows name theirs.
+    word = unique_word()
+    first, second = author_did(), author_did()
+    target = listed(
+        f"Notes on {word}",
+        authors=(
+            # Stored out of byline order: ``position`` decides, not insertion.
+            VersionAuthor(did=second, position=2, credit_roles=None),
+            VersionAuthor(did=first, position=1, credit_roles=("Conceptualization",)),
+        ),
+    )
+
+    hit = next(h for h in ok(client, word)["results"] if h["version_cid"] == target.version_cid)
+
+    assert hit["authors"] == [
+        {"did": first, "author": first, "position": 1, "creditRoles": ["Conceptualization"]},
+        {"did": second, "author": second, "position": 2, "creditRoles": None},
+    ]
+
+
+def test_a_hit_matches_the_catalog_authors_for_the_same_version(client):
+    word = unique_word()
+    did = author_did()
+    target = listed(
+        f"Study of {word}",
+        authors=(VersionAuthor(did=did, position=1, credit_roles=()),),
+    )
+    hit = next(h for h in ok(client, word)["results"] if h["version_cid"] == target.version_cid)
+
+    assert [a["did"] for a in hit["authors"]] == [r.author_did for r in authorship_for(target.version_cid)]
+    assert hit["authors"][0]["creditRoles"] == []
+
+
+def test_a_hit_with_no_authorship_rows_has_an_empty_author_list(client):
+    word = unique_word()
+    target = listed(f"Anonymous {word}")
+
+    hit = next(h for h in ok(client, word)["results"] if h["version_cid"] == target.version_cid)
+
+    assert hit["authors"] == []
+
+
+def test_search_versions_hits_carry_their_authors():
+    word = unique_word()
+    did = author_did()
+    target = listed(
+        f"Direct {word}",
+        authors=(VersionAuthor(did=did, position=1, credit_roles=None),),
+    )
+
+    (hit,) = search_versions(word).hits
+
+    assert hit.version_cid == target.version_cid
+    assert [row.author_did for row in hit.authors] == [did]
 
 
 def test_an_unlisted_version_is_not_returned(client):
