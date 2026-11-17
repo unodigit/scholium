@@ -116,7 +116,7 @@ test.describe("the roles", () => {
     const tracker = page.getByRole("region", { name: "Status tracker" });
     await expect(tracker).toBeVisible();
     await expect(
-      tracker.getByRole("region", { name: "Co-author consents" }),
+      tracker.getByRole("list", { name: "Co-author consents" }),
     ).toBeVisible();
 
     const versionCid = cidOf(posted, "paper.version");

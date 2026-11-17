@@ -357,7 +357,7 @@ test.describe("publishing", () => {
     const tracker = page.getByRole("region", { name: "Status tracker" });
     await expect(tracker).toBeVisible();
     await expect(tracker.getByRole("listitem").filter({ hasText: /^Submitted/ })).toBeVisible();
-    await expect(tracker.getByRole("region", { name: "Co-author consents" })).toBeVisible();
+    await expect(tracker.getByRole("list", { name: "Co-author consents" })).toBeVisible();
 
     expect(recordStatuses.length).toBeGreaterThanOrEqual(3);
     expect(recordStatuses.every((status) => status === 201)).toBe(true);
