@@ -57,8 +57,8 @@ export async function generateMetadata({ params }: MetaPageProps): Promise<Metad
   return {
     title:
       parsed.ref !== undefined
-        ? `Versions and files of ${parsed.ref.schId} · Scholium`
-        : "Versions and files · Scholium",
+        ? `Versions and files of ${parsed.ref.schId}`
+        : "Versions and files",
     description:
       "Every listed version of a Scholium paper, with its change note and public timestamp, and the signed files of one version with their size, licence, scan status and download links.",
   };

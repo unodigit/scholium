@@ -11,7 +11,7 @@ import {
 } from "../../features/feed";
 
 export const metadata: Metadata = {
-  title: "Home · Scholium",
+  title: "Home",
   description:
     "The latest and reviewed preprints on Scholium, by category, newest first and with no vote counts.",
 };

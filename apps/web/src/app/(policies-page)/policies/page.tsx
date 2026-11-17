@@ -8,7 +8,7 @@ import {
 } from "../../../features/policies-page/policies";
 
 export const metadata: Metadata = {
-  title: "Moderation policies · Scholium",
+  title: "Moderation policies",
   description:
     "The public moderation policy clauses every Scholium moderation decision cites.",
 };

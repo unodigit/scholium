@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { VerifyEmailForm } from "../../../features/web-auth/verify-email-form";
 
 export const metadata: Metadata = {
-  title: "Verify your email · Scholium",
+  title: "Verify your email",
   description: "Confirm the email address saved on your Scholium account.",
   // The address carries a bearer token until the page has consumed it: keep
   // the page out of search indexes and never send the address on as a referrer.

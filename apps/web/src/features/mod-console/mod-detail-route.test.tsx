@@ -50,7 +50,7 @@ describe("mod detail route (server render)", () => {
     const metadata = await generateMetadata({
       params: Promise.resolve({ cid: VERSION }),
     });
-    expect(metadata.title).toBe("Moderation decision · Scholium");
+    expect(metadata.title).toBe("Moderation decision");
     expect(metadata.description).toContain(VERSION);
   });
 });

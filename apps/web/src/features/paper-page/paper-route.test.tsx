@@ -540,7 +540,7 @@ describe("metadata", () => {
     stubApi();
     const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
 
-    expect(meta.title).toBe("Can a Meta-Agent Choose the Safer Branch? · v2 of 2 · Scholium");
+    expect(meta.title).toBe("Can a Meta-Agent Choose the Safer Branch? · v2 of 2");
     expect(meta.description).toMatch(/evaluation framework investigating/);
   });
 
@@ -550,7 +550,7 @@ describe("metadata", () => {
       params: Promise.resolve({ id: BARE_ID, version: "v1" }),
     });
 
-    expect(meta.title).toBe("Can a Meta-Agent Choose the Safer Branch? · v1 of 2 · Scholium");
+    expect(meta.title).toBe("Can a Meta-Agent Choose the Safer Branch? · v1 of 2");
   });
 
   it("cuts a long abstract at a word", async () => {
@@ -574,7 +574,7 @@ describe("metadata", () => {
     const bad = await generateMetadata({ params: Promise.resolve({ id: "not an id!" }) });
 
     for (const meta of [missing, bad]) {
-      expect(meta.title).toBe("Paper unavailable · Scholium");
+      expect(meta.title).toBe("Paper unavailable");
       expect(meta.robots).toEqual({ index: false });
     }
   });
@@ -589,7 +589,7 @@ describe("metadata", () => {
 
     const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
 
-    expect(meta.title).toBe("Content removed · Scholium");
+    expect(meta.title).toBe("Content removed");
     expect(meta.robots).toEqual({ index: false });
   });
 });

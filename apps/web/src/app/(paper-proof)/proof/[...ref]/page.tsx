@@ -30,7 +30,7 @@ function parse(segments: string[]): Parsed {
 export async function generateMetadata({ params }: ProofPageProps): Promise<Metadata> {
   const parsed = parse((await params).ref);
   return {
-    title: "ref" in parsed ? `Proof of ${parsed.ref.schId} · Scholium` : "Proof · Scholium",
+    title: "ref" in parsed ? `Proof of ${parsed.ref.schId}` : "Proof",
     description:
       "Check in your browser that a Scholium paper is signed by all its authors, its history is intact and its files match.",
   };

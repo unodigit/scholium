@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { SubmitWizard } from "../../../features/submit";
 
 export const metadata: Metadata = {
-  title: "Submit a paper · Scholium",
+  title: "Submit a paper",
   description:
     "Submit a paper to Scholium: upload your PDF, LaTeX source, code and data, then add details, authors and sign.",
 };

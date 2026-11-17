@@ -62,8 +62,8 @@ export async function generateMetadata({ params }: ReviewsPageProps): Promise<Me
   return {
     title:
       parsed.ref !== undefined
-        ? `Reviews of ${parsed.ref.schId} · Scholium`
-        : "Reviews · Scholium",
+        ? `Reviews of ${parsed.ref.schId}`
+        : "Reviews",
     description:
       "The formal reviews of a Scholium paper: reviewer label, recommendation, rubric scores and the report, with the median score per rubric dimension.",
   };

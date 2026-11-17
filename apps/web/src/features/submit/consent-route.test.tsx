@@ -41,6 +41,6 @@ describe("/consent/[version] route (server render)", () => {
 
   it("is a personal invitation, so it asks search engines to leave it out", () => {
     expect(metadata.robots).toEqual({ index: false, follow: false });
-    expect(metadata.title).toBe("Review and sign · Scholium");
+    expect(metadata.title).toBe("Review and sign");
   });
 });

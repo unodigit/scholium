@@ -66,8 +66,8 @@ export async function generateMetadata({ params }: DiscussionPageProps): Promise
   return {
     title:
       parsed.ref !== undefined
-        ? `Discussion of ${parsed.ref.schId} · Scholium`
-        : "Discussion · Scholium",
+        ? `Discussion of ${parsed.ref.schId}`
+        : "Discussion",
     description:
       "Open discussion threads on a Scholium paper, most helpful first, with replies and a way to report any post.",
   };

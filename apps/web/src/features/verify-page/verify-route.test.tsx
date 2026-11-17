@@ -77,7 +77,7 @@ describe("/verify route (server render)", () => {
   });
 
   it("titles the page", () => {
-    expect(metadata.title).toBe("Verify a file · Scholium");
+    expect(metadata.title).toBe("Verify a file");
     expect(String(metadata.description)).toMatch(/exactly what the authors of a Scholium paper signed/);
   });
 });

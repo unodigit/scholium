@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { NewVersionPage } from "../../../../../features/submit";
 
 export const metadata: Metadata = {
-  title: "Submit a new version · Scholium",
+  title: "Submit a new version",
   description:
     "Publish the next version of a paper: the details pre-filled from its latest version, a change note, and a signed paper.version that extends it.",
 };

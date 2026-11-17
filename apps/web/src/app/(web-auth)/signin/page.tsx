@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { SignInForm } from "../../../features/web-auth/signin-form";
 
 export const metadata: Metadata = {
-  title: "Sign in · Scholium",
+  title: "Sign in",
   description: "Sign in to Scholium with your passkey.",
 };
 

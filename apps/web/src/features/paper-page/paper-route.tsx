@@ -162,19 +162,19 @@ export async function paperRouteMetadata(
     address === null ? null : await readPaper(address.id, address.version);
   if (read !== null && !read.ok && read.tombstone !== null) {
     return {
-      title: "Content removed · Scholium",
+      title: "Content removed",
       robots: { index: false },
     };
   }
   if (read === null || !read.ok) {
     return {
-      title: "Paper unavailable · Scholium",
+      title: "Paper unavailable",
       robots: { index: false },
     };
   }
   const { paper, version, totalVersions } = read.data;
   return {
-    title: `${paper.title} · ${versionOfTotal(version, totalVersions)} · Scholium`,
+    title: `${paper.title} · ${versionOfTotal(version, totalVersions)}`,
     description: describe(paper.abstract),
   };
 }

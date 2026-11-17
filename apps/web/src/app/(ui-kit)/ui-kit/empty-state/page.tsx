@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { EmptyState } from "../../../../features/ui-kit";
 
 export const metadata: Metadata = {
-  title: "Empty state · UI kit · Scholium",
+  title: "Empty state · UI kit",
   description: "Empty states: one sentence and one action, never a dead end.",
   robots: { index: false, follow: false },
 };

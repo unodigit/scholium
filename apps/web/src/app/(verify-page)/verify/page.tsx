@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { VerifyPage } from "../../../features/verify-page/verify-page";
 
 export const metadata: Metadata = {
-  title: "Verify a file · Scholium",
+  title: "Verify a file",
   description:
     "Check in your browser that a file is exactly what the authors of a Scholium paper signed. The file never leaves your device.",
 };

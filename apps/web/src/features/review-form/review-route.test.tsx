@@ -231,12 +231,12 @@ describe("/review route failures", () => {
 describe("/review metadata", () => {
   it("titles the tab with the paper id", async () => {
     const metadata = await generateMetadata({ params: Promise.resolve({ id: "6sel-2dio-orm6" }) });
-    expect(metadata.title).toBe("Review sch:6sel-2dio-orm6 · Scholium");
+    expect(metadata.title).toBe("Review sch:6sel-2dio-orm6");
   });
 
   it("falls back to a plain title for a bad id instead of throwing", async () => {
     const metadata = await generateMetadata({ params: Promise.resolve({ id: "nonsense" }) });
-    expect(metadata.title).toBe("Review · Scholium");
+    expect(metadata.title).toBe("Review");
   });
 
   it("keeps a reviewer's workspace out of search engines", async () => {

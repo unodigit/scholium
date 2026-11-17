@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { OnboardingForm } from "../../../features/web-auth/onboarding-form";
 
 export const metadata: Metadata = {
-  title: "Welcome · Scholium",
+  title: "Welcome",
   description:
     "Set up Scholium: your passkey, your name, ORCID iD, categories to follow and recovery guardians.",
 };

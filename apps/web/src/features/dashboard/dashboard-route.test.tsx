@@ -21,7 +21,7 @@ describe("/me route", () => {
   });
 
   it("names the page in its metadata", () => {
-    expect(metadata.title).toBe("Me · Scholium");
+    expect(metadata.title).toBe("Me");
     expect(metadata.description).toContain("needs your attention");
   });
 });

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { RecordLinkDemo } from "./record-link-demo";
 
 export const metadata: Metadata = {
-  title: "Record link · UI kit · Scholium",
+  title: "Record link · UI kit",
   description:
     "“View record” opens the raw signed JSON from GET /v1/records/{cid} in a side sheet.",
   robots: { index: false, follow: false },

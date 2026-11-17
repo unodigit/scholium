@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { OrcidReturn } from "../../../../features/web-auth/onboarding-form";
 
 export const metadata: Metadata = {
-  title: "Linking your ORCID iD · Scholium",
+  title: "Linking your ORCID iD",
   description: "Finishing the link between your Scholium account and your ORCID iD.",
   // The address carries a one-time authorization code and a signed state until
   // the page has taken them out of it: keep the page out of search indexes and

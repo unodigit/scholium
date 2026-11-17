@@ -27,9 +27,9 @@ export async function generateMetadata({
   params,
 }: ReviewRouteProps): Promise<Metadata> {
   const { id } = await params;
-  let title = "Review · Scholium";
+  let title = "Review";
   try {
-    title = `Review ${parseReviewTarget(id)} · Scholium`;
+    title = `Review ${parseReviewTarget(id)}`;
   } catch (error) {
     if (!(error instanceof InvalidPaperIdError)) throw error;
   }

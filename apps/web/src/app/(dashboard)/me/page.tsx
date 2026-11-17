@@ -4,7 +4,7 @@ import { DashboardPage } from "../../../features/dashboard/dashboard-page";
 import { FollowedCategoriesCard } from "../../../features/dashboard/follow-toggle";
 
 export const metadata: Metadata = {
-  title: "Me · Scholium",
+  title: "Me",
   description:
     "Your dashboard: needs your attention, your papers, your reviews, credentials and notifications.",
 };

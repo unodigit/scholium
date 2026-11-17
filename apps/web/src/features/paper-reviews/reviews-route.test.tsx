@@ -210,6 +210,6 @@ describe("generateMetadata", () => {
     const metadata = await generateMetadata({
       params: Promise.resolve({ ref: ["6sel-2dio-orm6", "v2"] }),
     });
-    expect(metadata.title).toBe(`Reviews of ${SHORT}/v2 · Scholium`);
+    expect(metadata.title).toBe(`Reviews of ${SHORT}/v2`);
   });
 });

@@ -26,6 +26,13 @@ import { defineConfig, devices } from "@playwright/test";
 const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 3100);
 const API_PORT = Number(process.env.E2E_API_PORT ?? 8100);
 
+// A small SMTP sink (`tests/e2e/mail-sink.mjs`) stands in for the recipient's
+// mail server, so a journey can read the branded email the node actually
+// sends. It listens for SMTP and, on a second port, for the HTTP calls the
+// journeys use to read and clear the mailbox.
+const SMTP_PORT = Number(process.env.E2E_SMTP_PORT ?? 8125);
+const MAIL_HTTP_PORT = Number(process.env.E2E_MAIL_HTTP_PORT ?? 8126);
+
 // Both sides are `localhost` on purpose. The refresh token is a
 // `SameSite=Strict` cookie set by the API, and the browser only keeps (and
 // sends) it when the API and the web app are the same *site*; `localhost` and
@@ -38,6 +45,9 @@ const API_URL = `http://localhost:${API_PORT}`;
 // Readiness is probed on the loopback address the servers bind to.
 const WEB_READY_URL = `http://127.0.0.1:${WEB_PORT}/`;
 const API_READY_URL = `http://127.0.0.1:${API_PORT}/healthz`;
+const MAIL_READY_URL = `http://127.0.0.1:${MAIL_HTTP_PORT}/health`;
+/** The mailbox the journeys read; also where the API delivers its mail. */
+const MAIL_URL = `http://127.0.0.1:${MAIL_HTTP_PORT}`;
 
 /** Wiped and recreated by the API command at the start of every run. */
 const DATA_DIR = join(tmpdir(), `scholium-e2e-${API_PORT}`);
@@ -51,6 +61,7 @@ process.env.E2E_WEB_URL = WEB_URL;
 process.env.E2E_API_URL = API_URL;
 process.env.E2E_API_DIR = API_DIR;
 process.env.E2E_DEMO_KEYS = join(DATA_DIR, "demo-keys.json");
+process.env.E2E_MAIL_URL = MAIL_URL;
 
 const UV = "uv run --all-packages python";
 
@@ -81,6 +92,21 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
+      // The recipient's mail server. It must be up before the API sends
+      // anything, and it is started with the rest of the system.
+      name: "mail",
+      command: "node tests/e2e/mail-sink.mjs",
+      cwd: fileURLToPath(new URL(".", import.meta.url)),
+      url: MAIL_READY_URL,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stderr: "pipe",
+      env: {
+        E2E_SMTP_PORT: String(SMTP_PORT),
+        E2E_MAIL_HTTP_PORT: String(MAIL_HTTP_PORT),
+      },
+    },
+    {
       name: "api",
       command: apiCommand,
       cwd: API_DIR,
@@ -97,6 +123,9 @@ export default defineConfig({
         NODE_KEY_PATH: join(DATA_DIR, "node.key"),
         JWT_SECRET: "scholium-e2e-jwt-secret-not-for-production",
         WEB_ORIGINS: WEB_URL,
+        // Every notification goes to the sink, where a journey can read the
+        // exact message a member's mail client would receive.
+        SMTP_URL: `smtp://127.0.0.1:${SMTP_PORT}`,
         SCHOLIUM_ENV: "dev",
         ORCID_MOCK: "1",
         ARXIV_MOCK: "1",

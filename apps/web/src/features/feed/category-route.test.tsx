@@ -249,7 +249,7 @@ describe("category metadata", () => {
   it("names the category and its label in the title", async () => {
     const metadata = await generateMetadata({ params: params("cs.AI") });
 
-    expect(metadata.title).toBe("cs.AI · Artificial Intelligence · Scholium");
+    expect(metadata.title).toBe("cs.AI · Artificial Intelligence");
     expect(String(metadata.description)).toContain("Artificial Intelligence");
   });
 
@@ -264,6 +264,6 @@ describe("category metadata", () => {
   it("falls back to a plain title for an unknown category", async () => {
     const metadata = await generateMetadata({ params: params("astro-ph.HE") });
 
-    expect(metadata.title).toBe("astro-ph.HE · Scholium");
+    expect(metadata.title).toBe("astro-ph.HE");
   });
 });

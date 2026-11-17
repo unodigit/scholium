@@ -7,7 +7,7 @@ import {
 } from "../../../../features/ui-kit";
 
 export const metadata: Metadata = {
-  title: "Status chip · UI kit · Scholium",
+  title: "Status chip · UI kit",
   description: "Status chips: an icon plus a word, never colour alone.",
   robots: { index: false, follow: false },
 };

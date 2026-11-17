@@ -67,10 +67,10 @@ describe("/ai route (server render)", () => {
 
   it("titles the page with the paper being advised", async () => {
     const good = await generateMetadata({ params: Promise.resolve({ ref: [PAPER, "v2"] }) });
-    expect(good.title).toBe("AI pre-review of sch:6sel-2dio-orm6/v2 · Scholium");
+    expect(good.title).toBe("AI pre-review of sch:6sel-2dio-orm6/v2");
     expect(good.description).toMatch(/not a peer review/i);
 
     const bad = await generateMetadata({ params: Promise.resolve({ ref: ["nope"] }) });
-    expect(bad.title).toBe("AI pre-review · Scholium");
+    expect(bad.title).toBe("AI pre-review");
   });
 });

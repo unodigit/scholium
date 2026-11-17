@@ -178,18 +178,18 @@ export async function compareRouteMetadata(
   const address = parseCompareAddress(segments);
   if (address === null) {
     return {
-      title: "Comparison unavailable · Scholium",
+      title: "Comparison unavailable",
       robots: { index: false },
     };
   }
   const read = await readComparison(address.id, address.from, address.to);
   const heading = `Compare v${address.from} with v${address.to}`;
   if (!read.ok) {
-    return { title: `${heading} · Scholium`, robots: { index: false } };
+    return { title: `${heading}`, robots: { index: false } };
   }
   const paper = read.paperTitle === null ? "" : ` of ${read.paperTitle}`;
   return {
-    title: `${heading}${paper} · Scholium`,
+    title: `${heading}${paper}`,
     description: `Paragraph-by-paragraph changes between version ${address.from} and version ${address.to}${paper}.`,
   };
 }

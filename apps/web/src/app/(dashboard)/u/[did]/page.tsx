@@ -28,7 +28,7 @@ export async function generateMetadata({
   const { did } = await params;
   const decodedDid = decodeProfileDid(did);
   return {
-    title: "Profile · Scholium",
+    title: "Profile",
     description: `A member's public profile: name, affiliation, ORCID, trust tier and signed reviews (${decodedDid}).`,
   };
 }

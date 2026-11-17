@@ -12,7 +12,7 @@ export async function generateMetadata({
 }: ModDetailPageProps): Promise<Metadata> {
   const { cid } = await params;
   return {
-    title: "Moderation decision · Scholium",
+    title: "Moderation decision",
     description: `Decide on the flagged record ${cid}: read what was reported, cite a policy clause and give a reason.`,
   };
 }

@@ -67,10 +67,10 @@ describe("/proof route (server render)", () => {
 
   it("titles the page with the version being checked", async () => {
     const good = await generateMetadata({ params: Promise.resolve({ ref: [PAPER, "v2"] }) });
-    expect(good.title).toBe("Proof of sch:6sel-2dio-orm6/v2 · Scholium");
+    expect(good.title).toBe("Proof of sch:6sel-2dio-orm6/v2");
     expect(good.description).toMatch(/signed by all its authors/);
 
     const bad = await generateMetadata({ params: Promise.resolve({ ref: ["nope"] }) });
-    expect(bad.title).toBe("Proof · Scholium");
+    expect(bad.title).toBe("Proof");
   });
 });

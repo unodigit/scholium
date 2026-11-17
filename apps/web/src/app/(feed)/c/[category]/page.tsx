@@ -28,13 +28,13 @@ export async function generateMetadata({
   const category = normalizeCategory((await params).category);
   if (category === "") {
     return {
-      title: "Category · Scholium",
+      title: "Category",
       description: "Papers by category on Scholium.",
     };
   }
   const label = categoryLabel(category);
   return {
-    title: `${label === null ? category : `${category} · ${label}`} · Scholium`,
+    title: `${label === null ? category : `${category} · ${label}`}`,
     description: categoryDescription(category),
     // Lets a feed reader discover the category's Atom feed from the page.
     alternates: {

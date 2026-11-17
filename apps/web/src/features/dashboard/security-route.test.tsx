@@ -28,7 +28,7 @@ describe("/me/security route", () => {
   });
 
   it("names the page in its metadata", () => {
-    expect(metadata.title).toBe("Security · Scholium");
+    expect(metadata.title).toBe("Security");
     expect(metadata.description).toContain("3 of 5");
     expect(metadata.description).toContain("key rotation");
   });

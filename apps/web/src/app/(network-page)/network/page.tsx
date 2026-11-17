@@ -8,7 +8,7 @@ import {
 } from "../../../features/network-page/network";
 
 export const metadata: Metadata = {
-  title: "Network · Scholium",
+  title: "Network",
   description:
     "What this Scholium node says about itself, in public: its standing, log head, anchor status, replicas and moderation record.",
 };

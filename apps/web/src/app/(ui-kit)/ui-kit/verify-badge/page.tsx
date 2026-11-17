@@ -8,7 +8,7 @@ import {
 import { VerifyBadgeDemo } from "./verify-badge-demo";
 
 export const metadata: Metadata = {
-  title: "Verify badge · UI kit · Scholium",
+  title: "Verify badge · UI kit",
   description:
     "Verify badge: five states of a paper's proof, each an icon plus words, never colour alone.",
   robots: { index: false, follow: false },

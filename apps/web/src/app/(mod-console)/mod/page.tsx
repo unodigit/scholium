@@ -4,7 +4,7 @@ import { ModCases } from "../../../features/mod-console/mod-cases";
 import { ModConsole } from "../../../features/mod-console/mod-console";
 
 export const metadata: Metadata = {
-  title: "Moderation console · Scholium",
+  title: "Moderation console",
   description:
     "The moderation queue, flags and appeals: papers waiting for a decision with their automated check signals, reports to review, and the panel vote on contested decisions.",
 };

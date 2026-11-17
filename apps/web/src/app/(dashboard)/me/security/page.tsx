@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { SecurityPage } from "../../../../features/dashboard/security-page";
 
 export const metadata: Metadata = {
-  title: "Security · Scholium",
+  title: "Security",
   description:
     "Your devices, recovery guardians (3 of 5), last key rotation and the option to rotate your signing key.",
 };

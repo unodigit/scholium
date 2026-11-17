@@ -8,7 +8,7 @@ import {
 } from "../../../../features/search-page";
 
 export const metadata: Metadata = {
-  title: "Paper · Scholium",
+  title: "Paper",
   description:
     "A listed paper with its authors, status, version, categories and licence.",
 };

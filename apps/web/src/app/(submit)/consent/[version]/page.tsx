@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { ConsentPage } from "../../../../features/submit";
 
 export const metadata: Metadata = {
-  title: "Review and sign · Scholium",
+  title: "Review and sign",
   description:
     "Review a version of a paper you are listed on as a co-author, then accept or decline authorship with a signed record.",
   // The link is a personal invitation, not a page to find through search.

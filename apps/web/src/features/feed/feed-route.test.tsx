@@ -315,7 +315,7 @@ describe("feed route (server render)", () => {
   });
 
   it("has a title and a description", () => {
-    expect(metadata.title).toBe("Home · Scholium");
+    expect(metadata.title).toBe("Home");
     expect(String(metadata.description)).toContain("no vote counts");
   });
 });

@@ -228,10 +228,10 @@ describe("/discussion/[id]", () => {
 
   it("titles the page after the paper named in the URL", async () => {
     const meta = await generateMetadata({ params: Promise.resolve({ ref: ["6sel-2dio-orm6"] }) });
-    expect(meta.title).toBe(`Discussion of ${SHORT} · Scholium`);
+    expect(meta.title).toBe(`Discussion of ${SHORT}`);
 
     const bad = await generateMetadata({ params: Promise.resolve({ ref: ["nope"] }) });
-    expect(bad.title).toBe("Discussion · Scholium");
+    expect(bad.title).toBe("Discussion");
   });
 
   it("says in the header that a helpful mark never changes the paper's status", async () => {

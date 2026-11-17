@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { IdPillDemo } from "./id-pill-demo";
 
 export const metadata: Metadata = {
-  title: "ID pill · UI kit · Scholium",
+  title: "ID pill · UI kit",
   description:
     "A sch: id in monospace that copies on click and confirms with a “Copied” toast.",
   robots: { index: false, follow: false },

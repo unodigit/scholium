@@ -23,8 +23,12 @@ import { expect, test as base, type Page } from "@playwright/test";
 /** The seeded paper that is waiting in the moderation queue. */
 const QUEUED_TITLE = "A Perpetual-Motion Optimizer That Needs No Gradient";
 
-/** ORCID iD the mocked authorize step sends back. */
-const MOCK_ORCID = "0000-0002-1825-0097";
+/**
+ * The shape of a valid ORCID iD. The mock consent screen generates a fresh one
+ * for every sign-in (so two newcomers never try to link the same iD), which is
+ * why the journey reads the offered value instead of naming a constant.
+ */
+const ORCID_SHAPE = /^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/;
 
 // --- Wiring from playwright.config.ts ---------------------------------------
 
@@ -152,13 +156,15 @@ test.describe("the session survives a page load", () => {
     // state the API issued to this session.
     await page.getByRole("button", { name: "Link your ORCID iD" }).click();
     await expect(page.getByRole("heading", { name: "Scholium wants to sign you in" })).toBeVisible();
-    await expect(page.getByText(MOCK_ORCID, { exact: false })).toBeVisible();
+    // Accept the iD the mock generated for this sign-in.
+    const offeredOrcid = await page.getByLabel("ORCID iD").inputValue();
+    expect(offeredOrcid).toMatch(ORCID_SHAPE);
 
     await page.getByRole("button", { name: "Authorize" }).click();
 
     await expect(page).toHaveURL(/\/onboarding\/orcid\?/);
     await expect(page.getByRole("heading", { name: "ORCID iD linked" })).toBeVisible();
-    await expect(page.getByText(MOCK_ORCID, { exact: false })).toBeVisible();
+    await expect(page.getByText(offeredOrcid, { exact: false })).toBeVisible();
     await expect(page.getByRole("link", { name: "Continue setting up" })).toBeVisible();
 
     // Coming back from the other origin must not cost the session: the

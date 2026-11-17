@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { RecoverForm } from "../../../features/web-auth/recover-form";
 
 export const metadata: Metadata = {
-  title: "Recover your account · Scholium",
+  title: "Recover your account",
   description:
     "Lost your device? Identify your Scholium account by ORCID iD, follow your guardians' approvals and cancel during the 72-hour safety window.",
 };

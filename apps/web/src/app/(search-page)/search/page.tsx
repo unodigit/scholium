@@ -15,7 +15,7 @@ import {
 } from "../../../features/search-page";
 
 export const metadata: Metadata = {
-  title: "Search · Scholium",
+  title: "Search",
   description:
     "Search listed papers by title, abstract or full text, with filters for category, date, status and code, and a semantic search mode.",
 };

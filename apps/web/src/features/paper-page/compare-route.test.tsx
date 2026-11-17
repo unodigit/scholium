@@ -247,7 +247,7 @@ describe("metadata", () => {
       params: Promise.resolve({ id: BARE_ID, range: "1..2" }),
     });
     expect(metadata.title).toBe(
-      "Compare v1 with v2 of Can a Meta-Agent Choose the Safer Branch? · Scholium",
+      "Compare v1 with v2 of Can a Meta-Agent Choose the Safer Branch?",
     );
     expect(metadata.description).toContain(
       "Paragraph-by-paragraph changes between version 1 and version 2",
@@ -258,7 +258,7 @@ describe("metadata", () => {
     const metadata = await generateMetadata({
       params: Promise.resolve({ id: BARE_ID, range: "nope" }),
     });
-    expect(metadata.title).toBe("Comparison unavailable · Scholium");
+    expect(metadata.title).toBe("Comparison unavailable");
     expect(metadata.robots).toEqual({ index: false });
   });
 });

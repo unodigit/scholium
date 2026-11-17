@@ -7,7 +7,7 @@ import {
 import { DecisionBannerDemo } from "./decision-banner-demo";
 
 export const metadata: Metadata = {
-  title: "Decision banner · UI kit · Scholium",
+  title: "Decision banner · UI kit",
   description:
     "Full-width banners for Retracted, Corrected, A newer version exists and Content removed for legal reasons — each linking to the record and the policy clause.",
   robots: { index: false, follow: false },

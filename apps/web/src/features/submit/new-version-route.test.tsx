@@ -40,7 +40,7 @@ describe("/submit/new-version/[ref] route (server render)", () => {
   });
 
   it("names the page for the tab, and describes it for a share", () => {
-    expect(metadata.title).toBe("Submit a new version · Scholium");
+    expect(metadata.title).toBe("Submit a new version");
     expect(metadata.description).toContain("change note");
   });
 });

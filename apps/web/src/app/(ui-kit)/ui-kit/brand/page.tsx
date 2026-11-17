@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { BrandLogo, BrandMark } from "../../../../features/ui-kit";
 
 export const metadata: Metadata = {
-  title: "Brand · UI kit · Scholium",
+  title: "Brand · UI kit",
   description: "Brand mark and logo in every variant and size.",
   robots: { index: false, follow: false },
 };

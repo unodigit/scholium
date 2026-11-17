@@ -38,7 +38,7 @@ describe("mod route (server render)", () => {
   });
 
   it("titles the page for the browser tab", () => {
-    expect(metadata.title).toBe("Moderation console · Scholium");
+    expect(metadata.title).toBe("Moderation console");
   });
 
   it("describes flags and appeals as well as the queue", () => {
