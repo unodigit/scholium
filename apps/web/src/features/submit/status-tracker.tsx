@@ -63,7 +63,7 @@ interface Stage {
   count?: string;
   detail?: string;
   done: boolean;
-  /** Something needs a person: a co-author declined. */
+  /** Something needs a person: a co-author declined, or moderation held the version. */
   attention?: boolean;
 }
 
@@ -77,7 +77,8 @@ const STATE_WORDS: Record<StageState, string> = {
 /** The version states that come after consents / after the scan. */
 const PAST_CONSENTS = new Set(["scanning", "moderation", "listed", "held", "rejected"]);
 const PAST_SCAN = new Set(["moderation", "listed", "held", "rejected"]);
-const PAST_MODERATION = new Set(["listed", "held", "rejected"]);
+/** A held version has not passed moderation: it is stopped there, waiting for a person. */
+const PAST_MODERATION = new Set(["listed", "rejected"]);
 
 export function StatusTracker(props: StatusTrackerProps): ReactElement {
   const report = props.report ?? props.consents ?? props.consentReport ?? null;
@@ -103,7 +104,13 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
       attention: counts.declined > 0 && !consentsDone,
     },
     { key: "scan", label: "Scan", detail: "Files and references are checked", done: PAST_SCAN.has(state) },
-    { key: "moderation", label: "Moderation", detail: "Target: 48 hours", done: PAST_MODERATION.has(state) },
+    {
+      key: "moderation",
+      label: "Moderation",
+      detail: state === "held" ? "Not listed while the hold stands" : "Target: 48 hours",
+      done: PAST_MODERATION.has(state),
+      attention: state === "held",
+    },
     { key: "listed", label: "Listed", done: state === "listed" },
     { key: "ai", label: "AI pre-review", detail: "Advisory, after listing", done: false },
   ];
@@ -131,8 +138,13 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
                 ? "attention"
                 : "current"
               : "upcoming";
-          // After listing, the AI pre-review is on its way rather than "in progress".
-          const stateWords = stage.key === "ai" && stageState === "current" ? "Pending" : STATE_WORDS[stageState];
+          // After listing, the AI pre-review is on its way rather than "in progress"; a hold is said as "Held".
+          const stateWords =
+            stage.key === "ai" && stageState === "current"
+              ? "Pending"
+              : stage.key === "moderation" && stageState === "attention"
+                ? "Held"
+                : STATE_WORDS[stageState];
           return (
             <li
               key={stage.key}

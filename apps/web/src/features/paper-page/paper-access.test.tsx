@@ -281,6 +281,82 @@ describe("the paper's author", () => {
       await screen.findByRole("heading", { level: 1, name: "Can a Meta-Agent Choose the Safer Branch?" }),
     ).toBeTruthy();
   });
+
+  it("titles the browser tab with the paper once it renders, not with the server's 'Paper unavailable'", async () => {
+    // The server answered 404 for this paper (it holds no token), so the tab
+    // starts out titled for a page with no paper.
+    document.title = "Paper unavailable · Scholium";
+    stubHeldPaper();
+
+    signIn(ALICE);
+    render(<PaperAccess address={{ id: BARE_ID, version: null }} />);
+
+    // Until the retry knows better, the title stays honest.
+    expect(document.title).toBe("Paper unavailable · Scholium");
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Can a Meta-Agent Choose the Safer Branch?",
+    });
+
+    expect(document.title).toBe("Can a Meta-Agent Choose the Safer Branch? · v2 · Scholium");
+  });
+
+  it("keeps 'Paper unavailable' for a reader who may not see the paper", async () => {
+    document.title = "Paper unavailable · Scholium";
+    stubHeldPaper({ text: () => notFound() });
+
+    signIn(OKAFOR);
+    render(<PaperAccess address={{ id: BARE_ID, version: null }} />);
+
+    await waitFor(() => expect(screen.queryByText(/Checking whether you can read/)).toBeNull());
+    expect(document.title).toBe("Paper unavailable · Scholium");
+  });
+});
+
+describe("the status stepper of a held paper", () => {
+  /** The tracker's stage, once the author's view has rendered it. */
+  async function stage(key: string): Promise<HTMLElement> {
+    const list = await screen.findByRole("list", { name: "Submission status" });
+    const item = list.querySelector<HTMLElement>(`[data-stage="${key}"]`);
+    if (item === null) throw new Error(`the stepper has no ${key} stage`);
+    return item;
+  }
+
+  const stateWord = (item: HTMLElement): string | undefined =>
+    item.querySelector(".sw-status-tracker__state")?.textContent ?? undefined;
+
+  it("shows Moderation as Held, an attention state, with Listed still ahead", async () => {
+    stubHeldPaper();
+
+    signIn(ALICE);
+    render(<PaperAccess address={{ id: BARE_ID, version: null }} />);
+
+    const moderation = await stage("moderation");
+    expect(moderation.dataset.state).toBe("attention");
+    expect(stateWord(moderation)).toBe("Held");
+    expect(moderation.getAttribute("aria-current")).toBe("step");
+
+    // Not "In progress": a held paper is waiting for a person, not on its way.
+    const listed = await stage("listed");
+    expect(listed.dataset.state).toBe("upcoming");
+    expect(stateWord(listed)).toBe("Not started");
+    expect(listed.getAttribute("aria-current")).toBeNull();
+
+    // What came before the hold is still done.
+    expect((await stage("scan")).dataset.state).toBe("done");
+  });
+
+  it("still shows a paper in moderation as in progress", async () => {
+    stubHeldPaper({ state: "moderation", records: [versionEntry()] });
+
+    signIn(ALICE);
+    render(<PaperAccess address={{ id: BARE_ID, version: null }} />);
+
+    const moderation = await stage("moderation");
+    expect(moderation.dataset.state).toBe("current");
+    expect(stateWord(moderation)).toBe("In progress");
+    expect((await stage("listed")).dataset.state).toBe("upcoming");
+  });
 });
 
 describe("an appeal the author has filed", () => {

@@ -11,13 +11,15 @@
 
 import { useState } from "react";
 
-import { tokenStore } from "../../lib/api";
 import { ReportPanel } from "../paper-discussion";
 import {
   reportPostFlag,
+  signInPath,
   type ReportReason,
   type ReportReceipt,
 } from "../paper-discussion";
+import { useViewer } from "../review-form/use-viewer";
+import { SIGNED_OUT, type Viewer } from "../review-form/viewer";
 
 export interface ReportPaperProps {
   /** cid of the version on screen: the target of the flag. */
@@ -30,9 +32,12 @@ export interface ReportPaperProps {
   readonly targetCid?: string;
   /** The paper, for words; optional. */
   readonly paperId?: string;
-  /** Where "Sign in" goes when a session has ended. */
+  /**
+   * Where "Sign in" goes when there is no session. By default it is the page
+   * the reader is on, with its query and hash, so signing in brings them back.
+   */
   readonly signInHref?: string;
-  /** Pin the sign-in state instead of reading the token store. */
+  /** Pin the sign-in state instead of following the live session. */
   readonly signedIn?: boolean;
   /** Replace the filing call (target, reason) -> receipt, for tests. */
   readonly report?: (target: string, reason: ReportReason) => Promise<ReportReceipt>;
@@ -48,12 +53,18 @@ export interface ReportPaperProps {
   readonly send?: (target: string, reason: ReportReason) => Promise<ReportReceipt>;
 }
 
-const DEFAULT_SIGN_IN_HREF = "/signin";
+/** The viewer a caller pinned with `signedIn`, so the session hook is not read. */
+const PINNED_SIGNED_IN: Viewer = { ...SIGNED_OUT, signedIn: true };
+
+/** `/signin?next=…` back to the address on screen: path, query and hash. */
+function signInHereHref(): string {
+  const { pathname, search, hash } = window.location;
+  return signInPath(`${pathname}${search}${hash}`);
+}
 
 export function ReportPaper(props: ReportPaperProps) {
   const versionCid =
     props.versionCid ?? props.cid ?? props.target ?? props.targetCid ?? "";
-  const signInHref = props.signInHref ?? DEFAULT_SIGN_IN_HREF;
   const signedIn = props.signedIn;
   const report = props.report;
   const onReport = props.onReport;
@@ -62,8 +73,13 @@ export function ReportPaper(props: ReportPaperProps) {
   const [open, setOpen] = useState(false);
   const [reported, setReported] = useState<ReportReason | null>(null);
 
-  const isSignedIn =
-    signedIn !== undefined ? signedIn : tokenStore.isAuthenticated;
+  // The live session, like the rest of the header: the access token lives in
+  // memory and is restored after the page has rendered, so it cannot be read
+  // once at render. A pinned `signedIn` wins, for hosts and tests.
+  const viewer = useViewer(
+    signedIn === undefined ? undefined : signedIn ? PINNED_SIGNED_IN : SIGNED_OUT,
+  );
+  const isSignedIn = viewer.signedIn;
 
   const file = async (reason: ReportReason): Promise<void> => {
     const target = versionCid;
@@ -92,10 +108,12 @@ export function ReportPaper(props: ReportPaperProps) {
   const click = () => {
     if (!isSignedIn) {
       if (typeof window !== "undefined") {
+        // Read now, not at render: the reader may have moved to another tab.
+        const href = props.signInHref ?? signInHereHref();
         if (typeof window.location.assign === "function") {
-          window.location.assign(signInHref);
+          window.location.assign(href);
         } else {
-          window.location.href = signInHref;
+          window.location.href = href;
         }
       }
       return;
@@ -117,7 +135,7 @@ export function ReportPaper(props: ReportPaperProps) {
         <div className="pd-panel">
           <ReportPanel
             authorLabel="this paper"
-            signInHref={signInHref}
+            signInHref={props.signInHref ?? signInHereHref()}
             onCancel={() => setOpen(false)}
             onReport={file}
           />

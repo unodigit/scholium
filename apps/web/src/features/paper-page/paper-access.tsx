@@ -262,6 +262,20 @@ export function PaperAccess({
     };
   }, [address?.id, address?.version, loaders]);
 
+  // The server titled this page for a 404 ("Paper unavailable"): it holds no
+  // token, so it could not know the paper renders for this reader. Once it
+  // does, the tab is named for the paper, in the listed page's own form
+  // (paper-route.tsx), without a total the timeline has not been read for.
+  const paperTitle =
+    phase.kind === "paper" && phase.view.version.title.trim() !== ""
+      ? `${phase.view.version.title} · ${versionOfTotal(phase.view.version.n, null)} · Scholium`
+      : null;
+  useEffect(() => {
+    if (paperTitle !== null) {
+      document.title = paperTitle;
+    }
+  }, [paperTitle]);
+
   if (phase.kind === "tombstone") {
     return <PaperTombstoneView facts={phase.facts} />;
   }

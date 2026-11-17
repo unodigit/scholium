@@ -33,6 +33,17 @@
   position: relative;
 }
 
+/* Follow and Report, the second row of the header's actions. Its two buttons
+   are separate islands with no wrapper of their own, so the row owns the space
+   between them: the same step as the row above it (design.md §3: 4 px grid,
+   8 px between neighbouring controls), and wrapping on a narrow screen. */
+.ppg-extra-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+}
+
 /* ---- Download menu ---------------------------------------------------------- */
 
 /* The button is a `.ppg-action`, so it looks like its neighbours in the row.
