@@ -1,22 +1,25 @@
 /*
- * Styles for the web-auth pages (/signin, /onboarding, /recover).
+ * Styles for the web-auth pages (/signin, /onboarding, /recover) and the root
+ * not-found / error fallbacks, which import this stylesheet for the same shell.
  *
- * Tokens come from docs/design.md §3. They are scoped to `.wa-shell` so this
- * stylesheet never leaks into, or collides with, the global theme; when the
- * app-wide tokens land, delete the block below and keep the rules.
+ * Colours come from the app-wide tokens (docs/design.md §3) rather than local
+ * literals: the paper background, card and text then follow both the OS
+ * preference and a forced `data-theme` subtree — light and dark match the
+ * brand without a second palette to keep in sync.
  */
 
 .wa-shell {
-  --wa-bg: #fbfaf7;
-  --wa-surface: #ffffff;
-  --wa-ink: #1b1d22;
-  --wa-ink-2: #5a5f6b;
-  --wa-rule: #e4e1d9;
-  --wa-accent: #2f4ba0;
-  --wa-on-accent: #ffffff;
-  --wa-critical: #b3312b;
+  --wa-bg: var(--bg);
+  --wa-surface: var(--surface);
+  --wa-ink: var(--ink);
+  --wa-ink-2: var(--ink-2);
+  --wa-rule: var(--rule);
+  --wa-accent: var(--accent);
+  --wa-on-accent: var(--accent-ink);
+  --wa-critical: var(--critical);
 
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -28,17 +31,49 @@
   line-height: 22px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .wa-shell {
-    --wa-bg: #14151a;
-    --wa-surface: #1c1e25;
-    --wa-ink: #ecebe6;
-    --wa-ink-2: #a3a7b2;
-    --wa-rule: #2c2f38;
-    --wa-accent: #8fa6f0;
-    --wa-on-accent: #14151a;
-    --wa-critical: #f08a84;
-  }
+/* --- Brand header --------------------------------------------------------- */
+
+/*
+ * The shell centres its one child. `.wa-frame` owns the column (lockup above,
+ * card below) and repeats the shell's scroll behaviour: it centres when it
+ * fits and starts at the top when it does not, so a tall onboarding checklist
+ * never hides its first line above the viewport.
+ */
+
+.wa-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  align-self: flex-start;
+  margin-block: auto;
+}
+
+.wa-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.wa-tagline {
+  margin: 0;
+  max-width: 34ch;
+  color: var(--wa-ink-2);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  letter-spacing: 0.01em;
+  text-wrap: balance;
+}
+
+/*
+ * The lockup above the card is the one brand mark on these screens; the small
+ * in-card wordmark predates it. Hide the copy rather than repeat the name
+ * twice in the same column.
+ */
+.wa-shell .wa-wordmark {
+  display: none;
 }
 
 .wa-card {
@@ -512,6 +547,69 @@
 .wa-notice {
   margin: 12px 0 0;
   color: var(--wa-ink-2);
+}
+
+/* --- Cards in the branded frame ----------------------------------------- */
+
+/*
+ * `.wa-onboarding` and `.wa-recover` set `align-self: flex-start` for the old
+ * row-shaped shell. Inside the column frame the frame itself handles the
+ * scroll-from-the-top behaviour, so the cards just stay centred.
+ */
+
+.wa-frame > .wa-card {
+  align-self: center;
+  margin-block: 0;
+}
+
+/* --- Root not-found and error fallbacks ---------------------------------- */
+
+/*
+ * `app/not-found.tsx` and `app/error.tsx` import this stylesheet and reuse the
+ * entry-screen shell, card and buttons, so a wrong link or a server fault
+ * still looks like Scholium: mark, plain sentence, one action, no drama.
+ */
+
+.wa-fallback {
+  max-width: 420px;
+  text-align: center;
+}
+
+.wa-fallback .wa-title {
+  margin-bottom: 8px;
+  text-wrap: balance;
+}
+
+.wa-fallback .wa-lede {
+  margin-bottom: 24px;
+  text-wrap: pretty;
+}
+
+.wa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wa-actions .wa-button {
+  flex: 1 1 140px;
+  width: auto;
+}
+
+.wa-digest {
+  margin: 16px 0 0;
+  color: var(--wa-ink-2);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.wa-digest code {
+  color: var(--wa-ink);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  font-variant-ligatures: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
