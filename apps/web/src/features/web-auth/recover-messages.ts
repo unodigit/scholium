@@ -13,13 +13,11 @@ import { ApiError, NetworkError } from "../../lib/api";
 import { isDeviceKeyError } from "./errors";
 import {
   RECOVERY_ACCOUNT_NOT_FOUND_TYPE,
+  RECOVERY_GUARDIAN_COUNT,
   RECOVERY_GUARDIANS_NOT_SET_TYPE,
   approvalProgressText,
   approvalsRemaining,
-  formatRecoveryDeadline,
-  formatSafetyWindowRemaining,
   isRecoveryError,
-  safetyWindowRemainingMs,
   type RecoverySnapshot,
   type RecoveryStatus,
 } from "./recover";
@@ -187,6 +185,7 @@ export function recoveryProgressNote(snapshot: RecoverySnapshot): string {
 export function safetyWindowNote(
   snapshot: RecoverySnapshot,
   nowMs: number = Date.now(),
+  options: { locale?: string; timeZone?: string } = {},
 ): string {
   switch (snapshot.status) {
     case "cancelled":
@@ -194,16 +193,50 @@ export function safetyWindowNote(
     case "finalized":
       return RECOVER_SAFETY_WINDOW_FINALIZED_NOTE;
     case "contest": {
-      const deadline = formatRecoveryDeadline(snapshot.contestUntil);
-      const remaining = safetyWindowRemainingMs(snapshot.contestUntil, nowMs);
-      if (deadline && remaining !== null) {
-        return `The 72-hour safety window closes on ${deadline} (${formatSafetyWindowRemaining(remaining)}).`;
+      const deadline = formatRecoveryDeadlineLocal(snapshot.contestUntil, options);
+      const approved = Math.max(
+        0,
+        Math.min(snapshot.approvals, RECOVERY_GUARDIAN_COUNT),
+      );
+      if (deadline) {
+        return (
+          `Approved by ${approved} of ${RECOVERY_GUARDIAN_COUNT} guardians. ` +
+          `Your new passkey takes over on ${deadline}; until then your old key ` +
+          "still works and any guardian or you can cancel."
+        );
       }
       return RECOVER_SAFETY_WINDOW_OPEN_NOTE;
     }
     case "pending":
       return RECOVER_SAFETY_WINDOW_PENDING_NOTE;
   }
+}
+
+/**
+ * A deadline as the reader's own clock and zone show it, e.g.
+ * `18 Nov 2026, 09:00`. Unlike {@link formatRecoveryDeadline}, which stays in
+ * UTC so audit text never shifts, the safety window is something the member
+ * plans around, so it reads in their local time.
+ */
+export function formatRecoveryDeadlineLocal(
+  value: string | null | undefined,
+  options: { locale?: string; timeZone?: string } = {},
+): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return new Intl.DateTimeFormat(options.locale ?? "en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: options.timeZone,
+  }).format(date);
 }
 
 /** The progress line for the meter and its text alternative. */

@@ -554,6 +554,10 @@ class _Seeder:
                 self._at(paper, _CONSENT + step),
             )
             self.actors[slug].submit(consent, f"{self.names[slug]}'s consent to {paper.title!r}")
+            # The consent this actor just signed answers the request that was
+            # sent when the version went out for consent, so leave no stale
+            # unread "Consent request" on their /me.
+            self._mark_consent_request_read(self.actors[slug], version["id"])
         jobs.run_pending()  # the scan, which passes the version to moderation
 
         state = self._state(version["id"], paper)
@@ -578,6 +582,28 @@ class _Seeder:
             created=not duplicate,
             ai_reviewed=ai_reviewed,
         )
+
+    def _mark_consent_request_read(self, actor: _Actor, version_cid: str) -> None:
+        """Mark the unread consent request for ``version_cid`` as read.
+
+        The seed signs each author's consent as soon as the request goes out,
+        so leaving that request unread would ask them to do what they have
+        already done.
+        """
+        response = self.http.get("/v1/me/notifications", headers=actor.headers)
+        rows = _require(
+            response, 200, f"reading {actor.account.name}'s notifications"
+        ).json()
+        for row in rows:
+            if row.get("kind") != "consent.request" or row.get("read"):
+                continue
+            payload = row.get("payload") or {}
+            if payload.get("version_cid") != version_cid:
+                continue
+            marked = self.http.post(
+                f"/v1/me/notifications/{row['id']}/read", headers=actor.headers
+            )
+            _require(marked, 200, f"marking {actor.account.name}'s consent request read")
 
     def _state(self, version_cid: str, paper: DemoPaper) -> str:
         row = get_version(version_cid)

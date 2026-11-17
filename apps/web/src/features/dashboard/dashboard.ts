@@ -106,6 +106,8 @@ export interface NeedsAttention {
   readonly review_invitations: readonly AttentionItem[];
   readonly author_replies: readonly AttentionItem[];
   readonly moderation_outcomes: readonly AttentionItem[];
+  /** Open recovery requests that still need this guardian's answer. */
+  readonly recovery_requests?: readonly AttentionItem[];
   readonly items: readonly AttentionItem[];
 }
 
@@ -211,6 +213,9 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
     moderation_outcomes: Array.isArray(value.moderation_outcomes)
       ? value.moderation_outcomes
       : [],
+    recovery_requests: Array.isArray(value.recovery_requests)
+      ? value.recovery_requests
+      : [],
   };
   const items = Array.isArray(value.items)
     ? value.items
@@ -219,6 +224,7 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
         ...groups.review_invitations,
         ...groups.author_replies,
         ...groups.moderation_outcomes,
+        ...groups.recovery_requests,
       ];
   const count =
     readNumber(value.count) ?? items.length;
@@ -229,6 +235,7 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
     review_invitations: groups.review_invitations.map(parseAttentionItem),
     author_replies: groups.author_replies.map(parseAttentionItem),
     moderation_outcomes: groups.moderation_outcomes.map(parseAttentionItem),
+    recovery_requests: groups.recovery_requests.map(parseAttentionItem),
     items: items.map(parseAttentionItem),
   };
 }
@@ -335,8 +342,120 @@ export function parseDashboard(payload: unknown): DashboardData {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Recovery requests awaiting this guardian                                   */
+/* -------------------------------------------------------------------------- */
+
+/** `GET /v1/recovery/requests`, relative to `/v1`. */
+export const RECOVERY_REQUESTS_ENDPOINT = "/recovery/requests";
+
+/** The `needs_attention` kind for a recovery waiting on this guardian. */
+export const RECOVERY_ATTENTION_KIND = "recovery_request";
+
+/** The guardian DIDs one `approvals` entry names, however it is spelled. */
+function approvalDids(entry: unknown): string[] {
+  if (typeof entry === "string") {
+    return [entry];
+  }
+  if (!isRecord(entry)) {
+    return [];
+  }
+  const did =
+    ["guardian", "guardian_did", "did", "signer", "approver", "guardianDid"]
+      .map((key) => entry[key])
+      .find((value): value is string => typeof value === "string" && value !== "") ?? null;
+  return did === null ? [] : [did];
+}
+
+/** `did:key:z6Mk…AbCdEf`, short enough for a one-line summary. */
+function shortDid(did: string): string {
+  return did.length <= 24 ? did : `${did.slice(0, 16)}…${did.slice(-6)}`;
+}
+
+/**
+ * Read `GET /v1/recovery/requests` into attention items.
+ *
+ * Only requests still open (`pending` or `contest`) and not yet answered by
+ * `viewerDid` are returned: once a guardian has approved, the request no
+ * longer needs their attention.
+ */
+export function parseRecoveryAttention(
+  payload: unknown,
+  viewerDid: string,
+): AttentionItem[] {
+  const rows = Array.isArray(payload)
+    ? payload
+    : isRecord(payload)
+      ? (payload.requests ?? payload.items ?? payload.recovery_requests)
+      : undefined;
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  const viewer = viewerDid.trim();
+  const items: AttentionItem[] = [];
+  for (const row of rows) {
+    if (!isRecord(row)) {
+      continue;
+    }
+    const requestId =
+      readText(row.request_id) ?? readText(row.requestId) ?? readText(row.id);
+    if (requestId === null) {
+      continue;
+    }
+    const status = readText(row.status) ?? "pending";
+    if (status !== "pending" && status !== "contest") {
+      continue;
+    }
+    const approvals = Array.isArray(row.approvals) ? row.approvals : [];
+    const answered = approvals.flatMap(approvalDids);
+    if (viewer !== "" && answered.includes(viewer)) {
+      continue;
+    }
+    const accountDid =
+      readText(row.did) ?? readText(row.account_did) ?? readText(row.accountDid) ?? "";
+    items.push({
+      kind: RECOVERY_ATTENTION_KIND,
+      summary: accountDid
+        ? `Approve the recovery of ${shortDid(accountDid)}`
+        : "Approve a recovery request",
+      reason: "You are one of this account's guardians.",
+      paper: null,
+      shortId: null,
+      paperCid: null,
+      version: null,
+      versionCid: null,
+      version_cid: null,
+      title: null,
+      link: `/me/recovery/${encodeURIComponent(requestId)}`,
+      createdAt: readText(row.requested_at) ?? readText(row.requestedAt),
+    });
+  }
+  return items;
+}
+
+/** Best-effort recovery attention; a failure never fails the dashboard. */
+async function loadRecoveryAttention(
+  client: DashboardClient,
+  viewerDid: string,
+): Promise<AttentionItem[]> {
+  try {
+    const payload = await client.get<unknown>(RECOVERY_REQUESTS_ENDPOINT, {
+      cache: "no-store",
+    });
+    return parseRecoveryAttention(payload, viewerDid);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Load the dashboard from `GET /v1/me/dashboard`.
+ *
+ * The API's own document has no recovery group, but a guardian is asked to
+ * answer from `/me` too, so the open requests for this caller are read next
+ * and folded into `needs_attention`. That read is best-effort: a signed-out or
+ * non-guardian caller (or a node without the route) simply gets the API's own
+ * items, never a failed dashboard.
  */
 export async function loadDashboard(
   client: DashboardClient = api,
@@ -344,7 +463,20 @@ export async function loadDashboard(
   const payload = await client.get<unknown>(DASHBOARD_ENDPOINT, {
     cache: "no-store",
   });
-  return parseDashboard(payload);
+  const data = parseDashboard(payload);
+  const recovery = await loadRecoveryAttention(client, data.did);
+  if (recovery.length === 0) {
+    return data;
+  }
+  return {
+    ...data,
+    needs_attention: {
+      ...data.needs_attention,
+      count: data.needs_attention.count + recovery.length,
+      recovery_requests: [...(data.needs_attention.recovery_requests ?? []), ...recovery],
+      items: [...data.needs_attention.items, ...recovery],
+    },
+  };
 }
 
 /** Alias for callers that name the loader after the route. */

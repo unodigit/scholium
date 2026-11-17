@@ -184,6 +184,21 @@ def test_running_seed_demo_again_adds_nothing(node):
     assert not second.keys_created
 
 
+def test_seed_demo_marks_consent_requests_read_for_the_consents_it_signs(node):
+    seed_demo(node.root / ".demo-keys.json")
+
+    # Every listed author consented during the seed, so none of their consent
+    # requests may be left sitting unread on /me.
+    assert rows(
+        node,
+        "select did, payload from notifications where kind = 'consent.request' and read = 0",
+    ) == []
+    # The check is not vacuous: the seed did write consent requests.
+    assert rows(
+        node, "select count(*) from notifications where kind = 'consent.request'"
+    )[0][0] > 0
+
+
 def test_short_ids_are_the_ones_derived_from_the_genesis_records(node):
     result = seed_demo(node.root / ".demo-keys.json")
 

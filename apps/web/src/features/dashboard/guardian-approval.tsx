@@ -7,6 +7,7 @@ import { Card } from "./dashboard-page";
 import { EmptyState } from "../ui-kit";
 import { deviceKey } from "../web-auth";
 import { SECURITY_SIGNIN_HREF } from "./security";
+import "./security-page.css";
 
 export interface GuardianApprovalData {
   readonly requestId: string;
@@ -18,6 +19,10 @@ export interface GuardianApprovalData {
   readonly threshold: number;
   readonly contestUntil: string | null;
   readonly requestedAt: string | null;
+  /** The guardians who have already answered this request. */
+  readonly approvalDids?: readonly string[];
+  /** When a guardian answered, by DID, when the server records a time. */
+  readonly approvalTimes?: Readonly<Record<string, string>>;
 }
 
 export interface GuardianApprovalPageProps {
@@ -35,9 +40,78 @@ export interface GuardianApprovalPageProps {
   onApproved?: () => void;
   onDeclined?: () => void;
   signedIn?: boolean;
+  /** The signed-in guardian's DID; read from the device key when omitted. */
+  viewerDid?: string;
 }
 
 const DEFAULT_THRESHOLD = 3;
+
+/** The DID and any recorded time carried by one entry of `approvals`. */
+function readApproval(entry: unknown): { did: string | null; at: string | null } {
+  if (typeof entry === "string") {
+    return { did: entry, at: null };
+  }
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+    return { did: null, at: null };
+  }
+  const record = entry as Record<string, unknown>;
+  const didKey = ["guardian", "guardian_did", "did", "signer", "approver", "guardianDid"];
+  const did =
+    didKey
+      .map((key) => record[key])
+      .find((value): value is string => typeof value === "string" && value !== "") ?? null;
+  const timeKey = ["approved_at", "approvedAt", "created_at", "createdAt", "at", "timestamp"];
+  const at =
+    timeKey
+      .map((key) => record[key])
+      .find((value): value is string => typeof value === "string" && value !== "") ?? null;
+  return { did, at };
+}
+
+/** The approvals a request carries, as a count, DIDs and any times. */
+function readApprovals(payload: Record<string, unknown>): {
+  count: number;
+  dids: string[];
+  times: Record<string, string>;
+} {
+  if (Array.isArray(payload.approvals)) {
+    const dids: string[] = [];
+    const times: Record<string, string> = {};
+    for (const entry of payload.approvals) {
+      const { did, at } = readApproval(entry);
+      if (did !== null) {
+        dids.push(did);
+        if (at !== null) {
+          times[did] = at;
+        }
+      }
+    }
+    return { count: payload.approvals.length, dids, times };
+  }
+  const count =
+    typeof payload.approval_count === "number"
+      ? payload.approval_count
+      : typeof payload.approvals_count === "number"
+        ? payload.approvals_count
+        : 0;
+  return { count, dids: [], times: {} };
+}
+
+/** `17 Nov 2026`, in the reader's own zone. */
+function formatApprovedOn(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
 
 function resolveId(props: GuardianApprovalPageProps): string {
   return props.requestId ?? props.id ?? props.request ?? "";
@@ -73,13 +147,7 @@ async function defaultLoadRecoveryRequest(requestId: string): Promise<GuardianAp
       accountName = null;
     }
   }
-  const approvals = Array.isArray(payload.approvals)
-    ? payload.approvals.length
-    : typeof payload.approval_count === "number"
-      ? payload.approval_count
-      : typeof payload.approvals_count === "number"
-        ? payload.approvals_count
-        : 0;
+  const approvals = readApprovals(payload);
   const threshold =
     typeof payload.threshold === "number" ? payload.threshold : DEFAULT_THRESHOLD;
   const newPublicKey =
@@ -106,10 +174,12 @@ async function defaultLoadRecoveryRequest(requestId: string): Promise<GuardianAp
     accountDid,
     accountName,
     newPublicKey,
-    approvals,
+    approvals: approvals.count,
     threshold,
     contestUntil,
     requestedAt,
+    approvalDids: approvals.dids,
+    approvalTimes: approvals.times,
   };
 }
 
@@ -126,12 +196,34 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
     | { status: "signed-out" }
     | { status: "error"; message: string }
     | { status: "ready"; data: GuardianApprovalData }
-    | { status: "approved" }
+    | { status: "approved"; at: string }
     | { status: "declined" }
   >(() => (initial ? { status: "ready", data: initial } : { status: "loading" }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewerDid, setViewerDid] = useState(props.viewerDid ?? "");
   const mounted = useRef(true);
+
+  // Who is answering decides whether this guardian has already answered.
+  useEffect(() => {
+    if (props.viewerDid !== undefined) {
+      setViewerDid(props.viewerDid);
+      return;
+    }
+    let cancelled = false;
+    deviceKey
+      .didKey()
+      .then((did) => {
+        if (!cancelled) setViewerDid(did);
+      })
+      .catch(() => {
+        // No key on this device: the request is still readable, just not
+        // attributable to an answer.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.viewerDid]);
 
   useEffect(() => {
     mounted.current = true;
@@ -163,6 +255,8 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
   const approve = useCallback(async () => {
     if (state.status !== "ready" || busy) return;
     const data = state.data;
+    // Nobody may add an approval once the quorum is met.
+    if (data.threshold > 0 && data.approvals >= data.threshold) return;
     const signer = (props.approve ?? props.approveRequest) ?? (async () => {
       const did = await deviceKey.didKey();
       // Build approval message matching API.
@@ -188,7 +282,7 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
     try {
       await signer(data.requestId);
       if (mounted.current) {
-        setState({ status: "approved" });
+        setState({ status: "approved", at: new Date().toISOString() });
         props.onApproved?.();
       }
     } catch (err) {
@@ -245,10 +339,14 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
   }
 
   if (state.status === "approved") {
+    const on = formatApprovedOn(state.at);
     return (
       <div className="db-notice" role="status">
-        <h2 className="db-notice-title">Approval recorded</h2>
-        <p className="db-notice-text">Your approval has been sent.</p>
+        <h2 className="db-notice-title">You approved</h2>
+        <p className="db-notice-text">
+          {on ? `You approved on ${on}.` : "You approved this request."} Your approval
+          has been sent to the account.
+        </p>
       </div>
     );
   }
@@ -263,6 +361,13 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
   }
 
   const data = state.data;
+  const approvedDids = data.approvalDids ?? [];
+  const youAnswered = viewerDid !== "" && approvedDids.includes(viewerDid);
+  const answeredAt = youAnswered ? data.approvalTimes?.[viewerDid] ?? null : null;
+  const atThreshold = data.threshold > 0 && data.approvals >= data.threshold;
+  const closed = data.status !== "pending" && data.status !== "contest";
+  const canAct = !youAnswered && !atThreshold && !closed;
+  const answerDate = formatApprovedOn(answeredAt ?? data.requestedAt);
   return (
     <div className="db-page">
       <header className="db-header">
@@ -307,25 +412,42 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
 
         {error ? <p className="db-error" role="alert">{error}</p> : null}
 
-        <div className="db-actions">
-          <button
-            type="button"
-            className="db-button"
-            data-variant="primary"
-            disabled={busy}
-            onClick={() => void approve()}
-          >
-            {busy ? "Approving…" : "Approve"}
-          </button>
-          <button
-            type="button"
-            className="db-button"
-            disabled={busy}
-            onClick={() => void decline()}
-          >
-            Decline
-          </button>
-        </div>
+        {youAnswered ? (
+          <p className="db-note" role="status">
+            {answerDate
+              ? `You approved on ${answerDate}.`
+              : "You approved this request."}{" "}
+            No further action is needed.
+          </p>
+        ) : null}
+
+        {!youAnswered && atThreshold ? (
+          <p className="db-note" role="status">
+            Enough guardians have approved. No further action is needed.
+          </p>
+        ) : null}
+
+        {canAct ? (
+          <div className="db-actions">
+            <button
+              type="button"
+              className="db-button"
+              data-variant="primary"
+              disabled={busy}
+              onClick={() => void approve()}
+            >
+              {busy ? "Approving…" : "Approve"}
+            </button>
+            <button
+              type="button"
+              className="db-button"
+              disabled={busy}
+              onClick={() => void decline()}
+            >
+              Decline
+            </button>
+          </div>
+        ) : null}
       </Card>
     </div>
   );

@@ -299,7 +299,74 @@ describe("loadDashboard", () => {
     await loadMe(client);
     await loadDashboard(client);
 
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(
+      get.mock.calls.filter(([path]) => path === "/me/dashboard"),
+    ).toHaveLength(2);
+  });
+
+  it("adds an open recovery request to Needs your attention until the guardian answers", async () => {
+    const viewer = PAYLOAD.did;
+    const other = "did:key:z6MkOtherGuardianOtherGuardianOtherGuardian";
+    const requester = "did:key:z6MkRequesterRequesterRequesterRequester";
+    const recovery = [
+      {
+        request_id: "rec_open",
+        did: requester,
+        status: "pending",
+        approvals: [{ guardian: other }],
+        approval_count: 1,
+        threshold: 3,
+      },
+      {
+        request_id: "rec_answered",
+        did: requester,
+        status: "pending",
+        approvals: [{ guardian: viewer }],
+        approval_count: 1,
+        threshold: 3,
+      },
+      {
+        request_id: "rec_closed",
+        did: requester,
+        status: "finalized",
+        approvals: [],
+        approval_count: 0,
+        threshold: 3,
+      },
+    ];
+    const get = vi.fn(async (path: string) =>
+      path === "/recovery/requests" ? recovery : PAYLOAD,
+    );
+    const client = { get: get as unknown as DashboardClient["get"] };
+
+    const data = await loadDashboard(client);
+
+    const added = data.needs_attention.items.filter(
+      (item) => item.kind === "recovery_request",
+    );
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({
+      kind: "recovery_request",
+      link: "/me/recovery/rec_open",
+    });
+    expect(data.needs_attention.count).toBe(PAYLOAD.needs_attention.count + 1);
+  });
+
+  it("still loads the dashboard when the recovery list cannot be read", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path === "/recovery/requests") {
+        throw new ApiError(404, { title: "Not Found" });
+      }
+      return PAYLOAD;
+    });
+    const client = { get: get as unknown as DashboardClient["get"] };
+
+    const data = await loadDashboard(client);
+
+    expect(data.did).toBe(PAYLOAD.did);
+    expect(data.needs_attention.items.every((item) => item.kind !== "recovery_request")).toBe(
+      true,
+    );
   });
 });
 

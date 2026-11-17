@@ -5,6 +5,7 @@ import { apiErrorFrom, NetworkError } from "../../lib/api";
 
 import {
   describeVerifyEmailFailure,
+  loadVerifyEmailAccountName,
   parseVerifyEmailLink,
   resendVerificationEmail,
   verifyEmailAddress,
@@ -64,6 +65,45 @@ describe("resendVerificationEmail", () => {
     expect(client.post).toHaveBeenCalledWith(
       `/profiles/${encodeURIComponent(DID)}/verify-email/resend`,
     );
+  });
+});
+
+describe("loadVerifyEmailAccountName", () => {
+  function accountClient(payload: unknown) {
+    const get = vi.fn(async () => payload);
+    return { get } as unknown as VerifyEmailClient & {
+      get: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it("reads the profile name for the account in the link", async () => {
+    const client = accountClient({ did: DID, name: "Ada Lovelace", erased: false });
+
+    expect(await loadVerifyEmailAccountName(client, DID)).toBe("Ada Lovelace");
+    expect(client.get).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(DID)}`, {
+      auth: false,
+      cache: "no-store",
+    });
+  });
+
+  it("accepts the display-name spellings a profile may use", async () => {
+    expect(await loadVerifyEmailAccountName(accountClient({ display_name: "Ada" }), DID)).toBe(
+      "Ada",
+    );
+    expect(await loadVerifyEmailAccountName(accountClient({ displayName: "Ada" }), DID)).toBe(
+      "Ada",
+    );
+  });
+
+  it("is null when the profile is erased, has no name, or cannot be read", async () => {
+    expect(await loadVerifyEmailAccountName(accountClient({ erased: true, name: "Ada" }), DID)).toBeNull();
+    expect(await loadVerifyEmailAccountName(accountClient({ name: "  " }), DID)).toBeNull();
+    expect(await loadVerifyEmailAccountName(accountClient(null), DID)).toBeNull();
+
+    const failing = { get: vi.fn().mockRejectedValue(new NetworkError("offline")) };
+    expect(
+      await loadVerifyEmailAccountName(failing as unknown as VerifyEmailClient, DID),
+    ).toBeNull();
   });
 });
 

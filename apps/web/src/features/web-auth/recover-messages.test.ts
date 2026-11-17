@@ -21,6 +21,7 @@ import {
   RECOVER_STATUS_UNAVAILABLE_NOTE,
   RECOVER_WRONG_DEVICE_MESSAGE,
   describeRecoveryError,
+  formatRecoveryDeadlineLocal,
   recoveryProgressLine,
   recoveryProgressNote,
   recoveryStatusLabel,
@@ -83,17 +84,21 @@ describe("safety-window copy", () => {
     expect(note).toContain("cancel link");
   });
 
-  it("shows the deadline and the time left while it is open", () => {
+  it("tells the requester what happens at the threshold, in local time", () => {
     const note = safetyWindowNote(
       snapshot({
         status: "contest",
         approvals: 3,
+        threshold: 3,
         contestUntil: "2026-11-18T00:00:00Z",
       }),
       NOW,
+      { timeZone: "UTC" },
     );
-    expect(note).toContain("18 Nov 2026, 00:00 UTC");
-    expect(note).toContain("about 3 days");
+    expect(note).toContain("Approved by 3 of 5 guardians.");
+    expect(note).toContain("Your new passkey takes over on 18 Nov 2026, 00:00");
+    expect(note).toContain("until then your old key still works");
+    expect(note).toContain("any guardian or you can cancel");
   });
 
   it("still explains the window when no deadline came back", () => {
@@ -111,6 +116,22 @@ describe("safety-window copy", () => {
     expect(safetyWindowNote(snapshot({ status: "finalized" }), NOW)).toContain(
       "safety window has closed",
     );
+  });
+});
+
+describe("formatRecoveryDeadlineLocal", () => {
+  it("writes a deadline in the reader's own zone, not UTC", () => {
+    expect(
+      formatRecoveryDeadlineLocal("2026-11-18T00:00:00Z", { timeZone: "UTC" }),
+    ).toBe("18 Nov 2026, 00:00");
+    expect(
+      formatRecoveryDeadlineLocal("2026-11-18T00:00:00Z", { timeZone: "Asia/Tokyo" }),
+    ).toBe("18 Nov 2026, 09:00");
+  });
+
+  it("returns null for an unreadable deadline", () => {
+    expect(formatRecoveryDeadlineLocal(null)).toBeNull();
+    expect(formatRecoveryDeadlineLocal("not-a-date")).toBeNull();
   });
 });
 

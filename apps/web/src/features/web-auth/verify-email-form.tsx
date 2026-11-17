@@ -28,8 +28,10 @@ import {
   VERIFY_EMAIL_RESENT_MESSAGE,
   VERIFY_EMAIL_SESSION_EXPIRED_MESSAGE,
   describeVerifyEmailFailure,
+  loadVerifyEmailAccountName,
   parseVerifyEmailLink,
   resendVerificationEmail,
+  shortDid,
   verifyEmailAddress,
   type VerifyEmailFailure,
   type VerifyEmailLink,
@@ -69,6 +71,7 @@ const COPY = {
 /** Read the link, then redeem it exactly once (StrictMode mounts twice). */
 export function VerifyEmailForm() {
   const [link, setLink] = useState<VerifyEmailLink | null>(null);
+  const [accountName, setAccountName] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "checking" });
   const [resendState, setResendState] = useState<ResendState>("idle");
   const [resendMessage, setResendMessage] = useState<string | null>(null);
@@ -117,6 +120,9 @@ export function VerifyEmailForm() {
     // The token is bearer material; keep it out of the address bar and history.
     const { pathname, hash } = window.location;
     window.history.replaceState(window.history.state, "", pathname + hash);
+    // Name the account as the reader knows it, not by its DID. Best-effort:
+    // a profile that cannot be read leaves the DID on screen.
+    void loadVerifyEmailAccountName(apiClient, parsed.did).then(setAccountName);
     void runVerify(parsed);
   }, [runVerify]);
 
@@ -179,7 +185,15 @@ export function VerifyEmailForm() {
 
       {link !== null ? (
         <p className="we-account">
-          Account <code>{link.did}</code>
+          Account{" "}
+          {accountName === null ? (
+            <code>{link.did}</code>
+          ) : (
+            <>
+              <span className="we-account-name">{accountName}</span>{" "}
+              <code>{shortDid(link.did)}</code>
+            </>
+          )}
         </p>
       ) : null}
 
@@ -311,6 +325,7 @@ const STYLES = `
   font-size: 12px;
   color: var(--wa-ink);
 }
+.we-account-name { font-weight: 600; color: var(--wa-ink); }
 .we-actions { display: flex; flex-direction: column; gap: 12px; }
 .we-actions .wa-button {
   transition:

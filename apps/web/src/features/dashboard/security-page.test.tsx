@@ -5,12 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, NetworkError, tokenStore } from "../../lib/api";
 
 import { RotationError, type RotateKey, type RotateKeyInput } from "./rotate-key";
-import { SecurityPage } from "./security-page";
+import { SecurityPage, shortDid } from "./security-page";
 import type { DeviceInfo, GuardianState, SecurityData } from "./security";
 
 const ACCOUNT = "did:key:z6MkAccountAccountAccountAccountAccountAccount1";
 const NEW_KEY = "did:key:z6MkNewKeyNewKeyNewKeyNewKeyNewKeyNewKeyNewKe2";
-const GUARDIANS = [1, 2, 3, 4, 5].map((n) => `did:key:z6MkGuardian${n}${"x".repeat(30)}`);
+const GUARDIANS = [1, 2, 3, 4, 5].map((n) => `did:key:z6MkGuardian${n}${"x".repeat(29)}${n}`);
 
 const DEVICE: DeviceInfo = {
   id: "cred-1",
@@ -140,8 +140,17 @@ describe("Recovery guardians card", () => {
     expect(guardians.getByText("All 5 guardians set.")).toBeTruthy();
     expect(guardians.getByText(/any 3 of your 5 guardians/)).toBeTruthy();
     const list = guardians.getByRole("list", { name: "Your recovery guardians" });
-    expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual(GUARDIANS);
+    expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual(
+      GUARDIANS.map(shortDid),
+    );
     expect(guardians.queryByRole("link", { name: "Set recovery guardians" })).toBeNull();
+  });
+
+  it("does not annotate a guardian that is also saved on this device", () => {
+    ready({ guardians: { ...FULL_GUARDIANS, localDids: GUARDIANS } });
+
+    const guardians = within(card("Recovery guardians"));
+    expect(guardians.queryByText(/also on this device/)).toBeNull();
   });
 
   it("still shows 3 of 5 and offers setup when no guardians are set", () => {
@@ -183,9 +192,10 @@ describe("Recovery guardians card", () => {
 
     const guardians = within(card("Recovery guardians"));
     expect(guardians.getByText("Grace Hopper")).toBeTruthy();
-    // The DID is still there, secondarily, so the guardian is identifiable.
-    expect(guardians.getByText(GUARDIANS[0]!)).toBeTruthy();
-    expect(guardians.getByText(GUARDIANS[1]!)).toBeTruthy();
+    // The DID is still there, secondarily and shortened, so the guardian is identifiable.
+    expect(guardians.getByText(shortDid(GUARDIANS[0]!))).toBeTruthy();
+    expect(guardians.getByText(shortDid(GUARDIANS[1]!))).toBeTruthy();
+    expect(guardians.queryByText(GUARDIANS[0]!)).toBeNull();
   });
 });
 
@@ -209,15 +219,15 @@ describe("Recovery requests card", () => {
     expect(
       requests.getByRole("link", { name: "Grace Hopper" }).getAttribute("href"),
     ).toBe(`/me/recovery/${encodeURIComponent("rr-1")}`);
-    expect(requests.getByText(GUARDIANS[0]!)).toBeTruthy();
+    expect(requests.getByText(shortDid(GUARDIANS[0]!))).toBeTruthy();
   });
 
-  it("falls back to the requester's DID when no profile name is known", () => {
+  it("falls back to the requester's short DID when no profile name is known", () => {
     ready({ recoveryRequests: [REQUEST] });
 
     const requests = within(card("Recovery requests"));
     expect(
-      requests.getByRole("link", { name: GUARDIANS[0]! }).getAttribute("href"),
+      requests.getByRole("link", { name: shortDid(GUARDIANS[0]!) }).getAttribute("href"),
     ).toBe(`/me/recovery/${encodeURIComponent("rr-1")}`);
   });
 });

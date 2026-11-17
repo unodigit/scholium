@@ -20,7 +20,7 @@ export interface VerifyEmailLink {
 }
 
 /** The slice of {@link ApiClient} the verification page uses. */
-export type VerifyEmailClient = Pick<ApiClient, "post">;
+export type VerifyEmailClient = Pick<ApiClient, "post" | "get">;
 
 /** The one-time values are bearer material; never leave them in history. */
 export const VERIFY_EMAIL_PATH = "/verify-email";
@@ -87,6 +87,48 @@ export async function resendVerificationEmail(
   did: string,
 ): Promise<void> {
   await client.post(`/profiles/${encodeURIComponent(did)}/verify-email/resend`);
+}
+
+/**
+ * The public name of the account a verification link names, or `null`.
+ *
+ * The link only carries the DID, which is not how a person recognises their
+ * account; the profile does have the name they chose. The read is public
+ * (the email address itself is not) and best-effort: a profile that cannot be
+ * read leaves the page showing the DID rather than failing the verification.
+ */
+export async function loadVerifyEmailAccountName(
+  client: VerifyEmailClient,
+  did: string,
+): Promise<string | null> {
+  let payload: unknown;
+  try {
+    payload = await client.get<unknown>(`/profiles/${encodeURIComponent(did)}`, {
+      auth: false,
+      cache: "no-store",
+    });
+  } catch {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  if (record.erased === true) {
+    return null;
+  }
+  for (const key of ["name", "display_name", "displayName"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+/** `did:key:z6Mk…AbCdEf`, short enough to sit beside a name. */
+export function shortDid(did: string): string {
+  return did.length <= 24 ? did : `${did.slice(0, 16)}…${did.slice(-6)}`;
 }
 
 /** What the page should say about a failed verification. */

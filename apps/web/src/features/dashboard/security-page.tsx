@@ -67,6 +67,11 @@ type SecurityState =
   | { status: "error"; message: string }
   | { status: "ready"; data: SecurityData };
 
+/** `did:key:z6Mk…AbCdEf`, short enough to sit beside a name. */
+export function shortDid(did: string): string {
+  return did.length <= 24 ? did : `${did.slice(0, 16)}…${did.slice(-6)}`;
+}
+
 function reloadPage(): void {
   globalThis.location?.reload();
 }
@@ -262,10 +267,9 @@ function GuardiansCard({
             return (
               <li className="db-guardian" key={did}>
                 {name ? <span className="db-guardian-name">{name}</span> : null}
-                <span className="db-cred-id mono-id db-guardian-did">{did}</span>
-                {(guardians.localDids ?? []).includes(did) ? (
-                  <span className="db-cred-note meta"> (also on this device)</span>
-                ) : null}
+                <span className="db-cred-id mono-id db-guardian-did" title={did}>
+                  {shortDid(did)}
+                </span>
               </li>
             );
           })}
@@ -306,11 +310,14 @@ function RecoveryRequestsCard({
             return (
               <li key={request.requestId} className="db-requester">
                 <a className="db-link" href={`/me/recovery/${encodeURIComponent(request.requestId)}`}>
-                  {name ?? (request.accountDid || request.requestId)}
+                  {name ?? (shortDid(request.accountDid) || request.requestId)}
                 </a>
                 {name && request.accountDid ? (
-                  <span className="db-cred-id mono-id db-requester-did">
-                    {request.accountDid}
+                  <span
+                    className="db-cred-id mono-id db-requester-did"
+                    title={request.accountDid}
+                  >
+                    {shortDid(request.accountDid)}
                   </span>
                 ) : null}
                 <span className="db-cred-note meta">
