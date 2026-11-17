@@ -1,0 +1,130 @@
+/*
+ * Site footer — rendered by the root layout under every page.
+ * Contents: the BrandMark glyph and a one-line description, then Network ·
+ * Verify a file · Policies · Public export (docs/design.md §4, PRD NET-2).
+ *
+ * A quiet static surface, not chrome: paper background, one 1px --rule at the
+ * top, no shadow, no translucency (design.md §3). Every value reads the design
+ * tokens (src/styles/tokens.css), so light, dark and forced themes follow with
+ * no rule of their own, and the high-contrast and reduced-motion overrides in
+ * src/styles/base.css apply as they do everywhere. Rules are prefixed `sf-` so
+ * nothing leaks into other features.
+ *
+ * ≥640px: one row — glyph and description left, links right.
+ * <640px: stacked, and the bottom edge is padded by the fixed tab bar's height
+ * (components/nav, `.gn-tabbar`: 56px plus the home-indicator inset) so the
+ * last line stays above it. The page is not allowed to scroll sideways: the
+ * links wrap and the description may shrink.
+ */
+
+.sf {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 2);
+  padding-block: calc(var(--space-unit) * 3);
+  padding-inline: calc(var(--space-unit) * 4);
+  border-block-start: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
+@media (width >= 40rem) {
+  .sf {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(var(--space-unit) * 6);
+  }
+}
+
+/* The same side padding as the global header at this width. */
+@media (width >= 64rem) {
+  .sf {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
+
+@media (width < 40rem) {
+  .sf {
+    padding-block-end: calc(
+      var(--space-unit) * 3 + 56px + env(safe-area-inset-bottom, 0px)
+    );
+  }
+}
+
+/* ---- Glyph and description ------------------------------------------------- */
+
+.sf-about {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+  min-inline-size: 0;
+}
+
+/* BrandMark ships half-its-height clear space as margins (design.md §2). The
+   footer's own padding already leaves at least that much on three sides and
+   the gap leaves it between glyph and text, so drop the margins here. Two
+   classes, so this wins whichever stylesheet loads last. */
+.sf-about .sf-mark {
+  flex: none;
+  margin: 0;
+}
+
+.sf-description {
+  min-inline-size: 0;
+  color: var(--ink-2);
+}
+
+/* ---- Links ----------------------------------------------------------------- */
+
+.sf-nav {
+  min-inline-size: 0;
+}
+
+/* The negative inline margin cancels the links' inline padding, so the first
+   link's text starts on the same line as the glyph above it. */
+.sf-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  margin-inline: calc(var(--space-unit) * -2);
+  padding: 0;
+  list-style: none;
+}
+
+/* The export link and its "CAR archive" note read as one item. */
+.sf-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Ink like a control, with the base layer's hairline underline kept so a link
+   is never marked by colour alone; hover swaps to the accent and a soft tint,
+   as the global nav's controls do. 44px tall on every pointer (design.md §9). */
+.sf-link {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-block-size: 44px;
+  padding-inline: calc(var(--space-unit) * 2);
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  transition:
+    background-color var(--duration-fast) var(--ease-decel),
+    color var(--duration-fast) var(--ease-decel);
+}
+
+.sf-link:hover {
+  background-color: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--accent);
+}
+
+.sf-note {
+  padding-inline-end: calc(var(--space-unit) * 2);
+  color: var(--ink-2);
+}

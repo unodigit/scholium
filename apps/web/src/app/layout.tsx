@@ -1,3 +1,4 @@
+import { SiteFooter } from "../components/footer";
 import { SessionProvider } from "../lib/api/session-provider";
 
 import "./globals.css";
@@ -13,6 +14,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <SessionProvider>{children}</SessionProvider>
+        {/* Under every page, including the ones that hold the session back:
+            the links in it are public. */}
+        <SiteFooter />
       </body>
     </html>
   );
