@@ -14,6 +14,8 @@ import { BARE_ID, HAPPY, stubApi } from "./paper-page-fixtures";
  * The paper header's Follow and Report actions, as the page renders them: the
  * session arrives after the first render (a full page load restores it from
  * the refresh cookie), and the two buttons sit in one row with room between.
+ * The preservation fact is a client island that reads the node's replication
+ * summary (`GET /v1/network`) after the first render.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -81,6 +83,51 @@ describe("Report in the paper header", () => {
     expect(assign).toHaveBeenCalledWith(
       `/signin?next=${encodeURIComponent(`/p/${BARE_ID}#reviews`)}`,
     );
+  });
+});
+
+describe("the header's preservation fact", () => {
+  /** Answer `GET /v1/network` with this single node's replication summary. */
+  function stubNetworkSummary(replicas: unknown): void {
+    const fixtureFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = decodeURIComponent(new URL(String(input)).pathname);
+        if (path === "/v1/network") {
+          return new Response(JSON.stringify({ node_did: "did:key:z6Mk", standing: "local", replicas }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return fixtureFetch(input);
+      }),
+    );
+  }
+
+  it("says what this node preserves, in words, linking to /network", async () => {
+    stubApi(HAPPY);
+    stubNetworkSummary({ have: 1, of: 1, local: true, summary: "1 of 1 local" });
+    const data = await loadPaperPageData({ id: BARE_ID, version: null });
+
+    render(<PaperHeader data={data} />);
+
+    const fact = await screen.findByRole("link", { name: /Preserved: 1 of 1 local copy/ });
+    expect(fact.getAttribute("href")).toBe("/network");
+    // The honest qualifier is said out loud, not hidden in a tooltip.
+    expect(fact.closest(".ppg-fact")!.textContent).toContain(
+      "Multi-operator replication is not enabled yet.",
+    );
+  });
+
+  it("stays quiet when the node's summary cannot be read", async () => {
+    stubApi(HAPPY); // no /v1/network route: every such read is a 404
+    const data = await loadPaperPageData({ id: BARE_ID, version: null });
+
+    render(<PaperHeader data={data} />);
+    await act(async () => {});
+
+    expect(screen.queryByText(/Preserved:/)).toBeNull();
   });
 });
 

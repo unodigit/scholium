@@ -8,9 +8,11 @@ import {
   PROOF_TAB_HREF,
   VERIFY_BADGE_SPECS,
   VERIFY_STATES,
+  countedLabel,
   isVerifyState,
   proofTabHref,
   verifyBadgeTitle,
+  type VerifyCounts,
 } from "./verify";
 
 describe("verify states", () => {
@@ -91,14 +93,23 @@ describe("verify states", () => {
       const { meaning } = VERIFY_BADGE_SPECS[state];
       expect(meaning.trim().length).toBeGreaterThan(0);
       expect(meaning).toMatch(/[.]$/);
-      expect(meaning).not.toMatch(/blockchain|token|hash|CID|node/i);
+      // "node" is allowed: the verify-sweep copy says "on this node" and
+      // "the node's public log" by decision (bug_spec_verify4 bug 4), where
+      // design.md §8's vocabulary rule used to ask for "server"/"network".
+      expect(meaning).not.toMatch(/blockchain|token|hash|CID/i);
     }
   });
 
-  it("say what design.md §8 says for the two states it writes copy for", () => {
-    expect(VERIFY_BADGE_SPECS.anchor_pending.meaning).toContain(
-      "Signed. The public timestamp will be added within the hour.",
+  it("never promise a timestamp this node cannot add (phase 1 has no anchoring)", () => {
+    expect(VERIFY_BADGE_SPECS.anchor_pending.meaning).toBe(
+      "Signed. Anchoring is not enabled on this node yet.",
     );
+    for (const state of VERIFY_STATES) {
+      expect(VERIFY_BADGE_SPECS[state].meaning).not.toMatch(/within the hour/i);
+    }
+  });
+
+  it("say what design.md §8 says for the failure state", () => {
     expect(VERIFY_BADGE_SPECS.failed.meaning).toContain(
       "This file does not match what the authors signed. Do not rely on it.",
     );
@@ -193,6 +204,51 @@ describe("verifyBadgeTitle", () => {
       expect(verifyBadgeTitle(state)).toBe(
         `${VERIFY_BADGE_SPECS[state].meaning} Opens the Proof tab.`,
       );
+    }
+  });
+});
+
+describe("countedLabel", () => {
+  const counts = (versions: number, signatures: number): VerifyCounts => ({
+    versions,
+    signatures,
+  });
+
+  it("reads the PRD's journey-3 line: Verified, the versions, the signatures", () => {
+    expect(countedLabel("verified", counts(3, 4))).toBe(
+      "Verified · 3 versions · 4 signatures",
+    );
+  });
+
+  it("counts a check that passed but is not anchored the same way", () => {
+    expect(countedLabel("anchor_pending", counts(2, 3))).toBe(
+      "Verified · 2 versions · 3 signatures",
+    );
+  });
+
+  it("pluralises one version and one signature honestly", () => {
+    expect(countedLabel("verified", counts(1, 1))).toBe(
+      "Verified · 1 version · 1 signature",
+    );
+  });
+
+  it("keeps the state's own label when there is nothing to count", () => {
+    for (const state of VERIFY_STATES) {
+      expect(countedLabel(state, null)).toBe(VERIFY_BADGE_SPECS[state].label);
+    }
+  });
+
+  it("never dresses a failure or an unfinished check as Verified", () => {
+    for (const state of ["checking", "cannot_verify", "failed"] as const) {
+      expect(countedLabel(state, counts(3, 4))).toBe(
+        VERIFY_BADGE_SPECS[state].label,
+      );
+    }
+  });
+
+  it("refuses counts that are not whole numbers, rather than printing them", () => {
+    for (const bad of [counts(-1, 4), counts(3, 0), counts(1.5, 2)]) {
+      expect(countedLabel("verified", bad)).toBe(VERIFY_BADGE_SPECS.verified.label);
     }
   });
 });

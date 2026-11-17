@@ -350,6 +350,11 @@ describe("words and formats", () => {
       icon: "pending",
       tone: "pending",
     });
+    // Phase 1 has no anchoring: pending never promises a time (bug_spec_verify4
+    // bug 4) — a time is promised only when an anchor is actually anchored.
+    expect(anchorSpec({ status: "pending" }).meaning).toBe(
+      "Anchoring is not enabled on this node yet.",
+    );
     expect(
       anchorSpec({
         status: "anchored",

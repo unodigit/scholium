@@ -119,12 +119,14 @@ describe("/meta/[id]", () => {
     expect(html).toContain("sch:6sel-2dio-orm6");
   });
 
-  it("uses the version in the URL for the file list, and marks it Current", async () => {
+  it("uses the version in the URL for the file list, and marks it Viewing", async () => {
     const fetchMock = stubApi();
     const html = await render(["6sel-2dio-orm6", "v1"]);
 
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v/1/manifest"))).toBe(true);
-    expect(html).toContain("Current");
+    // The version being read is "Viewing" (bug_spec_verify4 bug 4): only the
+    // newest version is "Latest", and reading v1 does not make v1 current.
+    expect(html).toContain("Viewing");
   });
 
   it("says a bad id is not a paper, instead of asking the API", async () => {

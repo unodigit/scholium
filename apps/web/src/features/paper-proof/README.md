@@ -22,18 +22,28 @@ the first HTML says "Checking…", never a verdict.
 ## What it shows
 
 ```text
-✓ Verified in your browser                                 [Re-run check]
+✓ Verified · 3 versions · 4 signatures                       [Re-run check]
+  Signed. Anchoring is not enabled on this node yet.
+  Verified in your browser
 ✓ Signed by all 4 listed authors
 ✓ Version history is intact (v1 → v2)
 ✓ Files match what the authors signed (3 files)
-◔ Timestamp anchor pending: the public timestamp will be added within the hour
+✓ Recorded in the node's public log (entry #41)
+◔ Timestamp anchor pending: anchoring is not enabled on this node yet
 ✓ No retraction or correction on record
+◔ Preserved: 1 of 1 local copy                    Network details ▸
 ▸ Technical details
     Version record  bafyrei…q7x2 ⧉     Manifest  bafyrei…m1ka ⧉
     Anchor          pending            Signer 1  did:key:z6Mk…ab12 ⧉
     Checks run in your browser: chain, signatures, prev_hashes, consents, …
     Verify offline: scholium verify sch:k3f9-q2xz-7mwd/v2 --node https://node ⧉
 ```
+
+The indicator's headline carries the PRD journey-3 counts ("Verified: 3
+versions, 4 signatures") for a check that passed, with the anchor state as the
+line under it; a failure keeps its own words. The checklist names people and
+records in words — a notice says who signed it, not its record id or the
+signer's did:key; those stay in the technical details, one copy away.
 
 Five header states, the VerifyBadge's: **Verified**, **Signed · anchor
 pending**, **Checking…**, **Could not check**, **Verification failed**. The
@@ -46,7 +56,7 @@ twice).
 The PRD asks that "indicator result equals CLI verifier result" (cq-19). Both
 verifiers call the same `verify_paper` (Python and TypeScript, pinned to
 `apps/api/packages/record-core/vectors/verification.json`) and fold its six
-checks into the same five lines with the same rules
+checks into the same plain lines with the same rules
 (`apps/api/packages/cli/src/scholium_cli/checklist.py`, ported in
 `checklist.ts`):
 
@@ -55,8 +65,10 @@ checks into the same five lines with the same rules
 | Signed by all authors | `signatures` + `consents` | either failed |
 | History intact | `chain` + `prev_hashes` | either failed |
 | Files match | `manifests` + the files | manifest failed, or a file differs |
+| In the node's log | the node's proof | never (entry number, or waiting) |
 | Timestamp | the node's proof | never (pending or anchored) |
 | No retraction | `supersession` | the notice is forged |
+| Preserved | `GET /v1/network` | never (a state, said in words) |
 
 A retraction, correction or tombstone is a **warning**, not a failure: the
 history still verifies, and the line says so. `checklist.test.ts` runs every
@@ -86,13 +98,13 @@ paper that already failed.
 
 ## Where the records come from
 
-A `ProofSource` (`source.ts`): `loadRecords`, and optionally `loadRecordProof`
-and `loadFile`. The default, `createNodeProofSource()`, replays the node's
-event log (`GET /v1/sync/range`, paged, at most 100 pages) the way
-`scholium verify --node` does, reads the ledger proof
-(`GET /v1/records/{cid}/proof`) and file bytes (`GET /v1/content/{cid}`), all
-unauthenticated. Pass your own `source` (a stable object) when the paper page
-already holds the records.
+A `ProofSource` (`source.ts`): `loadRecords`, and optionally `loadRecordProof`,
+`loadFile` and `loadPreservation`. The default, `createNodeProofSource()`,
+replays the node's event log (`GET /v1/sync/range`, paged, at most 100 pages)
+the way `scholium verify --node` does, reads the ledger proof
+(`GET /v1/records/{cid}/proof`), file bytes (`GET /v1/content/{cid}`) and the
+node's replication summary (`GET /v1/network`), all unauthenticated. Pass your
+own `source` (a stable object) when the paper page already holds the records.
 
 **Known gap: signatures.** The ledger does not retain `sig` (it is checked at
 ingest; `GET /v1/sync/range` and `GET /v1/records/{cid}` serve the seven content
@@ -106,14 +118,27 @@ endpoint) and needs no change here beyond a source.
 
 ## The anchor
 
-Today the node answers `"anchor": "pending"` for every record, so a paper that
-verifies is **Signed · anchor pending**, which is also what the CLI prints (it
-never checks the chain offline). `anchor.ts` also reads the anchored form that
-`design.md` §5.3 shows (`{ status: "anchored", anchored_at, chain, batch,
-tx_url }`) so **Verified** is reachable once the node anchors. The browser does
-not check the chain: the technical details say "reported by the node", and
-anything unrecognised is read as pending, never as more verified than it is.
-The transaction link is rendered only for `https:` URLs.
+Today the node answers `"anchor": "pending"` for every record — it has no
+anchoring configured (phase 1) — so a paper that verifies is **Signed · anchor
+pending**, which is also what the CLI prints (it never checks the chain
+offline). Pending never promises a time: the copy says "Anchoring is not
+enabled on this node yet", and only the anchored state names a date.
+`anchor.ts` also reads the anchored form that `design.md` §5.3 shows
+(`{ status: "anchored", anchored_at, chain, batch, tx_url }`) so **Verified**
+is reachable once the node anchors. The browser does not check the chain: the
+technical details say "reported by the node", and anything unrecognised is read
+as pending, never as more verified than it is. The transaction link is rendered
+only for `https:` URLs.
+
+## Preservation
+
+`GET /v1/network` reports the node's replication summary (`1 of 1 local` on
+this single-node deployment). `preservation.ts` reads it into
+`PreservationInfo`, words it ("Preserved: 1 of 1 local copy", with the honest
+qualifier "Multi-operator replication is not enabled yet.") and the checklist
+line links to `/network` — the page that shows the same summary in full.
+`preservation-fact.tsx` is the paper header's client island for the same line
+(a node that cannot be read is silence, never a guess).
 
 ## The offline command
 
@@ -142,15 +167,17 @@ for an exported archive.
 | --- | --- |
 | `proof-tab.tsx` | The component: verdict, checklist, technical details, copy controls, re-run. |
 | `proof-tab.css` | Styles; every value is a design token. |
-| `run-proof-check.ts` | One check, end to end: load, verify, compare files, read the proof, build the outcome. |
-| `checklist.ts` | The five plain lines, the verdict, the technical rows, the offline command. Pure. |
+| `run-proof-check.ts` | One check, end to end: load, verify, compare files, read the proof and the replication summary, build the outcome. |
+| `checklist.ts` | The plain lines, the verdict, the technical rows, the offline command. Pure. |
 | `files.ts` | Manifest lookup and the file comparison (size and CID) with a download budget. |
 | `anchor.ts` | Reads the ledger proof (pending or anchored); `https`-only links. |
+| `preservation.ts` | Reads and words the node's replication summary (`GET /v1/network`). Pure. |
+| `preservation-fact.tsx` | The paper header's preservation line, a client island. |
 | `source.ts` | `ProofSource`, the default node source, `ProofUnavailableError`, error wording. |
 | `paper-ref.ts` | `sch:` id and route-segment parsing with checksum validation. |
 | `proof-fixtures.ts` | Test-only: a genuinely signed paper built with verify-core. |
 | `index.ts` | Public surface for the paper page. |
-| `*.test.ts(x)` | Vector parity with the CLI, end-to-end checks with real signatures, source, files, anchor, component, route, CSS contract. |
+| `*.test.ts(x)` | Vector parity with the CLI, end-to-end checks with real signatures, source, files, anchor, preservation, component, route, CSS contract. |
 | `app/(paper-proof)/layout.tsx`, `paper-proof.css` | Global nav + page shell for `/proof/…`. |
 | `app/(paper-proof)/proof/[...ref]/page.tsx` | The `/proof/{id}[/v{n}]` route: metadata, URL parsing, bad-id notice. |
 

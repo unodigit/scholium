@@ -27,7 +27,9 @@ import {
 
 const stubs = vi.hoisted(() => ({
   props: {} as Record<string, Record<string, unknown>>,
-  proofState: undefined as undefined | ((state: string, outcome: null) => void),
+  proofState: undefined as
+    | undefined
+    | ((state: string, outcome: { counts?: unknown } | null) => void),
 }));
 
 vi.mock("../paper-reviews", async (importOriginal) => {
@@ -414,6 +416,22 @@ describe("the badge", () => {
     await waitFor(() =>
       expect(badge().textContent).toContain("Verification failed"),
     );
+  });
+
+  it("carries the counts the finished check reported, as journey 3 reads", async () => {
+    render(<MarginPanel {...props()} />);
+
+    act(() =>
+      stubs.proofState?.("anchor_pending", {
+        counts: { versions: 2, signatures: 3 },
+      }),
+    );
+    await waitFor(() =>
+      expect(badge().textContent).toBe("Verified · 2 versions · 3 signatures"),
+    );
+    // The anchor state stays its own line below the badge, not part of its words.
+    expect(badge().textContent).not.toContain("anchor pending");
+    expect(screen.getByText(/^Anchored /)).toBeTruthy();
   });
 
   it("always opens the Proof tab, and moves focus there", () => {

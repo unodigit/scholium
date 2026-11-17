@@ -44,6 +44,51 @@ describe("VerifyBadge", () => {
     expect(icon?.getAttribute("stroke")).toBe("currentColor");
   });
 
+  it("adds a finished check's counts to the indicator, as the PRD's journey 3 reads", () => {
+    const badge = badgeOf(
+      createElement(VerifyBadge, {
+        state: "verified",
+        counts: { versions: 3, signatures: 4 },
+      }),
+    );
+
+    expect(badge.textContent).toBe("Verified · 3 versions · 4 signatures");
+    // The link's accessible name is still the visible words.
+    expect(
+      screen.getByRole("link", { name: "Verified · 3 versions · 4 signatures" }),
+    ).toBeTruthy();
+    // The state itself is unchanged, so the styling and the live region stay right.
+    expect(badge.dataset.state).toBe("verified");
+  });
+
+  it("counts a signed but unanchored check the same way, and never a failure", () => {
+    expect(
+      badgeOf(
+        createElement(VerifyBadge, {
+          state: "anchor_pending",
+          counts: { versions: 2, signatures: 3 },
+        }),
+      ).textContent,
+    ).toBe("Verified · 2 versions · 3 signatures");
+
+    cleanup();
+    expect(
+      badgeOf(
+        createElement(VerifyBadge, {
+          state: "failed",
+          counts: { versions: 2, signatures: 3 },
+        }),
+      ).textContent,
+    ).toBe("Verification failed");
+  });
+
+  it("keeps its own words when the check reported no counts", () => {
+    const badge = badgeOf(
+      createElement(VerifyBadge, { state: "verified", counts: null }),
+    );
+    expect(badge.textContent).toBe("Verified");
+  });
+
   it("renders the five labels of docs/design.md §5.3", () => {
     const words = VERIFY_STATES.map(
       (state) => badgeOf(createElement(VerifyBadge, { state })).textContent,

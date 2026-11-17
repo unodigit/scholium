@@ -16,6 +16,8 @@
  * Pure data and functions, no React: the markup lives in `verify-badge.ts`.
  * Deciding *which* state a paper is in (from verify-core's report and the
  * anchor proof) belongs to the Proof tab; the badge only shows the answer.
+ * The counts a finished check adds to the indicator's words — "Verified · 3
+ * versions · 4 signatures" (PRD §9 journey 3) — are `countedLabel` below.
  */
 
 import type { IconName } from "./icons";
@@ -68,7 +70,9 @@ export const VERIFY_BADGE_SPECS: Readonly<Record<VerifyState, VerifyBadgeSpec>> 
     label: "Signed · anchor pending",
     tone: "pending",
     icon: "pending",
-    meaning: "Signed. The public timestamp will be added within the hour.",
+    // Phase 1 has no anchoring, so pending never promises a time: a time is
+    // promised only by the anchored state, which names the anchor's own date.
+    meaning: "Signed. Anchoring is not enabled on this node yet.",
   },
   checking: {
     state: "checking",
@@ -128,4 +132,42 @@ export function proofTabHref(base?: string): string {
 /** The tooltip (and accessible description) of a badge: what it means, then what a click does. */
 export function verifyBadgeTitle(state: VerifyState): string {
   return `${VERIFY_BADGE_SPECS[state].meaning} Opens the Proof tab.`;
+}
+
+/**
+ * The counts a finished check can add to the indicator: how many versions the
+ * paper has, and how many distinct signatures were checked (PRD §9 journey 3:
+ * "Verified: 3 versions, 4 signatures, anchored 2027-03-02").
+ */
+export interface VerifyCounts {
+  readonly versions: number;
+  readonly signatures: number;
+}
+
+/** A count worth printing: a whole number, and not zero of something a verified paper always has. */
+function isCounted(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+/**
+ * The indicator's words for a finished check: "Verified · 3 versions ·
+ * 4 signatures" when the check passed and the counts are known, whatever the
+ * anchor state is (that follows the indicator as its own line).
+ *
+ * Anything else — no counts, a check that failed or could not run — keeps the
+ * state's own label, so a count is never printed next to a failure and
+ * "Verified" never appears without the checks behind it.
+ */
+export function countedLabel(state: VerifyState, counts: VerifyCounts | null): string {
+  if (
+    counts === null ||
+    (state !== "verified" && state !== "anchor_pending") ||
+    !isCounted(counts.versions) ||
+    !isCounted(counts.signatures)
+  ) {
+    return VERIFY_BADGE_SPECS[state].label;
+  }
+  const versions = `${counts.versions} ${counts.versions === 1 ? "version" : "versions"}`;
+  const signatures = `${counts.signatures} ${counts.signatures === 1 ? "signature" : "signatures"}`;
+  return `Verified · ${versions} · ${signatures}`;
 }

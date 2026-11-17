@@ -559,7 +559,9 @@ export function anchorSpec(anchor: VersionAnchor): AnchorSpec {
     label: "Anchor pending",
     icon: "pending",
     tone: "pending",
-    meaning: "The public timestamp will be added within the hour.",
+    // This node has no anchoring configured (phase 1), so pending never
+    // promises a time; only the anchored state names a date.
+    meaning: "Anchoring is not enabled on this node yet.",
   };
 }
 

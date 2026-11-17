@@ -28,6 +28,7 @@ import { decodeRecordBytes } from "../verify-core";
 import { parseRecordProof, type RecordProofInfo } from "./anchor";
 import type { FileLoader } from "./files";
 import type { PaperRef } from "./paper-ref";
+import { loadPreservation, type PreservationInfo } from "./preservation";
 
 /** A signed record envelope as `verifyPaper` reads it. */
 export type SignedRecord = Record<string, unknown>;
@@ -42,6 +43,11 @@ export interface ProofSource {
   loadRecordProof?(recordId: string, signal?: AbortSignal): Promise<RecordProofInfo>;
   /** Bytes of a listed file by its signed id, or `null` when not held. */
   loadFile?: FileLoader;
+  /**
+   * The node's replication summary (`GET /v1/network`), for the checklist's
+   * preservation line. Answers `null` when the node did not say.
+   */
+  loadPreservation?(signal?: AbortSignal): Promise<PreservationInfo | null>;
 }
 
 /**
@@ -152,6 +158,10 @@ export function createNodeProofSource(client: ProofClient = api): ProofSource {
         }
         throw error;
       }
+    },
+
+    loadPreservation(signal) {
+      return loadPreservation(signal, client);
     },
   };
 }

@@ -48,10 +48,12 @@ export {
   PROOF_TAB_HREF,
   VERIFY_BADGE_SPECS,
   VERIFY_STATES,
+  countedLabel,
   isVerifyState,
   proofTabHref,
   verifyBadgeTitle,
   type VerifyBadgeSpec,
+  type VerifyCounts,
   type VerifyState,
   type VerifyTone,
 } from "./verify";

@@ -5,7 +5,7 @@
  * ← cs.AI
  * Can a Meta-Agent Choose the Safer Branch?
  * Mei Zhang · A. Okafor · R. Silva · J. Tan
- * ✓ Reviewed · v2 of 2 · CC BY 4.0
+ * ✓ Reviewed · v2 of 2 · CC BY 4.0 · Preserved: 1 of 1 local copy
  * [ PDF ] [ HTML ] [ Cite ] [ Download ▾ ]
  * ```
  *
@@ -22,6 +22,9 @@
  * - **Version** reads `v2 of 2`, from the version timeline; if the timeline
  *   could not be read it is just `v2`.
  * - **Licence** is the signed version's, in words (`CC BY 4.0`).
+ * - **Preserved** is the node's replication state in words (`Preserved: 1 of
+ *   1 local copy`), linking to `/network` (`preservation-fact.tsx`, a client
+ *   island that reads the node's public status after the first render).
  * - **Invite reviewer** is offered to the paper's authors only, beneath the
  *   four actions (`invite-reviewer.tsx`). A consented author also gets **New
  *   version**, **Issue notice** and, when the latest moderation decision is a
@@ -35,6 +38,7 @@
 import { DecisionBanner, StatusChip, isPaperStatus } from "../ui-kit";
 import type { ReactElement } from "react";
 import { licenceLabel } from "../paper-meta/meta";
+import { PreservationFact } from "../paper-proof";
 import { InviteReviewer } from "./invite-reviewer";
 import { PaperActions } from "./paper-actions";
 import {
@@ -107,6 +111,10 @@ export function PaperHeader({ data }: PaperHeaderProps) {
           {versionOfTotal(version, totalVersions)}
         </span>
         <span className="ppg-fact ppg-licence">{licenceLabel(paper.licence)}</span>
+        {/* A client island: the node's replication state arrives after the
+            first render, and silence never claims a state the node did not
+            report. */}
+        <PreservationFact />
       </p>
 
       <PaperActions

@@ -3,40 +3,54 @@
  * verdict it adds up to.
  *
  * verify-core answers six technical questions (`chain`, `signatures`,
- * `prev_hashes`, `consents`, `manifests`, `supersession`). A reader wants five
- * plain ones, the same five `scholium verify` prints
+ * `prev_hashes`, `consents`, `manifests`, `supersession`). A reader wants
+ * plain ones, the same ones `scholium verify` prints
  * (`apps/api/packages/cli/src/scholium_cli/checklist.py`), and the rules that
- * fold the six into the five are that file's, line for line:
+ * fold the six into them are that file's, line for line:
  *
  * | Line                 | From                                  |
  * | -------------------- | ------------------------------------- |
  * | Signed by all authors | `signatures` + `consents`            |
  * | History intact        | `chain` + `prev_hashes`              |
  * | Files match           | `manifests` + the files themselves   |
+ * | In the node's log     | the node's proof (never the browser) |
  * | Timestamp / anchor    | the node's proof (never the browser) |
  * | No retraction         | `supersession`                       |
+ * | Preserved             | `GET /v1/network` (the node's words) |
  *
  * That shared rule is what lets the in-browser indicator and the CLI agree
  * (PRD: "indicator result equals CLI verifier result"): both fail on exactly
  * the same failed checks. A line is a pass, a fail, *pending* (a state, not an
  * error) or a *warning* (verified, but the reader should know). Only fails
  * make the verdict negative: a retracted paper's history still verifies, so a
- * retraction is a warning, not a failure.
+ * retraction is a warning, not a failure. The notice lines name people and
+ * records in words; the raw record ids and did:key:s they used to print live
+ * in the technical details (bug_spec_verify4 bug 4).
  *
  * Pure data and functions, no React.
  */
 
 import {
   VERIFY_BADGE_SPECS,
+  countedLabel,
+  type VerifyCounts,
   type VerifyState,
 } from "../ui-kit/verify";
 import type { CheckResult, VerificationReport } from "../verify-core";
 import { formatAnchorTime, type RecordProofInfo } from "./anchor";
 import type { FileResult, VersionManifest } from "./files";
+import { NETWORK_PAGE_HREF, preservationCopy, type PreservationInfo } from "./preservation";
 
 export type ItemState = "pass" | "fail" | "pending" | "warn";
 
-export type ItemKey = "authors" | "history" | "files" | "anchor" | "retraction";
+export type ItemKey =
+  | "authors"
+  | "history"
+  | "files"
+  | "ledger"
+  | "anchor"
+  | "retraction"
+  | "preservation";
 
 export interface ChecklistItem {
   readonly key: ItemKey;
@@ -45,7 +59,10 @@ export interface ChecklistItem {
   readonly text: string;
   /** Individual findings, shown under a fail or a warning. */
   readonly details: readonly string[];
-  /** A follow-up link (the anchor transaction); always `https:`. */
+  /**
+   * A follow-up link: an `https:` URL (the anchor transaction) opens in a new
+   * tab, a path (`/network`) opens in this one.
+   */
   readonly link: { readonly href: string; readonly label: string } | null;
 }
 
@@ -134,15 +151,58 @@ function historyItem(report: VerificationReport): ChecklistItem {
   return fromChecks("history", chain.message, [chain, prevHashes]);
 }
 
+// --- the notices line -----------------------------------------------------
+
+/** The notice kinds verify-core reports, as a reader says them. */
+const NOTICE_KIND_WORDS: Readonly<Record<string, string>> = {
+  retraction: "Retraction",
+  correction: "Correction",
+  tombstone: "Tombstone",
+};
+
+/** "retraction" → "Retraction"; an unknown kind keeps its own word, capitalised. */
+export function noticeKindWord(kind: string): string {
+  const known = NOTICE_KIND_WORDS[kind];
+  if (known !== undefined) return known;
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+/**
+ * Who signed a notice, in words. The primary list names people and records in
+ * words (bug_spec_verify4 bug 4); the raw record id and did:key are printed by
+ * the technical details instead (`technicalRows`).
+ */
+function noticeSignerWord(
+  notice: { author: string | null; applied: boolean },
+  report: VerificationReport,
+): string {
+  if (notice.author !== null && report.authors.includes(notice.author)) {
+    return "a listed author";
+  }
+  // verify-core applies a notice only when its signer is a listed author or a
+  // trusted authority, so an applied outside signer is necessarily trusted.
+  return notice.applied ? "a trusted authority" : "an unrecognised signer";
+}
+
+/** One notice as a reader reads it: what, by whom, and whether it applies. */
+function noticeDetail(
+  notice: {
+    kind: string;
+    author: string | null;
+    applied: boolean;
+    reason: string | null;
+  },
+  report: VerificationReport,
+): string {
+  const applied = notice.applied ? "applies" : `not applied: ${notice.reason}`;
+  return `${noticeKindWord(notice.kind)} notice signed by ${noticeSignerWord(notice, report)} (${applied})`;
+}
+
 function retractionItem(report: VerificationReport): ChecklistItem {
   const check = report.checks.supersession;
   if (!check.passed) return fromChecks("retraction", "", [check]);
 
-  const notices = report.supersessions.map(
-    (notice) =>
-      `${notice.kind} ${notice.id} signed by ${notice.author}` +
-      (notice.applied ? " (applies)" : ` (not applied: ${notice.reason})`),
-  );
+  const notices = report.supersessions.map((notice) => noticeDetail(notice, report));
   switch (report.status) {
     case "retracted":
       return item(
@@ -223,7 +283,23 @@ function filesItem(
   return item("files", "pass", `Files match what the authors signed (${plural(total, "file")})`);
 }
 
-// --- the timestamp line --------------------------------------------------
+// --- the ledger and timestamp lines ---------------------------------------
+
+/**
+ * The record's place in the node's public log. The records the check verified
+ * came from that log, so inclusion is known; only the entry number waits for
+ * the node's proof to say it (and it is best effort, like the CLI's).
+ */
+function ledgerItem(proof: RecordProofInfo): ChecklistItem {
+  if (proof.seq !== null) {
+    return item("ledger", "pass", `Recorded in the node's public log (entry #${proof.seq})`);
+  }
+  return item(
+    "ledger",
+    "pending",
+    "Recorded in the node's public log (entry number not reported)",
+  );
+}
 
 function anchorItem(proof: RecordProofInfo): ChecklistItem {
   const { anchor } = proof;
@@ -236,10 +312,40 @@ function anchorItem(proof: RecordProofInfo): ChecklistItem {
       anchor.txUrl === null ? null : { href: anchor.txUrl, label: "View transaction" },
     );
   }
+  // This node has no anchoring configured, so the line says that instead of
+  // promising a time (only the anchored state, above, names a date).
   return item(
     "anchor",
     "pending",
-    "Timestamp anchor pending: the public timestamp will be added within the hour",
+    "Timestamp anchor pending: anchoring is not enabled on this node yet",
+  );
+}
+
+// --- the preservation line ------------------------------------------------
+
+/**
+ * What the node preserves, from its own replication summary, with the way to
+ * read it in full (`/network`). A node that did not answer is said, not
+ * guessed at — and never as a failure: the paper's proof stands on its own.
+ */
+function preservationItem(preservation: PreservationInfo | null): ChecklistItem {
+  const network = { href: NETWORK_PAGE_HREF, label: "Network details" };
+  if (preservation === null) {
+    return item(
+      "preservation",
+      "warn",
+      "This node's preservation state could not be read",
+      [],
+      network,
+    );
+  }
+  const copy = preservationCopy(preservation);
+  return item(
+    "preservation",
+    copy.pending ? "pending" : "pass",
+    copy.label,
+    copy.note === null ? [] : [copy.note],
+    network,
   );
 }
 
@@ -250,17 +356,25 @@ export interface ChecklistInput {
   readonly manifest: VersionManifest | null;
   readonly fileResults: readonly FileResult[];
   readonly proof: RecordProofInfo;
+  /** The node's replication summary, or `null` when it did not say. */
+  readonly preservation: PreservationInfo | null;
 }
 
-/** The five plain lines, in the order of docs/design.md §5.3. */
+/**
+ * The seven plain lines: the five of docs/design.md §5.3, with the record's
+ * place in the node's public log before the anchor that timestamps it, and
+ * the node's preservation state last.
+ */
 export function buildChecklist(input: ChecklistInput): ChecklistItem[] {
-  const { report, manifest, fileResults, proof } = input;
+  const { report, manifest, fileResults, proof, preservation } = input;
   return [
     authorsItem(report),
     historyItem(report),
     filesItem(report, manifest, fileResults),
+    ledgerItem(proof),
     anchorItem(proof),
     retractionItem(report),
+    preservationItem(preservation),
   ];
 }
 
@@ -292,16 +406,19 @@ export interface VerdictCopy {
 }
 
 /**
- * Headline and summary for each state. The words come from the VerifyBadge's
- * own table (docs/design.md §5.3) so the badge in the paper header and this
- * tab always say the same thing; only the two states that happen *in this
- * tab* get its sentence ("Verified in your browser").
+ * Headline and summary for each state. For a check that passed, the headline
+ * carries the PRD's counts ("Verified · 3 versions · 4 signatures") and the
+ * anchor state follows as the summary, so a signed-but-not-anchored paper says
+ * so instead of promising a time. The words otherwise come from the
+ * VerifyBadge's own table (docs/design.md §5.3) so the badge in the paper
+ * header and this tab always agree.
  */
-export function verdictCopy(state: VerifyState): VerdictCopy {
+export function verdictCopy(state: VerifyState, counts: VerifyCounts | null = null): VerdictCopy {
   const spec = VERIFY_BADGE_SPECS[state];
   switch (state) {
     case "verified":
-      return { headline: "Verified in your browser", summary: spec.meaning };
+    case "anchor_pending":
+      return { headline: countedLabel(state, counts), summary: spec.meaning };
     case "checking":
       return { headline: "Checking in your browser…", summary: spec.meaning };
     default:
@@ -363,6 +480,14 @@ export function technicalRows(input: TechnicalInput): TechnicalRow[] {
   add("version", "Version record", report.head);
   add("manifest", "Manifest", manifest?.cid ?? null);
   add("paper", "Paper record", report.genesis);
+
+  // The raw ids the checklist's notice lines deliberately do not print: the
+  // record id and the signer's did:key, one copy away (bug_spec_verify4 bug 4).
+  report.supersessions.forEach((notice, index) => {
+    const word = noticeKindWord(notice.kind);
+    add(`notice-${index + 1}-record`, `${word} record`, notice.id);
+    add(`notice-${index + 1}-signer`, `${word} signer`, notice.author);
+  });
 
   const { anchor } = proof;
   if (anchor.status === "anchored") {

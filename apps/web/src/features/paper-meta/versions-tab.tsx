@@ -11,13 +11,15 @@
  * A timeline from v1 to vN, oldest first, each version showing
  *
  * ```text
- * ○ Version 2   [Current]                    2 Feb 2027
+ * ○ Version 2   [Viewing] [Latest]           2 Feb 2027
  *   Fixed the proof of Lemma 2
  *   ◔ Anchor pending
  * ```
  *
  * the change note the author signed, the date it was listed and the record's
- * anchor status. The anchor is a state, not a verdict: the node does not
+ * anchor status. The version being read is marked "Viewing" (it is not
+ * necessarily the current one) and the newest is "Latest"; the two can sit on
+ * the same row. The anchor is a state, not a verdict: the node does not
  * timestamp its log on-chain yet, so "Anchor pending" is what every version
  * says today, and it never looks like a failure.
  *
@@ -50,7 +52,7 @@ export interface VersionsTabProps {
   /** The paper's id, in any spelling the API accepts (`sch:…` or a genesis cid). */
   paperId: string;
   /**
-   * The version the paper page is showing, marked "Current". Defaults to the
+   * The version the paper page is showing, marked "Viewing". Defaults to the
    * newest listed version.
    */
   currentVersion?: number;
@@ -208,11 +210,11 @@ function Timeline({ data, paperId, currentVersion, versionHref, compareHref }: T
                     {`Version ${version.n}`}
                   </a>
                   {isCurrent ? (
-                    <span className="pm-chip pm-chip--current" data-chip="current">
-                      Current
+                    <span className="pm-chip pm-chip--current" data-chip="viewing">
+                      Viewing
                     </span>
                   ) : null}
-                  {!isCurrent && isNewest ? (
+                  {isNewest ? (
                     <span className="pm-chip" data-chip="latest">
                       Latest
                     </span>

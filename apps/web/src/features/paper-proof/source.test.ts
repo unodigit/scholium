@@ -125,11 +125,24 @@ describe("createNodeProofSource: loadRecords", () => {
     const { client } = clientOf(({ path }) => (path === `/export/paper/${REF.shortId}/records` ? signed : null));
     const outcome = await runProofCheck({
       ref: REF,
-      source: { loadRecords: createNodeProofSource(client).loadRecords },
+      source: {
+        loadRecords: createNodeProofSource(client).loadRecords,
+        loadPreservation: createNodeProofSource(client).loadPreservation,
+      },
       nodeUrl: "https://n.example",
     });
     expect(outcome.state).toBe("anchor_pending");
-    expect(outcome.items.map((item) => item.state)).toEqual(["pass", "pass", "warn", "pending", "pass"]);
+    // Without the record proof the ledger line waits; the node's replica
+    // summary (absent from this client's answers) is asked for, not guessed.
+    expect(outcome.items.map((item) => item.state)).toEqual([
+      "pass",
+      "pass",
+      "warn",
+      "pending",
+      "pending",
+      "pass",
+      "warn",
+    ]);
   });
 
   it("returns an empty log as no records, which the check reports as nothing to check", async () => {
@@ -149,6 +162,22 @@ describe("createNodeProofSource: loadRecordProof and loadFile", () => {
     const proof = await createNodeProofSource(client).loadRecordProof!(paper.versionIds[0]);
     expect(proof).toEqual({ anchor: { status: "pending" }, seq: 9 });
     expect(calls[0].path).toBe(`/records/${paper.versionIds[0]}/proof`);
+    expect(calls[0].options).toMatchObject({ auth: false });
+  });
+
+  it("reads the node's replication summary from the public network status", async () => {
+    const { client, calls } = clientOf(() => ({
+      node_did: "did:key:z6Mk",
+      standing: "local",
+      replicas: { have: 1, of: 1, local: true, summary: "1 of 1 local" },
+    }));
+    const source = createNodeProofSource(client);
+    await expect(source.loadPreservation!()).resolves.toEqual({
+      have: 1,
+      of: 1,
+      local: true,
+    });
+    expect(calls[0].path).toBe("/network");
     expect(calls[0].options).toMatchObject({ auth: false });
   });
 

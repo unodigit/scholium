@@ -8,13 +8,17 @@ import { deriveShortId } from "../verify-core";
 import type { RecordProofInfo } from "./anchor";
 import { parsePaperRef } from "./paper-ref";
 import { bytesOf, buildPaper } from "./proof-fixtures";
+import { LOCAL_PRESERVATION, type PreservationInfo } from "./preservation";
 import { runProofCheck } from "./run-proof-check";
 import type { ProofSource, SignedRecord } from "./source";
 
 const NODE = "https://node.example";
 
-function sourceOf(records: readonly SignedRecord[], extra: Partial<ProofSource> = {}): ProofSource {
-  return { loadRecords: async () => records, ...extra };
+function sourceOf(
+  records: readonly SignedRecord[],
+  extra: Partial<ProofSource> = {},
+): ProofSource {
+  return { loadRecords: async () => records, loadPreservation: async () => LOCAL_PRESERVATION, ...extra };
 }
 
 /** A node that holds exactly `paper`'s files. */
@@ -48,7 +52,7 @@ describe("a paper that verifies", () => {
   const paper = buildPaper({ authors: 3, versions: 2 });
   const ref = parsePaperRef(paper.shortId);
 
-  it("shows the five plain lines and is 'Signed · anchor pending' while the node has no anchor", async () => {
+  it("reads the counted indicator, then the anchor state, while the node has no anchor", async () => {
     const outcome = await runProofCheck({
       ref,
       source: sourceOf(paper.records, { loadFile: filesOf(paper) }),
@@ -56,20 +60,32 @@ describe("a paper that verifies", () => {
     });
 
     expect(outcome.state).toBe("anchor_pending");
-    expect(outcome.headline).toBe("Signed · anchor pending");
+    // The indicator carries the PRD's counts; the anchor state follows as the
+    // summary (a promise of a time only when an anchor is actually scheduled).
+    expect(outcome.headline).toBe("Verified · 2 versions · 3 signatures");
+    // The same counts reach the header badge, which words them itself.
+    expect(outcome.counts).toEqual({ versions: 2, signatures: 3 });
+    expect(outcome.summary).toBe("Signed. Anchoring is not enabled on this node yet.");
     expect(outcome.items.map((entry) => [entry.key, entry.state])).toEqual([
       ["authors", "pass"],
       ["history", "pass"],
       ["files", "pass"],
+      ["ledger", "pending"],
       ["anchor", "pending"],
       ["retraction", "pass"],
+      ["preservation", "pending"],
     ]);
     expect(line(outcome, "authors").text).toBe("Signed by all 3 listed authors");
     expect(line(outcome, "history").text).toMatch(/^Version history is intact \(v1 → v2\)/);
     expect(line(outcome, "files").text).toBe("Files match what the authors signed (1 file)");
+    expect(line(outcome, "preservation").text).toBe("Preserved: 1 of 1 local copy");
+    expect(line(outcome, "preservation").link).toEqual({
+      href: "/network",
+      label: "Network details",
+    });
   });
 
-  it("is Verified once the node reports an anchor", async () => {
+  it("is Verified once the node reports an anchor, and records the log entry", async () => {
     const outcome = await runProofCheck({
       ref,
       source: sourceOf(paper.records, {
@@ -80,11 +96,41 @@ describe("a paper that verifies", () => {
     });
 
     expect(outcome.state).toBe("verified");
-    expect(outcome.headline).toBe("Verified in your browser");
+    expect(outcome.headline).toBe("Verified · 2 versions · 3 signatures");
     expect(line(outcome, "anchor")).toMatchObject({
       state: "pass",
       text: "Timestamp anchored: 2 Mar 2027 04:00 UTC",
     });
+    expect(line(outcome, "ledger")).toMatchObject({
+      state: "pass",
+      text: "Recorded in the node's public log (entry #3)",
+    });
+  });
+
+  it("asks the node for its replication summary, and keeps the paper verified without it", async () => {
+    const loadPreservation = vi.fn(async () => LOCAL_PRESERVATION as PreservationInfo);
+    const withSummary = await runProofCheck({
+      ref,
+      source: sourceOf(paper.records, { loadPreservation }),
+      nodeUrl: NODE,
+    });
+    expect(loadPreservation).toHaveBeenCalledTimes(1);
+    expect(line(withSummary, "preservation").state).toBe("pending");
+
+    const withoutSummary = await runProofCheck({
+      ref,
+      source: sourceOf(paper.records, {
+        loadPreservation: async () => {
+          throw new NetworkError("https://node.example/v1/network");
+        },
+      }),
+      nodeUrl: NODE,
+    });
+    expect(line(withoutSummary, "preservation")).toMatchObject({
+      state: "warn",
+      text: "This node's preservation state could not be read",
+    });
+    expect(withoutSummary.state).toBe("anchor_pending");
   });
 
   it("asks the node for the proof of the version it verified", async () => {

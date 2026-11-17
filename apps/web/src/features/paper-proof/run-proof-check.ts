@@ -28,6 +28,7 @@ import {
   verifyPaper,
   type VerificationReport,
 } from "../verify-core";
+import type { VerifyCounts } from "../ui-kit/verify";
 import { PENDING_PROOF, type RecordProofInfo } from "./anchor";
 import {
   buildChecklist,
@@ -43,6 +44,7 @@ import {
 } from "./checklist";
 import { compareFiles, versionManifest, type FileResult } from "./files";
 import type { PaperRef } from "./paper-ref";
+import type { PreservationInfo } from "./preservation";
 import {
   ProofUnavailableError,
   createNodeProofSource,
@@ -58,7 +60,12 @@ export interface ProofOutcome {
   readonly headline: string;
   /** One line under it; for `cannot_verify`, the reason. */
   readonly summary: string;
-  /** The five plain lines; empty when nothing could be checked. */
+  /**
+   * What the check verified, for the header indicator's counted words (PRD
+   * journey 3); absent or `null` when nothing could be checked.
+   */
+  readonly counts?: VerifyCounts | null;
+  /** The plain checklist lines; empty when nothing could be checked. */
   readonly items: readonly ChecklistItem[];
   /** Record ids, anchor and signers. */
   readonly rows: readonly TechnicalRow[];
@@ -155,6 +162,7 @@ function cannotVerify(reason: string, ref: PaperRef, nodeUrl: string): ProofOutc
     // The reason is specific; the closing sentence is the design's promise
     // that a check that could not run is not a verdict (§5.3).
     summary: `${reason} This is not a failure.`,
+    counts: null,
     items: [],
     rows: [],
     checks: [],
@@ -201,12 +209,30 @@ async function checkRecords(
     }
   }
 
-  const items = buildChecklist({ report, manifest, fileResults, proof });
+  // The node's own replication summary, for the preservation line: best effort
+  // too, and the checklist says so when the node did not answer.
+  let preservation: PreservationInfo | null = null;
+  if (source.loadPreservation !== undefined) {
+    try {
+      preservation = await source.loadPreservation(signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
+  }
+
+  const items = buildChecklist({ report, manifest, fileResults, proof, preservation });
   const state = verdictState(items, report, proof);
+  // The indicator carries the PRD's counts for a check that passed; the anchor
+  // state follows as the verdict's summary line.
+  const counts: VerifyCounts = {
+    versions: report.version_count,
+    signatures: report.signers.length,
+  };
   const schId = versionLabel(records, report, ref);
   return {
-    ...verdictCopy(state),
+    ...verdictCopy(state, counts),
     state,
+    counts,
     items,
     rows: technicalRows({ report, manifest, proof }),
     checks: checkLines(report),

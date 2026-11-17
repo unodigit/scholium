@@ -13,19 +13,25 @@
  * says the result as a plain-language checklist,
  *
  * ```text
- * ✓ Verified in your browser                                 [Re-run check]
+ * ✓ Verified · 3 versions · 4 signatures                     [Re-run check]
+ *   Signed. Anchoring is not enabled on this node yet.
  * ✓ Signed by all 4 listed authors
  * ✓ Version history is intact (v1 → v2)
  * ✓ Files match what the authors signed (3 files)
- * ◔ Timestamp anchor pending: the public timestamp will be added within the hour
+ * ✓ Recorded in the node's public log (entry #41)
+ * ◔ Timestamp anchor pending: anchoring is not enabled on this node yet
  * ✓ No retraction or correction on record
+ * ◔ Preserved: 1 of 1 local copy                    Network details ▸
  * ▸ Technical details
  * ```
  *
  * with the technical details (record ids, anchor, signers, the six checks) and
  * the command that repeats the check offline, `scholium verify …`, under a
  * disclosure. The result is the CLI's: both fail on exactly the same failed
- * checks (see `checklist.ts`).
+ * checks (see `checklist.ts`). The indicator's headline carries the PRD's
+ * counts (journey 3: "Verified: 3 versions, 4 signatures") with the anchor
+ * state as the line under it, and the checklist names people and records in
+ * words — raw ids stay in the technical details.
  *
  * - **Five states**, the VerifyBadge's: Verified, Signed · anchor pending,
  *   Checking…, Could not check, Verification failed. A check that could not
@@ -186,7 +192,9 @@ export function ProofTab({
         <div className="pt-verdict" role="status" data-state={state} data-tone={spec.tone}>
           <p className="pt-verdict__line">
             <Icon name={spec.icon} className="pt-verdict__icon" />
-            <span className="pt-verdict__headline">{copy.headline}</span>
+            {/* A finished check's headline carries its counts; the fallback is
+                the checking copy, the only outcome-less render there is. */}
+            <span className="pt-verdict__headline">{outcome?.headline ?? copy.headline}</span>
           </p>
           <p className="pt-verdict__summary">{outcome?.summary ?? copy.summary}</p>
           {outcome !== null && (outcome.state === "anchor_pending" || outcome.state === "verified") ? (
@@ -227,6 +235,9 @@ export function ProofNotice({ message }: { message: string }) {
 }
 
 function ChecklistLine({ item }: { item: ChecklistItem }) {
+  // An `https:` follow-up (the anchor transaction) opens in a new tab; a path
+  // (`/network`) is this site's own page and opens in this one.
+  const external = item.link !== null && /^https:\/\//.test(item.link.href);
   return (
     <li className="pt-item" data-state={item.state} data-key={item.key}>
       <Icon name={ITEM_ICONS[item.state]} className="pt-item__icon" />
@@ -240,11 +251,14 @@ function ChecklistLine({ item }: { item: ChecklistItem }) {
               <a
                 className="pt-link"
                 href={item.link.href}
-                target="_blank"
-                rel="noopener noreferrer"
+                target={external ? "_blank" : undefined}
+                rel={external ? "noopener noreferrer" : undefined}
               >
-                {item.link.label} ↗
-                <span className="pt-visually-hidden"> (opens in a new tab)</span>
+                {item.link.label}
+                {external ? " ↗" : null}
+                {external ? (
+                  <span className="pt-visually-hidden"> (opens in a new tab)</span>
+                ) : null}
               </a>
             </>
           ) : null}

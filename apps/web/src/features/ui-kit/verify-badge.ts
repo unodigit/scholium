@@ -8,7 +8,7 @@
  * <VerifyBadge state="checking" />
  * <VerifyBadge state="cannot_verify" />
  * <VerifyBadge state="failed" />
- * <VerifyBadge state={proofState} href={proofTabHref("/p/k3f9-q2xz-7mwd/v2")} />
+ * <VerifyBadge state={proofState} counts={counts} href={proofTabHref("/p/k3f9-q2xz-7mwd/v2")} />
  * ```
  *
  * Five states, the header-indicator table of §5.3:
@@ -20,6 +20,11 @@
  * | `checking`       | spinner "Checking…"                 |
  * | `cannot_verify`  | ? grey "Could not check"            |
  * | `failed`         | ✕ red "Verification failed"         |
+ *
+ * A finished check also says what it checked (`counts`): "Verified · 3
+ * versions · 4 signatures" (PRD §9 journey 3), with the anchor state as the
+ * paper page's own line beneath it. The counts are added only to a check that
+ * passed; a failure keeps its failure words.
  *
  * What makes a badge safe to read without colour:
  * - the **word** is real text, so it is the accessible name and survives
@@ -56,8 +61,10 @@ import { Icon } from "./icons";
 import {
   PROOF_TAB_HREF,
   VERIFY_BADGE_SPECS,
+  countedLabel,
   isVerifyState,
   verifyBadgeTitle,
+  type VerifyCounts,
   type VerifyState,
 } from "./verify";
 import "./verify-badge.css";
@@ -73,6 +80,14 @@ export interface VerifyBadgeProps extends SpanProps {
    * back to the default, so the badge never renders a link that goes nowhere.
    */
   href?: string;
+  /**
+   * How many versions and signatures a finished check verified. With them the
+   * words carry the PRD's counts (journey 3): "Verified · 3 versions · 4
+   * signatures". Omit them — or pass `null` — for a check that has not run or
+   * has no counts, and the state's own label is shown. A failure or an
+   * unfinished check never shows counts (see `countedLabel`).
+   */
+  counts?: VerifyCounts | null;
 }
 
 /**
@@ -86,11 +101,15 @@ export interface VerifyBadgeProps extends SpanProps {
 export function VerifyBadge({
   state,
   href,
+  counts,
   className,
   ...rest
 }: VerifyBadgeProps): ReactElement | null {
   if (!isVerifyState(state)) return null;
   const spec = VERIFY_BADGE_SPECS[state];
+  // The counts ride on the words, never the state: a check that failed keeps
+  // its failure label whatever numbers the caller passes.
+  const label = countedLabel(state, counts ?? null);
   const target =
     typeof href === "string" && href.trim().length > 0
       ? href.trim()
@@ -115,7 +134,7 @@ export function VerifyBadge({
         title: verifyBadgeTitle(state),
       },
       createElement(Icon, { name: spec.icon, className: "sch-verify__icon" }),
-      createElement("span", { className: "sch-verify__label" }, spec.label),
+      createElement("span", { className: "sch-verify__label" }, label),
     ),
   );
 }

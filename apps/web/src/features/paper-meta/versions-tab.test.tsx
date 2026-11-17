@@ -62,14 +62,17 @@ describe("VersionsTab", () => {
     );
   });
 
-  it("marks the newest version Current by default, and the one asked for when given", () => {
+  it("marks the version being read 'Viewing' and the newest 'Latest', also when they differ", () => {
     const { rerender } = render(<VersionsTab paperId={SHORT} initial={TIMELINE} />);
-    expect(screen.getByText("Current").closest("li")?.textContent).toContain("Version 2");
-    expect(screen.queryByText("Latest")).toBeNull();
-
-    rerender(<VersionsTab paperId={SHORT} initial={TIMELINE} currentVersion={1} />);
-    expect(screen.getByText("Current").closest("li")?.textContent).toContain("Version 1");
+    // Reading the newest (the default): it is both the one being viewed and the latest.
+    expect(screen.getByText("Viewing").closest("li")?.textContent).toContain("Version 2");
     expect(screen.getByText("Latest").closest("li")?.textContent).toContain("Version 2");
+
+    // Reading v1: v1 is merely being viewed — v2, not v1, is the latest.
+    rerender(<VersionsTab paperId={SHORT} initial={TIMELINE} currentVersion={1} />);
+    expect(screen.getByText("Viewing").closest("li")?.textContent).toContain("Version 1");
+    expect(screen.getByText("Latest").closest("li")?.textContent).toContain("Version 2");
+    expect(screen.queryByText("Current")).toBeNull();
   });
 
   it("offers the compare action only when the host supplies a compare URL", () => {

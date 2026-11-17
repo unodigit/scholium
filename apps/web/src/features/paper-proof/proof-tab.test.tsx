@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkError } from "../../lib/api";
 import { TOAST_REGION_ID } from "../ui-kit";
 import { buildPaper, bytesOf } from "./proof-fixtures";
+import { LOCAL_PRESERVATION } from "./preservation";
 import { ProofTab } from "./proof-tab";
 import type { ProofSource, SignedRecord } from "./source";
 import type { RecordProofInfo } from "./anchor";
@@ -27,7 +28,10 @@ const ANCHORED: RecordProofInfo = {
 
 function sourceOf(records: readonly SignedRecord[] = paper.records, extra: Partial<ProofSource> = {}) {
   const loadRecords = vi.fn(async () => records);
-  return { source: { loadRecords, ...extra } as ProofSource, loadRecords };
+  return {
+    source: { loadRecords, loadPreservation: async () => LOCAL_PRESERVATION, ...extra } as ProofSource,
+    loadRecords,
+  };
 }
 
 /** The node holds exactly the paper's files. */
@@ -97,12 +101,12 @@ describe("while it checks", () => {
     await waitFor(() => expect(before.dataset.state).toBe("anchor_pending"));
 
     expect(verdictOf(container)).toBe(before);
-    expect(before.textContent).toContain("Signed · anchor pending");
+    expect(before.textContent).toContain("Verified · 2 versions · 3 signatures");
   });
 });
 
 describe("a paper that verifies", () => {
-  it("shows the five plain lines of design.md §5.3", async () => {
+  it("shows the plain lines: the five of design.md §5.3 plus the ledger and preservation", async () => {
     const { source } = sourceOf(paper.records, { loadFile: holdsFiles });
     const { container } = await renderTab({ source });
 
@@ -115,27 +119,52 @@ describe("a paper that verifies", () => {
       },
       { key: "files", state: "pass", text: "Passed: Files match what the authors signed (1 file)" },
       {
+        key: "ledger",
+        state: "pending",
+        text: "Pending: Recorded in the node's public log (entry number not reported)",
+      },
+      {
         key: "anchor",
         state: "pending",
-        text: "Pending: Timestamp anchor pending: the public timestamp will be added within the hour",
+        text: "Pending: Timestamp anchor pending: anchoring is not enabled on this node yet",
       },
       { key: "retraction", state: "pass", text: "Passed: No retraction or correction on record" },
+      {
+        key: "preservation",
+        state: "pending",
+        // The line carries its follow-up link, so the text ends with it.
+        text: expect.stringMatching(/^Pending: Preserved: 1 of 1 local copy Network details$/),
+      },
     ]);
   });
 
-  it("is 'Signed · anchor pending', amber, until the node anchors", async () => {
+  it("carries the counts, and the anchor state follows the indicator", async () => {
     const { source } = sourceOf();
     const { container } = await renderTab({ source });
     const verdict = verdictOf(container);
 
     expect(verdict.dataset.state).toBe("anchor_pending");
     expect(verdict.dataset.tone).toBe("pending");
-    expect(verdict.textContent).toContain("Signed · anchor pending");
-    expect(verdict.textContent).toContain("The public timestamp will be added within the hour");
+    expect(verdict.textContent).toContain("Verified · 2 versions · 3 signatures");
+    expect(verdict.textContent).toContain("Anchoring is not enabled on this node yet");
+    expect(verdict.textContent).not.toContain("within the hour");
     expect(container.querySelector("section")!.getAttribute("aria-busy")).toBe("false");
   });
 
-  it("is 'Verified in your browser', green, with a safe link to the transaction, once anchored", async () => {
+  it("links the preservation line to /network in this tab, not a new one", async () => {
+    const { source } = sourceOf();
+    const { container } = await renderTab({ source });
+
+    const network = container.querySelector<HTMLAnchorElement>('.pt-item[data-key="preservation"] .pt-link')!;
+    expect(network.textContent).toContain("Network details");
+    expect(network.getAttribute("href")).toBe("/network");
+    expect(network.getAttribute("target")).toBeNull();
+    expect(network.getAttribute("rel")).toBeNull();
+    // The external-link markers belong to the transaction link only.
+    expect(network.textContent).not.toContain("↗");
+  });
+
+  it("is green, with a safe link to the transaction, once anchored", async () => {
     const { source } = sourceOf(paper.records, { loadRecordProof: async () => ANCHORED });
     const { container } = await renderTab({ source });
     const verdict = verdictOf(container);
@@ -143,13 +172,15 @@ describe("a paper that verifies", () => {
     expect(verdict.dataset.state).toBe("verified");
     expect(verdict.dataset.tone).toBe("verified");
     expect(verdict.textContent).toContain("Verified in your browser");
+    expect(verdict.textContent).toContain("Verified · 2 versions · 3 signatures");
 
-    const link = container.querySelector<HTMLAnchorElement>(".pt-link")!;
+    const link = container.querySelector<HTMLAnchorElement>('.pt-item[data-key="anchor"] .pt-link')!;
     expect(link.textContent).toContain("View transaction");
     expect(link.getAttribute("href")).toBe("https://basescan.org/tx/0xabc");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(lines(container)[3].text).toContain("Timestamp anchored: 2 Mar 2027 04:00 UTC");
+    expect(lines(container)[4].text).toContain("Timestamp anchored: 2 Mar 2027 04:00 UTC");
+    expect(lines(container)[3].text).toContain("Recorded in the node's public log (entry #12)");
   });
 
   it("gives every line an icon of its own shape and hides the icons from assistive technology", async () => {
@@ -452,7 +483,7 @@ describe("under React StrictMode (next.config.js sets reactStrictMode)", () => {
 
     await waitFor(() => expect(verdictOf(container).dataset.state).toBe("anchor_pending"));
     expect(container.querySelector("section")!.getAttribute("aria-busy")).toBe("false");
-    expect(lines(container)).toHaveLength(5);
+    expect(lines(container)).toHaveLength(7);
     // The first run was abandoned, the second one is the answer.
     expect(signals.length).toBeGreaterThanOrEqual(2);
     expect(signals[0].aborted).toBe(true);

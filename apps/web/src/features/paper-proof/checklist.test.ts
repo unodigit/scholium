@@ -19,6 +19,7 @@ import {
 } from "./checklist";
 import { versionManifest } from "./files";
 import { buildPaper } from "./proof-fixtures";
+import { LOCAL_PRESERVATION, type PreservationInfo } from "./preservation";
 
 /**
  * The browser's checklist must fold verify-core's six checks into the same
@@ -62,10 +63,14 @@ const ANCHORED: RecordProofInfo = {
   },
 };
 
-function checklistOf(vector: Vector, proof: RecordProofInfo = PENDING_PROOF) {
+function checklistOf(
+  vector: Vector,
+  proof: RecordProofInfo = PENDING_PROOF,
+  preservation: PreservationInfo | null = LOCAL_PRESERVATION,
+) {
   const report = verifyPaper(vector.records, vector.call);
   const manifest = versionManifest(vector.records, report);
-  const items = buildChecklist({ report, manifest, fileResults: [], proof });
+  const items = buildChecklist({ report, manifest, fileResults: [], proof, preservation });
   const states = Object.fromEntries(items.map((item) => [item.key, item.state])) as Record<
     ItemKey,
     ItemState
@@ -115,19 +120,30 @@ describe("the checklist agrees with the shared vectors (and so with the CLI)", (
 describe("plain-language lines", () => {
   const verified = vectors.find((vector) => vector.name === "verified-three-versions")!;
 
-  it("says the five things design.md §5.3 lists, in order", () => {
+  it("says the seven plain things, in order, with the ledger and preservation lines", () => {
     const { items } = checklistOf(verified);
     expect(items.map((item) => item.key)).toEqual([
       "authors",
       "history",
       "files",
+      "ledger",
       "anchor",
       "retraction",
+      "preservation",
     ]);
     expect(items[0].text).toBe("Signed by all 3 listed authors");
     expect(items[1].text).toMatch(/^Version history is intact \(v1 → v3\)/);
-    expect(items[3].text).toMatch(/^Timestamp anchor pending/);
-    expect(items[4].text).toBe("No retraction or correction on record");
+    expect(items[3].text).toBe("Recorded in the node's public log (entry number not reported)");
+    expect(items[4].text).toBe(
+      "Timestamp anchor pending: anchoring is not enabled on this node yet",
+    );
+    expect(items[5].text).toBe("No retraction or correction on record");
+    expect(items[6]).toMatchObject({
+      state: "pending",
+      text: "Preserved: 1 of 1 local copy",
+      details: ["Multi-operator replication is not enabled yet."],
+      link: { href: "/network", label: "Network details" },
+    });
   });
 
   it("says 'the listed author' for a paper with one author", () => {
@@ -139,6 +155,7 @@ describe("plain-language lines", () => {
       manifest: versionManifest(paper.records, report),
       fileResults: [],
       proof: PENDING_PROOF,
+      preservation: LOCAL_PRESERVATION,
     });
     expect(items[0]).toMatchObject({ state: "pass", text: "Signed by the listed author" });
   });
@@ -157,7 +174,7 @@ describe("plain-language lines", () => {
   it("does not repeat a broken history on every line", () => {
     const fork = vectors.find((vector) => vector.name === "invalid-fork-without-a-chosen-head")!;
     const { items } = checklistOf(fork);
-    const [authors, history, files, , retraction] = items;
+    const [authors, history, files, , , retraction] = items;
     expect(history).toMatchObject({ state: "fail", text: "The version history is broken" });
     expect(history.details.join(" ")).toMatch(/competing heads/);
     for (const downstream of [authors, files, retraction]) {
@@ -177,7 +194,7 @@ describe("plain-language lines", () => {
   it("names a forged retraction as not genuine, and fails the paper like the CLI", () => {
     const forged = vectors.find((vector) => vector.name === "invalid-forged-retraction")!;
     const { items, state } = checklistOf(forged);
-    expect(items[4]).toMatchObject({
+    expect(items[5]).toMatchObject({
       state: "fail",
       text: "A retraction or correction on record is not genuine",
     });
@@ -187,10 +204,38 @@ describe("plain-language lines", () => {
   it("warns, rather than fails, for a retraction, and says the history still verifies", () => {
     const retracted = vectors.find((vector) => vector.name === "retracted-by-author")!;
     const { items, state } = checklistOf(retracted);
-    expect(items[4]).toMatchObject({ state: "warn" });
-    expect(items[4].text).toMatch(/Retracted.*history still verifies/);
-    expect(items[4].details[0]).toMatch(/^retraction bafy.* \(applies\)$/);
+    expect(items[5]).toMatchObject({ state: "warn" });
+    expect(items[5].text).toMatch(/Retracted.*history still verifies/);
     expect(state).toBe("anchor_pending");
+  });
+
+  it("names people and records in words: no record id or did:key in the primary list", () => {
+    const retracted = vectors.find((vector) => vector.name === "retracted-by-author")!;
+    const { items, report } = checklistOf(retracted);
+    expect(items[5].details[0]).toBe("Retraction notice signed by a listed author (applies)");
+    for (const detail of items[5].details) {
+      expect(detail).not.toMatch(/^retraction bafy/i);
+      expect(detail).not.toMatch(/did:key/);
+    }
+
+    const corrected = vectors.find((vector) => vector.name === "corrected-by-co-author")!;
+    const correction = checklistOf(corrected).items[5];
+    expect(correction.text).toMatch(/^Corrected/);
+    expect(correction.details[0]).toBe("Correction notice signed by a listed author (applies)");
+
+    // The raw ids the details used to print live in the technical details instead.
+    const notice = report.supersessions[0];
+    const rows = technicalRows({
+      report,
+      manifest: versionManifest(retracted.records, report),
+      proof: PENDING_PROOF,
+    });
+    expect(rows).toContainEqual(
+      expect.objectContaining({ key: "notice-1-record", label: "Retraction record", value: notice.id }),
+    );
+    expect(rows).toContainEqual(
+      expect.objectContaining({ key: "notice-1-signer", label: "Retraction signer", value: notice.author }),
+    );
   });
 
   it("shows a notice that does not apply as information, not as a warning", () => {
@@ -198,8 +243,18 @@ describe("plain-language lines", () => {
       (vector) => vector.name === "retraction-by-outsider-is-not-applied",
     )!;
     const { items } = checklistOf(outsider);
-    expect(items[4].state).toBe("pass");
-    expect(items[4].details[0]).toMatch(/not applied: signer is neither an author/);
+    expect(items[5].state).toBe("pass");
+    expect(items[5].details[0]).toMatch(
+      /^Retraction notice signed by an unrecognised signer \(not applied: signer is neither an author/,
+    );
+  });
+
+  it("names a trusted authority's tombstone in words too", () => {
+    const vector = vectors.find(
+      (entry) => entry.name === "tombstoned-by-trusted-authority",
+    )!;
+    const { items } = checklistOf(vector);
+    expect(items[5].details[0]).toBe("Tombstone notice signed by a trusted authority (applies)");
   });
 });
 
@@ -208,7 +263,7 @@ describe("the timestamp line and the verdict", () => {
 
   it("is Verified once the node reports an anchor, with a link to the transaction", () => {
     const { items, state } = checklistOf(verified, ANCHORED);
-    expect(items[3]).toMatchObject({
+    expect(items[4]).toMatchObject({
       key: "anchor",
       state: "pass",
       text: "Timestamp anchored: 2 Mar 2027 04:00 UTC",
@@ -219,8 +274,25 @@ describe("the timestamp line and the verdict", () => {
 
   it("is 'Signed · anchor pending' until then", () => {
     const { items, state } = checklistOf(verified);
-    expect(items[3]).toMatchObject({ state: "pending", link: null });
+    expect(items[4]).toMatchObject({ state: "pending", link: null });
     expect(state).toBe("anchor_pending");
+  });
+
+  it("never promises a timestamp the node cannot add", () => {
+    const { items } = checklistOf(verified);
+    expect(items[4].text).toBe(
+      "Timestamp anchor pending: anchoring is not enabled on this node yet",
+    );
+    expect(items[4].text).not.toMatch(/within the hour/i);
+  });
+
+  it("records the record's place in the node's public log when the node reports it", () => {
+    const { items } = checklistOf(verified, { ...PENDING_PROOF, seq: 41 });
+    expect(items[3]).toMatchObject({
+      key: "ledger",
+      state: "pass",
+      text: "Recorded in the node's public log (entry #41)",
+    });
   });
 
   it("is Failed whatever the anchor says when a check failed", () => {
@@ -312,11 +384,78 @@ describe("the offline command", () => {
 
 describe("verdictCopy", () => {
   it("uses the VerifyBadge's own words, so the header badge and this tab agree", () => {
-    expect(verdictCopy("verified").headline).toBe("Verified in your browser");
-    expect(verdictCopy("anchor_pending").headline).toBe("Signed · anchor pending");
     expect(verdictCopy("cannot_verify").headline).toBe("Could not check");
     expect(verdictCopy("failed").headline).toBe("Verification failed");
     expect(verdictCopy("checking").headline).toBe("Checking in your browser…");
     expect(verdictCopy("failed").summary).toMatch(/Do not rely on it/);
+  });
+
+  it("reads the PRD's counted line for a check that passed, then the anchor state", () => {
+    // PRD journey 3: "Verified: 3 versions, 4 signatures, anchored 2027-03-02".
+    // The anchor state follows as the summary, so a paper that is signed but
+    // not anchored says so instead of promising a time.
+    expect(verdictCopy("verified", { versions: 3, signatures: 4 })).toEqual({
+      headline: "Verified · 3 versions · 4 signatures",
+      summary: "Every check passed and the public timestamp is in place.",
+    });
+    expect(verdictCopy("anchor_pending", { versions: 2, signatures: 3 })).toEqual({
+      headline: "Verified · 2 versions · 3 signatures",
+      summary: "Signed. Anchoring is not enabled on this node yet.",
+    });
+  });
+
+  it("keeps the badge's own label when there is nothing to count", () => {
+    expect(verdictCopy("verified").headline).toBe("Verified");
+    expect(verdictCopy("anchor_pending").headline).toBe("Signed · anchor pending");
+  });
+});
+
+describe("the preservation line", () => {
+  const report = verifyPaper(
+    vectors.find((vector) => vector.name === "verified-single-version")!.records,
+    vectors.find((vector) => vector.name === "verified-single-version")!.call,
+  );
+
+  function preservationOf(info: PreservationInfo | null) {
+    return buildChecklist({
+      report,
+      manifest: null,
+      fileResults: [],
+      proof: PENDING_PROOF,
+      preservation: info,
+    }).find((item) => item.key === "preservation")!;
+  }
+
+  it("says what this single-node deployment honestly holds, and links to /network", () => {
+    expect(preservationOf(LOCAL_PRESERVATION)).toMatchObject({
+      state: "pending",
+      text: "Preserved: 1 of 1 local copy",
+      details: ["Multi-operator replication is not enabled yet."],
+      link: { href: "/network", label: "Network details" },
+    });
+  });
+
+  it("passes a node whose replicas are at target and not only local", () => {
+    expect(preservationOf({ have: 5, of: 5, local: false })).toMatchObject({
+      state: "pass",
+      text: "Preserved: 5 of 5 replicas",
+      details: [],
+    });
+  });
+
+  it("stays honest while a multi-replica node is still filling", () => {
+    expect(preservationOf({ have: 2, of: 5, local: false })).toMatchObject({
+      state: "pending",
+      text: "Preserved: 2 of 5 replicas",
+      details: [],
+    });
+  });
+
+  it("says so, rather than guessing, when the node did not answer", () => {
+    expect(preservationOf(null)).toMatchObject({
+      state: "warn",
+      text: "This node's preservation state could not be read",
+      link: { href: "/network", label: "Network details" },
+    });
   });
 });

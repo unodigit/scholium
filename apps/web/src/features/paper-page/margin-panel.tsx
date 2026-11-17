@@ -59,7 +59,13 @@ import type { DiscussionData } from "../paper-discussion/discussion";
 import { ProofTab } from "../paper-proof";
 import { ReviewsTab } from "../paper-reviews";
 import type { ReviewsData } from "../paper-reviews/review";
-import { Icon, IdPill, VerifyBadge, type VerifyState } from "../ui-kit";
+import {
+  Icon,
+  IdPill,
+  VerifyBadge,
+  type VerifyCounts,
+  type VerifyState,
+} from "../ui-kit";
 import {
   MARGIN_TAB_IDS,
   comparePagePath,
@@ -122,6 +128,9 @@ export function MarginPanel({
     () => new Set(MOUNTED_AT_START),
   );
   const [proofState, setProofState] = useState<VerifyState>("checking");
+  // What the finished check verified, for the badge's counted words; the
+  // anchor state stays on its own line beneath it.
+  const [proofCounts, setProofCounts] = useState<VerifyCounts | null>(null);
 
   const open = useCallback((tab: MarginTabId) => {
     setActive(tab);
@@ -209,7 +218,12 @@ export function MarginPanel({
     <div className="ppg-panel">
       <div className="ppg-proofbar">
         <div className="ppg-proofbar-row">
-          <VerifyBadge state={proofState} href={tabHash("proof")} onClick={openProof} />
+          <VerifyBadge
+            state={proofState}
+            counts={proofCounts}
+            href={tabHash("proof")}
+            onClick={openProof}
+          />
           <a className="ppg-details" href={tabHash("proof")} onClick={openProof}>
             Details<span aria-hidden="true"> ›</span>
             <span className="ppg-visually-hidden"> of the proof</span>
@@ -290,7 +304,10 @@ export function MarginPanel({
               {tab === "proof" ? (
                 <ProofTab
                   schId={versionId}
-                  onStateChange={(state) => setProofState(state)}
+                  onStateChange={(state, outcome) => {
+                    setProofState(state);
+                    setProofCounts(outcome?.counts ?? null);
+                  }}
                 />
               ) : null}
             </>

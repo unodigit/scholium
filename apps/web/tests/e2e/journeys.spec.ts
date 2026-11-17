@@ -229,9 +229,12 @@ test.describe("reading", () => {
     await page.getByRole("link", { name: META_AGENT.title }).click();
     await expect(page.getByRole("heading", { name: META_AGENT.title, level: 1 })).toBeVisible();
 
-    // The badge above the tabs is the Proof tab's verdict: signed (the public
-    // timestamp is anchored later, so "anchor pending" is the settled state here).
-    await expect(page.getByRole("link", { name: /^Signed/ })).toBeVisible();
+    // The badge above the tabs is the Proof tab's verdict, and says what the
+    // check verified (PRD §9 journey 3); the public timestamp is anchored later,
+    // so "Anchor pending" is the settled state on the line beneath it.
+    await expect(
+      page.getByRole("link", { name: /^Verified · \d+ versions? · \d+ signatures?$/ }),
+    ).toBeVisible();
 
     await page.getByRole("tab", { name: "Proof" }).click();
     const proof = page.getByRole("tabpanel");
