@@ -372,7 +372,7 @@ test.describe("the branded entry and fallback screens", () => {
   test("an unknown address renders the branded not-found screen", async ({ page }) => {
     await page.goto(`/no-such-page-${Date.now()}`, { waitUntil: "networkidle" });
 
-    await expect(page).toHaveTitle("Scholium");
+    await expect(page).toHaveTitle("Not found · Scholium");
     await expect(
       page.getByRole("heading", { name: "We couldn't find that page." }),
     ).toBeVisible();
