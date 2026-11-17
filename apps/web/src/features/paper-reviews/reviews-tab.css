@@ -552,6 +552,19 @@
   padding-inline-start: calc(var(--space-unit) * 5);
 }
 
+/* Tailwind's preflight resets every list to `list-style: none`. A report is
+   Markdown, so its bullets and numbers are the content, not decoration: draw
+   them back, indented into the padding above. */
+.pr-report__body ul,
+.pr-history__report-body ul {
+  list-style: disc;
+}
+
+.pr-report__body ol,
+.pr-history__report-body ol {
+  list-style: decimal;
+}
+
 .pr-report__body li + li,
 .pr-history__report-body li + li {
   margin-block-start: var(--space-unit);

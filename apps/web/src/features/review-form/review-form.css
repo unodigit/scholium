@@ -749,6 +749,16 @@
   padding-inline-start: calc(var(--space-unit) * 5);
 }
 
+/* Tailwind's preflight resets every list to `list-style: none`; a report's
+   bullets and numbers are its content, so draw them back. */
+.rf-updated__report-body ul {
+  list-style: disc;
+}
+
+.rf-updated__report-body ol {
+  list-style: decimal;
+}
+
 .rf-updated__report-body a {
   color: var(--accent);
   text-decoration: underline;

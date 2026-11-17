@@ -470,6 +470,34 @@ describe("ReviewForm update", () => {
     expect(screen.queryByRole("button", { name: UPDATE_LABEL })).toBeNull();
   });
 
+  it("says the scores and recommendation are public now and when the report unseals", async () => {
+    const update = vi.fn<UpdateReview>(async () => updatedReview());
+
+    render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        prev="bafyformal"
+        update={update}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
+    await screen.findByRole("heading", { name: "Your review is updated" });
+
+    // The update is revealed at once, but its written report waits for the
+    // version's gate (REV-4): the confirmation may not call the whole review
+    // published. The date is the record's own date plus the 21-day window.
+    expect(screen.getByText(/Your scores and recommendation are public now/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Your written report unseals once 2 reviews are committed on this version, or on 22 Dec\./,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/now published on the paper/)).toBeNull();
+  });
+
   it("renders the confirmed report as Markdown, not with its asterisks", async () => {
     const result = updatedReview();
     result.body.report = "**Summary:** the revised method is *sound*.\n\n- clear\n- tested\n\n<b>not bold</b>";

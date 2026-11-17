@@ -237,8 +237,8 @@ interface GateFacts {
   readonly revealed: number;
   /** Listed reviews still sealed, rubric included. */
   readonly sealed: number;
-  /** An earlier version's revealed review is listed beside this one's. */
-  readonly hasEarlierRevealed: boolean;
+  /** Earlier-version reviews listed below, all already revealed. */
+  readonly earlierRevealed: number;
   /** The day the clock opens the gate, when a commit date is served. */
   readonly date: string | null;
 }
@@ -255,23 +255,56 @@ function unsealClock(date: string | null): string {
  * recommendation are public whether or not this version's gate is open (an
  * update is revealed at once; its written report is what waits), so once any
  * listed review is revealed the note says scores are public and that only the
- * written reports unseal at the gate. Only a listing with nothing revealed
- * speaks of reviews being revealed at the gate.
+ * written reports unseal at the gate.
+ *
+ * The note names how many reviews are committed on the version being listed,
+ * and — separately — how many earlier-version reviews the listing carries and
+ * has already revealed. It never says "the reviews shown below" of a mixed
+ * listing: the update on this version is revealed while its report is sealed,
+ * which a blanket earlier-version sentence would contradict.
  */
-function gateNote({ commits, revealed, sealed, hasEarlierRevealed, date }: GateFacts): string {
+function gateNote({
+  commits,
+  revealed,
+  sealed,
+  earlierRevealed,
+  date,
+}: GateFacts): string {
   const earlier =
-    hasEarlierRevealed
-      ? " The reviews shown below are from an earlier version and are already revealed."
+    earlierRevealed > 0
+      ? ` ${earlierRevealed} earlier-version review${
+          earlierRevealed === 1 ? "" : "s"
+        } below ${earlierRevealed === 1 ? "is" : "are"} already revealed.`
       : "";
 
   if (revealed > 0) {
-    const none = commits <= 0 ? "No review has been committed on this version yet. " : "";
+    const scores =
+      sealed > 0 ? "Scores are public on the revealed reviews." : "Scores are public.";
     const reports =
       sealed > 0
         ? "Written reports on this version, and the rubric of a review still sealed, unseal"
         : "Written reports on this version unseal";
-    const scores = sealed > 0 ? "Scores are public on the revealed reviews." : "Scores are public.";
-    return `${none}${scores} ${reports} once 2 reviews are committed on it, or ${unsealClock(date)}.${earlier}`;
+    const gate = `${reports} once 2 reviews are committed on it, or ${unsealClock(date)}.`;
+
+    if (commits <= 0) {
+      return `No review has been committed on this version yet. ${scores} ${gate}${earlier}`;
+    }
+
+    if (sealed === 0) {
+      // Every review on this version is revealed: only its written report is
+      // withheld until the gate opens (REV-4), so say the count and that.
+      return `${commits} review${
+        commits === 1 ? "" : "s"
+      } committed on this version; ${
+        commits === 1
+          ? "its written report unseals"
+          : "their written reports unseal"
+      } once 2 are committed, or ${unsealClock(date)}.${earlier}`;
+    }
+
+    return `${commits} review${
+      commits === 1 ? "" : "s"
+    } committed on this version. ${scores} ${gate}${earlier}`;
   }
 
   if (commits <= 0) {
@@ -335,9 +368,13 @@ function ReviewsView({
   const commits = committedOnVersion(reviews, data.version);
   const sealed = reviews.filter((review) => !isRevealed(review)).length;
   const gateDate = reportGateDate(reviews, data.version);
-  const hasEarlierRevealed = reviews.some(
-    (review) => review.version !== null && data.version !== null && review.version !== data.version && isRevealed(review),
-  );
+  const earlierRevealed = reviews.filter(
+    (review) =>
+      review.version !== null &&
+      data.version !== null &&
+      review.version !== data.version &&
+      isRevealed(review),
+  ).length;
 
   // Who wrote an anonymous review is escrowed, so which of the earlier reviews
   // is the viewer's own is asked of their dashboard; only when there is one to
@@ -385,7 +422,7 @@ function ReviewsView({
               commits,
               revealed: reviews.length - sealed,
               sealed,
-              hasEarlierRevealed,
+              earlierRevealed,
               date: gateDate,
             })}
           </p>

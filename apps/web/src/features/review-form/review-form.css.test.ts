@@ -106,6 +106,20 @@ describe("review-form.css", () => {
     expect(feature).not.toMatch(/\.rf-paragraph\s*\{[^}]*font-family/);
   });
 
+  it("gives the confirmed report's Markdown lists their markers back", () => {
+    // Tailwind's preflight resets every list to `list-style: none`; the
+    // confirmation renders the report's bullets and numbers explicitly.
+    expect(feature).toMatch(
+      /\.rf-updated__report-body\s+ul\s*\{[^}]*list-style:\s*disc/,
+    );
+    expect(feature).toMatch(
+      /\.rf-updated__report-body\s+ol\s*\{[^}]*list-style:\s*decimal/,
+    );
+    expect(feature).toMatch(
+      /\.rf-updated__report-body\s+ul,\s*\.rf-updated__report-body\s+ol\s*\{[^}]*padding-inline-start:/,
+    );
+  });
+
   it("lets a long title or id wrap instead of overflowing the page", () => {
     expect(feature).toMatch(/\.rf-title\s*\{[^}]*overflow-wrap:\s*anywhere/);
     expect(feature).toMatch(/\.rf-kicker\s*\{[^}]*overflow-wrap:\s*anywhere/);

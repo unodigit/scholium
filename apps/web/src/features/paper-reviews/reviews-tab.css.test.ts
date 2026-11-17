@@ -82,6 +82,21 @@ describe("reviews-tab.css", () => {
     expect(tab.rules).toMatch(/\.pr-report__sealed\s*\{/);
   });
 
+  it("gives the report's Markdown lists their markers back", () => {
+    // Tailwind's preflight resets every list to `list-style: none`; a report's
+    // bullets and numbers must be drawn explicitly or the text renders as
+    // unmarked lines.
+    expect(tab.rules).toMatch(
+      /\.pr-report__body\s+ul,\s*\.pr-history__report-body\s+ul\s*\{[^}]*list-style:\s*disc/,
+    );
+    expect(tab.rules).toMatch(
+      /\.pr-report__body\s+ol,\s*\.pr-history__report-body\s+ol\s*\{[^}]*list-style:\s*decimal/,
+    );
+    expect(tab.rules).toMatch(
+      /\.pr-report__body\s+ul,\s*\.pr-report__body\s+ol,\s*\.pr-history__report-body\s+ul,\s*\.pr-history__report-body\s+ol\s*\{[^}]*padding-inline-start:/,
+    );
+  });
+
   it("gives the report's summary a 44 px target (§9)", () => {
     expect(tab.rules).toMatch(/\.pr-report__summary\s*\{[^}]*min-block-size:\s*2\.75rem/);
   });

@@ -59,6 +59,7 @@ import {
   commitReview,
   describeCommitError,
   formatRevealDate,
+  revealDateFor,
   type CommitFailure,
   type ReviewCommitInput,
   type ReviewCommitResult,
@@ -800,11 +801,33 @@ function updatedRecommendation(value: unknown): string {
 }
 
 /**
+ * The day this update's written report unseals on the clock alone, as the
+ * design writes dates (`22 Dec`), or `null` when the record carries no usable
+ * date.
+ *
+ * An update is revealed at once, but REV-4 withholds its written report until
+ * the target version's gate opens: two reviews committed on it, or 21 days
+ * after the first. The record's own `created` is the commit date the reviewer
+ * brings, and the client's commit flow uses the same window.
+ */
+function updatedReportUnsealDate(result: UpdateReviewResult): string | null {
+  try {
+    return formatRevealDate(revealDateFor(result.record.created));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * What replaces the form once an update is accepted.
  *
  * The reviewer sees the review they now stand on, read-only, rather than a
  * still-editable form that looks as though nothing happened. There is nothing
  * left to submit, so a second click (and a confusing `409`) is impossible.
+ *
+ * The copy must not overstate publication: the scores and recommendation are
+ * public now, but the written report stays sealed until the version's gate
+ * opens (REV-4).
  */
 export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
   const body = result.body;
@@ -813,6 +836,7 @@ export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
     typeof body.report === "string" && body.report.trim() !== ""
       ? body.report.trim()
       : null;
+  const unsealDate = updatedReportUnsealDate(result);
 
   return (
     <section
@@ -823,7 +847,12 @@ export function UpdateConfirmed({ result }: { result: UpdateReviewResult }) {
     >
       <h2 className="rf-form-title">Your review is updated</h2>
       <p className="rf-sealed-text">
-        This is the review now published on the paper’s Reviews tab.
+        Your scores and recommendation are public now.
+        {report !== null
+          ? ` Your written report unseals once 2 reviews are committed on this version, or ${
+              unsealDate !== null ? `on ${unsealDate}` : "21 days after the first commit"
+            }.`
+          : ""}
       </p>
       <p className="rf-updated__recommendation">
         {updatedRecommendation(body.recommendation)}

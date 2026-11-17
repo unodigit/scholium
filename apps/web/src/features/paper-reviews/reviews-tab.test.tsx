@@ -702,7 +702,7 @@ describe("a review carried from an earlier version, and one revised since", () =
     const note = screen.getByRole("note");
     expect(note.textContent).toMatch(/No review has been committed on this version yet/);
     expect(note.textContent).toMatch(/already revealed/);
-    expect(note.textContent).toMatch(/earlier version/);
+    expect(note.textContent).toMatch(/earlier-version/);
   });
 
   it("does not mention earlier reviews when none is shown", () => {
@@ -757,13 +757,52 @@ describe("the listing of a newer version once a review is updated to it", () => 
     });
   }
 
-  it("says the scores are public and only the written reports are waiting", () => {
+  it("states the count on this version and that only the written reports are waiting", () => {
     renderTab(updatedListing());
 
     const note = screen.getByRole("note").textContent ?? "";
     expect(note).toContain(
-      "Scores are public. Written reports on this version unseal once 2 reviews are committed on it, or on 23 Mar 2027.",
+      "1 review committed on this version; its written report unseals once 2 are committed, or on 23 Mar 2027.",
     );
+  });
+
+  it("counts the reviews on this version beside the earlier reviews it carries", () => {
+    // The bug's listing: one reviewer has updated to v2 (revealed, its report
+    // sealed), and a reviewer who has not yet updated is carried from v1
+    // (revealed). The note must describe each group for what it is: it is not
+    // true that the reviews shown below are all from an earlier version.
+    renderTab(
+      parseReviews({
+        paper: PAPER,
+        version: 2,
+        gate_open: false,
+        reviews: [
+          review({
+            review_cid: "bafy-updated",
+            label: "Reviewer A",
+            version: 2,
+            committed_at: "2027-03-02T04:00:00",
+            revealed_at: "2027-04-01T00:00:00",
+          }),
+          review({
+            review_cid: "bafy-earlier",
+            label: "Reviewer B",
+            version: 1,
+            committed_at: "2027-02-01T00:00:00",
+            revealed_at: "2027-02-02T00:00:00",
+            report: "An earlier report.",
+          }),
+        ],
+      }),
+    );
+
+    const note = screen.getByRole("note").textContent ?? "";
+    expect(note).toContain("1 review committed on this version;");
+    expect(note).toContain(
+      "its written report unseals once 2 are committed, or on 23 Mar 2027.",
+    );
+    expect(note).toContain("1 earlier-version review below is already revealed.");
+    expect(note).not.toContain("The reviews shown below are from an earlier version");
   });
 
   it("does not say the review is yet to be revealed while its card shows the scores", () => {
