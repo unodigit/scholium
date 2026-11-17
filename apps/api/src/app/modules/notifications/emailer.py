@@ -8,6 +8,10 @@
   so an email is never silently dropped.  The log line names the recipient
   and subject but never the body, which can carry a verification token.
 
+Every email built by :func:`build_email` is ``multipart/alternative``: the
+plain-text body first, then the branded HTML rendering from
+:mod:`.email_template`.  The plain-text part is the same text it always was.
+
 ``SMTP_URL`` accepts the usual URL forms::
 
     smtp://user:pass@mail.example.org:587
@@ -29,6 +33,8 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import Any, Mapping, Optional
 from urllib.parse import parse_qs, unquote, urlparse
+
+from .email_template import render_html
 
 __all__ = [
     "DEFAULT_FROM",
@@ -75,12 +81,14 @@ class Email:
     kind: str = ""
     notification_id: Optional[int] = None
     message: Optional[EmailMessage] = field(default=None, compare=False, repr=False)
+    #: The branded HTML alternative; ``None`` sends the plain-text body alone.
+    html: Optional[str] = field(default=None, repr=False)
 
     def as_message(self) -> EmailMessage:
         """Return the email as a stdlib :class:`EmailMessage`."""
         if self.message is not None:
             return self.message
-        return _render_message(self.to, self.from_addr, self.subject, self.body)
+        return _render_message(self.to, self.from_addr, self.subject, self.body, self.html)
 
 
 @dataclass(frozen=True)
@@ -134,12 +142,26 @@ def _render_body(did: str, kind: str, payload: Any) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_message(to: str, from_addr: str, subject: str, body: str) -> EmailMessage:
+def _link_of(payload: Any) -> Optional[str]:
+    """The link the notification points at (the one ``Open:`` shows), if any."""
+    if isinstance(payload, Mapping):
+        for key in _LINK_KEYS:
+            link = payload.get(key)
+            if isinstance(link, str) and link:
+                return link
+    return None
+
+
+def _render_message(
+    to: str, from_addr: str, subject: str, body: str, html: Optional[str] = None
+) -> EmailMessage:
     message = EmailMessage()
     message["From"] = from_addr
     message["To"] = to
     message["Subject"] = subject
     message.set_content(body)
+    if html is not None:
+        message.add_alternative(html, subtype="html")
     return message
 
 
@@ -151,11 +173,16 @@ def build_email(
     notification_id: Optional[int] = None,
     from_addr: str = DEFAULT_FROM,
 ) -> Email:
-    """Render the email for ``notify(did, kind, payload)``."""
+    """Render the email for ``notify(did, kind, payload)``.
+
+    The message carries the plain-text ``body`` and a branded HTML alternative
+    (``html``) of the same notification.
+    """
     to = _recipient(did, payload)
     subject = f"{DEFAULT_SUBJECT_PREFIX} {kind}"
     body = _render_body(did, kind, payload)
-    message = _render_message(to, from_addr, subject, body)
+    html = render_html(did, kind, payload, link=_link_of(payload))
+    message = _render_message(to, from_addr, subject, body, html)
     # ``message`` is frozen now, so later payload mutation cannot change what
     # is sent.
     return Email(
@@ -163,6 +190,7 @@ def build_email(
         from_addr=from_addr,
         subject=subject,
         body=body,
+        html=html,
         did=did,
         kind=kind,
         notification_id=notification_id,
