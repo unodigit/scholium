@@ -39,6 +39,10 @@ _SANDBOX_BACKENDS = ("docker", "podman", "remote", "none")
 #: Accepted values of ``JOBS_MODE`` (see :attr:`Settings.jobs_mode`).
 _JOBS_MODES = ("eager", "thread", "external")
 
+#: Accepted values of ``STORAGE_BACKEND``: ``fs`` keeps objects under
+#: ``CONTENT_DIR``, ``s3`` keeps them in an S3-API bucket (see ``app.storage``).
+_STORAGE_BACKENDS = ("fs", "s3")
+
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
@@ -71,6 +75,22 @@ def _int(name: str, default: int = 0) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _flag(name: str, default: int = 0) -> int:
+    """A yes/no environment variable as ``0``/``1``.
+
+    Accepts ``1``/``0`` like :func:`_int` and also ``true``/``false``,
+    ``yes``/``no`` and ``on``/``off`` (any case), so a flag written the way a
+    compose file or a shell user would write it is not silently read as off.
+    Anything else keeps the default.
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return 1
+    if raw in ("0", "false", "no", "off"):
+        return 0
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +223,26 @@ def _write_node_key_file(value: str) -> str:
 class Settings:
     DATABASE_URL: str = field(default_factory=lambda: _env("DATABASE_URL", "sqlite:///./scholium.db"))
     CONTENT_DIR: str = field(default_factory=lambda: _env("CONTENT_DIR", "./data/content"))
+    # Where objects (content blobs, staged uploads) live: ``fs`` (the default)
+    # writes under CONTENT_DIR; ``s3`` writes to S3_BUCKET through the S3 API,
+    # at S3_ENDPOINT_URL when set (MinIO, R2, ...) or the provider default when
+    # not.  S3_REGION may stay empty for providers that ignore it.  Blank
+    # S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY fall back to the S3 client's own
+    # credential lookup outside production.  S3_FORCE_PATH_STYLE=1 addresses the
+    # bucket as ``endpoint/bucket`` rather than ``bucket.endpoint`` (needed by
+    # most self-hosted servers).  See ``app.storage``.
+    STORAGE_BACKEND: str = field(
+        default_factory=lambda: (_env("STORAGE_BACKEND", "fs") or "fs").strip().lower()
+    )
+    S3_BUCKET: str = field(default_factory=lambda: _env("S3_BUCKET", "").strip())
+    S3_ENDPOINT_URL: str = field(default_factory=lambda: _env("S3_ENDPOINT_URL", "").strip())
+    S3_REGION: str = field(default_factory=lambda: _env("S3_REGION", "").strip())
+    S3_ACCESS_KEY_ID: str = field(default_factory=lambda: _env("S3_ACCESS_KEY_ID", "").strip())
+    # Secret: excluded from repr() so it cannot reach logs or tracebacks.
+    S3_SECRET_ACCESS_KEY: str = field(
+        default_factory=lambda: _env("S3_SECRET_ACCESS_KEY", "").strip(), repr=False
+    )
+    S3_FORCE_PATH_STYLE: int = field(default_factory=lambda: _flag("S3_FORCE_PATH_STYLE", 0))
     NODE_KEY_PATH: str = field(default_factory=lambda: _env("NODE_KEY_PATH", "./data/node.key"))
     # The node signing key itself (hex or base64, same formats as the key
     # file), as an alternative to a key file.  When set it takes precedence over
@@ -324,6 +364,12 @@ class Settings:
                 f"Unknown JOBS_MODE {self.JOBS_MODE!r}; expected one of "
                 + ", ".join(_JOBS_MODES) + "."
             )
+        if (self.STORAGE_BACKEND or "").strip().lower() not in _STORAGE_BACKENDS:
+            # Likewise a typo must not quietly store objects somewhere else.
+            raise RuntimeError(
+                f"Unknown STORAGE_BACKEND {self.STORAGE_BACKEND!r}; expected one of "
+                + ", ".join(_STORAGE_BACKENDS) + "."
+            )
         if environment != "production":
             if environment != "dev":
                 raise RuntimeError(
@@ -384,6 +430,7 @@ class Settings:
                     "SANDBOX_TOKEN must be a random value of at least 32 characters "
                     "when SANDBOX_BACKEND is remote"
                 )
+        problems.extend(self._storage_problems())
         provider = (self.AI_PROVIDER or "").strip().lower()
         if provider == "fake":
             problems.append("AI_PROVIDER must not be fake")
@@ -411,6 +458,19 @@ class Settings:
             problems.append("NEXT_PUBLIC_API_URL must not point at localhost in production")
         if problems:
             raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
+
+    def _storage_problems(self) -> list[str]:
+        """What an ``s3`` storage backend lacks to run in production (``fs`` lacks nothing)."""
+        if (self.STORAGE_BACKEND or "").strip().lower() != "s3":
+            return []
+        problems = []
+        if not (self.S3_BUCKET or "").strip():
+            problems.append("S3_BUCKET must be set when STORAGE_BACKEND is s3")
+        if not (self.S3_ACCESS_KEY_ID or "").strip() or not (self.S3_SECRET_ACCESS_KEY or "").strip():
+            problems.append(
+                "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set when STORAGE_BACKEND is s3"
+            )
+        return problems
 
     def _node_key_problems(self) -> list[str]:
         """Why the node signing key is unusable, as messages that never quote ``NODE_KEY``."""

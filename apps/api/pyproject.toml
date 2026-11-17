@@ -14,6 +14,7 @@ dependencies = [
   "multiformats",
   "pypdf",
   "httpx",
+  "boto3>=1.36",
   "anthropic",
   "pytest",
   "pytest-xdist",
@@ -37,7 +38,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["pytest", "pytest-xdist"]
+dev = ["pytest", "pytest-xdist", "moto[s3]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/app"]
