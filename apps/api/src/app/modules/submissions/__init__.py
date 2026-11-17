@@ -45,15 +45,22 @@ See :mod:`app.modules.submissions.notices`.
 
 Each check runs as the record type's ingest handler, so it happens inside
 ``POST /v1/records`` before the record reaches the ledger.  Registering the
-handlers is the only wiring needed: the module loader imports every package
-under ``app.modules``, and this package registers at import time via
-:func:`app.modules.ingest.register`.  There is no route of its own.
+handlers is the only wiring the write side needs: the module loader imports
+every package under ``app.modules``, and this package registers at import time
+via :func:`app.modules.ingest.register`.
+
+The read side is ``GET /v1/submissions/eligibility``
+(:mod:`app.modules.submissions.eligibility`): the caller's tier, weekly quota
+and endorsed categories, so the submit wizard can explain a refusal before the
+author uploads anything.  It is exported as this package's ``router`` and
+mounted by the module loader under ``/v1``.
 
 See :mod:`app.modules.submissions.manifest`,
 :mod:`app.modules.submissions.genesis` and
 :mod:`app.modules.submissions.versions` and
 :mod:`app.modules.submissions.notices` for the handlers,
 :mod:`app.modules.submissions.limits` for the weekly genesis limit,
+:mod:`app.modules.submissions.eligibility` for the early eligibility read,
 :mod:`app.modules.submissions.models` for the ``papers``,
 ``paper_versions``, ``authorship`` and ``notices`` tables,
 :mod:`app.modules.submissions.state` and
@@ -90,6 +97,7 @@ from .errors import (
     VersionNotAuthorized,
     VersionOutOfSequence,
 )
+from .eligibility import EligibilityOut, router
 from .events import (
     VERSION_STATE_CHANGED,
     VersionStateChanged,
@@ -214,6 +222,7 @@ __all__ = [
     "CORRECTION_TYPE",
     "DEFAULT_LICENCE",
     "DRAFT",
+    "EligibilityOut",
     "GENESIS_MIN_TIER",
     "GENESIS_RATE_LIMITED",
     "GENESIS_WEEKLY_LIMIT",
@@ -307,6 +316,7 @@ __all__ = [
     "require_endorsed",
     "require_known_paper",
     "resolve_target",
+    "router",
     "save_notice",
     "save_paper",
     "save_version",

@@ -521,6 +521,32 @@ describe("NewVersionPage — who is signing", () => {
     expect(within(tracker).getAllByText("(you)")).toHaveLength(1);
   });
 
+  it("shows the carried byline and tracker by profile name when the record carries none", async () => {
+    // The byline is signed exactly as the previous version signed it, and that
+    // version listed DIDs only. The page must ask the public profile route for
+    // the names rather than label people "You" or a DID.
+    const names: Record<string, string> = { [A]: "Ana Ruiz", [B]: "Rafael Silva" };
+    renderForm(
+      { fetchProfileName: vi.fn(async (did: string) => names[did] ?? null) },
+      {
+        authors: [
+          { did: A, position: 1, name: null, orcid: null, creditRoles: [] },
+          { did: B, position: 2, name: null, orcid: null, creditRoles: [] },
+        ],
+      },
+    );
+    await toChangeNote();
+
+    expect(await screen.findByText("Ana Ruiz", { selector: ".nv-byline__name" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/change note/i), { target: { value: "Adds the appendix." } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit version 4" }));
+
+    const tracker = await screen.findByRole("region", { name: "Status tracker" });
+    expect(within(tracker).getByText(/Ana Ruiz/, { selector: ".sw-tracker__name" })).toBeTruthy();
+    expect(within(tracker).getByText(/Rafael Silva/, { selector: ".sw-tracker__name" })).toBeTruthy();
+    expect(within(tracker).queryByText("You", { selector: ".sw-tracker__name" })).toBeNull();
+  });
+
   it("names a key that is not on the byline, without hiding the action", async () => {
     renderForm({ submitterDid: STRANGER });
     await toChangeNote();

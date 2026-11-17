@@ -53,6 +53,7 @@ import { FileRow } from "./file-row";
 import { summaryText } from "./file-view";
 import { shortCid } from "./fingerprint";
 import { formatBytes, SIZE_LIMITS } from "./limits";
+import { withProfileNames, type FetchProfileName, type ProfileNames } from "./profile-names";
 import {
   CHANGE_NOTE_MAX,
   canSignNewVersion,
@@ -83,6 +84,7 @@ import { completedFiles, summarize, type ManagerDeps, type UploadManager, type F
 import { DEFAULT_CHECK_POLL_MS, useChecks } from "./use-checks";
 import { DEFAULT_CONSENT_POLL_MS, useConsents } from "./use-consents";
 import { useDeviceDid } from "./use-device-did";
+import { useProfileNames } from "./use-profile-names";
 import { useUploadManager } from "./use-upload-manager";
 import { StatusTracker } from "./status-tracker";
 import "./submit.css";
@@ -113,6 +115,8 @@ export interface NewVersionPageProps {
   fetchChecks?: FetchChecks;
   /** Milliseconds between check report refreshes; `0` asks once. */
   checksPollMs?: number;
+  /** Replaces the public profile lookup that names the carried byline (tests). */
+  fetchProfileName?: FetchProfileName;
 }
 
 /** One plain sentence for where the pre-fill came from and what signing does. */
@@ -266,6 +270,13 @@ function NewVersionForm(props: NewVersionPageProps & { paperId: string }): React
     { fetcher: props.fetchChecks ?? fetchVersionChecks, intervalMs: props.checksPollMs ?? DEFAULT_CHECK_POLL_MS },
   );
 
+  // The previous version's byline lists DIDs, and the form carries it over
+  // unchanged; the public profile names each person for display only.
+  const profileNames = useProfileNames(
+    paper === null ? [] : paper.authors.map((author) => author.did),
+    { fetcher: props.fetchProfileName },
+  );
+
   if (phase === "loading") {
     return (
       <NewVersionShell crumb={`scholium / submit / new version / ${paperId}`}>
@@ -355,7 +366,7 @@ function NewVersionForm(props: NewVersionPageProps & { paperId: string }): React
     }
   };
 
-  const trackerAuthors = bylineAsDraft(paper.authors, ownDid);
+  const trackerAuthors = withProfileNames(bylineAsDraft(paper.authors, ownDid), profileNames);
 
   return (
     <NewVersionShell
@@ -409,6 +420,7 @@ function NewVersionForm(props: NewVersionPageProps & { paperId: string }): React
           failure={failure}
           onReload={reload}
           signInHref={signInHref}
+          names={profileNames}
         />
       )}
     </NewVersionShell>
@@ -436,6 +448,8 @@ interface SignSectionProps {
   failure: NewVersionFailure | null;
   onReload: () => void;
   signInHref: string;
+  /** Public names for the carried byline, which lists DIDs only. */
+  names: ProfileNames;
 }
 
 function SignSection({
@@ -454,6 +468,7 @@ function SignSection({
   failure,
   onReload,
   signInHref,
+  names,
 }: SignSectionProps): ReactElement {
   const noteRef = useRef<HTMLTextAreaElement>(null);
   // Entering the step starts at the one field this form adds, not on a button
@@ -533,7 +548,7 @@ function SignSection({
         />
       ) : null}
 
-      <CarriedOver paper={paper} draft={draft} />
+      <CarriedOver paper={paper} draft={draft} names={names} />
 
       {keyReady && !hasKey ? (
         <p className="sw-notice" role="note">
@@ -907,7 +922,15 @@ function ResponseBox({
 }
 
 /** The parts of the previous version this form does not change, said in words. */
-function CarriedOver({ paper, draft }: { paper: NewVersionPaper; draft: NewVersionDraft }): ReactElement {
+function CarriedOver({
+  paper,
+  draft,
+  names,
+}: {
+  paper: NewVersionPaper;
+  draft: NewVersionDraft;
+  names: ProfileNames;
+}): ReactElement {
   const previous = paper.files;
   const unchanged = previous === null || fileCounts(previous, draft).unchanged;
   return (
@@ -931,7 +954,9 @@ function CarriedOver({ paper, draft }: { paper: NewVersionPaper; draft: NewVersi
               <ol className="nv-byline">
                 {paper.authors.map((author) => (
                   <li key={author.did} className="nv-byline__author">
-                    <span className="nv-byline__name">{author.name ?? shortDid(author.did)}</span>
+                    <span className="nv-byline__name">
+                      {author.name ?? names[author.did] ?? shortDid(author.did)}
+                    </span>
                     {author.creditRoles.length > 0 ? (
                       <span className="nv-byline__roles">{author.creditRoles.join(", ")}</span>
                     ) : null}

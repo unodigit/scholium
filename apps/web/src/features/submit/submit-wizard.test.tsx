@@ -400,6 +400,19 @@ describe("SubmitWizard — eligibility is explained before any upload", () => {
     expect(region.textContent).not.toContain("paper.genesis");
   });
 
+  it("blocks the wizard before any upload when the weekly limit applies", async () => {
+    const next = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    render(<SubmitWizard signedIn submitterDid={ME} fetchEligibility={askApi({ nextAllowedAt: next })} />);
+    const region = await eligibilityRegion();
+    await vi.waitFor(() => expect(region.textContent).toMatch(/one new paper a week/i));
+
+    // No drop zone and no Continue: the author cannot spend an upload on a
+    // paper the node will refuse at signing.
+    expect(screen.queryByRole("heading", { level: 2, name: "Files" })).toBeNull();
+    expect(screen.queryByLabelText("Choose paper files")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue to Details" })).toBeNull();
+  });
+
   it("checks the categories as they are chosen on the Details step", async () => {
     await openDetails({ submitterDid: ME, fetchEligibility: askApi({ endorsedCategories: ["cs.CL"] }) });
     const region = await eligibilityRegion();

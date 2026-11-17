@@ -18,6 +18,7 @@ import { ApiError, NetworkError, api, resolveApiBaseUrl } from "../../lib/api";
 import { isDeviceKeyError, isPasskeyCancellation, isRecordSigningError } from "../web-auth/errors";
 import { signRecord, type SignedRecord } from "../web-auth/sign-record";
 import { initials, shortDid } from "./authors";
+import type { ProfileNames } from "./profile-names";
 import {
   toConsentStatus,
   type ConsentReport,
@@ -448,13 +449,16 @@ export function consentGate({ device, version, report, reportFailed = false }: C
 export function closedMessage(
   gate: Extract<ConsentGate, { kind: "closed" }>,
   version: ConsentVersion,
+  names: ProfileNames = {},
 ): string {
   switch (gate.state) {
     case "draft": {
       const decliner =
         gate.declinedBy === null
           ? null
-          : (version.authors.find((author) => author.did === gate.declinedBy)?.name ?? shortDid(gate.declinedBy));
+          : (version.authors.find((author) => author.did === gate.declinedBy)?.name ??
+            names[gate.declinedBy] ??
+            shortDid(gate.declinedBy));
       return decliner === null
         ? "This version is back in draft, so it is not asking for signatures now. If it is submitted again you will get a new link."
         : `${decliner} declined authorship, so this version is back in draft and is not asking for signatures now. If it is submitted again you will get a new link.`;
@@ -485,6 +489,7 @@ export function consentTrackerEntries(
   version: ConsentVersion,
   report: ConsentReport | null,
   myDid: string | null,
+  names: ProfileNames = {},
 ): TrackerEntry[] {
   const rows: { did: string; status: ConsentStatus; roles: string[] | null }[] =
     report === null
@@ -499,7 +504,9 @@ export function consentTrackerEntries(
 
   return rows.map((row) => {
     const listed = version.authors.find((author) => author.did === row.did);
-    const name = listed?.name ?? null;
+    // The signed record's name wins; the public profile fills in an author it
+    // listed by DID alone; the DID is the fallback when neither has a name.
+    const name = listed?.name ?? names[row.did] ?? null;
     return {
       key: row.did,
       name: name ?? shortDid(row.did),

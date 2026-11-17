@@ -177,6 +177,35 @@ describe("ConsentPage — reviewing the version", () => {
     expect(within(tracker).getByRole("status").textContent).toBe("1 of 3 signed · 2 waiting");
   });
 
+  it("shows the signer and every author by profile name when the signed record carries none", async () => {
+    // Ana added Rafael by DID, so neither byline entry carries a name; without
+    // a profile lookup the page would say "signed by did:key:…" and list DIDs.
+    const unnamed = loadedVersion({
+      authors: [
+        { did: A, position: 1, name: null, orcid: null, creditRoles: ["Conceptualization"] },
+        { did: B, position: 2, name: null, orcid: null, creditRoles: ["Software"] },
+      ],
+    });
+    const fetchProfileName = vi.fn(async (did: string) =>
+      did === A ? "Ana Ruiz" : did === B ? "Rafael Silva" : null,
+    );
+
+    renderPage(A, report("awaiting_consent", [[A, "waiting"], [B, "waiting"]]), {
+      loadVersion: vi.fn().mockResolvedValue(unnamed),
+      fetchProfileName,
+    });
+    await acceptButton();
+
+    expect(screen.getByRole("article").textContent).toContain("signed by Ana Ruiz");
+    const tracker = screen.getByRole("region", { name: "Co-author consents" });
+    const rows = within(tracker).getAllByRole("listitem");
+    expect(rows[0].textContent).toContain("Ana Ruiz");
+    expect(rows[1].textContent).toContain("Rafael Silva");
+    // The name is the primary text; the DID may only appear shortened beneath it.
+    expect(tracker.textContent).not.toContain(A);
+    expect(tracker.textContent).not.toContain(B);
+  });
+
   it("shows the PDF in the viewer, not as a plain link that would fetch it without a token", async () => {
     tokenStore.set({ accessToken: "coauthor-access-token" });
     renderPage(B);

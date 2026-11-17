@@ -45,7 +45,9 @@ import {
 import { ConsentTracker } from "./consent-tracker";
 import { trackerFromDraft, trackerFromReport, type FetchConsents, type VersionRef } from "./consents";
 import { ArrowDownIcon, ArrowUpIcon, CheckIcon, InfoIcon, PersonIcon, PlusIcon } from "./icons";
+import { withProfileNames, type FetchProfileName } from "./profile-names";
 import { useConsents } from "./use-consents";
+import { useProfileNames } from "./use-profile-names";
 import "./submit.css";
 
 export interface AuthorsStepProps {
@@ -75,6 +77,8 @@ export interface AuthorsStepProps {
   fetchConsents?: FetchConsents;
   /** How often to ask the node again while someone is waiting. */
   pollMs?: number;
+  /** Replaces the public profile lookup that names co-authors, for tests. */
+  fetchProfileName?: FetchProfileName;
 }
 
 const KIND_PHRASES = { did: "a DID", orcid: "an ORCID iD", email: "an email address" } as const;
@@ -102,6 +106,7 @@ export function AuthorsStep({
   consentsFor,
   fetchConsents,
   pollMs,
+  fetchProfileName,
 }: AuthorsStepProps): ReactElement {
   const [identifier, setIdentifier] = useState("");
   const [name, setName] = useState("");
@@ -138,9 +143,24 @@ export function AuthorsStep({
   });
 
   const consents = useConsents(consentsFor, { fetcher: fetchConsents, intervalMs: pollMs });
+  // Authors added by DID carry no name in the draft; their public profile names
+  // them for display. The roster itself keeps exactly what the author entered,
+  // because that is what the signed version lists.
+  const unnamedDids = useMemo(
+    () =>
+      authors
+        .filter((author) => author.name.trim() === "" && author.did !== null)
+        .map((author) => author.did as string),
+    [authors],
+  );
+  const profileNames = useProfileNames(unnamedDids, { fetcher: fetchProfileName });
+  const namedAuthors = useMemo(
+    () => withProfileNames(authors, profileNames),
+    [authors, profileNames],
+  );
   const entries = useMemo(
-    () => (consents.report !== null ? trackerFromReport(consents.report, authors) : trackerFromDraft(authors)),
-    [consents.report, authors],
+    () => (consents.report !== null ? trackerFromReport(consents.report, namedAuthors) : trackerFromDraft(namedAuthors)),
+    [consents.report, namedAuthors],
   );
   const caption =
     consentsFor == null ? NOT_YET_ASKED : consents.phase === "loading" ? "Checking who has signed…" : undefined;
@@ -305,7 +325,7 @@ export function AuthorsStep({
       </form>
 
       <ol className="sw-authors" aria-label="Authors, in byline order">
-        {authors.map((author, index) => (
+        {namedAuthors.map((author, index) => (
           <AuthorCard
             key={author.key}
             author={author}

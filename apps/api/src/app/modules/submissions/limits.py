@@ -24,7 +24,7 @@ evaluate.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from app import db
 from app.modules.ingest import PAPER_GENESIS_TYPE
@@ -37,10 +37,13 @@ __all__ = [
     "GENESIS_WINDOW",
     "YOUNG_ACCOUNT_MAX_AGE",
     "YOUNG_AUTHOR_TIER",
+    "GenesisQuota",
     "account_created_at",
     "enforce_genesis_quota",
+    "genesis_quota",
     "is_young_author",
     "newest_recent_genesis",
+    "recent_genesis_count",
 ]
 
 #: Most genesis records a limited account may have accepted in one window.
@@ -158,6 +161,78 @@ def newest_recent_genesis(
             query = query.filter(EventLog.record_cid != exclude_cid)
         received = [_naive_utc(value) for (value,) in query.all() if value is not None]
     return max(received) if received else None
+
+
+def recent_genesis_count(author: object, *, now: Optional[datetime] = None) -> int:
+    """How many ``paper.genesis`` records ``author`` had accepted in the window.
+
+    The same rolling window :func:`newest_recent_genesis` reads, so the quota a
+    caller is shown and the refusal they would receive cannot disagree.  A
+    node without a ledger, or an unusable author, counts none.
+    """
+    if not isinstance(author, str) or not author:
+        return 0
+    try:
+        from app.modules.ledger.models import EventLog, ensure_table
+    except ImportError:
+        return 0
+    ensure_table()
+    cutoff = _moment(now) - GENESIS_WINDOW
+    with db.SessionLocal() as session:
+        return (
+            session.query(EventLog)
+            .filter(
+                EventLog.author_did == author,
+                EventLog.record_type == PAPER_GENESIS_TYPE,
+                EventLog.received_at > cutoff,
+            )
+            .count()
+        )
+
+
+class GenesisQuota(NamedTuple):
+    """What the weekly rule currently says about one author.
+
+    ``next_allowed_at`` is ``None`` when nothing blocks the author now -- either
+    because the rule does not apply to them, or because their last genesis has
+    left the window.  ``used`` and ``allowed`` are the rolling-week numbers the
+    read endpoint reports; ``limited`` is the rule's answer, which is what
+    :func:`enforce_genesis_quota` refuses on.
+    """
+
+    used: int
+    allowed: int
+    next_allowed_at: Optional[datetime]
+    limited: bool
+
+
+def genesis_quota(
+    author: object, tier: int, *, now: Optional[datetime] = None
+) -> GenesisQuota:
+    """The weekly quota for ``author`` as the enforcement code would see it.
+
+    This is the read side of :func:`enforce_genesis_quota`: a young tier-2
+    account reports ``limited`` while its newest genesis is still inside the
+    rolling week, and the instant that genesis leaves it.  Older and higher-tier
+    accounts are never limited, but their tier and the number of papers started
+    this week are still reported.
+    """
+    moment = _moment(now)
+    used = recent_genesis_count(author, now=moment)
+    if not is_young_author(author, tier, now=moment):
+        return GenesisQuota(used=used, allowed=GENESIS_WEEKLY_LIMIT, next_allowed_at=None, limited=False)
+    newest = newest_recent_genesis(author, now=moment)
+    if newest is None:
+        return GenesisQuota(used=used, allowed=GENESIS_WEEKLY_LIMIT, next_allowed_at=None, limited=False)
+    next_allowed = newest + GENESIS_WINDOW
+    if next_allowed <= moment:
+        return GenesisQuota(used=used, allowed=GENESIS_WEEKLY_LIMIT, next_allowed_at=None, limited=False)
+    return GenesisQuota(
+        used=used,
+        allowed=GENESIS_WEEKLY_LIMIT,
+        next_allowed_at=next_allowed,
+        limited=True,
+    )
 
 
 def enforce_genesis_quota(

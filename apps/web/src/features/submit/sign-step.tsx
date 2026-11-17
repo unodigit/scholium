@@ -30,6 +30,8 @@ import {
 import { emptyDetails, type DetailsValues } from "./details";
 import { submissionProblemMessage } from "./eligibility";
 import { pluralize } from "./limits";
+import { withProfileNames, type FetchProfileName } from "./profile-names";
+import { useProfileNames } from "./use-profile-names";
 import { useChecks, DEFAULT_CHECK_POLL_MS } from "./use-checks";
 import { useConsents, DEFAULT_CONSENT_POLL_MS } from "./use-consents";
 import { StatusTracker } from "./status-tracker";
@@ -63,6 +65,8 @@ export interface SignStepProps {
    * author entered on the Authors step.
    */
   submitterName?: string | null;
+  /** Replaces the public profile lookup that names co-authors, for tests. */
+  fetchProfileName?: FetchProfileName;
   onBack?: () => void;
   onContinue?: (result: SignResult) => void;
   onSigned?: (result: SignResult) => void;
@@ -155,18 +159,31 @@ export function SignStep(props: SignStepProps): ReactElement {
   const [checksRef, setChecksRef] = useState<ChecksVersionRef | null>(null);
 
   // People are shown by name. The submitter's draft entry has none unless they
-  // typed one, so lend it the profile name for display; `authors` itself, which
-  // is what gets signed, is left as it is.
+  // typed one, so lend it the profile name for display; co-authors added by DID
+  // have none at all, so their public profile supplies it. `authors` itself,
+  // which is what gets signed, is left exactly as the author built it.
   const submitterName = props.submitterName ?? null;
-  const shownAuthors = useMemo(
+  const unnamedDids = useMemo(
     () =>
-      submitterName === null || submitterName.trim() === ""
-        ? authors
-        : authors.map((author) =>
-            author.isSubmitter && author.name.trim() === "" ? { ...author, name: submitterName.trim() } : author,
-          ),
+      authors
+        .filter(
+          (author) =>
+            author.name.trim() === "" &&
+            author.did !== null &&
+            !(author.isSubmitter && submitterName !== null && submitterName.trim() !== ""),
+        )
+        .map((author) => author.did as string),
     [authors, submitterName],
   );
+  const profileNames = useProfileNames(unnamedDids, { fetcher: props.fetchProfileName });
+  const shownAuthors = useMemo(() => {
+    const named = withProfileNames(authors, profileNames);
+    return submitterName === null || submitterName.trim() === ""
+      ? named
+      : named.map((author) =>
+          author.isSubmitter && author.name.trim() === "" ? { ...author, name: submitterName.trim() } : author,
+        );
+  }, [authors, profileNames, submitterName]);
   const submitterDid = authors.find((author) => author.isSubmitter)?.did ?? null;
 
   const fetchConsentsProp = props.fetchConsents ?? fetchConsents;
@@ -280,6 +297,9 @@ export function SignStep(props: SignStepProps): ReactElement {
           {shownAuthors.map((author) => {
             const label = authorLabel(author);
             const did = author.did ?? (author.kind === "did" ? author.identifier : null);
+            // The name slot already shows an unnamed co-author by their DID;
+            // repeating it underneath would print the same identifier twice.
+            const showDid = did !== null && (author.name.trim() !== "" || author.isSubmitter);
             return (
               <li key={author.key}>
                 <span className="sw-summary__author-name">
@@ -289,7 +309,7 @@ export function SignStep(props: SignStepProps): ReactElement {
                 {author.creditRoles.length > 0 ? (
                   <span className="sw-summary__author-roles"> — {author.creditRoles.join(", ")}</span>
                 ) : null}
-                {did !== null ? (
+                {showDid && did !== null ? (
                   <span className="sw-summary__author-did" title={did}>
                     {shortDid(did)}
                   </span>
@@ -314,21 +334,23 @@ export function SignStep(props: SignStepProps): ReactElement {
         </p>
       ) : null}
 
-      <div className="sw-actions">
-        {props.onBack ? (
-          <button type="button" className="sw-button sw-button--quiet" onClick={props.onBack} disabled={phase === "signing"}>
-            Back to Checks
+      {phase !== "submitted" ? (
+        <div className="sw-actions">
+          {props.onBack ? (
+            <button type="button" className="sw-button sw-button--quiet" onClick={props.onBack} disabled={phase === "signing"}>
+              Back to Checks
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="sw-button sw-button--primary"
+            disabled={phase === "signing"}
+            onClick={() => void handleSign()}
+          >
+            {phase === "signing" ? "Signing…" : "Sign and submit"}
           </button>
-        ) : null}
-        <button
-          type="button"
-          className="sw-button sw-button--primary"
-          disabled={phase === "signing" || phase === "submitted"}
-          onClick={() => void handleSign()}
-        >
-          {phase === "signing" ? "Signing…" : "Sign and submit"}
-        </button>
-      </div>
+        </div>
+      ) : null}
 
       {phase === "submitted" && result !== null ? (
         <StatusTracker

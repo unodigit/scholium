@@ -150,6 +150,11 @@ export function SubmitWizard({
     () => (facts === null ? [] : findBlockers(facts, details.categories)),
     [facts, details.categories],
   );
+  // The weekly limit is the one rule that stops the paper existing at all: no
+  // upload can make it start sooner, so the wizard waits rather than letting
+  // the author fill five steps for a `429` at signing. The other blockers are
+  // said above but still allow preparing a draft.
+  const blockedByWeek = blockers.some((blocker) => blocker.kind === "weekly-limit");
 
   // Pick the persistence backend. Props win; otherwise IndexedDB when the
   // browser has it, with an in-memory fallback for tests and SSR.
@@ -285,55 +290,64 @@ export function SubmitWizard({
         })}
       </div>
 
-      <div hidden={step !== "files"}>
-        <FilesStep
-          managerDeps={managerDeps}
-          onFilesChange={setFiles}
-          onContinue={() => setStep("details")}
-        />
-      </div>
+      {blockedByWeek ? (
+        <p className="sw-notice" role="note">
+          Nothing has been uploaded. Come back when the week is up, or open your existing paper from{" "}
+          <Link href="/me">your dashboard</Link>.
+        </p>
+      ) : (
+        <>
+          <div hidden={step !== "files"}>
+            <FilesStep
+              managerDeps={managerDeps}
+              onFilesChange={setFiles}
+              onContinue={() => setStep("details")}
+            />
+          </div>
 
-      {step === "details" ? (
-        <DetailsStep
-          value={details}
-          onChange={setDetails}
-          onBack={() => setStep("files")}
-          onContinue={() => setStep("authors")}
-        />
-      ) : null}
+          {step === "details" ? (
+            <DetailsStep
+              value={details}
+              onChange={setDetails}
+              onBack={() => setStep("files")}
+              onContinue={() => setStep("authors")}
+            />
+          ) : null}
 
-      {step === "authors" ? (
-        <AuthorsStep
-          authors={authors}
-          onChange={setAuthors}
-          onBack={() => setStep("details")}
-          onContinue={() => setStep("checks")}
-          resolveAuthor={resolveAuthor}
-        />
-      ) : null}
+          {step === "authors" ? (
+            <AuthorsStep
+              authors={authors}
+              onChange={setAuthors}
+              onBack={() => setStep("details")}
+              onContinue={() => setStep("checks")}
+              resolveAuthor={resolveAuthor}
+            />
+          ) : null}
 
-      {step === "checks" ? (
-        <ChecksStep
-          checksFor={checksFor}
-          fetchChecks={fetchChecks}
-          pollMs={checksPollMs}
-          files={files}
-          onBack={() => setStep("authors")}
-          onContinue={() => setStep("sign")}
-          onFixFiles={() => setStep("files")}
-          onFixDetails={() => setStep("details")}
-        />
-      ) : null}
+          {step === "checks" ? (
+            <ChecksStep
+              checksFor={checksFor}
+              fetchChecks={fetchChecks}
+              pollMs={checksPollMs}
+              files={files}
+              onBack={() => setStep("authors")}
+              onContinue={() => setStep("sign")}
+              onFixFiles={() => setStep("files")}
+              onFixDetails={() => setStep("details")}
+            />
+          ) : null}
 
-      {step === "sign" ? (
-        <SignStep
-          files={files}
-          details={details}
-          authors={authors}
-          submitterName={facts?.name ?? null}
-          onBack={() => setStep("checks")}
-        />
-      ) : null}
+          {step === "sign" ? (
+            <SignStep
+              files={files}
+              details={details}
+              authors={authors}
+              submitterName={facts?.name ?? null}
+              onBack={() => setStep("checks")}
+            />
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

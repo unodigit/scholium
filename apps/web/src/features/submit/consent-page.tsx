@@ -47,11 +47,13 @@ import { fetchConsents as defaultFetchConsents, type FetchConsents } from "./con
 import { licenceById } from "./details";
 import { shortCid } from "./fingerprint";
 import { shortDid } from "./authors";
+import type { FetchProfileName, ProfileNames } from "./profile-names";
 import { ConsentIcon } from "./icons";
 import { formatBytes } from "./limits";
 import { useConsents } from "./use-consents";
 import { useConsentVersion } from "./use-consent-version";
 import { useDeviceDid } from "./use-device-did";
+import { useProfileNames } from "./use-profile-names";
 import "./submit.css";
 import "./consent-page.css";
 // The PDF viewer's own rules (`ppg-pdf*`), drawn unchanged as on the paper page.
@@ -72,6 +74,8 @@ export interface ConsentPageProps {
   sign?: SignConsent;
   /** Replaces `POST /v1/records` (tests). */
   submit?: SubmitConsent;
+  /** Replaces the public profile lookup that names the authors, for tests. */
+  fetchProfileName?: FetchProfileName;
 }
 
 function Shell({ crumb, children }: { crumb: string; children: ReactNode }): ReactElement {
@@ -105,10 +109,14 @@ export function ConsentPage(props: ConsentPageProps): ReactElement {
   return <ConsentReview {...props} cid={parsed.cid} />;
 }
 
-function VersionCard({ version }: { version: ConsentVersion }): ReactElement {
+function VersionCard({ version, names }: { version: ConsentVersion; names: ProfileNames }): ReactElement {
   const licence = version.licence === null ? undefined : licenceById(version.licence);
   const submitter = version.authors.find((author) => author.did === version.submittedBy);
-  const submittedBy = submitter?.name ?? (version.submittedBy === "" ? null : shortDid(version.submittedBy));
+  // The signed record may carry no name (an author added by DID); the public
+  // profile is where the person is named. The DID stands in only when there is
+  // no name to show.
+  const submitterName = submitter?.name ?? names[version.submittedBy] ?? null;
+  const submittedBy = submitterName ?? (version.submittedBy === "" ? null : shortDid(version.submittedBy));
   const when = formatSigned(version.created);
 
   return (
@@ -351,6 +359,12 @@ function ConsentReview({ cid, ...props }: ConsentPageProps & { cid: string }): R
 
   const ref = useMemo(() => (version === null ? null : { paper: version.paper, version: version.n }), [version]);
   const consents = useConsents(ref, { fetcher: props.fetchConsents ?? defaultFetchConsents, intervalMs: props.pollMs });
+  // The signed byline lists DIDs; the public profile names each person. Ask
+  // whenever the version changes, and keep the DID when there is no name.
+  const profileNames = useProfileNames(
+    version === null ? [] : version.authors.map((author) => author.did),
+    { fetcher: props.fetchProfileName },
+  );
 
   const [stage, setStage] = useState<"idle" | "confirming" | "signing">("idle");
   const [comment, setComment] = useState("");
@@ -397,7 +411,7 @@ function ConsentReview({ cid, ...props }: ConsentPageProps & { cid: string }): R
     report: consents.report,
     reportFailed: consents.phase === "error" && consents.report === null,
   });
-  const entries = consentTrackerEntries(version, consents.report, device.did);
+  const entries = consentTrackerEntries(version, consents.report, device.did, profileNames);
   const signInHref = `/signin?next=${encodeURIComponent(`/consent/${cid}`)}`;
 
   const answer = async (decision: ConsentDecision): Promise<void> => {
@@ -479,7 +493,7 @@ function ConsentReview({ cid, ...props }: ConsentPageProps & { cid: string }): R
   } else if (gate.kind === "closed") {
     decision = (
       <p className="sw-notice" role="status">
-        {closedMessage(gate, version)}
+        {closedMessage(gate, version, profileNames)}
       </p>
     );
   } else {
@@ -590,7 +604,7 @@ function ConsentReview({ cid, ...props }: ConsentPageProps & { cid: string }): R
 
   return (
     <Shell crumb={crumb}>
-      <VersionCard version={version} />
+      <VersionCard version={version} names={profileNames} />
       <ConsentTracker
         entries={entries}
         idPrefix="cp-consents"

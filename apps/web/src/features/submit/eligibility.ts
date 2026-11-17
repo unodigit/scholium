@@ -12,15 +12,13 @@
  *
  * Before this module the wizard only found out at Sign and submit, after five
  * steps and an upload, and showed the API's own sentence: "paper.genesis" and a
- * raw ISO timestamp. Now `GET /v1/profiles/{did}` (tier, name) and
- * `GET /v1/me/endorsements` are read when `/submit` opens, the chosen categories
- * are checked as they change, and a refusal that still arrives at signing is
- * mapped to a sentence by {@link submissionProblemMessage}.
- *
- * What the node cannot tell the browser: there is no read endpoint for the
- * weekly window, so {@link fetchEligibility} never knows `nextAllowedAt`. It
- * stays in {@link EligibilityFacts} for a caller that does (a node that later
- * exposes it, or a test), and the 429 at signing still carries it.
+ * raw ISO timestamp. Now `GET /v1/submissions/eligibility` is read when
+ * `/submit` opens: it carries the tier, the rolling-week quota and the instant
+ * the next paper is allowed, and the categories the viewer is endorsed in, all
+ * from the code that refuses a genesis. `GET /v1/profiles/{did}` lends the
+ * viewer's display name. The chosen categories are checked as they change, and
+ * a refusal that still arrives at signing is mapped to a sentence by
+ * {@link submissionProblemMessage}.
  *
  * Pure data and functions, no React, so the wizard, the Sign step and vitest
  * share them. Nothing here imports the `web-auth` index, which the server
@@ -342,47 +340,50 @@ async function attempt<T>(request: Promise<T>): Promise<T | null> {
 }
 
 interface ProfileBody {
-  tier?: unknown;
   name?: unknown;
 }
 
-interface EndorsementBody {
-  category?: unknown;
+/** The part of `GET /v1/submissions/eligibility` this module reads. */
+interface EligibilityBody {
+  tier?: unknown;
+  endorsed_categories?: unknown;
+  next_allowed_at?: unknown;
 }
 
 /**
- * Reads the viewer's tier and name (`GET /v1/profiles/{did}`) and the
- * categories they are endorsed in (`GET /v1/me/endorsements`, active ones
- * only). Each is read on its own: one that fails is unknown, not an error, so
- * a profile outage never stops anyone submitting.
+ * Reads the viewer's tier, weekly quota and endorsed categories from
+ * `GET /v1/submissions/eligibility`, and their display name from
+ * `GET /v1/profiles/{did}`. Each is read on its own: one that fails is unknown,
+ * not an error, so a profile outage never stops anyone submitting.
  */
 export async function fetchEligibility(
   did: string | null,
   client: Pick<ApiClient, "get"> = api,
   signal?: AbortSignal,
 ): Promise<EligibilityFacts> {
-  const [profile, endorsements] = await Promise.all([
+  const [eligibility, profile] = await Promise.all([
+    attempt(client.get<EligibilityBody>("/submissions/eligibility", { signal })),
     did === null
       ? Promise.resolve(null)
       : attempt(client.get<ProfileBody>(`/profiles/${encodeURIComponent(did)}`, { signal })),
-    attempt(client.get<EndorsementBody[]>("/me/endorsements", { signal })),
   ]);
 
-  const tier = profile?.tier;
+  const tier = eligibility?.tier;
+  const categories = eligibility?.endorsed_categories;
   const name = typeof profile?.name === "string" ? profile.name.trim() : "";
 
   return {
     tier: typeof tier === "number" && Number.isInteger(tier) && tier >= 0 && tier <= 4 ? tier : null,
-    endorsedCategories: Array.isArray(endorsements)
+    endorsedCategories: Array.isArray(categories)
       ? [
           ...new Set(
-            endorsements
-              .map((endorsement) => endorsement?.category)
-              .filter((category): category is string => typeof category === "string" && category !== ""),
+            categories.filter(
+              (category): category is string => typeof category === "string" && category !== "",
+            ),
           ),
         ]
       : null,
-    nextAllowedAt: null,
+    nextAllowedAt: parseInstant(eligibility?.next_allowed_at),
     name: name === "" ? null : name,
   };
 }

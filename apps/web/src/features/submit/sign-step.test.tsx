@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../lib/api";
-import { initialAuthors } from "./authors";
+import { initialAuthors, type DraftAuthor } from "./authors";
 import type { ConsentReport } from "./consents";
 import type { ChecksVersionRef, FetchChecks, VersionChecks } from "./checks";
 import { SignStep } from "./sign-step";
@@ -18,6 +18,7 @@ vi.mock("next/link", async () => {
 });
 
 const ME = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+const ADA = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
 const PDF = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku";
 
 afterEach(cleanup);
@@ -179,6 +180,20 @@ const DETAILS = {
 /** The submitting author, as the wizard builds them once the device key is read. */
 const submitter = (name = "") => [{ ...initialAuthors(ME)[0], name }];
 
+/** A co-author added by DID, which the draft carries no name for. */
+const coauthor = (over: Partial<DraftAuthor> = {}): DraftAuthor => ({
+  key: "author-1",
+  kind: "did",
+  identifier: ADA,
+  did: ADA,
+  name: "",
+  orcid: null,
+  creditRoles: ["Software"],
+  isSubmitter: false,
+  match: "matched",
+  ...over,
+});
+
 type SignProps = Partial<React.ComponentProps<typeof SignStep>>;
 
 function renderSign(props: SignProps = {}): void {
@@ -227,6 +242,37 @@ describe("SignStep — the summary card's wording", () => {
     expect(row.querySelector(".sw-summary__author-name")?.textContent).toBe("You");
     expect(row.querySelector(".sw-summary__author-did")?.textContent).toBe("did:key:z6MkhaXg…ta2doK");
     expect(row.textContent).not.toContain(ME);
+  });
+
+  it("shows a co-author added by DID by their profile name, with the DID as secondary text", async () => {
+    const fetchProfileName = vi.fn(async (did: string) => (did === ADA ? "Rafael Silva" : null));
+    renderSign({
+      authors: [...submitter("Mei Chen"), coauthor()],
+      submitterName: "Mei Chen",
+      fetchProfileName,
+    });
+
+    const row = within(screen.getByRole("list", { name: "Authors" })).getAllByRole("listitem")[1];
+    await vi.waitFor(() => expect(row.querySelector(".sw-summary__author-name")?.textContent).toBe("Rafael Silva"));
+    expect(row.querySelector(".sw-summary__author-did")?.textContent).toBe("did:key:z6MkpTHR…sdvktH");
+    // The DID is secondary text only: one short line, never the raw identifier.
+    expect(row.querySelectorAll(".sw-summary__author-did")).toHaveLength(1);
+    expect(row.textContent).not.toContain(ADA);
+  });
+
+  it("shows an unnamed co-author's DID once, not twice, when no profile name exists", async () => {
+    const fetchProfileName = vi.fn(async () => null);
+    renderSign({
+      authors: [...submitter("Mei Chen"), coauthor()],
+      submitterName: "Mei Chen",
+      fetchProfileName,
+    });
+
+    const row = within(screen.getByRole("list", { name: "Authors" })).getAllByRole("listitem")[1];
+    await vi.waitFor(() => expect(fetchProfileName).toHaveBeenCalledWith(ADA, expect.anything()));
+    expect(row.querySelector(".sw-summary__author-name")?.textContent).toBe("did:key:z6MkpTHR…sdvktH");
+    // The name slot already says the DID; a second DID line would say it twice.
+    expect(row.querySelector(".sw-summary__author-did")).toBeNull();
   });
 
   it("leaves the signed byline alone: the display name is not written into the record", async () => {
@@ -302,5 +348,39 @@ describe("SignStep — the status tracker after submitting", () => {
     const row = await screen.findByText("Mei Chen", { selector: ".sw-tracker__name" });
     expect(row.textContent).toContain("(you)");
     expect(document.querySelector(".sw-status-tracker")?.textContent).not.toContain(ME);
+  });
+
+  it("shows a co-author added by DID by their profile name in the tracker too", async () => {
+    const fetchProfileName = vi.fn(async (did: string) => (did === ADA ? "Rafael Silva" : null));
+    renderSign({
+      authors: [...submitter("Mei Chen"), coauthor()],
+      submitterName: "Mei Chen",
+      fetchProfileName,
+      fetchConsents: vi.fn().mockResolvedValue({
+        ...consents(),
+        count: 2,
+        waiting: 2,
+        authors: [
+          { did: ME, position: 1, status: "waiting" },
+          { did: ADA, position: 2, status: "waiting" },
+        ],
+      }),
+    });
+    await vi.waitFor(() => expect(fetchProfileName).toHaveBeenCalledWith(ADA, expect.anything()));
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+
+    const row = await screen.findByText("Rafael Silva", { selector: ".sw-tracker__name" });
+    expect(row.closest("li")?.textContent).not.toContain(ADA);
+  });
+
+  it("replaces the wizard's action bar with the tracker once the version is signed", async () => {
+    renderSign({ authors: submitter("Mei Chen"), onBack: () => undefined });
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+
+    await screen.findByText("Status", { selector: ".sw-status-tracker__title" });
+    // The disabled "Sign and submit" and Back belong to the signing form; the
+    // tracker is the only action left once it has been signed.
+    expect(screen.queryByRole("button", { name: "Sign and submit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to Checks" })).toBeNull();
   });
 });

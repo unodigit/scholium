@@ -202,15 +202,21 @@ describe("submissionProblemMessage", () => {
 });
 
 describe("fetchEligibility", () => {
-  it("reads the tier and name from the profile and the categories from the endorsements", async () => {
+  /** The authenticated route's answer, as the API serves it. */
+  const eligibilityBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    tier: 2,
+    may_submit: true,
+    weekly_used: 0,
+    weekly_allowed: 1,
+    next_allowed_at: null,
+    endorsed_categories: ["cs.AI", "cs.LG"],
+    ...over,
+  });
+
+  it("reads the tier, quota and categories from GET /submissions/eligibility, and the name from the profile", async () => {
     const get = vi.fn(async (path: string) => {
-      if (path.startsWith("/profiles/")) return { did: ME, name: "Mei Chen", tier: 2 };
-      if (path === "/me/endorsements") {
-        return [
-          { category: "cs.AI", expires_at: null },
-          { category: "cs.LG", expires_at: "2099-01-01T00:00:00Z" },
-        ];
-      }
+      if (path === "/submissions/eligibility") return eligibilityBody();
+      if (path.startsWith("/profiles/")) return { did: ME, name: "Mei Chen" };
       throw new Error(`unexpected ${path}`);
     });
     const result = await fetchEligibility(ME, { get } as never);
@@ -220,22 +226,58 @@ describe("fetchEligibility", () => {
       nextAllowedAt: null,
       name: "Mei Chen",
     });
+    expect(get).toHaveBeenCalledWith("/submissions/eligibility", expect.anything());
     expect(get).toHaveBeenCalledWith(`/profiles/${encodeURIComponent(ME)}`, expect.anything());
+  });
+
+  it("learns the weekly window from the node, so the wizard can block before an upload", async () => {
+    const next = new Date("2026-11-24T12:00:00Z");
+    const get = vi.fn(async (path: string) => {
+      if (path === "/submissions/eligibility") {
+        return eligibilityBody({
+          may_submit: false,
+          weekly_used: 1,
+          next_allowed_at: next.toISOString(),
+        });
+      }
+      if (path.startsWith("/profiles/")) return { name: "Mei Chen" };
+      throw new Error(`unexpected ${path}`);
+    });
+
+    const result = await fetchEligibility(ME, { get } as never);
+
+    expect(result.nextAllowedAt?.toISOString()).toBe(next.toISOString());
+    expect(findBlockers(result, ["cs.AI"], new Date("2026-11-20T09:00:00Z")).map((b) => b.kind)).toEqual([
+      "weekly-limit",
+    ]);
   });
 
   it("leaves what it could not read unknown instead of failing the whole check", async () => {
     const get = vi.fn(async (path: string) => {
-      if (path === "/me/endorsements") return [{ category: "cs.AI" }];
+      if (path === "/submissions/eligibility") return eligibilityBody({ endorsed_categories: ["cs.AI"] });
       throw new ApiError(404, { status: 404, title: "Not Found" });
     });
     const result = await fetchEligibility(ME, { get } as never);
-    expect(result).toEqual({ tier: null, endorsedCategories: ["cs.AI"], nextAllowedAt: null, name: null });
+    expect(result).toEqual({ tier: 2, endorsedCategories: ["cs.AI"], nextAllowedAt: null, name: null });
   });
 
-  it("does not ask for a profile when no DID is known", async () => {
-    const get = vi.fn(async () => []);
+  it("keeps the name unknown when the profile cannot be read", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path === "/submissions/eligibility") return eligibilityBody({ tier: null, endorsed_categories: null });
+      throw new ApiError(404, { status: 404, title: "Not Found" });
+    });
+    const result = await fetchEligibility(ME, { get } as never);
+    expect(result).toEqual({ tier: null, endorsedCategories: null, nextAllowedAt: null, name: null });
+  });
+
+  it("does not ask for a profile when no DID is known, but still asks the node", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path === "/submissions/eligibility") return eligibilityBody();
+      throw new Error(`unexpected ${path}`);
+    });
     const result = await fetchEligibility(null, { get } as never);
     expect(get).not.toHaveBeenCalledWith(expect.stringContaining("/profiles/"), expect.anything());
-    expect(result.tier).toBeNull();
+    expect(result.tier).toBe(2);
+    expect(result.name).toBeNull();
   });
 });
