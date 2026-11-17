@@ -5,17 +5,107 @@ import type { Metadata, Viewport } from "next";
  * import them without compiling the layout's JSX.
  */
 
-const DEFAULT_SITE_URL = "http://localhost:3000";
+export const DEFAULT_SITE_URL = "http://localhost:3000";
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+
+function normalizeEnvironment(value: string | undefined): string {
+  const key = (value ?? "").trim().toLowerCase();
+  if (key === "prod") return "production";
+  return key === "" ? "dev" : key;
+}
+
+function isLoopbackUrl(value: string): boolean {
+  let host = "";
+  try {
+    host = new URL(value).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost");
+}
+
+function isProductionBuild(): boolean {
+  return (
+    process.env.NODE_ENV === "production" &&
+    normalizeEnvironment(process.env.SCHOLIUM_ENV) === "production"
+  );
+}
+
+let warned = false;
+function warnOnce(message: string): void {
+  if (warned) return;
+  warned = true;
+  console.warn(message);
+}
 
 /**
  * The site's public origin. Relative URLs in metadata (canonical links, Open
  * Graph images) resolve against it. `||` rather than `??` so an empty
  * `NEXT_PUBLIC_SITE_URL=` in an env file falls back too.
+ *
+ * A production build (NODE_ENV=production and SCHOLIUM_ENV=production) refuses
+ * an unset or loopback value with a clear error; any other build falls back to
+ * http://localhost:3000 and warns once.
  */
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || DEFAULT_SITE_URL;
+export function resolveSiteUrl(): string {
+  const configured = (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim();
+  const production = isProductionBuild();
+
+  if (configured === "") {
+    if (production) {
+      throw new Error(
+        "NEXT_PUBLIC_SITE_URL must be set to a non-loopback absolute URL such as https://scholium.example, got \"\"",
+      );
+    }
+    warnOnce(
+      "NEXT_PUBLIC_SITE_URL is unset; falling back to http://localhost:3000. Set it to the public origin of this deployment.",
+    );
+    return DEFAULT_SITE_URL;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw new Error(
+      `NEXT_PUBLIC_SITE_URL must be an absolute http(s) URL such as https://scholium.example, got ${JSON.stringify(configured)}`,
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      `NEXT_PUBLIC_SITE_URL must be an absolute http(s) URL such as https://scholium.example, got ${JSON.stringify(configured)}`,
+    );
+  }
+  if (isLoopbackUrl(configured)) {
+    if (production) {
+      throw new Error(
+        `NEXT_PUBLIC_SITE_URL must not point at localhost in production, got ${JSON.stringify(configured)}`,
+      );
+    }
+    warnOnce(
+      `NEXT_PUBLIC_SITE_URL points at localhost (${configured}); falling back to http://localhost:3000. Set it to the public origin of this deployment.`,
+    );
+    return DEFAULT_SITE_URL;
+  }
+  return configured;
+}
+
+// Backwards/alternative names some callers or tests may use.
+export const resolveSiteOrigin = resolveSiteUrl;
+export function siteUrl(): string {
+  return resolveSiteUrl();
+}
+export const siteOrigin = resolveSiteUrl;
+export function isLoopbackSiteUrl(value: string): boolean {
+  return isLoopbackUrl(value);
+}
+export const isLoopbackUrlExport = isLoopbackUrl;
+
+const siteUrlResolved = resolveSiteUrl();
 
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  metadataBase: new URL(siteUrlResolved),
   applicationName: "Scholium",
   title: {
     default: "Scholium",

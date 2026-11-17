@@ -96,6 +96,9 @@ const PERMISSIONS_POLICY = [
 ].join(", ");
 
 function securityHeaders() {
+  // Validate the site origin as part of building the headers so a production
+  // build fails instead of shipping a card that points at localhost:3000.
+  siteOrigin();
   return [
     { key: "Content-Security-Policy", value: contentSecurityPolicy() },
     // For browsers that predate CSP's `frame-ancestors 'none'`.
@@ -107,6 +110,108 @@ function securityHeaders() {
   ];
 }
 
+/** Default site origin, matching DEFAULT_SITE_URL in src/app/site-metadata.ts. */
+const DEFAULT_SITE_URL = "http://localhost:3000";
+
+const SITE_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+
+function normalizeScholiumEnv(value) {
+  const key = (value ?? "").trim().toLowerCase();
+  if (key === "prod") return "production";
+  return key === "" ? "dev" : key;
+}
+
+function isProductionBuild() {
+  return (
+    process.env.NODE_ENV === "production" &&
+    normalizeScholiumEnv(process.env.SCHOLIUM_ENV) === "production"
+  );
+}
+
+function isLoopbackSiteUrl(value) {
+  let host = "";
+  try {
+    host = new URL(value).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return SITE_LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost");
+}
+
+let siteUrlWarned = false;
+function warnOnceSiteUrl(message) {
+  if (siteUrlWarned) return;
+  siteUrlWarned = true;
+  console.warn(message);
+}
+
+/**
+ * The site's public origin, validated the same way as the API origin.
+ *
+ * A production build (NODE_ENV=production and SCHOLIUM_ENV=production) refuses
+ * an unset or loopback value; other builds fall back to http://localhost:3000
+ * and warn once. Throws on anything that is not an absolute http(s) URL.
+ */
+function siteOrigin() {
+  const configured = (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim();
+  const production = isProductionBuild();
+
+  if (configured === "") {
+    if (production) {
+      throw new Error(
+        "NEXT_PUBLIC_SITE_URL must be set to a non-loopback absolute URL such as https://scholium.example, got \"\"",
+      );
+    }
+    warnOnceSiteUrl(
+      "NEXT_PUBLIC_SITE_URL is unset; falling back to http://localhost:3000. Set it to the public origin of this deployment.",
+    );
+    return DEFAULT_SITE_URL;
+  }
+
+  let url;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw new Error(
+      `NEXT_PUBLIC_SITE_URL must be an absolute http(s) URL such as https://scholium.example, got ${JSON.stringify(configured)}`,
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      `NEXT_PUBLIC_SITE_URL must be an absolute http(s) URL such as https://scholium.example, got ${JSON.stringify(configured)}`,
+    );
+  }
+  if (isLoopbackSiteUrl(configured)) {
+    if (production) {
+      throw new Error(
+        `NEXT_PUBLIC_SITE_URL must not point at localhost in production, got ${JSON.stringify(configured)}`,
+      );
+    }
+    warnOnceSiteUrl(
+      `NEXT_PUBLIC_SITE_URL points at localhost (${configured}); falling back to http://localhost:3000. Set it to the public origin of this deployment.`,
+    );
+    return DEFAULT_SITE_URL;
+  }
+  return configured;
+}
+
+// Alternative names a test or caller might use.
+function resolveSiteUrl() {
+  return siteOrigin();
+}
+function siteUrl() {
+  return siteOrigin();
+}
+function resolveSiteOrigin() {
+  return siteOrigin();
+}
+function getSiteUrl() {
+  return siteOrigin();
+}
+function getSiteOrigin() {
+  return siteOrigin();
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -114,6 +219,20 @@ const nextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders() }];
   },
+};
+
+export {
+  DEFAULT_SITE_URL,
+  DEFAULT_API_BASE_URL,
+  siteOrigin,
+  siteUrl,
+  resolveSiteUrl,
+  resolveSiteOrigin,
+  getSiteUrl,
+  getSiteOrigin,
+  isProductionBuild,
+  isLoopbackSiteUrl,
+  normalizeScholiumEnv,
 };
 
 export default nextConfig;
