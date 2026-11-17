@@ -60,11 +60,14 @@ describe("a paper that verifies", () => {
     });
 
     expect(outcome.state).toBe("anchor_pending");
-    // The indicator carries the PRD's counts; the anchor state follows as the
-    // summary (a promise of a time only when an anchor is actually scheduled).
-    expect(outcome.headline).toBe("Verified · 8 author signatures across 2 versions");
+    // The indicator carries the PRD's counts, from the same check result the
+    // checklist below shows: the distinct author signatures over the verified
+    // chain (3 authors here — not the 8 signature-bearing records), so the
+    // counted words and "Signed by all 3 listed authors" cannot disagree
+    // (bug_spec_verify6 bug 2).
+    expect(outcome.headline).toBe("Verified · 3 author signatures across 2 versions");
     // The same counts reach the header badge, which words them itself.
-    expect(outcome.counts).toEqual({ versions: 2, signatures: 8 });
+    expect(outcome.counts).toEqual({ versions: 2, signatures: 3 });
     expect(outcome.summary).toBe("Signed. Anchoring is not enabled on this node yet.");
     expect(outcome.items.map((entry) => [entry.key, entry.state])).toEqual([
       ["authors", "pass"],
@@ -96,7 +99,7 @@ describe("a paper that verifies", () => {
     });
 
     expect(outcome.state).toBe("verified");
-    expect(outcome.headline).toBe("Verified · 8 author signatures across 2 versions");
+    expect(outcome.headline).toBe("Verified · 3 author signatures across 2 versions");
     expect(line(outcome, "anchor")).toMatchObject({
       state: "pass",
       text: "Timestamp anchored: 2 Mar 2027 04:00 UTC",
@@ -170,6 +173,28 @@ describe("a paper that verifies", () => {
     expect(outcome.schId).toBe(`${paper.shortId}/v1`);
     expect(outcome.report?.head).toBe(paper.versionIds[0]);
     expect(line(outcome, "history").text).toMatch(/\(v1\)/);
+  });
+
+  it("counts the version being viewed, never a later version's signatures", async () => {
+    // v1 was signed by one author; v2 added two more. A reader on /v1 must not
+    // see v2's authors counted beside v1's checklist, and the badge must be
+    // able to disagree with the newest page's badge (bug_spec_verify6 bug 2).
+    const grown = buildPaper({ authorCounts: [1, 3] });
+    const v1 = await runProofCheck({
+      ref: parsePaperRef(`${grown.shortId}/v1`),
+      source: sourceOf(grown.records),
+      nodeUrl: NODE,
+    });
+    const v2 = await runProofCheck({
+      ref: parsePaperRef(grown.shortId),
+      source: sourceOf(grown.records),
+      nodeUrl: NODE,
+    });
+
+    expect(v1.counts).toEqual({ versions: 1, signatures: 1 });
+    expect(line(v1, "authors").text).toBe("Signed by the listed author");
+    expect(v2.counts).toEqual({ versions: 2, signatures: 3 });
+    expect(line(v2, "authors").text).toBe("Signed by all 3 listed authors");
   });
 
   it("carries the technical details and the checks verify-core ran", async () => {

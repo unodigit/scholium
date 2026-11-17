@@ -105,12 +105,16 @@ describe("opening", () => {
     );
   });
 
-  it("links How to verify to the Proof tab", () => {
+  it("links How to verify to the Offline check steps, not a collapsed section", () => {
     show();
     fireEvent.click(button());
 
     const help = verifyLink();
-    expect(help.getAttribute("href")).toBe(DEFAULT_VERIFY_HREF);
+    // #proof lands on the tab with Technical details collapsed, hiding the
+    // guidance this item promises; #offline-check opens it and moves there
+    // (bug_spec_verify6 bug 2).
+    expect(help.getAttribute("href")).toBe("#offline-check");
+    expect(DEFAULT_VERIFY_HREF).toBe("#offline-check");
     expect(help.textContent).toContain(VERIFY_HELP_LABEL);
   });
 

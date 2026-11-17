@@ -174,18 +174,37 @@ describe("plain-language lines", () => {
     expect(items[0]).toMatchObject({ state: "pass", text: "Signed by both listed authors" });
   });
 
-  it("rewords the checks' own counts: one previous-version link, two listed authors", () => {
-    const paper = buildPaper({ authors: 2, versions: 1 });
-    const report = verifyPaper(paper.records, { paper: paper.shortId });
-    const lines = Object.fromEntries(checkLines(report).map((line) => [line.name, line.message]));
+  it("rewords the checks' own counts: previous-version links are versions − 1, listed authors in words", () => {
+    const messages = (records: readonly Record<string, unknown>[], shortId: string) =>
+      Object.fromEntries(
+        checkLines(verifyPaper(records, { paper: shortId })).map((line) => [
+          line.name,
+          line.message,
+        ]),
+      );
 
     // verify-core writes "All 1 prev link match…" and "Signed by all 2…";
     // the technical details say the same fact in grammatical English.
-    expect(lines.prev_hashes).toBe(
+    const two = buildPaper({ authors: 2, versions: 2 });
+    const twoLines = messages(two.records, two.shortId);
+    // A chain of two versions has ONE previous-version link: the oldest
+    // version's link is to the genesis record, not to a previous version
+    // (bug_spec_verify6 bug 2).
+    expect(twoLines.prev_hashes).toBe(
       "The previous-version link matches the hash of the record it names",
     );
-    expect(lines.consents).toBe(
+    expect(twoLines.consents).toBe(
       "Signed by both listed authors (every version has a consent from each of its authors)",
+    );
+
+    const four = buildPaper({ authors: 2, versions: 4 });
+    expect(messages(four.records, four.shortId).prev_hashes).toBe(
+      "All 3 previous-version links match the hash of the record they name",
+    );
+
+    const first = buildPaper({ authors: 2, versions: 1 });
+    expect(messages(first.records, first.shortId).prev_hashes).toBe(
+      "The first version's link to the genesis record matches its hash",
     );
   });
 

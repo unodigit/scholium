@@ -21,7 +21,6 @@
 
 import { resolveApiBaseUrl } from "../../lib/api";
 import {
-  CONSENT_TYPE,
   GENESIS_TYPE,
   VERSION_TYPE,
   deriveShortId,
@@ -174,37 +173,17 @@ function cannotVerify(reason: string, ref: PaperRef, nodeUrl: string): ProofOutc
 }
 
 /**
- * How many author signatures the check verified: one on each of the paper's
- * version records and one on each of its consent records (bug_spec_verify5
- * bug 5). The indicator says "4 author signatures across 2 versions", not
- * "2 signatures", so a reader can tell what the number counts.
+ * How many author signatures the check verified: the *distinct* authors whose
+ * signatures authenticate the verified chain's records — the version records
+ * it walked, their manifests and consents, and the genesis record — which is
+ * verify-core's own `report.signers` (bug_spec_verify6 bug 2).
  *
- * Records of other papers may be mixed into `records` (the source's contract),
- * so versions are matched to this paper's genesis and consents to those
- * versions.
+ * The number comes from the same report the checklist is built from, so the
+ * indicator's "3 author signatures" can never disagree with the line beside it
+ * ("Signed by all 3 listed authors"), and a check scoped to `/v1` never counts
+ * a later version's records. Records of other papers, or later versions of
+ * this one, are simply not in the chain that was verified.
  */
-export function authorSignatureCount(
-  records: readonly SignedRecord[],
-  report: VerificationReport,
-): number {
-  const genesis = report.genesis;
-  const versions = records.filter(
-    (record) =>
-      record.type === VERSION_TYPE &&
-      (genesis === null || bodyOf(record).paper === genesis),
-  );
-  const versionIds = new Set(
-    versions
-      .map((record) => record.id)
-      .filter((id): id is string => typeof id === "string"),
-  );
-  const consents = records.filter(
-    (record) =>
-      record.type === CONSENT_TYPE &&
-      versionIds.has(bodyOf(record).version as string),
-  );
-  return versions.length + consents.length;
-}
 
 /** A check that ran: the checklist, the verdict and the technical details. */
 async function checkRecords(
@@ -257,10 +236,11 @@ async function checkRecords(
   const items = buildChecklist({ report, manifest, fileResults, proof, preservation });
   const state = verdictState(items, report, proof);
   // The indicator carries the PRD's counts for a check that passed; the anchor
-  // state follows as the verdict's summary line.
+  // state follows as the verdict's summary line. Both numbers are the report's
+  // own, so the badge and the checklist below it always agree.
   const counts: VerifyCounts = {
     versions: report.version_count,
-    signatures: authorSignatureCount(records, report),
+    signatures: report.signers.length,
   };
   const schId = versionLabel(records, report, ref);
   return {

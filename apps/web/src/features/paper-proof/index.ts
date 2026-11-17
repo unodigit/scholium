@@ -17,10 +17,14 @@
  *
  * The tab runs verify-core in the browser and shows the plain-language
  * checklist, the technical details and the offline `scholium verify` command.
- * `/proof/k3f9-q2xz-7mwd/v2` shows it on a page of its own.
+ * `/proof/k3f9-q2xz-7mwd/v2` shows it on a page of its own. The Download
+ * menu's "How to verify" item links to the tab's Offline check section
+ * (`OFFLINE_CHECK_HREF`), which opens the technical details and moves there.
  */
 
 export {
+  OFFLINE_CHECK_HREF,
+  OFFLINE_CHECK_ID,
   ProofNotice,
   ProofTab,
   type ProofTabProps,

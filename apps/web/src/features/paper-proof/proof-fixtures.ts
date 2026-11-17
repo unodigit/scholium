@@ -27,6 +27,12 @@ export interface FixtureFile {
 export interface BuildPaperOptions {
   /** How many authors are listed on every version. Default 2. */
   readonly authors?: number;
+  /**
+   * Authors listed per version instead of one count for all: entry `n − 1` is
+   * version `n`'s author count (the submitting author always included). Lets a
+   * test build a paper whose authorship grew from one version to the next.
+   */
+  readonly authorCounts?: readonly number[];
   /** How many versions to chain. Default 1. */
   readonly versions?: number;
   /** Files of every version's manifest. Default: one small PDF. */
@@ -81,11 +87,17 @@ function sign(
 }
 
 export function buildPaper(options: BuildPaperOptions = {}): BuiltPaper {
-  const authorCount = options.authors ?? 2;
-  const versionCount = options.versions ?? 1;
+  const versionCount =
+    options.versions ?? (options.authorCounts ? options.authorCounts.length : 1);
   const files = options.files ?? [{ path: "main.pdf", bytes: bytesOf("%PDF-1.7 fixture") }];
-  const authorDids = Array.from({ length: authorCount }, (_, i) =>
-    didKeyFromSeed(seedFor(i)),
+  // How many authors version `n` lists: one count for every version, or that
+  // version's own count when the caller grew the authorship across versions.
+  // Author `a` is always the same did:key (seed `a`), submitting author first.
+  const authorCountOf = (n: number): number =>
+    options.authorCounts?.[n - 1] ?? options.authors ?? 2;
+  const authorDids = Array.from(
+    { length: authorCountOf(versionCount) },
+    (_, i) => didKeyFromSeed(seedFor(i)),
   );
 
   const records: Record<string, unknown>[] = [];
@@ -116,13 +128,16 @@ export function buildPaper(options: BuildPaperOptions = {}): BuiltPaper {
       n,
       title: `A Fixture Paper, version ${n}`,
       abstract: "Signed in a test.",
-      authors: authorDids.map((did) => ({ did, credit: ["writing"] })),
+      authors: Array.from({ length: authorCountOf(n) }, (_, a) => ({
+        did: didKeyFromSeed(seedFor(a)),
+        credit: ["writing"],
+      })),
       manifest: manifest.id,
       licence: "CC-BY-4.0",
       changeNote: n === 1 ? "First version" : `Revision ${n}`,
     });
     records.push(manifest, version);
-    for (let a = 0; a < authorCount; a += 1) {
+    for (let a = 0; a < authorCountOf(n); a += 1) {
       records.push(
         sign(a, "coauthor.consent", null, {
           version: version.id,

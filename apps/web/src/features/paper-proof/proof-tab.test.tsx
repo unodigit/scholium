@@ -101,7 +101,7 @@ describe("while it checks", () => {
     await waitFor(() => expect(before.dataset.state).toBe("anchor_pending"));
 
     expect(verdictOf(container)).toBe(before);
-    expect(before.textContent).toContain("Verified · 8 author signatures across 2 versions");
+    expect(before.textContent).toContain("Verified · 3 author signatures across 2 versions");
   });
 });
 
@@ -145,10 +145,26 @@ describe("a paper that verifies", () => {
 
     expect(verdict.dataset.state).toBe("anchor_pending");
     expect(verdict.dataset.tone).toBe("pending");
-    expect(verdict.textContent).toContain("Verified · 8 author signatures across 2 versions");
+    expect(verdict.textContent).toContain("Verified · 3 author signatures across 2 versions");
     expect(verdict.textContent).toContain("Anchoring is not enabled on this node yet");
     expect(verdict.textContent).not.toContain("within the hour");
     expect(container.querySelector("section")!.getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("counts the version on screen, so the badge agrees with the checklist beside it", async () => {
+    // Journey 08: after v2 exists, the v1 page counted v2's records too. The
+    // words must come from the same check result the checklist shows for the
+    // version being viewed (bug_spec_verify6 bug 2).
+    const { source } = sourceOf();
+    const { container } = render(
+      <ProofTab schId={`${paper.shortId}/v1`} nodeUrl={NODE} source={source} />,
+    );
+    await waitFor(() => expect(verdictOf(container).dataset.state).not.toBe("checking"));
+
+    expect(verdictOf(container).textContent).toContain(
+      "Verified · 3 author signatures across 1 version",
+    );
+    expect(lines(container)[0].text).toBe("Passed: Signed by all 3 listed authors");
   });
 
   it("links the preservation line to /network in this tab, not a new one", async () => {
@@ -172,7 +188,7 @@ describe("a paper that verifies", () => {
     expect(verdict.dataset.state).toBe("verified");
     expect(verdict.dataset.tone).toBe("verified");
     expect(verdict.textContent).toContain("Verified in your browser");
-    expect(verdict.textContent).toContain("Verified · 8 author signatures across 2 versions");
+    expect(verdict.textContent).toContain("Verified · 3 author signatures across 2 versions");
 
     const link = container.querySelector<HTMLAnchorElement>('.pt-item[data-key="anchor"] .pt-link')!;
     expect(link.textContent).toContain("View transaction");
@@ -249,6 +265,32 @@ describe("technical details", () => {
     ]);
   });
 
+  it("walks the offline check as numbered steps: download, install, run, what success looks like", async () => {
+    const { source } = sourceOf();
+    const { container } = await renderTab({ source });
+    const offline = container.querySelector<HTMLElement>(".pt-offline")!;
+
+    // The Download menu's "How to verify" promises steps; the section has them.
+    const steps = Array.from(offline.querySelectorAll<HTMLElement>(".pt-step"));
+    expect(steps).toHaveLength(4);
+    const archive = `sch-${paper.shortId.replace(/^sch:/, "")}.car`;
+    expect(steps[0].textContent).toContain("Download the archive");
+    expect(steps[0].textContent).toContain(archive);
+    expect(steps[1].textContent).toContain("Install the Scholium CLI");
+    expect(steps[1].textContent).toContain("scholium");
+    expect(steps[2].textContent).toContain("Run the check");
+    expect(steps[2].querySelector(".pt-copy__value")!.textContent).toBe(
+      `scholium verify ${archive}`,
+    );
+    expect(steps[3].textContent).toContain("What success looks like");
+    expect(steps[3].textContent).toContain("Result: VERIFIED");
+    // The online form stays beside the steps, as the other way to check.
+    const commands = Array.from(
+      offline.querySelectorAll<HTMLElement>(".pt-copy__value"),
+    ).map((value) => value.textContent);
+    expect(commands).toEqual([`scholium verify ${archive}`, `scholium verify ${V2} --node ${NODE}`]);
+  });
+
   it("shows long ids shortened, with the whole id as the tooltip and the button's name", async () => {
     const { source } = sourceOf();
     const { container } = await renderTab({ source });
@@ -301,6 +343,79 @@ describe("technical details", () => {
 
     await waitFor(() => expect(document.getElementById(TOAST_REGION_ID)?.textContent).toBe("Couldn't copy"));
     expect(button.dataset.copied).toBe("false");
+  });
+});
+
+describe("the #offline-check address (the Download menu's How to verify)", () => {
+  /** The paper page's margin: a hidden tabpanel whose tab (aria-labelledby) shows it. */
+  function inMarginPanel() {
+    const tab = document.createElement("button");
+    tab.id = "ppg-tab-proof";
+    const panel = document.createElement("div");
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", tab.id);
+    panel.hidden = true;
+    // Choosing the tab shows its panel, the way MarginPanel's onClick does.
+    tab.addEventListener("click", () => {
+      panel.hidden = false;
+    });
+    document.body.append(tab, panel);
+    return { tab, panel };
+  }
+
+  it("opens the Technical details and moves to the Offline check section", async () => {
+    const scrollIntoView = vi.fn();
+    const proto = Element.prototype as unknown as { scrollIntoView?: () => void };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = scrollIntoView;
+    const { tab, panel } = inMarginPanel();
+
+    try {
+      const { source } = sourceOf();
+      render(<ProofTab schId={V2} nodeUrl={NODE} source={source} />, { container: panel });
+      await waitFor(() => expect(verdictOf(panel).dataset.state).not.toBe("checking"));
+      // All is well, so the details start collapsed — the guidance is invisible.
+      expect(panel.querySelector<HTMLDetailsElement>(".pt-details")!.open).toBe(false);
+
+      window.location.hash = "#offline-check";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+      // The tab that holds the section was chosen (a raw listener, so already
+      // done), and the details opened with it.
+      expect(panel.hidden).toBe(false);
+      expect(tab.getAttribute("id")).toBe("ppg-tab-proof");
+      await waitFor(() =>
+        expect(panel.querySelector<HTMLDetailsElement>(".pt-details")!.open).toBe(true),
+      );
+      const offline = panel.querySelector<HTMLElement>(".pt-offline")!;
+      expect(offline.id).toBe("offline-check");
+      // The steps were brought into view and given focus.
+      expect(scrollIntoView.mock.instances[0]).toBe(offline);
+      expect(document.activeElement).toBe(offline);
+    } finally {
+      proto.scrollIntoView = original;
+      window.location.hash = "";
+      tab.remove();
+      panel.remove();
+    }
+  });
+
+  it("keeps the section collapsed until the address names it", async () => {
+    const { tab, panel } = inMarginPanel();
+    try {
+      const { source } = sourceOf();
+      render(<ProofTab schId={V2} nodeUrl={NODE} source={source} />, { container: panel });
+      await waitFor(() => expect(verdictOf(panel).dataset.state).not.toBe("checking"));
+
+      window.location.hash = "#proof";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+      expect(panel.querySelector<HTMLDetailsElement>(".pt-details")!.open).toBe(false);
+    } finally {
+      window.location.hash = "";
+      tab.remove();
+      panel.remove();
+    }
   });
 });
 

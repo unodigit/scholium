@@ -26,16 +26,19 @@
  * ```
  *
  * with the technical details (record ids, anchor, signers, the six checks) and
- * an "Offline check" section that gives both ways to repeat the check: the
- * downloaded archive (`scholium verify sch-{id}.car`, no network) and the
- * online form (`scholium verify sch:…/vN --node …`), under a disclosure. The
- * Download menu's "How to verify" item promises exactly this explanation. The
+ * an "Offline check" section that walks the check as numbered steps — the
+ * downloaded archive, the CLI, the command to run (`scholium verify
+ * sch-{id}.car`, no network) and what success looks like — with the online
+ * form (`scholium verify sch:…/vN --node …`) as the other way. The Download
+ * menu's "How to verify" item links to `#offline-check`, which opens the
+ * disclosure and moves to those steps. The
  * result is the CLI's: both fail on exactly the same failed
  * checks (see `checklist.ts`). The indicator's headline carries the PRD's
  * counts (journey 3: "Verified: 3 versions, 4 signatures", said as "4 author
- * signatures across 3 versions" so the number has a name) with the anchor
- * state as the line under it, and the checklist names people and records in
- * words — raw ids stay in the technical details.
+ * signatures across 3 versions" so the number has a name) — the counts of the
+ * version being viewed, from the same check result the checklist shows — with
+ * the anchor state as the line under it, and the checklist names people and
+ * records in words — raw ids stay in the technical details.
  *
  * - **Five states**, the VerifyBadge's: Verified, Signed · anchor pending,
  *   Checking…, Could not check, Verification failed. A check that could not
@@ -54,7 +57,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, RefObject } from "react";
 
 import {
   COPIED_MESSAGE,
@@ -71,6 +74,7 @@ import {
 import {
   abbreviateId,
   archiveCommand,
+  archiveFileName,
   verdictCopy,
   type ChecklistItem,
   type ItemState,
@@ -80,6 +84,12 @@ import { PaperRefError, parsePaperRef, type PaperRef } from "./paper-ref";
 import { runProofCheck, type ProofOutcome } from "./run-proof-check";
 import { createNodeProofSource, type ProofSource } from "./source";
 import "./proof-tab.css";
+
+/** The id of the Offline check section inside Technical details. */
+export const OFFLINE_CHECK_ID = "offline-check";
+
+/** The fragment that asks for the Offline check steps (the Download menu's "How to verify"). */
+export const OFFLINE_CHECK_HREF = `#${OFFLINE_CHECK_ID}`;
 
 export interface ProofTabProps {
   /** The paper or version to check: `sch:xxxx-xxxx-xxxx` or `sch:xxxx-xxxx-xxxx/vN`. */
@@ -146,6 +156,12 @@ export function ProofTab({
 
   const [outcome, setOutcome] = useState<ProofOutcome | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // The address asked for the Offline check section (the Download menu's "How
+  // to verify"): the Technical details that hold it open, and stay open.
+  const [revealOffline, setRevealOffline] = useState(false);
+  const rootRef = useRef<HTMLElement | null>(null);
+  const offlineRef = useRef<HTMLDivElement | null>(null);
+  const revealed = useRef(false);
 
   // The latest callback, without making a new one restart the check.
   const onStateChangeRef = useRef(onStateChange);
@@ -182,6 +198,42 @@ export function ProofTab({
 
   const rerun = useCallback(() => setAttempt((count) => count + 1), []);
 
+  // The address names the Offline check (`#offline-check`): the section the
+  // Download menu's "How to verify" promises. The tab this component lives in
+  // may be hidden behind another one, so its panel's own tab — the ARIA
+  // contract `aria-labelledby` names it — is chosen the way a reader would,
+  // which also puts the address back on `#proof` for the drawer that follows
+  // tab addresses. On the tab's own page there is no panel; opening the
+  // details below is all there is to do.
+  useEffect(() => {
+    if (parsed.error !== undefined) return;
+    const follow = () => {
+      if (window.location.hash !== OFFLINE_CHECK_HREF) return;
+      const panel = rootRef.current?.closest<HTMLElement>('[role="tabpanel"]');
+      if (panel != null) {
+        const tabId = panel.getAttribute("aria-labelledby");
+        const tab = tabId === null ? null : document.getElementById(tabId);
+        (tab as HTMLButtonElement | null)?.click();
+      }
+      setRevealOffline(true);
+    };
+    follow();
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, [parsed]);
+
+  // Bring the steps into view once they exist — the check may still be running
+  // when the address names them, so this waits for its outcome. Once only: a
+  // re-run of the check must not move the reader back here.
+  useEffect(() => {
+    if (!revealOffline || revealed.current) return;
+    const section = offlineRef.current;
+    if (section === null) return;
+    revealed.current = true;
+    section.focus({ preventScroll: true });
+    if (typeof section.scrollIntoView === "function") section.scrollIntoView();
+  }, [revealOffline, outcome]);
+
   if (parsed.error !== undefined) {
     return <ProofNotice message={parsed.error} />;
   }
@@ -192,7 +244,13 @@ export function ProofTab({
   const copy = verdictCopy(state);
 
   return (
-    <section className="pt-tab" aria-label="Proof" aria-busy={checking} data-state={state}>
+    <section
+      className="pt-tab"
+      aria-label="Proof"
+      aria-busy={checking}
+      data-state={state}
+      ref={rootRef}
+    >
       <div className="pt-head">
         <div className="pt-verdict" role="status" data-state={state} data-tone={spec.tone}>
           <p className="pt-verdict__line">
@@ -219,7 +277,9 @@ export function ProofTab({
         </ul>
       ) : null}
 
-      {outcome !== null ? <TechnicalDetails outcome={outcome} /> : null}
+      {outcome !== null ? (
+        <TechnicalDetails outcome={outcome} revealOffline={revealOffline} offlineRef={offlineRef} />
+      ) : null}
     </section>
   );
 }
@@ -280,20 +340,31 @@ function ChecklistLine({ item }: { item: ChecklistItem }) {
   );
 }
 
+interface TechnicalDetailsProps {
+  readonly outcome: ProofOutcome;
+  /** The address asked for the Offline check (see ProofTab's hash effect). */
+  readonly revealOffline: boolean;
+  /** The Offline check section: focused and scrolled to when it is asked for. */
+  readonly offlineRef: RefObject<HTMLDivElement | null>;
+}
+
 /**
  * Record ids, anchor, signers, the six checks and the offline check.
  *
- * The offline check names both forms, because the Download menu's "How to
- * verify" sends readers here: the archive they already downloaded (no network
- * at all) and the same check against the node. They are the same command the
- * menu shows for the archive, so the two pages cannot disagree.
+ * The offline check walks the steps the Download menu's "How to verify"
+ * promises, as numbered steps: the archive to download, the CLI to install,
+ * the command to run and what success looks like. The command is the same one
+ * the menu shows for the archive, so the two pages cannot disagree; the online
+ * form follows as the other way to check.
  *
  * Collapsed when all is well, as in the design. Open when the reader most
- * needs it: after a failure (the findings) and after "Could not check" (the
- * offline command is the way forward).
+ * needs it: after a failure (the findings), after "Could not check" (the
+ * offline command is the way forward), and whenever the address names the
+ * Offline check (`#offline-check`, which also scrolls to it).
  */
-function TechnicalDetails({ outcome }: { outcome: ProofOutcome }) {
-  const open = outcome.state === "failed" || outcome.state === "cannot_verify";
+function TechnicalDetails({ outcome, revealOffline, offlineRef }: TechnicalDetailsProps) {
+  const open =
+    outcome.state === "failed" || outcome.state === "cannot_verify" || revealOffline;
   return (
     <details className="pt-details" open={open}>
       <summary className="pt-details__summary">Technical details</summary>
@@ -321,17 +392,62 @@ function TechnicalDetails({ outcome }: { outcome: ProofOutcome }) {
         </>
       ) : null}
 
-      <div className="pt-offline">
+      <div
+        className="pt-offline"
+        id={OFFLINE_CHECK_ID}
+        ref={offlineRef}
+        // Focusable so the #offline-check address can land on it, like a skip
+        // link; programmatic focus does not draw a focus ring after a click.
+        tabIndex={-1}
+      >
         <p className="pt-subhead">Offline check</p>
         <p className="pt-offline__hint">
-          Verifies offline: the paper archive you downloaded checks with this command.
+          Four steps, no network: the archive you downloaded is all the evidence.
         </p>
-        <CopyValue
-          value={archiveCommand(outcome.schId)}
-          label="the offline command for the downloaded archive"
-          block
-        />
-        <p className="pt-offline__hint">Or verifies online, against the node:</p>
+        <ol className="pt-steps">
+          <li className="pt-step">
+            <div className="pt-step__body">
+              <p className="pt-step__text">
+                <span className="pt-step__lead">Download the archive.</span>{" "}
+                “Paper archive” in this page’s Download menu saves{" "}
+                <code>{archiveFileName(outcome.schId)}</code>.
+              </p>
+            </div>
+          </li>
+          <li className="pt-step">
+            <div className="pt-step__body">
+              <p className="pt-step__text">
+                <span className="pt-step__lead">Install the Scholium CLI.</span>{" "}
+                It provides the <code>scholium</code> command; open a terminal in
+                the folder where you saved the archive.
+              </p>
+            </div>
+          </li>
+          <li className="pt-step">
+            <div className="pt-step__body">
+              <p className="pt-step__text">
+                <span className="pt-step__lead">Run the check.</span> It reads the
+                archive alone — nothing is sent over the network:
+              </p>
+              <CopyValue
+                value={archiveCommand(outcome.schId)}
+                label="the offline command for the downloaded archive"
+                block
+              />
+            </div>
+          </li>
+          <li className="pt-step">
+            <div className="pt-step__body">
+              <p className="pt-step__text">
+                <span className="pt-step__lead">What success looks like.</span> The
+                CLI prints the same checklist with a ✓ on every line and ends
+                with <code>Result: VERIFIED</code>. If anything does not match,
+                the check names it and exits with code 1.
+              </p>
+            </div>
+          </li>
+        </ol>
+        <p className="pt-offline__hint">Or check online, against the node:</p>
         <CopyValue value={outcome.command} label="the online command" block />
       </div>
     </details>

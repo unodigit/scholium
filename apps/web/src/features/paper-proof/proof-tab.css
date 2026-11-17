@@ -255,6 +255,75 @@
   line-height: var(--leading-meta);
 }
 
+/* ---- Offline check steps ------------------------------------------------- */
+
+/* The section is an address (#offline-check, the Download menu's "How to
+   verify"): keep it clear of the 64 px global nav when the page moves to it. */
+.pt-offline {
+  scroll-margin-block-start: calc(var(--space-unit) * 18);
+}
+
+/* Four numbered steps, drawn like the checklist lines: a fixed lead column and
+   text that can wrap anywhere. The number is a badge, not a bare digit, so the
+   order survives without the indent. */
+.pt-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: pt-step;
+}
+
+.pt-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--space-unit) * 3);
+  padding-block: calc(var(--space-unit) * 2);
+  counter-increment: pt-step;
+}
+
+.pt-step::before {
+  content: counter(pt-step);
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  inline-size: calc(var(--space-unit) * 5);
+  block-size: calc(var(--space-unit) * 5);
+  /* Centre the badge on the first line of text, as the checklist icons do. */
+  margin-block-start: calc((var(--leading-ui) - var(--space-unit) * 5) / 2);
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  color: var(--ink-2);
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+  line-height: 1;
+}
+
+.pt-step__text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The step's content cell: its text, and the command block when it has one. */
+.pt-step__body {
+  min-inline-size: 0;
+}
+
+/* The step's first words ("Run the check."), where the eye lands. */
+.pt-step__lead {
+  font-weight: 500;
+}
+
+.pt-step__text code,
+.pt-step__text .pt-copy__value {
+  font-family: var(--family-mono);
+  font-size: var(--type-mono);
+}
+
+/* The command is part of its step, not a paragraph after it. */
+.pt-step .pt-copy[data-block="true"] {
+  margin-block-start: calc(var(--space-unit) * 2);
+}
+
 .pt-checks {
   margin: 0;
   padding: 0;
@@ -413,6 +482,10 @@
   .pt-item__icon,
   .pt-copy__icon {
     color: CanvasText;
+  }
+
+  .pt-step::before {
+    border-color: CanvasText;
   }
 
   .pt-link {

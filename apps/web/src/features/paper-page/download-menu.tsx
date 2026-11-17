@@ -36,6 +36,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { OFFLINE_CHECK_HREF } from "../paper-proof";
 import { useEnhanced } from "./use-enhanced";
 
 /** The action's name. */
@@ -52,8 +53,14 @@ export const VERIFY_OFFLINE_LABEL = "Verifies offline:";
 /** The second item: where the offline verification is explained. */
 export const VERIFY_HELP_LABEL = "How to verify";
 
-/** The Proof tab of the paper page, where the offline command is explained. */
-export const DEFAULT_VERIFY_HREF = "#proof";
+/**
+ * Where "How to verify" goes: the Offline check section of the paper page's
+ * Proof tab. The fragment opens the Technical details that hold the section
+ * and moves to the numbered steps; the bare Proof tab fragment would land on a
+ * collapsed disclosure with the guidance invisible (bug_spec_verify6 bug 2).
+ * The Proof tab itself answers the address, so the two cannot drift apart.
+ */
+export const DEFAULT_VERIFY_HREF = OFFLINE_CHECK_HREF;
 
 /**
  * The file name the archive is saved under, from its URL.

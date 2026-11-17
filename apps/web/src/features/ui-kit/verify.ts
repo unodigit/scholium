@@ -17,8 +17,8 @@
  * Deciding *which* state a paper is in (from verify-core's report and the
  * anchor proof) belongs to the Proof tab; the badge only shows the answer.
  * The counts a finished check adds to the indicator's words — "Verified · 4
- * author signatures across 2 versions" (PRD §9 journey 3) — are `countedLabel`
- * below.
+ * author signatures across 2 versions" (PRD §9 journey 3), the distinct author
+ * signatures over the version's verified chain — are `countedLabel` below.
  */
 
 import type { IconName } from "./icons";
@@ -140,10 +140,11 @@ export function verifyBadgeTitle(state: VerifyState): string {
  * paper has, and how many author signatures were checked (PRD §9 journey 3:
  * "Verified: 3 versions, 4 signatures, anchored 2027-03-02").
  *
- * `signatures` counts each author signature on a version or consent record,
- * not distinct signers: the indicator says what it counted
- * ("4 author signatures across 2 versions"), so two authors over two versions
- * do not read as "2 signatures" with nothing to say what the number means.
+ * Both numbers describe *the check that ran* (bug_spec_verify6 bug 2):
+ * `versions` is the versions of the verified chain — viewing `/v1` of a
+ * two-version paper is one version — and `signatures` is the distinct author
+ * signatures over that chain's records, so the counted words and the
+ * checklist's "Signed by all N listed authors" line always agree.
  */
 export interface VerifyCounts {
   readonly versions: number;
@@ -160,9 +161,10 @@ function isCounted(value: number): boolean {
  * across 2 versions" when the check passed and the counts are known, whatever
  * the anchor state is (that follows the indicator as its own line).
  *
- * The words say *what* was counted: the signatures are author signatures on
- * version and consent records, so "2 versions · 2 signatures" for two authors
- * no longer leaves a reader guessing (bug_spec_verify5 bug 5).
+ * The words say *what* was counted: author signatures over the verified
+ * chain's records, distinct signers — the same number the checklist's "Signed
+ * by all N listed authors" line rests on, for the version being viewed
+ * (bug_spec_verify5 bug 5, bug_spec_verify6 bug 2).
  *
  * Anything else — no counts, a check that failed or could not run — keeps the
  * state's own label, so a count is never printed next to a failure and

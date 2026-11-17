@@ -523,10 +523,18 @@ export function technicalRows(input: TechnicalInput): TechnicalRow[] {
  */
 function passedCheckWording(check: CheckResult, report: VerificationReport): string | null {
   if (check.name === "prev_hashes") {
-    const count = report.version_count;
-    return count === 1
-      ? "The previous-version link matches the hash of the record it names"
-      : `All ${count} previous-version links match the hash of the record they name`;
+    // verify-core checks every version's prev link, including the oldest
+    // version's link to the genesis record — which is not a *previous version*.
+    // A chain of V versions has V − 1 previous-version links (bug_spec_verify6
+    // bug 2: two versions have one, so "All 2 …" was wrong).
+    const count = report.version_count - 1;
+    if (count === 1) {
+      return "The previous-version link matches the hash of the record it names";
+    }
+    if (count > 1) {
+      return `All ${count} previous-version links match the hash of the record they name`;
+    }
+    return "The first version's link to the genesis record matches its hash";
   }
   if (check.name === "consents") {
     // verify-core names the newest version's listed authors; keep its count so
@@ -578,19 +586,25 @@ export function offlineCommand(schId: string, nodeUrl: string): string {
 }
 
 /**
- * The command that checks the paper's *downloaded archive* with no network at
- * all: `scholium verify sch-k3f9-q2xz-7mwd.car`.
- *
- * The Download menu names the archive `sch-{id}.car` (see
- * `paper-page/download-menu.tsx`), so the Proof tab spells the command the same
- * way: the "How to verify" item in that menu promises this explanation.
+ * The name the Download menu saves the paper's archive under, `sch-{id}.car`
+ * (see `paper-page/download-menu.tsx`), from the id of the version checked.
  */
-export function archiveCommand(schId: string): string {
+export function archiveFileName(schId: string): string {
   const paper = schId
     .trim()
     .replace(/^sch:/i, "")
     .split("/")[0];
-  return paper === ""
-    ? "scholium verify paper.car"
-    : `scholium verify sch-${paper}.car`;
+  return paper === "" ? "paper.car" : `sch-${paper}.car`;
+}
+
+/**
+ * The command that checks the paper's *downloaded archive* with no network at
+ * all: `scholium verify sch-k3f9-q2xz-7mwd.car`.
+ *
+ * The Download menu names the archive `sch-{id}.car`, so the Proof tab spells
+ * the command the same way: the "How to verify" item in that menu promises
+ * this explanation.
+ */
+export function archiveCommand(schId: string): string {
+  return `scholium verify ${archiveFileName(schId)}`;
 }

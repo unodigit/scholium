@@ -232,7 +232,9 @@ describe("countedLabel", () => {
     );
   });
 
-  it("reads naturally for two of each, the journey's two authors over two versions", () => {
+  it("reads naturally for a chain with more signers than its newest version lists", () => {
+    // Two versions whose author lists together name four distinct signing
+    // authors (PRD journey 3's shape): 4 signatures across 2 versions.
     expect(countedLabel("anchor_pending", counts(2, 4))).toBe(
       "Verified · 4 author signatures across 2 versions",
     );

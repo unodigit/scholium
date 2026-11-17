@@ -22,7 +22,7 @@ the first HTML says "Checking…", never a verdict.
 ## What it shows
 
 ```text
-✓ Verified · 3 versions · 4 signatures                       [Re-run check]
+✓ Verified · 4 author signatures across 3 versions            [Re-run check]
   Signed. Anchoring is not enabled on this node yet.
   Verified in your browser
 ✓ Signed by all 4 listed authors
@@ -36,14 +36,20 @@ the first HTML says "Checking…", never a verdict.
     Version record  bafyrei…q7x2 ⧉     Manifest  bafyrei…m1ka ⧉
     Anchor          pending            Signer 1  did:key:z6Mk…ab12 ⧉
     Checks run in your browser: chain, signatures, prev_hashes, consents, …
-    Verify offline: scholium verify sch:k3f9-q2xz-7mwd/v2 --node https://node ⧉
+    Offline check: 1 download the archive  2 install the Scholium CLI
+                   3 scholium verify sch-k3f9-q2xz-7mwd.car  4 Result: VERIFIED
 ```
 
 The indicator's headline carries the PRD journey-3 counts ("Verified: 3
-versions, 4 signatures") for a check that passed, with the anchor state as the
-line under it; a failure keeps its own words. The checklist names people and
-records in words — a notice says who signed it, not its record id or the
-signer's did:key; those stay in the technical details, one copy away.
+versions, 4 signatures", said as "4 author signatures across 3 versions") for a
+check that passed — both numbers from the same report the checklist is built
+from, so the counted words and "Signed by all 4 listed authors" cannot
+disagree, and a check scoped to `/v1` never counts a later version's records —
+with the anchor state as the line under it; a failure keeps its own words. The
+checklist names people and records in words — a notice says who signed it, not
+its record id or the signer's did:key; those stay in the technical details, one
+copy away. The Download menu's "How to verify" item links to `#offline-check`,
+which opens the technical details and moves to the Offline check steps.
 
 Five header states, the VerifyBadge's: **Verified**, **Signed · anchor
 pending**, **Checking…**, **Could not check**, **Verification failed**. The
