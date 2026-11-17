@@ -233,7 +233,9 @@ test.describe("reading", () => {
     // check verified (PRD §9 journey 3); the public timestamp is anchored later,
     // so "Anchor pending" is the settled state on the line beneath it.
     await expect(
-      page.getByRole("link", { name: /^Verified · \d+ versions? · \d+ signatures?$/ }),
+      page.getByRole("link", {
+        name: /^Verified · \d+ author signatures? across \d+ versions?$/,
+      }),
     ).toBeVisible();
 
     await page.getByRole("tab", { name: "Proof" }).click();
