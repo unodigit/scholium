@@ -21,7 +21,13 @@ settled against the record whenever the inbox is read:
   and its reason: no panel decided it, so none is credited.
 
 Both ``summary`` and ``outcome`` are rewritten, as the moderation notice sets
-both.  Settling is idempotent.
+both, and the settled payload names the appeal it answers (``appeal``).  The
+row keeps the moderation kind -- it is still a moderation decision -- but the
+dashboard reads that marker and labels it "Appeal outcome", like the notice an
+upheld appeal sends.  A release no appeal answers carries no marker and stays
+"Moderation outcome".
+
+Settling is idempotent.
 """
 
 from __future__ import annotations
@@ -53,18 +59,18 @@ def settle_restoration_notices(did: str) -> None:
         logger.debug("could not settle the restoration notices of %s", did, exc_info=True)
 
 
-def _answers_an_appeal(decision_cid: object) -> bool:
-    """Whether the decision is the release an overturned appeal made."""
+def _appeal_it_answers(decision_cid: object) -> Optional[str]:
+    """The appeal whose overturn the release ``decision_cid`` answers, if any."""
     from app.modules import ledger
 
     if not isinstance(decision_cid, str) or not decision_cid:
-        return False
+        return None
     entry = ledger.entry_by_cid(decision_cid)
     body = getattr(entry, "body", None)
     if not isinstance(body, Mapping):
-        return False
+        return None
     appeal = body.get("appeal") or body.get("appeal_restoration")
-    return isinstance(appeal, str) and bool(appeal)
+    return appeal if isinstance(appeal, str) and appeal else None
 
 
 def _sentence(payload: Mapping[str, Any]) -> str:
@@ -94,12 +100,16 @@ def _settle(did: str) -> None:
             payload = row.payload
             if not isinstance(payload, Mapping) or payload.get("action") != "release":
                 continue
-            if not _answers_an_appeal(payload.get("decision_cid")):
+            appeal = _appeal_it_answers(payload.get("decision_cid"))
+            if appeal is None:
                 continue
             sentence = _sentence(payload)
             settled = {key: value for key, value in payload.items() if key != "reason"}
             settled["summary"] = sentence
             settled["outcome"] = sentence
+            # The dashboard reads this marker to label the notice "Appeal
+            # outcome"; the moderation kind itself stays as the API sent it.
+            settled["appeal"] = appeal
             if settled != dict(payload):
                 row.payload = settled
                 changed = True

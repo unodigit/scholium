@@ -233,15 +233,31 @@ def readable_content(
     return excerpt, subject.link
 
 
+def _quoted_excerpt(excerpt: str) -> str:
+    """The opening of a record, quoted, with ``...`` marking that it is not the whole.
+
+    ``outcomes.excerpt`` truncates a long post and appends ``...``; a short post
+    has no marker, so one is added here.  A full stop before the marker would
+    read as a typo (``post....``), so it is absorbed.
+    """
+    if excerpt.endswith("..."):
+        return excerpt
+    return f"{excerpt.rstrip('.').rstrip()}..."
+
+
 def seat_summary(subject: Optional[AppealSubject], deadline: Optional[datetime]) -> str:
     """The sentence asking a seated member to vote, naming the appeal and the due day.
 
     ``Vote on the appeal for "T" by 2 Dec 2026.`` for a paper;
-    ``Vote on the appeal of a hidden post on "T" by 2 Dec 2026.`` for a post.
+    ``Vote on the appeal of a hidden post on "T" ("the post's first words...") by
+    2 Dec 2026.`` for a post.  The excerpt is what tells two appeals about posts
+    on the same paper apart, and a seated member may read it.
     """
     # A paper whose title this node cannot read has nothing to name.
     named = subject is not None and (subject.is_record or subject.title is not None)
     summary = f"Vote on the appeal {subject.phrase()}" if named else "Vote on an appeal panel"
+    if named and subject is not None and subject.excerpt:
+        summary += f' ("{_quoted_excerpt(subject.excerpt)}")'
     if deadline is not None:
         summary += f" by {format_day(deadline)}"
     return f"{summary}."

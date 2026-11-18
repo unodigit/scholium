@@ -158,6 +158,12 @@ export interface AppealCase {
    */
   readonly viewerVotedAt?: string | null;
   /**
+   * The reasons the viewer gave with the vote on file, as one string for the
+   * form's textarea, or `null` when the API returned none. Only a seated member
+   * is given their own reasons; "Change my vote" opens with them.
+   */
+  readonly viewerReasons?: string | null;
+  /**
    * How many of the panel's seats carry a vote, when the API said. The card
    * shows the same "n of 3 members have voted" after a reload as when the
    * member had just voted.
@@ -424,16 +430,27 @@ function readViewerDetail(
   body: unknown,
 ): Pick<
   AppealCase,
-  "viewerOnPanel" | "viewerVote" | "viewerVotedAt" | "votesCast" | "subject" | "panelStatus" | "deadline"
+  | "viewerOnPanel"
+  | "viewerVote"
+  | "viewerVotedAt"
+  | "viewerReasons"
+  | "votesCast"
+  | "subject"
+  | "panelStatus"
+  | "deadline"
 > | null {
   if (!isRecord(body) || typeof body.viewer_on_panel !== "boolean") {
     return null;
   }
   const kind = readText(body.target_kind);
+  // The API returns the member's own reasons as a list; the textarea holds one
+  // string, with a blank line between reasons given separately.
+  const reasons = readReasons(body.viewer_reasons);
   return {
     viewerOnPanel: body.viewer_on_panel,
     viewerVote: readText(body.viewer_vote),
     viewerVotedAt: readText(body.viewer_voted_at),
+    viewerReasons: reasons.length > 0 ? reasons.join("\n\n") : null,
     votesCast: readCount(body.votes_cast),
     panelStatus: readText(body.panel_status) ?? undefined,
     deadline: readText(body.deadline),

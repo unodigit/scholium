@@ -8,6 +8,7 @@ import {
   actionLabel,
   buildAppealCases,
   describeAppealsError,
+  enrichAppealCases,
   isAppealOpen,
   loadAppealCases,
   outcomeLabel,
@@ -338,6 +339,48 @@ describe("loadAppealCases", () => {
       throw new NetworkError("offline");
     });
     await expect(loadAppealCases({ get } as never)).rejects.toBeInstanceOf(NetworkError);
+  });
+});
+
+describe("the viewer's own recorded vote", () => {
+  function oneAppeal() {
+    const [appeal] = buildAppealCases([
+      versionEntry(),
+      decisionEntry(),
+      appealEntry(),
+    ]);
+    return appeal!;
+  }
+
+  it("reads the reasons the detail returns to this seated member", async () => {
+    const get = vi.fn(async () => ({
+      viewer_on_panel: true,
+      viewer_vote: "upheld",
+      viewer_voted_at: "2026-11-18T09:30:00Z",
+      viewer_reasons: ["The ruling matches MOD-01.", "The clause is clear."],
+      votes_cast: 1,
+    }));
+
+    const [enriched] = await enrichAppealCases([oneAppeal()], { get } as never);
+
+    // One string for the textarea: the reasons the member gave, in order.
+    expect(enriched?.viewerReasons).toBe(
+      "The ruling matches MOD-01.\n\nThe clause is clear.",
+    );
+  });
+
+  it("has no reasons when the API returns none", async () => {
+    const get = vi.fn(async () => ({
+      viewer_on_panel: true,
+      viewer_vote: "upheld",
+      viewer_voted_at: "2026-11-18T09:30:00Z",
+      viewer_reasons: null,
+      votes_cast: 1,
+    }));
+
+    const [enriched] = await enrichAppealCases([oneAppeal()], { get } as never);
+
+    expect(enriched?.viewerReasons).toBeNull();
   });
 });
 

@@ -171,6 +171,7 @@ export function AppealCard({
           appealCid={appeal.appealCid}
           castVote={castVote}
           recordedOutcome={appeal.viewerVote ?? null}
+          recordedReasons={appeal.viewerReasons ?? null}
           recordedAt={appeal.viewerVotedAt ?? null}
           votesCast={appeal.votesCast ?? null}
           onDecided={() => setDecidedNow(true)}

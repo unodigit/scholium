@@ -519,6 +519,49 @@ describe("notification wording", () => {
     expect(notificationKindLabel("appeal.panel")).toBe("Appeal panel");
   });
 
+  it("labels a restoration that answered an appeal as an appeal outcome", () => {
+    // The API settles the author's release notice with the appeal it answers;
+    // the dashboard labels that notice like the upheld one.
+    const sentence =
+      'The appeal panel overturned the decision to hide your post on "A paper under appeal"; it is visible again.';
+    const [item] = parseNotifications([
+      {
+        id: 1,
+        did: "did:key:z6MkAuthor",
+        kind: "moderation.outcome",
+        read: false,
+        payload: {
+          action: "release",
+          target_cid: "bafy-post-1",
+          target_kind: "post",
+          appeal: "bafy-appeal-1",
+          summary: sentence,
+          outcome: sentence,
+        },
+      },
+    ]);
+
+    expect(item?.kind).toBe("appeal.decision");
+    expect(notificationKindLabel(item!.kind)).toBe("Appeal outcome");
+    expect(notificationSummary(item!)).toBe(sentence);
+    expect(notificationDetail(item!)).toBeNull();
+  });
+
+  it("keeps a release no appeal answers a moderation outcome", () => {
+    const [item] = parseNotifications([
+      {
+        id: 2,
+        did: "did:key:z6MkAuthor",
+        kind: "moderation.outcome",
+        read: false,
+        payload: { action: "release", target_cid: "bafy-post-1", summary: "A moderator released your post." },
+      },
+    ]);
+
+    expect(item?.kind).toBe("moderation.outcome");
+    expect(notificationKindLabel(item!.kind)).toBe("Moderation outcome");
+  });
+
   it("shows the appeal-outcome sentence the API wrote and links to what it names", () => {
     const upheld = 'The appeal panel upheld the decision to hold "A paper under appeal".';
     const payload = {

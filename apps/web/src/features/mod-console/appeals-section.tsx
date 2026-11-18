@@ -23,7 +23,12 @@ import {
   loadAppealsForViewer,
   type AppealsLoad,
 } from "./appeals";
-import type { FallbackDecider, VoteCaster } from "./panel-vote";
+import {
+  castPanelVote,
+  decideAppealWithoutPanel,
+  type FallbackDecider,
+  type VoteCaster,
+} from "./panel-vote";
 import "./mod-console.css";
 
 /** Loads the appeals; replaceable in tests. */
@@ -56,10 +61,46 @@ export function AppealsSection({
   const [state, setState] = useState<SectionState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const headingId = useId();
+  // Appeals a vote of the viewer's has decided since the list loaded. The card
+  // marks itself decided at once; the tally above the list counts from this so
+  // the two never disagree until a reload (which the log already reflects).
+  const [decidedCids, setDecidedCids] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+
+  const markDecided = useCallback((appealCid: string) => {
+    setDecidedCids((current) =>
+      current.has(appealCid) ? current : new Set(current).add(appealCid),
+    );
+  }, []);
 
   const reload = useCallback(() => {
     setAttempt((count) => count + 1);
   }, []);
+
+  // The section owns the count, so it wraps whichever caster it is given: a
+  // published decision is folded into the tally in the same update as the
+  // card's "Decided by the panel".
+  const trackVote = useCallback<VoteCaster>(
+    async (appealCid, draft) => {
+      const result = await (castVote ?? castPanelVote)(appealCid, draft);
+      if (result.decisionCid !== null) markDecided(appealCid);
+      return result;
+    },
+    [castVote, markDecided],
+  );
+
+  const trackFallback = useCallback<FallbackDecider>(
+    async (appealCid, draft) => {
+      const result = await (decideWithoutPanel ?? decideAppealWithoutPanel)(
+        appealCid,
+        draft,
+      );
+      if (result.decisionCid !== null) markDecided(appealCid);
+      return result;
+    },
+    [decideWithoutPanel, markDecided],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -145,8 +186,9 @@ export function AppealsSection({
           load={state.load}
           refreshing={state.refreshing}
           onRefresh={reload}
-          castVote={castVote}
-          decideWithoutPanel={decideWithoutPanel}
+          castVote={trackVote}
+          decideWithoutPanel={trackFallback}
+          decidedCids={decidedCids}
           loadPerson={loadPerson}
         />
       ) : null}
@@ -160,6 +202,7 @@ function AppealsList({
   onRefresh,
   castVote,
   decideWithoutPanel,
+  decidedCids,
   loadPerson,
 }: {
   load: AppealsLoad;
@@ -167,6 +210,8 @@ function AppealsList({
   onRefresh: () => void;
   castVote: VoteCaster | undefined;
   decideWithoutPanel: FallbackDecider | undefined;
+  /** Appeals a vote of the viewer's decided after the list loaded. */
+  decidedCids: ReadonlySet<string>;
   loadPerson?: LoadPersonName;
 }) {
   const { cases, truncated } = load;
@@ -188,7 +233,11 @@ function AppealsList({
     );
   }
 
-  const open = cases.filter(isAppealOpen).length;
+  // A card's own "Decided by the panel" and this tally are the same state: an
+  // appeal the viewer just decided is counted as decided here too.
+  const open = cases.filter(
+    (appeal) => isAppealOpen(appeal) && !decidedCids.has(appeal.appealCid),
+  ).length;
   return (
     <>
       <div className="mc-toolbar">

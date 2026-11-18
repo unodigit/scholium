@@ -7,6 +7,7 @@ The module loader mounts this router under ``/v1``, so the routes below serve
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
@@ -14,12 +15,14 @@ from fastapi import APIRouter, Body, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from app import db
 from app.errors import ProblemException
 from app.modules import submissions
 from app.modules.ingest import ingest
 from app.security import Principal, Tier, get_current_principal, require_tier
 
 from .errors import AppealNotFound
+from .models import AppealVoteReasons, ensure_tables as ensure_appeal_tables
 from .panel import get_panel
 from .service import (
     APPEAL_TYPE,
@@ -33,6 +36,8 @@ from .subject import describe_subject, readable_content
 from .votes import cast_vote, decide_without_panel, decision_for_appeal, vote_fields
 
 __all__ = ["AppealAccepted", "AppealDetailOut", "PanelSeatOut", "VoteAccepted", "router"]
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/appeals", tags=["appeals"])
 
@@ -168,6 +173,11 @@ class AppealDetailOut(BaseModel):
     #: When the caller's vote was cast (UTC), when they hold a seat and have
     #: voted.  A reloaded vote form opens in its recorded state with it.
     viewer_voted_at: Optional[datetime] = None
+    #: The reasons the caller gave with their vote on file, when they hold a
+    #: seat and recorded any.  Nobody else reads them: they are the member's own
+    #: words, and the published decision carries the agreed members' reasons.
+    #: "Change my vote" opens with them so a change does not silently drop them.
+    viewer_reasons: Optional[list[str]] = None
     #: How many of the panel's seats carry a vote; the panel's own tally, shown
     #: only to a caller who may see the panel (nobody else is told how the
     #: panel is getting on).
@@ -205,6 +215,27 @@ class AppealDetailOut(BaseModel):
 
 #: Bearer credentials, read to widen the appeal view for its panel and tier 4.
 _bearer = HTTPBearer(auto_error=False)
+
+
+def _viewer_reasons(appeal_cid: str, member_did: str) -> list[str]:
+    """The reasons ``member_did`` gave with their vote on ``appeal_cid``, if any.
+
+    Read from ``appeal_vote_reasons``, the table beside the seat
+    (``appeal_panels`` has no column for them).  A read that fails leaves the
+    form without its reasons, never fails the appeal view.
+    """
+    try:
+        ensure_appeal_tables()
+        with db.SessionLocal() as session:
+            row = session.get(AppealVoteReasons, (appeal_cid, member_did))
+            if row is None:
+                return []
+            return [
+                item for item in (row.reasons or ()) if isinstance(item, str) and item.strip()
+            ]
+    except Exception:  # pragma: no cover - the reasons are a convenience
+        logger.debug("could not read the vote reasons of %s", member_did, exc_info=True)
+        return []
 
 
 def _optional_principal(
@@ -250,6 +281,7 @@ def get_appeal_detail(
 
     viewer_vote: Optional[str] = None
     viewer_voted_at: Optional[datetime] = None
+    viewer_reasons: Optional[list[str]] = None
     if on_panel and caller is not None:
         for seat in seats:
             if str(seat.member_did) != caller.did:
@@ -263,6 +295,9 @@ def get_appeal_detail(
                     if voted_at.tzinfo is None
                     else voted_at.astimezone(timezone.utc)
                 )
+        # Only this seated member reads their own reasons; the panel's tally
+        # and the other seats' reasons stay with the published decision.
+        viewer_reasons = _viewer_reasons(cid, caller.did) or None
     # The tally is the panel's business; a reader outside it is not told.
     votes_cast = (
         sum(1 for seat in seats if isinstance(seat.vote, str) and seat.vote)
@@ -317,6 +352,7 @@ def get_appeal_detail(
         viewer_on_panel=on_panel,
         viewer_vote=viewer_vote,
         viewer_voted_at=viewer_voted_at,
+        viewer_reasons=viewer_reasons,
         votes_cast=votes_cast,
         target_cid=target_cid,
         target_kind=subject.kind if subject is not None else None,

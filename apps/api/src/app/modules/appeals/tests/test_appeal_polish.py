@@ -28,6 +28,7 @@ from scholium_record_core import sign_record, verify_record
 from app.modules import flags
 from app.modules.appeals import get_appeal, get_panel, panel as panel_module
 from app.modules.appeals.service import panel_exclusions, resolve_decision
+from app.modules.appeals.subject import AppealSubject, seat_summary
 from app.modules.moderation.tests.test_decisions import (
     DECISIONS_URL,
     Moderator,
@@ -279,6 +280,45 @@ def test_the_detail_still_gives_the_viewers_vote_once_the_panel_decides(client, 
     assert body["votes_cast"] == 2
 
 
+def test_the_detail_gives_a_seated_member_their_own_reasons_and_no_one_else(client, pool):
+    """A reloaded "Change my vote" pre-fills the reasons from this answer."""
+    scene = HiddenPost(client)
+    seated = _seat_pool()[:3]
+    pool(*seated)
+    record = scene.appeal()
+    assert sorted(_members(record["id"])) == sorted(seated)
+
+    before = _detail(client, record["id"], seated[0])
+    assert before["viewer_reasons"] is None
+
+    vote = client.post(
+        VOTES_URL.format(cid=record["id"]),
+        json={"outcome": "upheld", "reasons": "The post broke MOD-09."},
+        headers=_bearer(seated[0]),
+    )
+    assert vote.status_code == 200, vote.text
+
+    assert _detail(client, record["id"], seated[0])["viewer_reasons"] == [
+        "The post broke MOD-09."
+    ]
+    # Another seated member sees their own (none), never this member's.
+    assert _detail(client, record["id"], seated[1])["viewer_reasons"] is None
+    # Nor does a moderator outside the panel, or an anonymous reader.
+    assert _detail(client, record["id"], scene.moderator.did, 4)["viewer_reasons"] is None
+    assert _detail(client, record["id"], None)["viewer_reasons"] is None
+
+    # Changing the vote replaces what "Change my vote" would pre-fill.
+    changed = client.post(
+        VOTES_URL.format(cid=record["id"]),
+        json={"outcome": "overturned", "reasons": "The excerpt is not abusive."},
+        headers=_bearer(seated[0]),
+    )
+    assert changed.status_code == 200, changed.text
+    assert _detail(client, record["id"], seated[0])["viewer_reasons"] == [
+        "The excerpt is not abusive."
+    ]
+
+
 def test_the_detail_describes_the_hidden_post(client, pool):
     scene = HiddenPost(client)
     pool(*_seat_pool()[:3])
@@ -320,9 +360,43 @@ def test_the_seat_notice_for_a_hidden_post_names_the_post_and_writes_the_date_in
     summary = _seat_notice(seated[0], record["id"]).payload["summary"]
 
     assert f'hidden post on "{scene.title}"' in summary
+    # The excerpt tells two appeals about posts on the same paper apart.
+    assert f'("{scene.text}...")' in summary
     assert summary != "Vote on an appeal panel."
     assert not ISO_DAY.search(summary)
     assert re.search(r" by \d{1,2} [A-Z][a-z]{2} \d{4}\.$", summary)
+
+
+def test_two_post_appeals_on_the_same_paper_read_differently():
+    """The same paper title alone made two hidden-post appeals indistinguishable."""
+    deadline = datetime(2026, 12, 3, 12, 0, tzinfo=timezone.utc)
+    first = AppealSubject(
+        target_cid="bafy-post-one",
+        kind="post",
+        title="A paper under appeal",
+        excerpt="The first hidden post.",
+        action="hide",
+    )
+    second = AppealSubject(
+        target_cid="bafy-post-two",
+        kind="post",
+        title="A paper under appeal",
+        excerpt="The second hidden post.",
+        action="hide",
+    )
+
+    one = seat_summary(first, deadline)
+    two = seat_summary(second, deadline)
+
+    assert one != two
+    assert one == (
+        'Vote on the appeal of a hidden post on "A paper under appeal" '
+        '("The first hidden post...") by 3 Dec 2026.'
+    )
+    assert two == (
+        'Vote on the appeal of a hidden post on "A paper under appeal" '
+        '("The second hidden post...") by 3 Dec 2026.'
+    )
 
 
 def test_the_attention_item_for_a_hidden_post_names_the_post(client, pool):
@@ -341,6 +415,7 @@ def test_the_attention_item_for_a_hidden_post_names_the_post(client, pool):
     assert items, response.json()
     summary = items[0]["summary"]
     assert f'hidden post on "{scene.title}"' in summary
+    assert f'("{scene.text}...")' in summary
     assert not ISO_DAY.search(summary)
     # The sentence is for reading; the fields beside it stay machine-readable.
     assert ISO_DAY.fullmatch(items[0]["dueAt"])
@@ -393,6 +468,8 @@ def test_the_authors_overturn_notice_names_the_post_and_shows_no_cid(client, poo
         if row.payload.get("action") == "release"
     ]
     assert len(notices) == 1
+    # The dashboard reads this marker to label the notice "Appeal outcome".
+    assert notices[0].payload["appeal"] == record["id"]
     payload = notices[0].payload
     assert payload["summary"] == (
         f'The appeal panel overturned the decision to hide your post on "{scene.title}"; '
@@ -464,5 +541,9 @@ def test_a_release_a_moderator_signs_on_their_own_is_not_credited_to_a_panel(cli
         if row.payload.get("action") == "release"
     ]
     assert len(notices) == 1
+    # No appeal answered it, so it carries no appeal marker and stays a
+    # moderation outcome on the dashboard.
+    assert notices[0].kind == "moderation.outcome"
+    assert "appeal" not in notices[0].payload
     assert "appeal panel" not in notices[0].payload["summary"]
     assert notices[0].payload.get("reason") == "Hidden by mistake."

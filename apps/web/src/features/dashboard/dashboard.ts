@@ -804,6 +804,27 @@ export class NotificationsError extends Error {
 }
 
 /**
+ * The kind the dashboard reads on screen.
+ *
+ * A release a panel's overturned appeal produced is recorded by the API under
+ * the moderation kind (it is still a moderation decision) and settled with the
+ * appeal it answers in `payload.appeal`.  The inbox labels it "Appeal outcome",
+ * like the notice an upheld appeal sends, instead of "Moderation outcome"; a
+ * release a moderator signed on their own carries no appeal marker and stays
+ * the moderation outcome it is.
+ */
+function dashboardKind(kind: string, payload: Readonly<Record<string, unknown>>): string {
+  if (
+    (kind === "moderation.outcome" || kind === "moderation.decision") &&
+    readText(payload.action) === "release" &&
+    readText(payload.appeal) !== null
+  ) {
+    return "appeal.decision";
+  }
+  return kind;
+}
+
+/**
  * Validate a `GET /v1/me/notifications` body.
  *
  * A body that is not a list, or a row with no `id` (it could never be marked
@@ -820,11 +841,13 @@ export function parseNotifications(payload: unknown): NotificationItem[] {
     if (!isRecord(row) || id === null) {
       throw new NotificationsError(`Notification ${index + 1} has no id.`);
     }
+    const body = isRecord(row.payload) ? row.payload : {};
+    const kind = readText(row.kind) ?? "notification";
     return {
       id: Math.trunc(id),
       did: readText(row.did) ?? "",
-      kind: readText(row.kind) ?? "notification",
-      payload: isRecord(row.payload) ? row.payload : {},
+      kind: dashboardKind(kind, body),
+      payload: body,
       // Unknown state reads as "needs your attention", like the nav's badge.
       read: row.read === true,
     };

@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppealCard } from "./appeal-card";
+import { AppealsSection } from "./appeals-section";
 import type { AppealCase, AppealSubject } from "./appeals";
+import type { VoteAccepted, VoteCaster } from "./panel-vote";
 
 afterEach(cleanup);
 
@@ -163,6 +165,25 @@ describe("a panel member's recorded vote after a reload", () => {
     expect(view.queryByRole("button", { name: "Cast my vote" })).toBeNull();
   });
 
+  it("pre-fills the recorded reasons when the member changes their vote", () => {
+    const view = card(
+      versionAppeal({
+        viewerOnPanel: true,
+        viewerVote: "upheld",
+        viewerVotedAt: "2026-11-18T09:30:00Z",
+        votesCast: 1,
+        viewerReasons: "The ruling matches MOD-01.",
+      }),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Change my vote" }));
+
+    expect((view.getByLabelText(/Your reasons/) as HTMLTextAreaElement).value).toBe(
+      "The ruling matches MOD-01.",
+    );
+    expect(view.queryByText(/did not send the reasons/i)).toBeNull();
+  });
+
   it("leaves the blank form to a seated member who has not voted", () => {
     const view = card(
       versionAppeal({ viewerOnPanel: true, viewerVote: null, votesCast: 0 }),
@@ -200,5 +221,43 @@ describe("an appeal against a paper", () => {
     const view = card(versionAppeal({ viewerOnPanel: true }));
 
     expect(view.getByRole("link", { name: "Read the paper" }).getAttribute("href")).toBe("/mod/bafy-version-1");
+  });
+});
+
+describe("the Appeals summary", () => {
+  it("counts a deciding vote decided in the same render as the card", async () => {
+    const decided: VoteAccepted = {
+      appealCid: "bafy-appeal-1",
+      outcome: "overturned",
+      votes: 2,
+      decisionCid: "bafy-panel-decision",
+      decidedOutcome: "overturned",
+    };
+    const castVote = vi.fn<VoteCaster>().mockResolvedValue(decided);
+
+    render(
+      <AppealsSection
+        loadAppeals={async () => ({ cases: [postAppeal()], truncated: false })}
+        castVote={castVote}
+        loadPerson={async () => null}
+      />,
+    );
+
+    expect(
+      await screen.findByText("1 appeal waiting for a panel · 0 decided"),
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/Outcome/), {
+      target: { value: "overturned" },
+    });
+    fireEvent.change(screen.getByLabelText(/Your reasons/), {
+      target: { value: "In scope of MOD-01." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cast my vote" }));
+
+    expect(await screen.findByText("Decided by the panel")).toBeTruthy();
+    expect(
+      screen.getByText("0 appeals waiting for a panel · 1 decided"),
+    ).toBeTruthy();
   });
 });
