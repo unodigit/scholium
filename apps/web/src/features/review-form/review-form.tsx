@@ -195,6 +195,22 @@ export const COMMIT_NOTE = COMMIT_NOTE_ANONYMOUS;
 export const UPDATE_NOTE =
   "An update is published immediately: your scores and recommendation are public at once. Your written report follows the version's gate, unsealing once 2 reviews are committed on this version, or 21 days after the first commit.";
 
+/**
+ * The hint under the Written report box on the commit form. Nothing is public
+ * yet: the whole review, report included, stays sealed until it is revealed.
+ */
+export const COMMIT_REPORT_HINT =
+  "Markdown is allowed. Your report is published with the rubric when the review is revealed; leave it blank if the rubric says everything.";
+
+/**
+ * The hint under the Written report box on an update form. It says the same
+ * thing as {@link UPDATE_NOTE}: an update is published when it is posted, so
+ * the commit form's "when the review is revealed" is false here, while the
+ * written report still follows the version's gate (REV-4).
+ */
+export const UPDATE_REPORT_HINT =
+  "Markdown is allowed. Your scores and recommendation are published immediately; your written report follows the version's gate, unsealing once 2 reviews are committed on this version, or 21 days after the first commit. Leave it blank if the rubric says everything.";
+
 /** Signs and sends the review; replaceable in tests. */
 export type CommitReview = (input: ReviewCommitInput) => Promise<ReviewCommitResult>;
 
@@ -798,8 +814,7 @@ function ReviewFormBody({
             Written report <span className="rf-optional">(optional)</span>
           </label>
           <p className="rf-field-hint" id={`${uid}-report-hint`}>
-            Markdown is allowed. Your report is published with the rubric when
-            the review is revealed; leave it blank if the rubric says everything.
+            {isUpdate ? UPDATE_REPORT_HINT : COMMIT_REPORT_HINT}
           </p>
           <textarea
             id={`${uid}-report`}

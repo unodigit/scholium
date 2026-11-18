@@ -193,6 +193,71 @@ describe("the layout (docs/design.md §5.2)", () => {
     expect(wide).toMatch(/max-inline-size:\s*100%/);
   });
 
+  it("fits the margin panel's children inside its content box, never a few pixels wider", () => {
+    // The proof bar's pill is an inline-flex with `white-space: nowrap` in
+    // verify-badge.css, so its min-content width can exceed the 360 px column
+    // and it was clipped 4 px at the edge (journey 15 step 6). The panel and
+    // every row in it shrink to the column and let the pill's label wrap.
+    for (const selector of [".ppg-proofbar", ".ppg-proofbar-row"]) {
+      const rule = declarations(page, selector);
+      expect(rule, selector).toMatch(/box-sizing:\s*border-box/);
+      expect(rule, selector).toMatch(/min-inline-size:\s*0/);
+      expect(rule, selector).toMatch(/max-inline-size:\s*100%/);
+    }
+
+    // The pill itself (its wrapper and its link) is a flex item here, so it
+    // gets the explicit min/max that a flex item needs to shrink below its
+    // nowrap min-content width.
+    for (const selector of [
+      ".ppg-proofbar-row .sch-verify",
+      ".ppg-proofbar-row .sch-verify__link",
+    ]) {
+      const rule = declarations(page, selector);
+      expect(rule, selector).toMatch(/box-sizing:\s*border-box/);
+      expect(rule, selector).toMatch(/min-inline-size:\s*0/);
+      expect(rule, selector).toMatch(/max-inline-size:\s*100%/);
+    }
+    expect(
+      declarations(page, ".ppg-proofbar-row .sch-verify__link"),
+    ).toMatch(/white-space:\s*normal/);
+
+    // "Anchor pending" sits in a flex row too; a long label wraps rather than
+    // pushing past the panel's edge.
+    const anchor = declarations(page, ".ppg-anchor");
+    expect(anchor).toMatch(/box-sizing:\s*border-box/);
+    expect(anchor).toMatch(/min-inline-size:\s*0/);
+    expect(anchor).toMatch(/max-inline-size:\s*100%/);
+    expect(declarations(page, ".ppg-anchor > span")).toMatch(
+      /min-inline-size:\s*0/,
+    );
+    expect(declarations(page, ".ppg-anchor > span")).toMatch(
+      /overflow-wrap:\s*anywhere/,
+    );
+  });
+
+  it("gives no child of the margin column a fixed width wider than its 360 px track", () => {
+    // --margin-panel is 22.5rem = 360 px. A literal width on a rule that
+    // belongs to the panel must not exceed it; percentages, tokens and calc()
+    // are how the panel stays inside its column.
+    const trackPx = 360;
+    const panelSelectors = /\.ppg-(?:margin|proofbar|tabs|tabpanel|anchor|details)\b/;
+    const tooWide: string[] = [];
+    for (const { selector, body } of blocks(page.rules)) {
+      if (!panelSelectors.test(selector)) continue;
+      for (const match of body.matchAll(/(?:^|;)\s*(inline-size|width):\s*([^;]+)/g)) {
+        const value = match[2].trim();
+        const fixed = /^([\d.]+)(px|rem)$/.exec(value);
+        if (fixed === null) continue;
+        const px =
+          fixed[2] === "rem" ? Number(fixed[1]) * 16 : Number(fixed[1]);
+        if (px > trackPx) {
+          tooWide.push(`${selector} { ${match[1]}: ${value} }`);
+        }
+      }
+    }
+    expect(tooWide).toEqual([]);
+  });
+
   it("scrolls the margin vertically only, so no sideways scrollbar appears under the cards", () => {
     // A scroll container that can scroll one way may scroll the other too;
     // the panel's and the drawer/sheet body's overflow is pinned to vertical.

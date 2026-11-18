@@ -22,13 +22,26 @@
  *   "Check for approvals" re-reads the status; a cancel prompts for the
  *   passkey of the key still on the account.
  *
- * Behaviour lives in `useRecover`; this file is markup only.
+ * Behaviour lives in `useRecover`; this file is markup only, apart from one
+ * best-effort read: once the status route names the account's DID, the page
+ * reads its public profile so the card names the person by the name they
+ * chose, with the ORCID iD secondary.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
-import { normalizeOrcid, isCancellable, formatRecoveryDeadline, type RecoverySnapshot } from "./recover";
+import { apiClient } from "../../lib/api";
+
+import {
+  fetchRecoveryStatus,
+  loadRecoveryAccountName,
+  normalizeOrcid,
+  isCancellable,
+  formatRecoveryDeadline,
+  type RecoveryClient,
+  type RecoverySnapshot,
+} from "./recover";
 import {
   RECOVER_ACCOUNT_LABEL,
   RECOVER_APPROVALS_HEADING,
@@ -51,6 +64,7 @@ import {
   RECOVER_START_ACTION,
   RECOVER_STATUS_UNAVAILABLE_NOTE,
   RECOVER_TITLE,
+  recoveryAccountLabel,
   recoveryProgressLine,
   recoveryProgressNote,
   recoveryStatusLabel,
@@ -71,6 +85,9 @@ export interface RecoverFormProps {
 /** The `/recover` page. */
 export function RecoverForm({ requestId, initialOrcid, services }: RecoverFormProps) {
   const recover = useRecover({ requestId, initialOrcid, services });
+  // The profile name of the account is read from the API slice the page was
+  // given, so a test (or a host) sees the read it injects.
+  const client = services?.client ?? apiClient;
 
   return (
     <section className="wa-card wa-recover" aria-labelledby="recover-heading">
@@ -80,7 +97,11 @@ export function RecoverForm({ requestId, initialOrcid, services }: RecoverFormPr
       </h1>
 
       {recover.snapshot ? (
-        <ProgressBody recover={recover} snapshot={recover.snapshot} />
+        <ProgressBody
+          recover={recover}
+          snapshot={recover.snapshot}
+          client={client}
+        />
       ) : (
         <IdentifyBody recover={recover} initialOrcid={initialOrcid} />
       )}
@@ -171,9 +192,12 @@ function IdentifyBody({
 function ProgressBody({
   recover,
   snapshot,
+  client,
 }: {
   recover: RecoverState;
   snapshot: RecoverySnapshot;
+  /** API slice for the account's public profile read. */
+  client: RecoveryClient;
 }) {
   const progressLine = recoveryProgressLine(snapshot);
   const threshold = Math.max(1, snapshot.threshold);
@@ -181,23 +205,67 @@ function ProgressBody({
   const percent = Math.round((done / threshold) * 100);
   const cancellable = isCancellable(snapshot);
 
+  // The public profile name of the account being recovered. The status route
+  // names its DID; when this browser's snapshot predates that reply (or was
+  // opened before any status read) it is read once here. A profile that cannot
+  // be read leaves the ORCID iD on the card.
+  const accountDid = snapshot.accountDid?.trim() ?? "";
+  const [accountName, setAccountName] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async (): Promise<string | null> => {
+      let did = accountDid;
+      if (did === "" && snapshot.requestId.trim() !== "") {
+        try {
+          did =
+            (await fetchRecoveryStatus(snapshot.requestId, client)).accountDid?.trim() ??
+            "";
+        } catch {
+          return null;
+        }
+      }
+      return did === "" ? null : loadRecoveryAccountName(did, client);
+    };
+    void load().then((name) => {
+      if (!cancelled) {
+        setAccountName(name);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountDid, client, snapshot.requestId]);
+
   return (
     <>
-      <p className="wa-lede">
-        {snapshot.orcid
-          ? `Recovering ${snapshot.orcid}.`
-          : "Recovering the account you identified."}
-      </p>
+      <p className="wa-lede">{`Recovering ${recoveryAccountLabel(
+        accountName,
+        snapshot.orcid,
+      )}.`}</p>
 
       <dl className="wa-recover-facts">
         <div className="wa-recover-fact">
           <dt>{RECOVER_REQUEST_ID_LABEL}</dt>
           <dd className="wa-mono">{snapshot.requestId}</dd>
         </div>
-        {snapshot.orcid ? (
+        {snapshot.orcid || accountName !== null ? (
           <div className="wa-recover-fact">
             <dt>{RECOVER_ACCOUNT_LABEL}</dt>
-            <dd className="wa-mono">{snapshot.orcid}</dd>
+            <dd className={accountName === null ? "wa-mono" : undefined}>
+              {accountName === null ? (
+                snapshot.orcid
+              ) : (
+                <>
+                  <span>{accountName}</span>
+                  {snapshot.orcid ? (
+                    <>
+                      {" "}
+                      <span className="wa-mono">{snapshot.orcid}</span>
+                    </>
+                  ) : null}
+                </>
+              )}
+            </dd>
           </div>
         ) : null}
       </dl>
