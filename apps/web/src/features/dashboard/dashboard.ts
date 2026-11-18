@@ -1000,7 +1000,7 @@ function recoverySummary(payload: Readonly<Record<string, unknown>>): string | n
   if (contestUntil !== null) {
     const on = formatDate(contestUntil);
     return on
-      ? `The recovery request${from} approved - the new passkey takes over on ${on}.`
+      ? `The recovery request${from} was approved — the new passkey takes over on ${on}.`
       : `The recovery request${from} approved.`;
   }
   return null;

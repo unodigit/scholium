@@ -131,7 +131,7 @@ def test_a_short_panel_is_visible_to_its_author_and_reported(client, pool):
         and note.payload.get("appeal_cid") == record["id"]
     ]
     assert moderator_notes
-    assert "only 2 of the 3" in moderator_notes[0].payload["summary"]
+    assert "Only 2 eligible members are available; a panel needs 3." in moderator_notes[0].payload["summary"]
 
     appellant_notes = [
         note

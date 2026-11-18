@@ -253,7 +253,7 @@ export function AuthorsStep({
     pendingFocus.current = `sw-author-${author.key}-${atEdge ? (pressed === "up" ? "down" : "up") : pressed}`;
   };
 
-  const blockers = authorsBlockers(authors);
+  const blockers = authorsBlockers(namedAuthors);
   const stillLooking = authors.find((author) => looking.has(author.key));
   const complete = canContinueAuthors(authors) && stillLooking === undefined;
   const canContinue = complete && onContinue !== undefined;

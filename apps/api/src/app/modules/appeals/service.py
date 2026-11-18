@@ -584,13 +584,23 @@ def notify_panel_missing(
             "has passed; a tier-4 moderator who is not involved in the decision "
             "may decide it without a panel"
         )
+        summary = f"No panel has decided the appeal {phrase} yet: {reason}."
     else:
         kind = PANEL_NOT_FORMED_KIND
-        reason = (
-            f"only {eligible} of the {needed} eligible members are available, so no "
-            "panel could be formed; the draw is retried as members become available"
+        # ``eligible`` counts the members who exist, ``needed`` is the panel's
+        # size: two eligible members for a panel of three is "only 2 ... a panel
+        # needs 3", not "2 of the 3 eligible".
+        if eligible == 0:
+            available = "No eligible members are available"
+        elif eligible == 1:
+            available = "Only 1 eligible member is available"
+        else:
+            available = f"Only {eligible} eligible members are available"
+        summary = (
+            f"No panel has decided the appeal {phrase} yet. "
+            f"{available}; a panel needs {needed}. "
+            "The draw is retried as members become available."
         )
-    summary = f"No panel has decided the appeal {phrase} yet: {reason}."
 
     payload = {
         "appeal_cid": str(appeal.appeal_cid),

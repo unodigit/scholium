@@ -610,7 +610,7 @@ describe("notification wording", () => {
           },
         }),
       ).toBe(
-        "The recovery request from Hanna Varga approved - the new passkey takes over on 20 Nov 2026.",
+        "The recovery request from Hanna Varga was approved — the new passkey takes over on 20 Nov 2026.",
       );
     });
 
