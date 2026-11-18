@@ -210,6 +210,34 @@ def test_create_app_refuses_unsafe_production(monkeypatch, tmp_path):
     assert "COMMITTEE_PUBLIC_KEY" in str(err.value)
 
 
+@pytest.mark.parametrize("value", ["gpt", "opnai", "deepseek", "anthropic,openai"])
+def test_create_app_refuses_an_unknown_ai_provider_in_development_too(monkeypatch, value):
+    """Like an unknown JOBS_MODE, a mistyped AI_PROVIDER stops the app in every environment."""
+    monkeypatch.setattr(settings, "SCHOLIUM_ENV", "dev")
+    monkeypatch.setattr(settings, "AI_PROVIDER", value)
+    with pytest.raises(RuntimeError) as err:
+        main.create_app()
+    message = str(err.value)
+    assert "AI_PROVIDER" in message
+    for accepted in ("fake", "anthropic", "openai", "ollama"):
+        assert accepted in message
+
+
+def test_production_refuses_openai_without_its_key_and_model(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AI_HOSTED_MODEL", raising=False)
+    unsafe = _safe_production_settings(tmp_path, monkeypatch)
+    unsafe.AI_PROVIDER = "openai"
+    unsafe.OPENAI_API_KEY = ""
+    with pytest.raises(RuntimeError) as err:
+        unsafe.validate_for_environment()
+    assert "OPENAI_API_KEY" in str(err.value) and "AI_HOSTED_MODEL" in str(err.value)
+
+    monkeypatch.setenv("AI_HOSTED_MODEL", "gpt-example")
+    unsafe.OPENAI_API_KEY = "sk-test-key"
+    unsafe.validate_for_environment()
+
+
 def test_review_uniqueness_key_dev_default_is_derived_and_distinct(monkeypatch):
     monkeypatch.delenv("REVIEW_UNIQUENESS_KEY", raising=False)
     first = Settings()

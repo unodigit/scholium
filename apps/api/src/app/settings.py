@@ -24,8 +24,16 @@ _REVIEW_UNIQUENESS_KEY_LABEL = b"scholium:review-uniqueness:dev-key:v1:"
 #: Hosts that only ever make sense on a developer machine.
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
-#: Hosted AI providers and the environment variable holding their API key.
+#: Hosted AI providers whose API key is read from the environment by their SDK.
+#: ``openai`` is checked by :meth:`Settings._openai_problems` instead.
 _HOSTED_AI_KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY"}
+
+#: Accepted values of ``AI_PROVIDER`` (see ``app.modules.ai_review.providers``).
+#: The ids name protocols, not vendors.
+_AI_PROVIDERS = ("fake", "anthropic", "openai", "ollama")
+
+#: ``OPENAI_BASE_URL`` when it is unset or blank: the OpenAI API itself.
+_DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 #: Accepted spellings of ``SCHOLIUM_ENV``, mapped to their canonical value.
 #: Anything else is unknown and is refused by
@@ -46,6 +54,15 @@ _STORAGE_BACKENDS = ("fs", "s3")
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
+
+
+def _base_url(name: str, default: str) -> str:
+    """A base URL from the environment without whitespace or trailing slashes.
+
+    Unset, blank or only slashes give ``default``, so ``OPENAI_BASE_URL=`` in a
+    compose file or ``.env`` behaves like not setting it.
+    """
+    return _env(name, default).strip().rstrip("/") or default
 
 
 def _normalise_environment(value: str) -> str:
@@ -270,8 +287,27 @@ class Settings:
     ORCID_CLIENT_SECRET: str = field(default_factory=lambda: _env("ORCID_CLIENT_SECRET", ""))
     ORCID_MOCK: int = field(default_factory=lambda: _int("ORCID_MOCK", 1))
     ARXIV_MOCK: int = field(default_factory=lambda: _int("ARXIV_MOCK", 1))
+    # fake | anthropic | openai | ollama, in any case and with surrounding
+    # spaces ignored (as ``get_provider`` reads it).  Anything else is refused by
+    # validate_for_environment in every environment.  ``openai`` names the
+    # OpenAI-compatible chat-completions protocol, not a vendor: point
+    # OPENAI_BASE_URL at any server that speaks it.
     AI_PROVIDER: str = field(default_factory=lambda: _env("AI_PROVIDER", "fake"))
+    # The hosted model id.  The default is an Anthropic model, so production
+    # refuses AI_PROVIDER=openai unless the variable is set explicitly.
     AI_HOSTED_MODEL: str = field(default_factory=lambda: _env("AI_HOSTED_MODEL", "claude-sonnet-5-5"))
+    # Where the Anthropic provider sends requests; empty means the Anthropic SDK
+    # default.
+    ANTHROPIC_BASE_URL: str = field(default_factory=lambda: _env("ANTHROPIC_BASE_URL", "").strip())
+    # OpenAI-compatible provider: the API key (empty when unset) and the base URL
+    # the ``/chat/completions`` path is appended to.  Secret: the key is excluded
+    # from repr() so it cannot reach logs or tracebacks.
+    OPENAI_API_KEY: str = field(
+        default_factory=lambda: _env("OPENAI_API_KEY", "").strip(), repr=False
+    )
+    OPENAI_BASE_URL: str = field(
+        default_factory=lambda: _base_url("OPENAI_BASE_URL", _DEFAULT_OPENAI_BASE_URL)
+    )
     OLLAMA_URL: str = field(default_factory=lambda: _env("OLLAMA_URL", "http://localhost:11434"))
     SMTP_URL: str = field(default_factory=lambda: _env("SMTP_URL", ""))
     JOBS_EAGER: int = field(default_factory=lambda: _int("JOBS_EAGER", 1))
@@ -376,6 +412,15 @@ class Settings:
                 f"Unknown STORAGE_BACKEND {self.STORAGE_BACKEND!r}; expected one of "
                 + ", ".join(_STORAGE_BACKENDS) + "."
             )
+        # Read as ``get_provider`` reads it (unset or empty means fake), so a
+        # value accepted here is one ``get_provider`` can build.
+        provider = (self.AI_PROVIDER or "fake").strip().lower()
+        if provider not in _AI_PROVIDERS:
+            # Nor may a typo leave every review failing at its first request.
+            raise RuntimeError(
+                f"Unknown AI_PROVIDER {self.AI_PROVIDER!r}; expected one of "
+                + ", ".join(_AI_PROVIDERS) + "."
+            )
         if environment != "production":
             if environment != "dev":
                 raise RuntimeError(
@@ -437,12 +482,13 @@ class Settings:
                     "when SANDBOX_BACKEND is remote"
                 )
         problems.extend(self._storage_problems())
-        provider = (self.AI_PROVIDER or "").strip().lower()
         if provider == "fake":
             problems.append("AI_PROVIDER must not be fake")
         key_env = _HOSTED_AI_KEY_ENV.get(provider)
         if key_env and not _env(key_env, "").strip():
             problems.append(f"{key_env} must be set when AI_PROVIDER is {provider}")
+        if provider == "openai":
+            problems.extend(self._openai_problems())
         if not self.RATE_LIMIT_ENABLED:
             problems.append("RATE_LIMIT_ENABLED must be 1 so write throttling is active in production")
         if "*" in self.web_origins:
@@ -464,6 +510,25 @@ class Settings:
             problems.append("NEXT_PUBLIC_API_URL must not point at localhost in production")
         if problems:
             raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
+
+    def _openai_problems(self) -> list[str]:
+        """What ``AI_PROVIDER=openai`` lacks to run in production.
+
+        The messages name the settings only; they never quote a key.
+        """
+        problems = []
+        # The attribute is what the provider sends; the environment is read too
+        # (as for ANTHROPIC_API_KEY) so a key exported after construction counts.
+        if not ((self.OPENAI_API_KEY or "").strip() or _env("OPENAI_API_KEY").strip()):
+            problems.append("OPENAI_API_KEY must be set when AI_PROVIDER is openai")
+        # The attribute's default is an Anthropic model id, which an
+        # OpenAI-compatible server would reject, so the variable itself must be set.
+        if not _env("AI_HOSTED_MODEL").strip():
+            problems.append(
+                "AI_HOSTED_MODEL must be set to a model the server serves when "
+                "AI_PROVIDER is openai (its default is an Anthropic model id)"
+            )
+        return problems
 
     def _storage_problems(self) -> list[str]:
         """What an ``s3`` storage backend lacks to run in production (``fs`` lacks nothing)."""
