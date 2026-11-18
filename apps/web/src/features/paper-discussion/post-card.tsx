@@ -31,11 +31,11 @@
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
-import { Icon } from "../ui-kit";
 import { LocalDate } from "../ui-kit/local-date";
 import { AppealForm } from "./appeal-form";
 import { ComposeForm } from "./compose-form";
 import {
+  appealFiledLabel,
   describeActionError,
   helpfulLabel,
   hiddenOwnNotice,
@@ -44,6 +44,7 @@ import {
   reportReason,
   type ActionFailure,
   type DiscussionPost,
+  type PostAppeal,
   type ReportReason,
 } from "./discussion";
 import { FlagIcon } from "./flag-icon";
@@ -119,6 +120,20 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
 
   const voted = actions.voted.has(post.cid);
   const reportedAs = actions.reported.get(post.cid) ?? null;
+  // The node's answer first: it survives a reload and another device. The
+  // tab's map only covers the moment between filing and the next read.
+  const appealedAt = actions.appealed?.get(post.cid) ?? null;
+  const appeal: PostAppeal | null =
+    post.appeal ??
+    (appealedAt === null
+      ? null
+      : {
+          cid: "",
+          filedAt: appealedAt,
+          status: "awaiting_panel",
+          outcome: null,
+          decidedAt: null,
+        });
   const replyId = `${uid}-reply`;
   const reportId = `${uid}-report`;
   const appealId = `${uid}-appeal`;
@@ -193,9 +208,9 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
         ) : null}
 
         {post.hidden === true ? (
-          isOwn && actions.appealed?.has(post.cid) ? (
+          isOwn && appeal !== null ? (
             <p className="pd-post__text pd-post__text--hidden" data-hidden="true" data-appeal-filed="true">
-              Appeal filed on <LocalDate value={actions.appealed.get(post.cid) ?? null} /> - awaiting panel
+              {appealFiledLabel(appeal)}
             </p>
           ) : isOwn ? (
             <>
@@ -325,12 +340,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
               Report{" "}
               <span className="pd-visually-hidden">{`post by ${who}`}</span>
             </button>
-          ) : (
-            <span className="pd-reported" data-reported={reportedAs}>
-              <Icon name="check" className="pd-reported__icon" />
-              Reported
-            </span>
-          )}
+          ) : null}
           </div>
         )}
 

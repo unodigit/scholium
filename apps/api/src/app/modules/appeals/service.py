@@ -94,14 +94,21 @@ from .errors import (
 )
 from .models import Appeal, AppealPanelMember, ensure_tables
 from .panel import derive_panel_seed, draw_panel, get_panel, panel_seed
-from .subject import AppealSubject, describe_subject, seat_summary
+from .subject import AppealSubject, describe_subject, format_day, seat_summary
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "APPEAL_MIN_TIER",
     "APPEAL_TYPE",
+    "PANEL_NOT_FORMED",
+    "PANEL_NOT_FORMED_KIND",
+    "PANEL_OVERDUE",
+    "PANEL_OVERDUE_KIND",
     "PANEL_SEATED_KIND",
+    "PANEL_STATUS_AWAITING",
+    "PANEL_STATUS_DECIDED",
+    "PANEL_STATUS_NOT_FORMED",
     "PANEL_VOTE_WINDOW",
     "PENDING",
     "AppealFields",
@@ -111,12 +118,16 @@ __all__ = [
     "get_appeal",
     "get_appeal_for_decision",
     "handle_appeal",
+    "notify_panel_missing",
     "notify_panel_seated",
     "panel_exclusions",
+    "panel_state",
     "persist_entry",
     "require_appellant",
     "resolve_decision",
+    "retry_pending_panels",
     "seat_panel",
+    "vote_deadline",
 ]
 
 #: The record type this module owns.
@@ -130,6 +141,24 @@ APPEAL_MIN_TIER = 0
 #: Status of an appeal no panel has decided yet.
 PENDING = "pending"
 
+#: Status of an appeal whose panel could not be drawn: fewer eligible members
+#: than :data:`~.panel.PANEL_SIZE`.  The appeal stays open and is retried; see
+#: :func:`retry_pending_panels`.
+PANEL_NOT_FORMED = "panel_not_formed"
+
+#: Status of a panel-less appeal whose vote deadline has passed.  A tier-4
+#: moderator who is not involved in the decision may now decide it without a
+#: panel; see :func:`~.votes.decide_without_panel`.
+PANEL_OVERDUE = "panel_overdue"
+
+#: The ``status`` values that mean "still open": no decision has been made.
+OPEN_STATUSES = (PENDING, PANEL_NOT_FORMED, PANEL_OVERDUE)
+
+#: How a reader sees the panel's state, independent of the raw status above.
+PANEL_STATUS_AWAITING = "awaiting_panel"
+PANEL_STATUS_NOT_FORMED = "not_formed"
+PANEL_STATUS_DECIDED = "decided"
+
 #: How long a drawn panel has to vote, counted from the appeal's ``filed_at``.
 #: The record schema fixes no deadline; the dashboard and the seat notice both
 #: state this one so a panellist knows when the vote is due.
@@ -141,6 +170,13 @@ PANEL_SEATED_KIND = "appeal.panel"
 #: Aliases covering the names a caller might reach for.
 PANEL_NOTIFICATION_KIND = PANEL_SEATED_KIND
 PANEL_SEAT_KIND = PANEL_SEATED_KIND
+
+#: Kind of the notice that no full panel could be drawn (tier-4 moderators and
+#: the appellant).  The appeal stays open; the draw is retried.
+PANEL_NOT_FORMED_KIND = "appeal.panel_missing"
+#: Kind of the notice that the deadline passed with no panel, so a tier-4
+#: moderator not involved in the decision may decide it without one.
+PANEL_OVERDUE_KIND = "appeal.panel_overdue"
 
 
 def _invalid(loc: list[Any], message: str, error_type: str, value: Any = None) -> InvalidRecord:
@@ -440,6 +476,228 @@ def get_appeal_for_decision(decision_cid: object) -> Optional[Appeal]:
         return row
 
 
+def _naive_utc(moment: Optional[datetime] = None) -> datetime:
+    """``moment`` (default: now) as the naive UTC the columns store."""
+    value = datetime.now(timezone.utc) if moment is None else moment
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def vote_deadline(appeal: Appeal) -> Optional[datetime]:
+    """When the panel's vote on ``appeal`` is due, or ``None`` for a bad date."""
+    filed = getattr(appeal, "filed_at", None)
+    if not isinstance(filed, datetime):
+        return None
+    return _naive_utc(filed) + PANEL_VOTE_WINDOW
+
+
+def panel_state(appeal: Appeal, *, decided: bool = False) -> str:
+    """How a reader sees the appeal's panel: awaiting, not formed, or decided."""
+    status = str(getattr(appeal, "status", "") or "")
+    if decided or status not in OPEN_STATUSES:
+        return PANEL_STATUS_DECIDED
+    if status in (PANEL_NOT_FORMED, PANEL_OVERDUE):
+        return PANEL_STATUS_NOT_FORMED
+    return PANEL_STATUS_AWAITING
+
+
+def _set_status(appeal_cid: str, status: str) -> bool:
+    """Set the appeal's status; return whether it changed."""
+    with db.SessionLocal() as session:
+        row = session.get(Appeal, appeal_cid)
+        if row is None or str(row.status) == status:
+            return False
+        row.status = status
+        session.commit()
+        return True
+
+
+def _open_undecided_appeals() -> list[Appeal]:
+    """Every appeal that is still open, detached, oldest first."""
+    ensure_tables()
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Appeal)
+            .filter(Appeal.status.in_(OPEN_STATUSES))
+            .order_by(Appeal.filed_at)
+            .all()
+        )
+        session.expunge_all()
+    return list(rows)
+
+
+def _tier_four_dids() -> list[str]:
+    """Every account at tier 4 (Moderator)."""
+    from app.modules.identity.models import Account, ensure_account_table
+
+    ensure_account_table()
+    with db.SessionLocal() as session:
+        return [
+            str(did)
+            for (did,) in session.query(Account.did).filter(Account.tier == 4).all()
+        ]
+
+
+def notify_panel_missing(
+    appeal: Appeal,
+    decision: Optional[AppealedDecision] = None,
+    *,
+    eligible: int,
+    needed: int,
+    overdue: bool = False,
+) -> int:
+    """Tell every tier-4 moderator and the appellant no full panel was formed.
+
+    The notice names the appeal and the reason, so a moderator knows there is
+    nothing to vote on yet and the appellant is not left wondering.  Best
+    effort, like every other notice: one recipient failing is logged and does
+    not stop the others or fail the appeal.
+    """
+    try:
+        from app.modules.notifications.service import notify
+    except Exception:  # pragma: no cover - notifications is a shipped plugin
+        logger.exception("notifications plugin unavailable; short panel not reported")
+        return 0
+
+    if decision is None:
+        try:
+            decision = resolve_decision(str(appeal.decision_cid))
+        except Exception:  # pragma: no cover - a decision this node no longer holds
+            decision = None
+
+    title: Optional[str] = None
+    paper_cid: Optional[str] = None
+    subject: Optional[AppealSubject] = None
+    if decision is not None:
+        paper_cid = decision.paper_cid
+        subject = describe_subject(decision.target_cid, decision.decision_cid)
+        title = subject.title
+    phrase = subject.phrase() if subject is not None else "an appeal panel"
+    deadline = vote_deadline(appeal)
+    when = f" on {format_day(deadline)}" if deadline is not None else ""
+
+    if overdue:
+        kind = PANEL_OVERDUE_KIND
+        reason = (
+            f"the {needed}-member panel could not be formed and the deadline{when} "
+            "has passed; a tier-4 moderator who is not involved in the decision "
+            "may decide it without a panel"
+        )
+    else:
+        kind = PANEL_NOT_FORMED_KIND
+        reason = (
+            f"only {eligible} of the {needed} eligible members are available, so no "
+            "panel could be formed; the draw is retried as members become available"
+        )
+    summary = f"No panel has decided the appeal {phrase} yet: {reason}."
+
+    payload = {
+        "appeal_cid": str(appeal.appeal_cid),
+        "appeal": str(appeal.appeal_cid),
+        "decision_cid": str(appeal.decision_cid),
+        "appellant_did": str(appeal.appellant_did),
+        "title": title,
+        "paper_cid": paper_cid,
+        "eligible": eligible,
+        "needed": needed,
+        "deadline": deadline.isoformat() if deadline is not None else None,
+        "overdue": overdue,
+        "summary": summary,
+        "outcome": summary,
+        "link": f"/mod#appeal-{appeal.appeal_cid}-title",
+    }
+
+    audience = set(_tier_four_dids())
+    audience.add(str(appeal.appellant_did))
+    notified = 0
+    for did in sorted(audience):
+        try:
+            notify(did, kind, dict(payload))
+        except Exception:
+            logger.exception(
+                "could not tell %s the appeal %s has no panel", did, appeal.appeal_cid
+            )
+        else:
+            notified += 1
+    return notified
+
+
+def _mark_panel_missing(
+    appeal: Appeal,
+    decision: Optional[AppealedDecision],
+    *,
+    eligible: int,
+    needed: int,
+    overdue: bool,
+) -> None:
+    """Record (once) that no panel was formed, or that its deadline has passed."""
+    status = PANEL_OVERDUE if overdue else PANEL_NOT_FORMED
+    current = str(getattr(appeal, "status", "") or "")
+    if not overdue and current == PANEL_OVERDUE:
+        # Overdue is the later state; a retry must not move it back.
+        return
+    if not _set_status(str(appeal.appeal_cid), status):
+        # Already in that state (or decided): the audience was told once.
+        return
+    notify_panel_missing(
+        appeal,
+        decision,
+        eligible=eligible,
+        needed=needed,
+        overdue=overdue,
+    )
+
+
+def retry_pending_panels(now: Optional[datetime] = None) -> int:
+    """Draw the panels of open appeals that have none; return how many were seated.
+
+    Called when a member becomes eligible (:mod:`app.modules.appeals` subscribes
+    to ``endorsement`` records) and by a daily job, so a filed appeal never
+    waits silently for members who have since arrived.  An appeal that is still
+    short at its deadline is marked overdue and its moderators are told a
+    tier-4 moderator may decide it without a panel.
+    """
+    current = _naive_utc(now)
+    seated = 0
+    for appeal in _open_undecided_appeals():
+        if get_panel(str(appeal.appeal_cid)):
+            if str(appeal.status) != PENDING:
+                _set_status(str(appeal.appeal_cid), PENDING)
+            continue
+        try:
+            decision = resolve_decision(str(appeal.decision_cid))
+        except Exception:
+            logger.warning(
+                "cannot retry the panel of appeal %s: its decision is gone",
+                appeal.appeal_cid,
+            )
+            continue
+        try:
+            seat_panel(appeal, decision)
+        except PanelSeedUnavailable:
+            logger.warning(
+                "appeal %s still has no panel: the node has no signing key",
+                appeal.appeal_cid,
+            )
+            continue
+        except PanelUnavailable as exc:
+            deadline = vote_deadline(appeal)
+            overdue = deadline is not None and current >= deadline
+            _mark_panel_missing(
+                appeal,
+                decision,
+                eligible=exc.eligible,
+                needed=exc.needed,
+                overdue=overdue,
+            )
+            continue
+        _set_status(str(appeal.appeal_cid), PENDING)
+        seated += 1
+    return seated
+
+
+
 # --------------------------------------------------------------------------- #
 # The ingest handler
 # --------------------------------------------------------------------------- #
@@ -460,7 +718,7 @@ def handle_appeal(record: Mapping[str, Any]) -> str:
     _, decision = _validated(record)
     existing = get_appeal_for_decision(decision.decision_cid)
     if existing is not None:
-        raise AppealAlreadyFiled(decision.decision_cid, existing.appeal_cid)
+        raise AppealAlreadyFiled(decision.decision_cid, existing.appeal_cid, existing.filed_at)
     return PENDING
 
 
@@ -634,6 +892,18 @@ def _seat_or_defer(appeal: Appeal, decision: AppealedDecision) -> None:
             exc.eligible,
             exc.needed,
         )
+        deadline = vote_deadline(appeal)
+        overdue = deadline is not None and _naive_utc() >= deadline
+        _mark_panel_missing(
+            appeal,
+            decision,
+            eligible=exc.eligible,
+            needed=exc.needed,
+            overdue=overdue,
+        )
+    else:
+        _set_status(str(appeal.appeal_cid), PENDING)
+
 
 
 
@@ -723,7 +993,7 @@ def _save_appeal(fields: AppealFields, decision: AppealedDecision) -> Appeal:
             )
             if holder is None:
                 raise
-            raise AppealAlreadyFiled(decision.decision_cid, holder.appeal_cid) from None
+            raise AppealAlreadyFiled(decision.decision_cid, holder.appeal_cid, holder.filed_at) from None
         session.refresh(row)
         session.expunge(row)
     return row

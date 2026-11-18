@@ -8,6 +8,7 @@ make.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from app.errors import ProblemException
@@ -16,7 +17,10 @@ __all__ = [
     "APPEAL_ALREADY_FILED",
     "APPEAL_NOT_AUTHORIZED",
     "APPEAL_NOT_FOUND",
+    "FALLBACK_NOT_AUTHORIZED",
+    "PANEL_DECISION_NOT_DUE",
     "PANEL_NOT_DRAWN",
+    "PANEL_SEATED",
     "PANEL_SEED_UNAVAILABLE",
     "PANEL_UNAVAILABLE",
     "UNKNOWN_APPEAL_TARGET",
@@ -25,7 +29,10 @@ __all__ = [
     "AppealAlreadyFiled",
     "AppealNotAuthorized",
     "AppealNotFound",
+    "FallbackNotAuthorized",
+    "PanelDecisionNotDue",
     "PanelNotDrawn",
+    "PanelSeated",
     "PanelSeedUnavailable",
     "PanelUnavailable",
     "UnknownAppealTarget",
@@ -39,6 +46,9 @@ APPEAL_ALREADY_FILED = "urn:scholium:problem:appeal-already-filed"
 PANEL_UNAVAILABLE = "urn:scholium:problem:appeal-panel-unavailable"
 APPEAL_NOT_FOUND = "urn:scholium:problem:appeal-not-found"
 PANEL_NOT_DRAWN = "urn:scholium:problem:appeal-panel-not-drawn"
+PANEL_SEATED = "urn:scholium:problem:appeal-panel-seated"
+PANEL_DECISION_NOT_DUE = "urn:scholium:problem:appeal-panel-decision-not-due"
+FALLBACK_NOT_AUTHORIZED = "urn:scholium:problem:appeal-fallback-not-authorized"
 PANEL_SEED_UNAVAILABLE = "urn:scholium:problem:appeal-panel-seed-unavailable"
 VOTE_NOT_AUTHORIZED = "urn:scholium:problem:vote-not-authorized"
 VOTE_NODE_KEY_UNAVAILABLE = "urn:scholium:problem:node-key-unavailable"
@@ -111,22 +121,36 @@ class AppealAlreadyFiled(ProblemException, ValueError):
     """The decision has been appealed already: ``409``.
 
     A decision can be appealed once.  The cid of the appeal that holds the
-    slot is carried as the ``appeal`` extension member; it is a public record,
-    so naming it discloses nothing.
+    slot is carried as the ``appeal`` extension member, and the day it was
+    filed as ``filed_at``, so the web can say "You already appealed this
+    decision on {date}" instead of a generic error.  Both are public facts.
     """
 
-    def __init__(self, decision_cid: object, appeal_cid: object) -> None:
+    def __init__(
+        self,
+        decision_cid: object,
+        appeal_cid: object,
+        filed_at: object = None,
+    ) -> None:
         self.decision_cid = decision_cid
         self.appeal_cid = appeal_cid
+        self.filed_at = filed_at
         shown = _clip(decision_cid if isinstance(decision_cid, str) else repr(decision_cid))
         message = f"Moderation decision {shown!r} has already been appealed; a decision can be appealed once."
+        extra = {}
+        if isinstance(filed_at, datetime):
+            if filed_at.tzinfo is not None:
+                filed_at = filed_at.astimezone(timezone.utc).replace(tzinfo=None)
+            extra["filed_at"] = filed_at.isoformat(timespec="seconds") + "Z"
         super().__init__(
             409,
             message,
             type=APPEAL_ALREADY_FILED,
             decision=decision_cid,
             appeal=appeal_cid,
+            **extra,
         )
+
 
 
 class PanelUnavailable(ProblemException, LookupError):
@@ -272,3 +296,68 @@ class VoteNodeKeyUnavailable(ProblemException):
             type=VOTE_NODE_KEY_UNAVAILABLE,
             appeal=appeal_cid,
         )
+
+
+class PanelSeated(ProblemException, LookupError):
+    """The appeal has a panel, so it is decided by its votes, not by a moderator: ``409``."""
+
+    def __init__(self, appeal_cid: object) -> None:
+        self.appeal_cid = appeal_cid
+        message = (
+            "This appeal has a panel seated; its members decide it by voting. "
+            "Only an appeal with no panel can be decided without one."
+        )
+        super().__init__(
+            409,
+            message,
+            type=PANEL_SEATED,
+            appeal=appeal_cid,
+        )
+
+
+class PanelDecisionNotDue(ProblemException):
+    """The appeal's panel deadline has not passed, so a moderator may not take it: ``409``."""
+
+    def __init__(self, appeal_cid: object, deadline: datetime) -> None:
+        self.appeal_cid = appeal_cid
+        self.deadline = deadline
+        shown = deadline.strftime("%Y-%m-%d")
+        message = (
+            "This appeal has no panel yet, but its vote deadline has not passed "
+            f"({shown}). A tier-4 moderator may decide it without a panel only "
+            "after that day."
+        )
+        super().__init__(
+            409,
+            message,
+            type=PANEL_DECISION_NOT_DUE,
+            appeal=appeal_cid,
+            deadline=deadline.isoformat(timespec="seconds") + "Z",
+        )
+
+
+class FallbackNotAuthorized(ProblemException, PermissionError):
+    """A person involved in the decision may not decide it themselves: ``403``.
+
+    Deciding an appeal without a panel is for a tier-4 moderator who is not
+    the deciding moderator, an author of the paper, the appellant, the author
+    of the reported record or one of its reporters -- the same exclusions that
+    keep them off a panel.
+    """
+
+    def __init__(self, moderator: object, appeal_cid: object) -> None:
+        self.moderator = moderator
+        self.appeal_cid = appeal_cid
+        shown = _clip(moderator if isinstance(moderator, str) else repr(moderator))
+        message = (
+            f"{shown} is involved in the decision this appeal contests, so may "
+            "not decide it without a panel."
+        )
+        super().__init__(
+            403,
+            message,
+            type=FALLBACK_NOT_AUTHORIZED,
+            appeal=appeal_cid,
+            moderator=moderator,
+        )
+

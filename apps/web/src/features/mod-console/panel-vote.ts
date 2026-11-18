@@ -202,6 +202,29 @@ export async function castPanelVote(
   return parseVoteAccepted(payload, { appealCid, outcome: body.outcome });
 }
 
+/** The fallback-decision endpoint for an appeal whose panel could not form. */
+export function decideWithoutPanelEndpoint(appealCid: string): string {
+  return `/appeals/${encodeURIComponent(appealCid)}/decide`;
+}
+
+/** Decides a panel-less appeal after its deadline; replaceable in tests. */
+export type FallbackDecider = (
+  appealCid: string,
+  draft: VoteDraft,
+) => Promise<VoteAccepted>;
+
+/** Decide a panel-less appeal as a tier-4 moderator, without a panel. */
+export async function decideAppealWithoutPanel(
+  appealCid: string,
+  draft: VoteDraft,
+  client: VoteClient = api,
+): Promise<VoteAccepted> {
+  const body = buildVoteBody(draft);
+  const payload = await client.post<unknown>(decideWithoutPanelEndpoint(appealCid), body);
+  return parseVoteAccepted(payload, { appealCid, outcome: body.outcome });
+}
+
+
 /** Why a vote was not recorded, and what the form should do about it. */
 export type VoteFailure =
   /** The session ended; the member must sign in again. */

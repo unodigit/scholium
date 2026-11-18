@@ -43,11 +43,30 @@ export const DISCUSSION_RECORD_TYPE = "discussion.post";
 /** Problem type the API answers with when a member marks their own post helpful. */
 export const SELF_HELPFUL_TYPE = "urn:scholium:problem:self-helpful";
 
+/** Problem type the API answers with when the decision was already appealed. */
+export const APPEAL_ALREADY_FILED_TYPE = "urn:scholium:problem:appeal-already-filed";
+
 /** The longest post the tab will sign, in characters. */
 export const POST_TEXT_MAX = 4000;
 
 /** Replies nested deeper than this are not read (a bound, not a design limit). */
 const MAX_DEPTH = 64;
+
+/** The appeal state the node reports for the author's own hidden record. */
+export interface PostAppeal {
+  /** cid of the `appeal` record. */
+  readonly cid: string;
+  /** When the appeal was filed (ISO 8601), when the node says. */
+  readonly filedAt: string | null;
+  /** `awaiting_panel`, `not_formed` or `decided`. */
+  readonly status: string;
+  /** The panel's outcome once decided, else `null`. */
+  readonly outcome: string | null;
+  /** When the panel decided (ISO 8601), when the node says. */
+  readonly decidedAt: string | null;
+  /** True when a tier-4 moderator decided it without a panel. */
+  readonly decidedWithoutPanel?: boolean;
+}
 
 /** One post: a thread's first post, a reply, or a paragraph annotation. */
 export interface DiscussionPost {
@@ -82,6 +101,12 @@ export interface DiscussionPost {
   readonly hiddenAt?: string | null;
   /** cid of the moderation decision that hid the post, when the node serves one. */
   readonly decisionCid?: string | null;
+  /**
+   * The appeal the signed-in author filed against the decision that hid their
+   * own post. `null` for everyone else, and for a hidden post nobody appealed:
+   * the node only serves it to the record's author.
+   */
+  readonly appeal?: PostAppeal | null;
   readonly replies: readonly DiscussionPost[];
 }
 
@@ -152,6 +177,24 @@ function readQuote(anchor: unknown): string | null {
   return isRecord(anchor) ? readText(anchor.quote) : null;
 }
 
+/** The author's own appeal state on a hidden record, or `null`. */
+function readAppeal(raw: unknown): PostAppeal | null {
+  if (!isRecord(raw)) return null;
+  const cid = pickText(raw, "appeal_cid", "appealCid", "id");
+  const outcome = pickText(raw, "outcome");
+  const status =
+    pickText(raw, "status", "panel_status", "panelStatus") ??
+    (outcome === null ? "awaiting_panel" : "decided");
+  return {
+    cid: cid ?? "",
+    filedAt: pickTimestamp(raw, "filed_at", "filedAt"),
+    status,
+    outcome,
+    decidedAt: pickTimestamp(raw, "decided_at", "decidedAt"),
+    decidedWithoutPanel: raw.decided_without_panel === true,
+  };
+}
+
 function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPost | null {
   if (!isRecord(raw) || depth > MAX_DEPTH) return null;
   const cid = pickText(raw, "post_cid", "postCid", "cid", "id");
@@ -187,6 +230,7 @@ function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPos
     hiddenReason: pickText(raw, "hidden_reason", "hiddenReason", "reason"),
     hiddenAt: pickTimestamp(raw, "hidden_at", "hiddenAt"),
     decisionCid: pickText(raw, "decision_cid", "decisionCid"),
+    appeal: readAppeal(raw.appeal),
     replies,
   };
 }
@@ -675,11 +719,26 @@ export function describeActionError(error: unknown, action: DiscussionAction): A
       return failure(
         action === "report"
           ? `The server would not take this report. ${sent}`
-          : `Your account is not yet at the trust level that can join discussions (tier 1). ${sent}`,
+          : action === "appeal"
+            ? `The server would not take this appeal: only an author of the paper may appeal its decisions. ${sent}`
+            : `Your account is not yet at the trust level that can join discussions (tier 1). ${sent}`,
       );
     }
     if (error.status === 404 && action === "helpful") {
       return failure("That post is no longer listed, so it could not be marked. Reload the tab.");
+    }
+    if (error.status === 409 && action === "appeal") {
+      if (error.type === APPEAL_ALREADY_FILED_TYPE) {
+        const filed =
+          typeof error.problem.filed_at === "string" ? formatDate(error.problem.filed_at) : null;
+        return failure(
+          filed === null
+            ? "You already appealed this decision."
+            : `You already appealed this decision on ${filed}.`,
+          { alreadyDone: true },
+        );
+      }
+      return failure("This decision has already been appealed.", { alreadyDone: true });
     }
     if (error.status === 409 && action === "helpful") {
       if (error.type === SELF_HELPFUL_TYPE) {
@@ -700,7 +759,9 @@ export function describeActionError(error: unknown, action: DiscussionAction): A
         ? "The server could not take the post just now. Try again in a moment."
         : action === "helpful"
           ? "The server could not record that just now. Try again in a moment."
-          : "The server could not take the report just now. Try again in a moment.",
+          : action === "appeal"
+            ? "The server could not take the appeal just now. Try again in a moment."
+            : "The server could not take the report just now. Try again in a moment.",
     );
   }
   if (error instanceof NetworkError) {
@@ -794,6 +855,54 @@ export function hiddenOwnNotice(reason: string | null | undefined): string {
   if (said === "") return "Your post was hidden.";
   const ended = /[.!?…]["'”’)\]]*$/.test(said);
   return `Your post was hidden: ${ended ? said : `${said}.`}`;
+}
+
+/** What a panel's outcome means after "decided:". */
+const APPEAL_OUTCOME_PHRASES: Readonly<Record<string, string>> = {
+  upheld: "upheld the decision",
+  overturned: "overturned the decision",
+  modified: "modified the decision",
+  remanded: "sent the decision back to the moderators",
+  granted: "granted the appeal",
+  grant: "granted the appeal",
+  denied: "denied the appeal",
+  deny: "denied the appeal",
+  allowed: "allowed the appeal",
+  dismissed: "dismissed the appeal",
+};
+
+/** The outcome in words; an unknown outcome is shown as the node sent it. */
+export function appealOutcomePhrase(outcome: string): string {
+  return APPEAL_OUTCOME_PHRASES[outcome] ?? `recorded the outcome “${outcome}”`;
+}
+
+/**
+ * The placeholder where the author's own post was hidden:
+ *
+ * `Appeal filed on 2 Dec 2026 - awaiting panel`,
+ * `Appeal filed on 2 Dec 2026 - panel not yet formed`,
+ * `Appeal filed on 2 Dec 2026 - decided: the panel overturned the decision`.
+ *
+ * An appeal a tier-4 moderator had to decide because no panel could be formed
+ * says so: `… - decided without a panel: upheld the decision`.
+ *
+ * The state comes from the node, so it survives a reload and follows the
+ * reader to another device; nothing here lives only in the tab.
+ */
+export function appealFiledLabel(
+  appeal: Pick<PostAppeal, "filedAt" | "status" | "outcome" | "decidedWithoutPanel">,
+): string {
+  const filed = appeal.filedAt === null ? null : formatDate(appeal.filedAt);
+  const opened = filed === null ? "Appeal filed" : `Appeal filed on ${filed}`;
+  if (appeal.outcome !== null) {
+    const decided =
+      appeal.decidedWithoutPanel === true ? "decided without a panel" : "decided";
+    return `${opened} - ${decided}: ${appealOutcomePhrase(appeal.outcome)}`;
+  }
+  if (appeal.status === "not_formed") {
+    return `${opened} - panel not yet formed`;
+  }
+  return `${opened} - awaiting panel`;
 }
 
 /** The paper page: `/p/6sel-2dio-orm6` (docs/design.md §4 drops the `sch:`). */

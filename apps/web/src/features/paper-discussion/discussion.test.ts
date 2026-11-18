@@ -176,6 +176,39 @@ describe("parseThreads", () => {
     expect(parsed.threads.map((thread) => thread.text)).toEqual([null, null]);
   });
 
+  it("reads the author's own appeal state on a hidden post", () => {
+    const parsed = parseThreads({
+      threads: [
+        {
+          post_cid: "hidden",
+          author: ME,
+          hidden: true,
+          hidden_reason: "Off topic.",
+          decision_cid: "bafyrei-decision",
+          appeal: {
+            appeal_cid: "bafyrei-appeal",
+            filed_at: "2026-11-18T09:30:00Z",
+            panel_status: "not_formed",
+            outcome: null,
+            deadline: "2026-12-02T09:30:00Z",
+          },
+        },
+        { post_cid: "plain", author: ME, text: "Hi." },
+      ],
+    });
+
+    expect(parsed.threads[0].appeal).toEqual({
+      cid: "bafyrei-appeal",
+      filedAt: "2026-11-18T09:30:00Z",
+      status: "not_formed",
+      outcome: null,
+      decidedAt: null,
+      decidedWithoutPanel: false,
+    });
+    // A post nobody appealed has no state to show.
+    expect(parsed.threads[1].appeal).toBeNull();
+  });
+
   it("treats an empty list as no discussion, not as an error", () => {
     expect(parseThreads({ paper: "sch:6sel-2dio-orm6", count: 0, threads: [] }).threads).toEqual([]);
   });
@@ -721,6 +754,20 @@ describe("describeActionError", () => {
     expect(failure.message).toMatch(/already marked/);
     // A 409 on anything else is just a failure.
     expect(describeActionError(problem(409), "post").alreadyDone).toBe(false);
+  });
+
+  it("says the decision was already appealed, with the day it was filed", () => {
+    const failure = describeActionError(
+      problem(409, "Already appealed.", {
+        type: "urn:scholium:problem:appeal-already-filed",
+        filed_at: "2026-11-18T09:30:00Z",
+      }),
+      "appeal",
+    );
+    expect(failure.message).toBe("You already appealed this decision on 18 Nov 2026.");
+    expect(failure.alreadyDone).toBe(true);
+    // Never the report wording: an appeal is not a report.
+    expect(failure.message).not.toMatch(/report/);
   });
 
   it("says a member cannot mark their own post helpful, from the API's own problem type", () => {

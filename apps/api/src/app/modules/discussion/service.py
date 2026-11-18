@@ -460,11 +460,63 @@ def _sort_key(item: Mapping[str, Any]) -> tuple[int, str, int]:
     return (-helpful, created, seq)
 
 
+def _appeal_state(decision_cid: Any) -> Optional[dict[str, Any]]:
+    """The appeal filed against ``decision_cid``, as the author's card shows it.
+
+    The state lives in the appeals plugin; the tab cannot keep it in memory
+    across a reload (or on another device), so the thread read carries it for
+    the signed-in author's own hidden records.  A node without the appeals
+    plugin, and a decision nobody appealed, simply have none.
+    """
+    if not isinstance(decision_cid, str) or not decision_cid:
+        return None
+    try:
+        from app.modules.appeals.service import (
+            get_appeal_for_decision,
+            panel_state,
+            vote_deadline,
+        )
+        from app.modules.appeals.votes import decision_for_appeal
+    except Exception:  # pragma: no cover - appeals is a shipped plugin
+        return None
+
+    appeal = get_appeal_for_decision(decision_cid)
+    if appeal is None:
+        return None
+    decision = decision_for_appeal(str(appeal.appeal_cid))
+    outcome: Optional[str] = None
+    resolution: Optional[str] = None
+    decided_at: Optional[str] = None
+    decided_without_panel = False
+    if decision is not None:
+        resolution = str(decision.record_cid)
+        body = decision.body if isinstance(decision.body, Mapping) else {}
+        value = body.get("outcome")
+        outcome = value if isinstance(value, str) else None
+        decided_without_panel = body.get("decided_without_panel") is True
+        decided_at = _iso(getattr(decision, "received_at", None))
+    deadline = vote_deadline(appeal)
+    return {
+        "id": str(appeal.appeal_cid),
+        "appeal_cid": str(appeal.appeal_cid),
+        "decision_cid": str(appeal.decision_cid),
+        "filed_at": _iso(appeal.filed_at),
+        "status": panel_state(appeal, decided=decision is not None),
+        "panel_status": panel_state(appeal, decided=decision is not None),
+        "outcome": outcome,
+        "resolution": resolution,
+        "decided_at": decided_at,
+        "decided_without_panel": decided_without_panel,
+        "deadline": _iso(deadline),
+    }
+
+
 def _hidden_document(
     row: DiscussionPost,
     entry: Any,
     hidden: Any,
     author_name_value: Optional[str] = None,
+    appeal: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """One hidden post as a placeholder: its place, author and ruling -- no body.
 
@@ -510,6 +562,7 @@ def _hidden_document(
         "hidden_clause": getattr(hidden, "clause", None),
         "decision_cid": decision_cid,
         "decisionCid": decision_cid,
+        "appeal": appeal,
         "replies": [],
     }
 
@@ -626,8 +679,11 @@ def threads_for(ref: PaperRef, *, viewer_did: Optional[str] = None) -> dict[str,
                 names[did] = author_name(did)
             hidden = hidden_record(row.post_cid)
             if hidden is not None:
+                appeal_state = None
+                if viewer_did is not None and str(did) == str(viewer_did):
+                    appeal_state = _appeal_state(getattr(hidden, "decision_cid", None))
                 documents[row.post_cid] = _hidden_document(
-                    row, entries.get(row.post_cid), hidden, names[did]
+                    row, entries.get(row.post_cid), hidden, names[did], appeal_state
                 )
             else:
                 documents[row.post_cid] = _post_document(

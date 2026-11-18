@@ -126,6 +126,8 @@ export interface AppealVerdict {
   readonly reasons: readonly string[];
   readonly votes: readonly PanelVoteRecord[];
   readonly decidedAt: string | null;
+  /** True when no panel could be formed and a tier-4 moderator decided it. */
+  readonly withoutPanel?: boolean;
 }
 
 /** One appeal with everything the log says about it. */
@@ -152,6 +154,13 @@ export interface AppealCase {
   readonly viewerVote?: string | null;
   /** What the appealed decision was about, once the API has described it. */
   readonly subject?: AppealSubject | null;
+  /**
+   * The panel's state as the API knows it: `awaiting_panel`, `not_formed` (too
+   * few eligible members) or `decided`. Absent until the detail has been read.
+   */
+  readonly panelStatus?: string;
+  /** When the panel's vote is due, when the API says. */
+  readonly deadline?: string | null;
   /** The panel's decision, or `null` while the appeal is open. */
   readonly verdict: AppealVerdict | null;
 }
@@ -253,6 +262,7 @@ function readVerdict(entry: LogEntry): AppealVerdict {
     reasons: readReasons(entry.body.reasons ?? entry.body.reason),
     votes,
     decidedAt: entry.receivedAt,
+    withoutPanel: entry.body.decided_without_panel === true,
   };
 }
 
@@ -401,7 +411,10 @@ const DETAIL_CONCURRENCY = 6;
 /** `viewer_on_panel`, the viewer's vote and the target's description, or `null` for any other answer. */
 function readViewerDetail(
   body: unknown,
-): Pick<AppealCase, "viewerOnPanel" | "viewerVote" | "subject"> | null {
+): Pick<
+  AppealCase,
+  "viewerOnPanel" | "viewerVote" | "subject" | "panelStatus" | "deadline"
+> | null {
   if (!isRecord(body) || typeof body.viewer_on_panel !== "boolean") {
     return null;
   }
@@ -409,6 +422,8 @@ function readViewerDetail(
   return {
     viewerOnPanel: body.viewer_on_panel,
     viewerVote: readText(body.viewer_vote),
+    panelStatus: readText(body.panel_status) ?? undefined,
+    deadline: readText(body.deadline),
     subject:
       kind === null
         ? null

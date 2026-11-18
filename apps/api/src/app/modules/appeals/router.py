@@ -7,7 +7,7 @@ The module loader mounts this router under ``/v1``, so the routes below serve
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
 from fastapi import APIRouter, Body, Depends, Request
@@ -21,9 +21,16 @@ from app.security import Principal, Tier, get_current_principal, require_tier
 
 from .errors import AppealNotFound
 from .panel import get_panel
-from .service import APPEAL_TYPE, apply_appeal, get_appeal, resolve_decision
+from .service import (
+    APPEAL_TYPE,
+    apply_appeal,
+    get_appeal,
+    panel_state,
+    resolve_decision,
+    vote_deadline,
+)
 from .subject import describe_subject
-from .votes import cast_vote, decision_for_appeal, vote_fields
+from .votes import cast_vote, decide_without_panel, decision_for_appeal, vote_fields
 
 __all__ = ["AppealAccepted", "AppealDetailOut", "PanelSeatOut", "VoteAccepted", "router"]
 
@@ -174,6 +181,14 @@ class AppealDetailOut(BaseModel):
     decision_action: Optional[str] = None
     #: Who sits on the panel; empty unless the caller is seated or tier 4.
     panel: list[PanelSeatOut] = []
+    #: The panel's state for a reader: ``awaiting_panel``, ``not_formed`` or
+    #: ``decided``.  ``not_formed`` means fewer eligible members than the panel
+    #: needs; the appeal is retried and may later be decided without a panel.
+    panel_status: str = "awaiting_panel"
+    #: When the panel's vote is due (the appeal's filed date plus 14 days).
+    deadline: Optional[datetime] = None
+    #: True when a tier-4 moderator decided it without a panel.
+    decided_without_panel: bool = False
 
 
 #: Bearer credentials, read to widen the appeal view for its panel and tier 4.
@@ -223,11 +238,13 @@ def get_appeal_detail(
     decision = decision_for_appeal(cid)
     outcome: Optional[str] = None
     resolution: Optional[str] = None
+    decided_without_panel = False
     if decision is not None:
         resolution = str(decision.record_cid)
         body = decision.body if isinstance(decision.body, Mapping) else {}
         if isinstance(body.get("outcome"), str):
             outcome = body["outcome"]
+        decided_without_panel = body.get("decided_without_panel") is True
 
     target_cid: Optional[str] = None
     try:
@@ -235,6 +252,9 @@ def get_appeal_detail(
     except Exception:  # a decision this node no longer holds describes nothing
         target_cid = None
     subject = describe_subject(target_cid, str(appeal.decision_cid)) if target_cid else None
+    deadline = vote_deadline(appeal)
+    if deadline is not None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
 
     return AppealDetailOut(
         id=str(appeal.appeal_cid),
@@ -257,6 +277,9 @@ def get_appeal_detail(
         excerpt=subject.excerpt if subject is not None else None,
         target_link=subject.link if subject is not None else None,
         decision_action=subject.action if subject is not None else None,
+        panel_status=panel_state(appeal, decided=decision is not None),
+        deadline=deadline,
+        decided_without_panel=decided_without_panel,
         panel=[
             PanelSeatOut(
                 did=str(seat.member_did),
@@ -332,3 +355,50 @@ def post_vote(
         outcome=result.decided_outcome,
         votedAt=datetime.now(timezone.utc),
     )
+
+
+@router.post(
+    "/{cid}/decide",
+    status_code=200,
+    response_model=VoteAccepted,
+    summary="Decide a panel-less appeal after its deadline",
+)
+def post_decide_without_panel(
+    cid: str,
+    body: dict[str, Any] = Body(..., description="The decision: {'outcome', 'reasons'}."),
+    principal: Principal = Depends(require_tier(int(Tier.MODERATOR))),
+) -> VoteAccepted:
+    """A tier-4 moderator decides an appeal whose panel could never be formed.
+
+    This is the fallback for an appeal the draw could not seat: once its
+    14-day deadline has passed, a tier-4 moderator who is not involved in the
+    decision (not the deciding moderator, an author, the appellant or a
+    reporter) may decide it.  The ``appeal.decision`` is published with
+    ``decided_without_panel: true`` and no votes.
+
+    Failures are RFC 9457 problem details: ``401`` for a missing token,
+    ``403`` for a caller below tier 4 or one involved in the decision, ``404``
+    for an unknown appeal, ``409`` when a panel is seated or the deadline has
+    not passed, ``422`` for an unknown outcome, and ``503`` without a signing
+    key.
+    """
+    outcome, reasons = vote_fields(body)
+    result = decide_without_panel(
+        cid,
+        principal.did,
+        outcome,
+        reasons,
+        moderator_tier=int(principal.tier),
+    )
+    from datetime import datetime, timezone
+
+    return VoteAccepted(
+        appeal=result.appeal_cid,
+        vote=result.outcome,
+        counted=True,
+        votes=result.votes_cast,
+        decision=result.decision_cid,
+        outcome=result.decided_outcome,
+        votedAt=datetime.now(timezone.utc),
+    )
+

@@ -277,7 +277,8 @@ export function DiscussionTab({
   const report = async (target: DiscussionPost, reason: ReportReason): Promise<void> => {
     await (actions?.report ?? reportPostFlag)(target.cid, reason);
     setReported((current) => new Map(current).set(target.cid, reason));
-    setAnnouncement("Reported. A moderator will review it.");
+    // The card's note ("You reported this post as …") is the one confirmation;
+    // a second announcement would say the same thing twice.
   };
 
   const appeal = async (target: DiscussionPost, grounds: string): Promise<void> => {
@@ -293,7 +294,7 @@ export function DiscussionTab({
       paper: paperCid,
     }, null);
     await api.post("/appeals", record);
-    setAppealed((current) => new Map(current).set(target.cid, new Date().toISOString()));
+    setAppealed((current) => new Map(current).set(target.cid, record.created));
     setAnnouncement("Appeal filed.");
   };
 

@@ -174,10 +174,23 @@ describe("AppealVoteForm casting", () => {
     submit();
 
     const status = await screen.findByText(/You voted/);
-    expect(status.textContent).toContain("You voted Overturn the decision");
+    expect(status.textContent).toContain("You voted to overturn the decision");
     expect(status.textContent).toContain("2 of 3 members have voted");
     expect(status.textContent).toContain("2 matching votes decide the appeal");
     expect(screen.getByText(PANEL_RECORD_NOTICE)).toBeTruthy();
+  });
+
+  it("says when the vote was recorded, with the outcome as a verb", async () => {
+    const castVote = vi.fn<VoteCaster>().mockResolvedValue(
+      accepted({ outcome: "upheld", votedAt: "2026-11-18T09:30:00Z" }),
+    );
+    render(<AppealVoteForm appealCid={APPEAL} castVote={castVote} />);
+
+    fill("upheld");
+    submit();
+
+    const status = await screen.findByText(/You voted/);
+    expect(status.textContent).toContain("You voted to uphold the decision on 18 Nov 2026");
   });
 
   it("does not claim a count the API did not send", async () => {

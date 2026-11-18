@@ -104,10 +104,18 @@ from app.modules.moderation import (
     get_decision as get_moderation_decision,
 )
 
-from .errors import AppealNotFound, PanelNotDrawn, VoteNodeKeyUnavailable, VoteNotAuthorized
+from .errors import (
+    AppealNotFound,
+    FallbackNotAuthorized,
+    PanelDecisionNotDue,
+    PanelNotDrawn,
+    PanelSeated,
+    VoteNodeKeyUnavailable,
+    VoteNotAuthorized,
+)
 from .models import Appeal, AppealPanelMember, AppealVoteReasons, ensure_tables
 from .panel import get_panel
-from .service import get_appeal, resolve_decision
+from .service import get_appeal, panel_exclusions, resolve_decision, vote_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +126,7 @@ __all__ = [
     "VOTE_OUTCOMES",
     "VoteCast",
     "cast_vote",
+    "decide_without_panel",
     "decision_for_appeal",
     "restore_target",
     "vote_fields",
@@ -357,11 +366,16 @@ def _build_decision_body(
     outcome: str,
     votes: list[AppealPanelMember],
     reasons: dict[str, tuple[str, ...]],
+    *,
+    decided_without_panel: bool = False,
+    note_reasons: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """The ``appeal.decision`` body for an agreed outcome, with its reasons."""
     agreed = [row for row in votes if row.vote == outcome]
     agreed_reasons = [reason for row in agreed for reason in reasons.get(str(row.member_did), ())]
-    return {
+    if note_reasons:
+        agreed_reasons = list(note_reasons)
+    body: dict[str, Any] = {
         "target": appeal_cid,
         "appeal": appeal_cid,
         "outcome": outcome,
@@ -376,6 +390,12 @@ def _build_decision_body(
             if isinstance(row.vote, str) and row.vote
         ],
     }
+    if decided_without_panel:
+        # The console and every other reader can tell this decision from a
+        # panel's: no members were drawn, so nobody voted.
+        body["decided_without_panel"] = True
+        body["panel"] = None
+    return body
 
 
 def _save_decision(
@@ -383,6 +403,9 @@ def _save_decision(
     outcome: str,
     votes: list[AppealPanelMember],
     reasons: dict[str, tuple[str, ...]],
+    *,
+    decided_without_panel: bool = False,
+    note_reasons: tuple[str, ...] = (),
 ) -> str:
     """Sign and append the panel's ``appeal.decision``; return its cid.
 
@@ -394,7 +417,14 @@ def _save_decision(
     if key is None:
         raise VoteNodeKeyUnavailable(appeal_cid)
 
-    body = _build_decision_body(appeal_cid, outcome, votes, reasons)
+    body = _build_decision_body(
+        appeal_cid,
+        outcome,
+        votes,
+        reasons,
+        decided_without_panel=decided_without_panel,
+        note_reasons=note_reasons,
+    )
     errors = validate_body(DECISION_TYPE, body)
     if errors:  # pragma: no cover - the body is built from the record's own schema
         raise _invalid(["body"], errors[0], "invalid_appeal_decision")
@@ -832,3 +862,82 @@ def cast_vote(
             decision_cid=decision_cid,
             decided_outcome=agreed,
         )
+
+
+def decide_without_panel(
+    appeal_cid: str,
+    moderator_did: str,
+    outcome: str,
+    reasons: tuple[str, ...] = (),
+    *,
+    moderator_tier: int = 4,
+    now: Optional[datetime] = None,
+) -> VoteCast:
+    """A tier-4 moderator decides a panel-less appeal after its deadline.
+
+    This is the fallback for an appeal that could never draw a panel: the
+    decision is recorded like a panel's, carrying ``decided_without_panel``,
+    and an overturn restores the target exactly as a panel's would.  Nobody
+    involved in the decision may take it (the same exclusions that keep them
+    off a panel), and it is possible only once the vote deadline has passed.
+
+    Raises:
+        AppealNotFound: ``404`` -- no such appeal is filed here.
+        FallbackNotAuthorized: ``403`` -- ``moderator_did`` took part in the
+            decision or is otherwise excluded from it.
+        PanelSeated: ``409`` -- the appeal has a panel; its members vote.
+        PanelDecisionNotDue: ``409`` -- the deadline has not passed.
+        VoteNodeKeyUnavailable: ``503`` -- the node cannot sign the decision.
+    """
+    ensure_tables()
+    with _vote_lock:
+        appeal = get_appeal(appeal_cid)
+        if appeal is None:
+            raise AppealNotFound(appeal_cid)
+        if moderator_tier < 4:
+            raise FallbackNotAuthorized(moderator_did, appeal_cid)
+
+        existing = decision_for_appeal(appeal_cid)
+        if existing is not None:
+            existing_body = existing.body if isinstance(existing.body, Mapping) else {}
+            decided = existing_body.get("outcome")
+            return VoteCast(
+                appeal_cid=appeal_cid,
+                member_did=moderator_did,
+                outcome=outcome,
+                votes_cast=0,
+                decision_cid=str(existing.record_cid),
+                decided_outcome=decided if isinstance(decided, str) else None,
+            )
+
+        if get_panel(appeal_cid):
+            raise PanelSeated(appeal_cid)
+
+        decision = resolve_decision(str(appeal.decision_cid))
+        if moderator_did in panel_exclusions(appeal, decision):
+            raise FallbackNotAuthorized(moderator_did, appeal_cid)
+
+        deadline = vote_deadline(appeal)
+        current = now if now is not None else datetime.now(timezone.utc)
+        if current.tzinfo is not None:
+            current = current.astimezone(timezone.utc).replace(tzinfo=None)
+        if deadline is not None and current < deadline:
+            raise PanelDecisionNotDue(appeal_cid, deadline)
+
+        decision_cid = _save_decision(
+            appeal_cid,
+            outcome,
+            [],
+            {},
+            decided_without_panel=True,
+            note_reasons=reasons,
+        )
+        return VoteCast(
+            appeal_cid=appeal_cid,
+            member_did=moderator_did,
+            outcome=outcome,
+            votes_cast=0,
+            decision_cid=decision_cid,
+            decided_outcome=outcome,
+        )
+

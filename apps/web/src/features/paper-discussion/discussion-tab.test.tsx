@@ -756,13 +756,14 @@ describe("DiscussionTab: reporting", () => {
     await waitFor(() => expect(report).toHaveBeenCalledWith("quiet", "abuse"));
     const note = await within(card("quiet")).findByText(/You reported this post as “Harassment or abuse”/);
     expect(note.textContent).toMatch(/A moderator will review it, and you will be told what was decided/);
-    // The Report button gives way to the word, and the panel closes.
+    // The Report button gives way to one confirmation: the note below.
     expect(within(card("quiet")).queryByRole("button", { name: /^Report post by/ })).toBeNull();
-    expect(within(card("quiet")).getByText("Reported")).toBeTruthy();
+    expect(within(card("quiet")).queryByText("Reported")).toBeNull();
+    expect(card("quiet").querySelector("[data-reported]")).toBeNull();
     expect(within(card("quiet")).queryByRole("group", { name: /Why are you reporting/ })).toBeNull();
     // Focus goes to the confirmation, not into the void.
     await waitFor(() => expect(document.activeElement).toBe(note));
-    expect(document.querySelector("[data-announcement]")?.textContent).toMatch(/Reported/);
+    expect(document.querySelector("[data-announcement]")?.textContent).not.toMatch(/Reported/);
   });
 
   it("only marks the reported post, never its neighbours", async () => {
@@ -771,7 +772,7 @@ describe("DiscussionTab: reporting", () => {
     openReport("loud");
     fireEvent.click(within(card("loud")).getByRole("radio", { name: /Spam/ }));
     fireEvent.click(within(card("loud")).getByRole("button", { name: "Send report" }));
-    await within(card("loud")).findByText("Reported");
+    await within(card("loud")).findByText(/You reported this post as “Spam/);
 
     expect(within(card("reply-high")).getByRole("button", { name: /^Report post by/ })).toBeTruthy();
     expect(within(card("quiet")).getByRole("button", { name: /^Report post by/ })).toBeTruthy();
@@ -813,7 +814,7 @@ describe("DiscussionTab: reporting", () => {
     expect((within(card("quiet")).getByRole("radio", { name: /Spam/ }) as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(within(card("quiet")).getByRole("button", { name: "Send report" }));
-    await within(card("quiet")).findByText("Reported");
+    await within(card("quiet")).findByText(/You reported this post as “Spam/);
     expect(report).toHaveBeenCalledTimes(2);
   });
 
@@ -1180,6 +1181,129 @@ describe("DiscussionTab: the author's hidden post", () => {
         { target: "bafyrei-decision", grounds: "Context was missing.", paper: "bafyrei-genesis" },
         null,
       );
+    } finally {
+      fetched.mockRestore();
+    }
+  });
+
+  it("shows the panel state the node served after a reload, not a fresh Appeal button", () => {
+    renderTab(
+      { viewerDid: ME },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("mine", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision",
+            text: null,
+            appeal: {
+              cid: "bafyrei-appeal",
+              filedAt: "2026-11-18T00:00:00Z",
+              status: "not_formed",
+              outcome: null,
+              decidedAt: null,
+            },
+          }),
+          post("visible"),
+        ],
+      },
+    );
+
+    expect(notice().textContent).toBe("Appeal filed on 18 Nov 2026 - panel not yet formed");
+    expect(within(card("mine")).queryByRole("button", { name: "Appeal" })).toBeNull();
+  });
+
+  it("shows a decided appeal's outcome from the node's answer", () => {
+    renderTab(
+      { viewerDid: ME },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("mine", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision",
+            text: null,
+            appeal: {
+              cid: "bafyrei-appeal",
+              filedAt: "2026-11-18T00:00:00Z",
+              status: "decided",
+              outcome: "overturned",
+              decidedAt: "2026-11-25T00:00:00Z",
+            },
+          }),
+          post("visible"),
+        ],
+      },
+    );
+
+    expect(notice().textContent).toBe(
+      "Appeal filed on 18 Nov 2026 - decided: overturned the decision",
+    );
+  });
+
+  it("says when a moderator had to decide without a panel", () => {
+    renderTab(
+      { viewerDid: ME },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("mine", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision",
+            text: null,
+            appeal: {
+              cid: "bafyrei-appeal",
+              filedAt: "2026-11-18T00:00:00Z",
+              status: "decided",
+              outcome: "upheld",
+              decidedAt: "2026-12-02T00:00:00Z",
+              decidedWithoutPanel: true,
+            },
+          }),
+          post("visible"),
+        ],
+      },
+    );
+
+    expect(notice().textContent).toBe(
+      "Appeal filed on 18 Nov 2026 - decided without a panel: upheld the decision",
+    );
+  });
+
+  it("says the decision was already appealed, with the day it was filed", async () => {
+    const { actions } = seams();
+    const fetched = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            type: "urn:scholium:problem:appeal-already-filed",
+            title: "Conflict",
+            status: 409,
+            detail: "This decision has already been appealed.",
+            filed_at: "2026-11-18T00:00:00Z",
+          }),
+          { status: 409, headers: { "content-type": "application/problem+json" } },
+        ),
+    );
+    try {
+      renderTab({ viewerDid: ME, actions }, ownHidden("Off topic."));
+      fireEvent.click(within(card("mine")).getByRole("button", { name: "Appeal" }));
+      typeInto(screen.getByLabelText("Why should this decision be reconsidered?"), "Again.");
+      fireEvent.click(screen.getByRole("button", { name: "Sign and file appeal" }));
+
+      const told = await within(card("mine")).findByText(/You already appealed this decision/);
+      expect(told.textContent).toBe("You already appealed this decision on 18 Nov 2026.");
+      // The old generic report wording must not stand in for the real reason.
+      expect(within(card("mine")).queryByText(/could not take the report/)).toBeNull();
     } finally {
       fetched.mockRestore();
     }

@@ -25,11 +25,19 @@ pipeline and subscribes to the ledger, so an appeal is saved whether it arrives
 here or through ``POST /v1/records``.  See :mod:`app.modules.appeals.service`.
 """
 
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
 from .errors import (
     APPEAL_ALREADY_FILED,
     APPEAL_NOT_AUTHORIZED,
     APPEAL_NOT_FOUND,
+    FALLBACK_NOT_AUTHORIZED,
+    PANEL_DECISION_NOT_DUE,
     PANEL_NOT_DRAWN,
+    PANEL_SEATED,
     PANEL_SEED_UNAVAILABLE,
     PANEL_UNAVAILABLE,
     UNKNOWN_APPEAL_TARGET,
@@ -38,7 +46,10 @@ from .errors import (
     AppealAlreadyFiled,
     AppealNotAuthorized,
     AppealNotFound,
+    FallbackNotAuthorized,
+    PanelDecisionNotDue,
     PanelNotDrawn,
+    PanelSeated,
     PanelSeedUnavailable,
     PanelUnavailable,
     UnknownAppealTarget,
@@ -62,8 +73,15 @@ from .service import (
     APPEAL_MIN_TIER,
     APPEAL_TYPE,
     PANEL_NOTIFICATION_KIND,
+    PANEL_NOT_FORMED,
+    PANEL_NOT_FORMED_KIND,
+    PANEL_OVERDUE,
+    PANEL_OVERDUE_KIND,
     PANEL_SEATED_KIND,
     PANEL_SEAT_KIND,
+    PANEL_STATUS_AWAITING,
+    PANEL_STATUS_DECIDED,
+    PANEL_STATUS_NOT_FORMED,
     PENDING,
     AppealedDecision,
     AppealFields,
@@ -72,12 +90,16 @@ from .service import (
     get_appeal,
     get_appeal_for_decision,
     handle_appeal,
+    notify_panel_missing,
     notify_panel_seated,
     panel_exclusions,
+    panel_state,
     persist_entry,
     require_appellant,
     resolve_decision,
+    retry_pending_panels,
     seat_panel,
+    vote_deadline,
 )
 from .votes import (
     DECIDING_VOTES,
@@ -86,10 +108,13 @@ from .votes import (
     VOTE_OUTCOMES,
     VoteCast,
     cast_vote,
+    decide_without_panel,
     decision_for_appeal,
     restore_target,
     vote_fields,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "APPEAL_ALREADY_FILED",
@@ -108,16 +133,29 @@ __all__ = [
     "AppealedDecision",
     "DECIDING_VOTES",
     "DECISION_TYPE",
+    "FALLBACK_NOT_AUTHORIZED",
+    "FallbackNotAuthorized",
+    "PANEL_DECISION_NOT_DUE",
     "PANEL_NOTIFICATION_KIND",
     "PANEL_NOT_DRAWN",
-    "PANEL_SEED_UNAVAILABLE",
+    "PANEL_NOT_FORMED",
+    "PANEL_NOT_FORMED_KIND",
+    "PANEL_OVERDUE",
+    "PANEL_OVERDUE_KIND",
+    "PANEL_SEATED",
     "PANEL_SEATED_KIND",
     "PANEL_SEAT_KIND",
+    "PANEL_SEED_UNAVAILABLE",
+    "PANEL_STATUS_AWAITING",
+    "PANEL_STATUS_DECIDED",
+    "PANEL_STATUS_NOT_FORMED",
     "PANEL_SIZE",
     "PANEL_TIERS",
     "PANEL_UNAVAILABLE",
     "PENDING",
+    "PanelDecisionNotDue",
     "PanelSeatOut",
+    "PanelSeated",
     "PanelNotDrawn",
     "PanelSeedUnavailable",
     "PanelUnavailable",
@@ -133,6 +171,7 @@ __all__ = [
     "appeal_fields",
     "apply_appeal",
     "cast_vote",
+    "decide_without_panel",
     "decision_for_appeal",
     "derive_panel_seed",
     "draw_panel",
@@ -143,26 +182,88 @@ __all__ = [
     "get_appeal_for_decision",
     "get_panel",
     "handle_appeal",
+    "notify_panel_missing",
     "notify_panel_seated",
     "panel_exclusions",
     "panel_seed",
     "panel_seed_secret",
+    "panel_state",
     "persist_entry",
     "require_appellant",
     "resolve_decision",
     "restore_target",
+    "retry_pending_panels",
     "router",
     "seat_panel",
     "select_panel",
+    "vote_deadline",
     "vote_fields",
 ]
 
 
 def _install_ledger_subscriber() -> None:
-    """Save every ``appeal`` once it is committed to the log."""
+    """Save every ``appeal`` once it is committed to the log.
+
+    Also retries panel-less appeals whenever an ``endorsement`` reaches the
+    log: an endorsement can make a member available to sit, which is exactly
+    when a short panel may become drawable.
+    """
     from app.modules import ledger
 
     ledger.subscribe(APPEAL_TYPE, persist_entry)
+    ledger.subscribe(ENDORSEMENT_TYPE, _retry_after_endorsement)
+
+
+def _retry_after_endorsement(entry: Any) -> None:
+    """Retry every panel-less appeal; never fail the append that caused it."""
+    if getattr(entry, "record_type", None) != ENDORSEMENT_TYPE:
+        return
+    try:
+        retry_pending_panels()
+    except Exception:  # pragma: no cover - a retry is best effort
+        logger.exception("could not retry the panels after an endorsement")
+
+
+#: Record type whose arrival can make another panel candidate available.
+ENDORSEMENT_TYPE = "endorsement"
+
+#: The daily job that retries panel-less appeals.
+PANEL_RETRY_JOB = "appeals.panels"
+
+
+def run_panel_retry_job(payload: Any = None) -> None:
+    """The ``appeals.panels`` job: retry every panel-less appeal."""
+    retry_pending_panels()
+
+
+def _register_panel_retry_job() -> None:
+    """Register the daily retry handler and schedule (idempotent)."""
+    try:
+        from datetime import timedelta
+
+        from app import jobs
+
+        jobs.register(PANEL_RETRY_JOB, run_panel_retry_job)
+        jobs.schedule_registry.register(PANEL_RETRY_JOB, timedelta(days=1))
+    except Exception:  # pragma: no cover - jobs is a shipped module
+        logger.exception("could not register the appeal panel retry job")
+
+
+def on_startup(app: Optional[Any] = None) -> None:
+    """Queue the first daily panel retry when jobs run on a worker.
+
+    In eager mode no worker ever picks up a deferred job, so nothing is
+    queued; the daily worker creates it from the schedule registry instead.
+    Failing to queue it is logged and never keeps the app from starting.
+    """
+    try:
+        from app import jobs
+
+        if jobs.is_eager():
+            return
+        jobs.schedule_registry.tick()
+    except Exception:  # pragma: no cover - starting the app must not depend on jobs
+        logger.exception("could not queue the appeal panel retry")
 
 
 def _register_record_type() -> None:
@@ -179,3 +280,4 @@ def _register_record_type() -> None:
 
 _install_ledger_subscriber()
 _register_record_type()
+_register_panel_retry_job()

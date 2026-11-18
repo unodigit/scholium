@@ -23,7 +23,7 @@ import {
   loadAppealsForViewer,
   type AppealsLoad,
 } from "./appeals";
-import type { VoteCaster } from "./panel-vote";
+import type { FallbackDecider, VoteCaster } from "./panel-vote";
 import "./mod-console.css";
 
 /** Loads the appeals; replaceable in tests. */
@@ -35,6 +35,8 @@ export interface AppealsSectionProps {
   loadAppeals?: LoadAppeals;
   /** Replace the vote sender, for tests. */
   castVote?: VoteCaster;
+  /** Replace the fallback decider, for tests. */
+  decideWithoutPanel?: FallbackDecider;
   /** Reads an appellant's profile name; replaceable in tests. */
   loadPerson?: LoadPersonName;
 }
@@ -48,6 +50,7 @@ type SectionState =
 export function AppealsSection({
   loadAppeals,
   castVote,
+  decideWithoutPanel,
   loadPerson,
 }: AppealsSectionProps = {}) {
   const [state, setState] = useState<SectionState>({ status: "loading" });
@@ -143,6 +146,7 @@ export function AppealsSection({
           refreshing={state.refreshing}
           onRefresh={reload}
           castVote={castVote}
+          decideWithoutPanel={decideWithoutPanel}
           loadPerson={loadPerson}
         />
       ) : null}
@@ -155,12 +159,14 @@ function AppealsList({
   refreshing,
   onRefresh,
   castVote,
+  decideWithoutPanel,
   loadPerson,
 }: {
   load: AppealsLoad;
   refreshing: boolean;
   onRefresh: () => void;
   castVote: VoteCaster | undefined;
+  decideWithoutPanel: FallbackDecider | undefined;
   loadPerson?: LoadPersonName;
 }) {
   const { cases, truncated } = load;
@@ -203,7 +209,12 @@ function AppealsList({
       <ul className="mc-case-list" aria-label="Appeals">
         {cases.map((appeal) => (
           <li key={appeal.appealCid}>
-            <AppealCard appeal={appeal} castVote={castVote} loadPerson={loadPerson} />
+            <AppealCard
+              appeal={appeal}
+              castVote={castVote}
+              decideWithoutPanel={decideWithoutPanel}
+              loadPerson={loadPerson}
+            />
           </li>
         ))}
       </ul>

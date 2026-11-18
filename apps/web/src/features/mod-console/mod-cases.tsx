@@ -26,7 +26,7 @@ import {
 } from "./appeals-section";
 import { FlagsSection, type LoadFlag, type LoadFlags } from "./flags-section";
 import type { LoadFlagCounts } from "./flags";
-import type { VoteCaster } from "./panel-vote";
+import type { FallbackDecider, VoteCaster } from "./panel-vote";
 import type { LoadFlagTarget } from "./record";
 import type { LoadPersonName } from "./person";
 import "./mod-console.css";
@@ -46,6 +46,8 @@ export interface ModCasesProps {
   loadTarget?: LoadFlagTarget;
   loadAppeals?: LoadAppeals;
   castVote?: VoteCaster;
+  /** Decides a panel-less appeal after its deadline; replaceable in tests. */
+  decideWithoutPanel?: FallbackDecider;
   loadPerson?: LoadPersonName;
 }
 
@@ -64,6 +66,7 @@ export function ModCases({
   loadTarget,
   loadAppeals,
   castVote,
+  decideWithoutPanel,
   loadPerson,
 }: ModCasesProps = {}) {
   const [session, setSession] = useState<Session>(() => pinnedSession(signedIn));
@@ -99,7 +102,12 @@ export function ModCases({
             loadTarget={loadTarget}
             loadPerson={loadPerson}
           />
-          <AppealsSection loadAppeals={loadAppeals} castVote={castVote} loadPerson={loadPerson} />
+          <AppealsSection
+            loadAppeals={loadAppeals}
+            castVote={castVote}
+            decideWithoutPanel={decideWithoutPanel}
+            loadPerson={loadPerson}
+          />
         </>
       )}
     </div>

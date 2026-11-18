@@ -40,6 +40,8 @@ const DETAIL = {
   excerpt: "This is wrong and you know it.",
   target_link: "/discussion/sch:k3f9-q2xz-7mwd",
   decision_action: "hide",
+  panel_status: "not_formed",
+  deadline: "2027-05-18T09:30:00Z",
 };
 
 function client(body: unknown) {
@@ -82,6 +84,8 @@ describe("enrichAppealCases", () => {
       link: "/discussion/sch:k3f9-q2xz-7mwd",
       action: "hide",
     });
+    expect(enriched?.panelStatus).toBe("not_formed");
+    expect(enriched?.deadline).toBe("2027-05-18T09:30:00Z");
   });
 
   it("leaves a case as the log gave it when its detail cannot be read", async () => {

@@ -268,6 +268,20 @@ function FieldError({ id, message }: { id: string; message: string }) {
   );
 }
 
+/** The member's vote as the sentence "You voted to …" wants it. */
+const VOTE_VERBS: Readonly<Record<string, string>> = {
+  upheld: "uphold",
+  overturned: "overturn",
+  modified: "modify",
+  remanded: "remand",
+  granted: "grant",
+  grant: "grant",
+  denied: "deny",
+  deny: "deny",
+  allowed: "allow",
+  dismissed: "dismiss",
+};
+
 /** What the API said once the vote was recorded. */
 function VoteRecorded({
   accepted,
@@ -278,10 +292,14 @@ function VoteRecorded({
 }) {
   const decided = accepted.decisionCid !== null;
   const headingId = useId();
-  // The member's own words for what they chose, not the panel-outcome phrase.
+  // The member's own words for what they chose, as a verb: "You voted to
+  // uphold/overturn the decision", matching the notices' wording.
+  const verb = VOTE_VERBS[accepted.outcome];
   const voted =
-    VOTE_CHOICES.find((choice) => choice.value === accepted.outcome)?.label ??
-    outcomeLabel(accepted.outcome);
+    verb !== undefined
+      ? `to ${verb} the decision`
+      : (VOTE_CHOICES.find((choice) => choice.value === accepted.outcome)?.label ??
+        outcomeLabel(accepted.outcome));
   const votedOn = formatDate(accepted.votedAt ?? null);
 
   return (

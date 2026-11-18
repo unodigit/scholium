@@ -10,8 +10,9 @@
  * vote completed the panel, without waiting for the list to be reloaded.
  */
 
-import { useState } from "react";
+import { useId, useState, type FormEvent } from "react";
 
+import { ApiError } from "../../lib/api";
 import { policyHref } from "../policies-page";
 import { RecordLink } from "../ui-kit";
 import { AppealVoteForm } from "./appeal-vote-form";
@@ -23,6 +24,16 @@ import {
   type AppealSubject,
 } from "./appeals";
 import { PersonName, type LoadPersonName } from "./person";
+import {
+  VOTE_CHOICES,
+  decideAppealWithoutPanel,
+  describeVoteError,
+  isVoteOutcome,
+  validateVoteDraft,
+  type FallbackDecider,
+  type VoteAccepted,
+  type VoteOutcome,
+} from "./panel-vote";
 import type { VoteCaster } from "./panel-vote";
 import { modDetailHref, type Signal } from "./queue";
 import { SignalCell } from "./queue-table";
@@ -30,10 +41,20 @@ import { formatDate } from "./wire";
 import "./mod-console.css";
 
 /** Where the appeal stands, as an icon plus words (never colour alone). */
-export function appealSignal(open: boolean): Signal {
-  return open
-    ? { tone: "warn", icon: "pending", text: "Waiting for the panel" }
-    : { tone: "ok", icon: "check", text: "Decided by the panel" };
+export function appealSignal(
+  open: boolean,
+  panelStatus?: string,
+  withoutPanel = false,
+): Signal {
+  if (!open) {
+    return withoutPanel
+      ? { tone: "ok", icon: "check", text: "Decided without a panel" }
+      : { tone: "ok", icon: "check", text: "Decided by the panel" };
+  }
+  if (panelStatus === "not_formed") {
+    return { tone: "warn", icon: "pending", text: "Panel not yet formed" };
+  }
+  return { tone: "warn", icon: "pending", text: "Waiting for the panel" };
 }
 
 /** Props for {@link AppealCard}. */
@@ -41,17 +62,29 @@ export interface AppealCardProps {
   appeal: AppealCase;
   /** Injectable vote sender, passed to the form. */
   castVote?: VoteCaster;
+  /** Injectable fallback decider for an appeal with no panel; for tests. */
+  decideWithoutPanel?: FallbackDecider;
   /** Reads the appellant's profile name; replaceable in tests. */
   loadPerson?: LoadPersonName;
 }
 
 /** The appeal as a card. */
-export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
+export function AppealCard({
+  appeal,
+  castVote,
+  decideWithoutPanel,
+  loadPerson,
+}: AppealCardProps) {
   const [decidedNow, setDecidedNow] = useState(false);
   const open = isAppealOpen(appeal) && !decidedNow;
   const filed = formatDate(appeal.filedAt);
   const headingId = `appeal-${appeal.appealCid}-title`;
   const record = recordSubject(appeal);
+  // The no-panel form keeps its confirmation after the decision is made, so
+  // it is tied to the state the API gave us, not to `decidedNow`.
+  const panelMissing = appeal.verdict === null && appeal.panelStatus === "not_formed";
+  const decidedWithoutPanel =
+    appeal.verdict?.withoutPanel === true || (decidedNow && panelMissing);
 
   return (
     <article className="mc-case" aria-labelledby={headingId}>
@@ -76,7 +109,9 @@ export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
             ) : null}
           </p>
         </div>
-        <SignalCell signal={appealSignal(open)} />
+        <SignalCell
+          signal={appealSignal(open, appeal.panelStatus, decidedWithoutPanel)}
+        />
       </header>
 
       <dl className="mc-case-facts">
@@ -125,6 +160,12 @@ export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
 
       {appeal.verdict !== null ? (
         <Verdict appeal={appeal} />
+      ) : panelMissing ? (
+        <PanelMissing
+          appeal={appeal}
+          decideWithoutPanel={decideWithoutPanel ?? decideAppealWithoutPanel}
+          onDecided={(accepted) => setDecidedNow(accepted.decisionCid !== null)}
+        />
       ) : (
         <AppealVoteForm
           appealCid={appeal.appealCid}
@@ -234,7 +275,9 @@ function Verdict({ appeal }: { appeal: AppealCase }) {
   const decided = formatDate(verdict.decidedAt);
   return (
     <section className="mc-verdict" aria-label="Panel decision">
-      <h4 className="mc-vote-title">Panel decision</h4>
+      <h4 className="mc-vote-title">
+        {verdict.withoutPanel === true ? "Decided without a panel" : "Panel decision"}
+      </h4>
       <p className="mc-verdict-outcome">
         {outcomeLabel(verdict.outcome)}
         {decided !== null ? (
@@ -254,6 +297,137 @@ function Verdict({ appeal }: { appeal: AppealCase }) {
           className="mc-button mc-button--quiet"
         />
       </div>
+    </section>
+  );
+}
+
+/**
+ * An appeal whose panel could not be drawn: say why, and once the deadline has
+ * passed offer a tier-4 moderator the fallback decision. The API refuses a
+ * moderator who took part in the decision; the form makes no claim about who
+ * may use it beyond the tier the section already needs to act.
+ */
+function PanelMissing({
+  appeal,
+  decideWithoutPanel,
+  onDecided,
+}: {
+  appeal: AppealCase;
+  decideWithoutPanel: FallbackDecider;
+  onDecided: (accepted: VoteAccepted) => void;
+}) {
+  const [outcomeValue, setOutcomeState] = useState<VoteOutcome | "">("");
+  const [reasons, setReasons] = useState("");
+  const [failure, setFailure] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [accepted, setAccepted] = useState<VoteAccepted | null>(null);
+  const uid = useId();
+  const outcomeId = `${uid}-outcome`;
+  const reasonsId = `${uid}-reasons`;
+
+  const deadline = formatDate(appeal.deadline ?? null);
+  const due =
+    appeal.deadline !== null &&
+    appeal.deadline !== undefined &&
+    Number.isFinite(Date.parse(appeal.deadline)) &&
+    Date.parse(appeal.deadline) <= Date.now();
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
+    const errors = validateVoteDraft({ outcome: outcomeValue, reasons });
+    const problem = errors.outcome ?? errors.reasons;
+    if (problem !== undefined) {
+      setFailure(problem);
+      return;
+    }
+    setFailure(null);
+    setBusy(true);
+    try {
+      const result = await decideWithoutPanel(appeal.appealCid, {
+        outcome: outcomeValue,
+        reasons,
+      });
+      setAccepted(result);
+      onDecided(result);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        setFailure(
+          "Only a tier-4 moderator who is not involved in this decision may decide it without a panel.",
+        );
+      } else {
+        setFailure(describeVoteError(error).message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mc-vote" aria-label="No panel could be formed">
+      <h4 className="mc-vote-title">No panel could be formed</h4>
+      <p className="mc-vote-lede">
+        There are not enough eligible members to draw the three-member panel. The
+        draw is retried as members become available.
+        {deadline === null
+          ? ""
+          : ` From ${deadline}, a tier-4 moderator who is not involved in this decision may decide it without a panel.`}
+      </p>
+
+      {accepted !== null ? (
+        <p className="mc-vote-lede" role="status">
+          The decision is published without a panel:{" "}
+          <strong>{outcomeLabel(accepted.decidedOutcome ?? accepted.outcome)}</strong>.
+        </p>
+      ) : due ? (
+        <form className="mc-vote" onSubmit={submit} aria-label="Decide without a panel" noValidate>
+          <div className="mc-field">
+            <label className="mc-label" htmlFor={outcomeId}>
+              Outcome <span className="mc-required">(required)</span>
+            </label>
+            <select
+              id={outcomeId}
+              className="mc-select"
+              value={outcomeValue}
+              disabled={busy}
+              onChange={(event) => {
+                const value = event.target.value;
+                setOutcomeState(isVoteOutcome(value) ? value : "");
+              }}
+            >
+              <option value="">Choose an outcome…</option>
+              {VOTE_CHOICES.map((choice) => (
+                <option key={choice.value} value={choice.value}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="mc-field">
+            <label className="mc-label" htmlFor={reasonsId}>
+              Your reasons <span className="mc-required">(required)</span>
+            </label>
+            <textarea
+              id={reasonsId}
+              className="mc-textarea"
+              rows={4}
+              value={reasons}
+              disabled={busy}
+              onChange={(event) => setReasons(event.target.value)}
+            />
+          </div>
+          {failure !== null ? (
+            <div className="mc-form-error" role="alert">
+              <p className="mc-form-error-text">{failure}</p>
+            </div>
+          ) : null}
+          <div className="mc-actions">
+            <button type="submit" className="mc-button" disabled={busy} aria-busy={busy}>
+              {busy ? "Publishing the decision…" : "Decide without a panel"}
+            </button>
+          </div>
+        </form>
+      ) : null}
     </section>
   );
 }

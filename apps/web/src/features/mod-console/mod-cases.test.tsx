@@ -428,6 +428,82 @@ describe("appeals", () => {
     expect(card.getByRole("button", { name: "Cast my vote" })).toBeTruthy();
   });
 
+  it("marks an appeal whose panel could not be formed instead of waiting silently", async () => {
+    const pending = appeal({
+      panelStatus: "not_formed",
+      deadline: "2999-01-01T00:00:00Z",
+    });
+    render(<ModCases signedIn {...quiet()} loadAppeals={async () => load([pending])} />);
+
+    const card = within(
+      await screen.findByRole("article", { name: "Sparse attention without the quadratic cost" }),
+    );
+    expect(card.getByText("Panel not yet formed")).toBeTruthy();
+    expect(card.queryByText("Waiting for the panel")).toBeNull();
+    expect(card.getByText(/not enough eligible members/i)).toBeTruthy();
+    // Until the deadline there is no vote and no fallback decision to take.
+    expect(card.queryByRole("form", { name: "Your panel vote" })).toBeNull();
+    expect(card.queryByRole("button", { name: "Decide without a panel" })).toBeNull();
+  });
+
+  it("offers the fallback decision once the deadline has passed with no panel", async () => {
+    const decideWithoutPanel = vi.fn<VoteCaster>().mockResolvedValue({
+      appealCid: "bafy-appeal-1",
+      outcome: "upheld",
+      votes: 0,
+      decisionCid: "bafy-fallback-decision",
+      decidedOutcome: "upheld",
+    });
+    const pending = appeal({
+      panelStatus: "not_formed",
+      deadline: "2020-01-01T00:00:00Z",
+    });
+    render(
+      <ModCases
+        signedIn
+        {...quiet()}
+        loadAppeals={async () => load([pending])}
+        decideWithoutPanel={decideWithoutPanel}
+      />,
+    );
+
+    const card = within(
+      await screen.findByRole("article", { name: "Sparse attention without the quadratic cost" }),
+    );
+    fireEvent.change(card.getByLabelText(/Outcome/), { target: { value: "upheld" } });
+    fireEvent.change(card.getByLabelText(/Your reasons/), {
+      target: { value: "No panel could be drawn in time." },
+    });
+    fireEvent.click(card.getByRole("button", { name: "Decide without a panel" }));
+
+    const status = await card.findByRole("status");
+    expect(status.textContent).toMatch(/published without a panel/i);
+    expect(decideWithoutPanel).toHaveBeenCalledWith("bafy-appeal-1", {
+      outcome: "upheld",
+      reasons: "No panel could be drawn in time.",
+    });
+  });
+
+  it("shows a decision taken without a panel as such", async () => {
+    const decided = appeal({
+      verdict: {
+        cid: "bafy-fallback-decision",
+        outcome: "upheld",
+        reasons: ["No eligible panel could be formed."],
+        votes: [],
+        decidedAt: "2027-05-20T10:00:00Z",
+        withoutPanel: true,
+      },
+    });
+    render(<ModCases signedIn {...quiet()} loadAppeals={async () => load([decided])} />);
+
+    const card = within(
+      await screen.findByRole("article", { name: "Sparse attention without the quadratic cost" }),
+    );
+    expect(card.getAllByText("Decided without a panel").length).toBeGreaterThan(0);
+    expect(card.queryByText("Decided by the panel")).toBeNull();
+  });
+
   it("says no appeals have been filed for an empty log", async () => {
     render(<ModCases signedIn {...quiet()} loadAppeals={async () => load([])} />);
     expect(await screen.findByText("No appeals have been filed.")).toBeTruthy();
