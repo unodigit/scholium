@@ -46,7 +46,7 @@ export interface VerifyPageProps {
   initialId?: string;
   /**
    * Where signed file lists come from. Defaults to the node's public catalog
-   * API. Pass a stable function: a new one reloads the list.
+   * API. The latest function is used; its identity does not reload the list.
    */
   loadManifest?: LoadManifest;
   /** Where the listed versions naming a blob come from. */

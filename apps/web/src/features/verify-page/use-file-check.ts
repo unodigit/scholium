@@ -43,7 +43,7 @@ import { PAPER_ARCHIVE } from "./file-drop";
 export interface FileCheckOptions {
   /** The id to start with, e.g. from `/verify?id=…`. */
   initialId?: string;
-  /** Where signed file lists come from. Pass a stable function: a new one reloads the list. */
+  /** Where signed file lists come from. The latest function is used; its identity does not reload the list. */
   loadManifest?: LoadManifest;
   /** Where the listed versions naming a blob come from. */
   loadContentVersions?: LoadContentVersions;
@@ -94,6 +94,14 @@ export function useFileCheck({
   const resolvedLoadContentVersions =
     loadContentVersions ?? loadContent ?? loadVersions ?? contentLoader ?? defaultLoadContentVersions;
 
+  // Loaders are read through refs so that an inline or re-created loader (whose
+  // identity changes every render) never restarts a request. Only the values the
+  // request actually depends on (schId, file cid, attempt) drive the effects.
+  const loadManifestRef = useRef(loadManifest);
+  loadManifestRef.current = loadManifest;
+  const loadContentVersionsRef = useRef(resolvedLoadContentVersions);
+  loadContentVersionsRef.current = resolvedLoadContentVersions;
+
   const [idText, setIdTextState] = useState(initialId);
   // Whether the reader has finished with the id field, so its problems may be
   // shown. A link that arrives with an id in it should say if the id is wrong;
@@ -126,7 +134,7 @@ export function useFileCheck({
     const controller = new AbortController();
     setLoaded({ schId: ref.schId, state: { status: "loading" } });
 
-    loadManifest(ref, controller.signal).then(
+    loadManifestRef.current(ref, controller.signal).then(
       (manifest) => {
         if (controller.signal.aborted) return;
         setLoaded({ schId: ref.schId, state: { status: "ready", manifest } });
@@ -141,7 +149,7 @@ export function useFileCheck({
     );
     return () => controller.abort();
     // `ref` is fully determined by `schId`, so the id is the dependency.
-  }, [schId, loadManifest, attempt]);
+  }, [schId, attempt]);
 
   const manifest = manifestStateFor(ref, loaded);
 
@@ -212,7 +220,7 @@ export function useFileCheck({
     const controller = new AbortController();
     setContentState({ cid, status: "loading", versions: [] });
 
-    resolvedLoadContentVersions(cid, controller.signal).then(
+    loadContentVersionsRef.current(cid, controller.signal).then(
       (versions) => {
         if (controller.signal.aborted) return;
         setContentState({ cid, status: "ready", versions });
@@ -228,7 +236,7 @@ export function useFileCheck({
       },
     );
     return () => controller.abort();
-  }, [ref, file.status, file.status === "ready" ? file.file.cid : null, resolvedLoadContentVersions, attempt]);
+  }, [ref, file.status, file.status === "ready" ? file.file.cid : null, attempt]);
 
   const contentVersions = {
     status: contentState.status,
