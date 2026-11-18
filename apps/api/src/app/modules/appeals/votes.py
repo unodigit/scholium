@@ -116,6 +116,7 @@ from .errors import (
 from .models import Appeal, AppealPanelMember, AppealVoteReasons, ensure_tables
 from .panel import get_panel
 from .service import get_appeal, panel_exclusions, resolve_decision, vote_deadline
+from .subject import describe_subject
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +449,11 @@ def _save_decision(
 
     _mark_decided(appeal_cid, outcome)
     _restore_after_overturn(appeal_cid, outcome, key)
+    # Tell the appellant how their appeal was decided.  An overturn already
+    # reaches them through the restoration path (notifications/restoration.py),
+    # so it must not be announced a second time here.
+    if outcome not in RESTORING_OUTCOMES:
+        _notify_appellant(appeal_cid, outcome, str(record["id"]), decided_without_panel=decided_without_panel)
     return str(record["id"])
 
 
@@ -797,6 +803,69 @@ def _mark_decided(appeal_cid: str, outcome: str) -> None:
                 session.commit()
     except Exception:  # pragma: no cover - a projection, not the decision
         pass
+
+
+def _notify_appellant(
+    appeal_cid: str,
+    outcome: str,
+    decision_cid: str,
+    *,
+    decided_without_panel: bool = False,
+) -> None:
+    """Tell the appellant how their appeal was decided; never raises."""
+    try:
+        appeal = get_appeal(appeal_cid)
+        if appeal is None:
+            return
+        appellant_did = str(getattr(appeal, "appellant_did", "") or "")
+        if not appellant_did:
+            return
+        from app.modules.notifications.service import notify
+
+        appealed = resolve_decision(str(appeal.decision_cid))
+        subject = describe_subject(appealed.target_cid, str(appeal.decision_cid))
+        title = subject.title
+        action = subject.action
+
+        if subject.is_record:
+            noun = {"post": "post", "annotation": "annotation", "review": "review"}.get(subject.kind, "record")
+            target_part = f"hide your {noun} on \"{title}\"" if title else f"hide your {noun}"
+        else:
+            action_word = action if isinstance(action, str) and action else "hold"
+            target_part = f'{action_word} "{title}"' if title else f"{action_word} your paper"
+
+        if outcome == "upheld":
+            if decided_without_panel:
+                summary = f"Decided without a panel: upheld the decision to {target_part}."
+            else:
+                summary = f"The appeal panel upheld the decision to {target_part}."
+        else:
+            if decided_without_panel:
+                summary = f"Decided without a panel: the appeal was {outcome}."
+            else:
+                summary = f"The appeal panel {outcome} the decision on \"{title}\"." if title else f"The appeal panel {outcome} the decision."
+
+        link = subject.link
+        if not isinstance(link, str) or not link.strip():
+            link = f"/mod#appeal-{appeal_cid}"
+
+        payload = {
+            "appeal_cid": str(appeal_cid),
+            "appeal": str(appeal_cid),
+            "appeal_id": str(appeal_cid),
+            "decision_cid": str(decision_cid),
+            "appealed_decision_cid": str(appeal.decision_cid),
+            "target_cid": subject.target_cid,
+            "target_kind": subject.kind,
+            "title": title,
+            "decided_without_panel": bool(decided_without_panel),
+            "summary": summary,
+            "outcome": summary,
+            "link": link,
+        }
+        notify(appellant_did, "appeal.decision", payload)
+    except Exception:
+        logger.exception("could not notify the appellant of appeal %s", appeal_cid)
 
 
 def cast_vote(
