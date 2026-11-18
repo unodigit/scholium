@@ -887,13 +887,68 @@ class TestBundleStore:
         monkeypatch.delenv("CONTENT_DIR", raising=False)
         assert default_store().root == Path(settings.CONTENT_DIR)
 
-    @pytest.mark.parametrize("backend", ["s3", "gcs"])
-    def test_a_backend_the_service_cannot_read_stops_it_starting(self, monkeypatch, backend):
-        monkeypatch.setenv("STORAGE_BACKEND", backend)
+    def test_a_backend_the_service_cannot_read_stops_it_starting(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "gcs")
         with pytest.raises(ServiceConfigError, match="STORAGE_BACKEND"):
             default_store()
         with pytest.raises(ServiceConfigError, match="STORAGE_BACKEND"):
             create_app(token=TOKEN)
+
+    def test_s3_without_a_bucket_stops_it_starting(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "s3")
+        monkeypatch.setattr(settings, "STORAGE_BACKEND", "s3")
+        monkeypatch.setattr(settings, "S3_BUCKET", "")
+        with pytest.raises(ServiceConfigError, match="S3_BUCKET"):
+            default_store()
+        with pytest.raises(ServiceConfigError, match="S3_BUCKET"):
+            create_app(token=TOKEN)
+
+    def test_s3_is_read_through_the_applications_object_store(self, request, monkeypatch, tmp_path):
+        """The service meets the API in the bucket the API writes to (``STORAGE_BACKEND=s3``)."""
+        import boto3
+        from moto import mock_aws
+
+        from app.storage import _s3_store
+
+        # The S3 client is cached per configuration; one built under moto must not
+        # outlive it.
+        _s3_store.cache_clear()
+        request.addfinalizer(_s3_store.cache_clear)
+        bucket = "scholium-sandbox-test"
+        credentials = dict(access_key_id="test-access-key-id", secret_access_key="test-SECRET-access-key")
+        monkeypatch.setenv("STORAGE_BACKEND", "s3")
+        for name, value in dict(
+            STORAGE_BACKEND="s3", S3_BUCKET=bucket, S3_REGION="us-east-1", S3_ENDPOINT_URL="",
+            S3_ACCESS_KEY_ID=credentials["access_key_id"], S3_SECRET_ACCESS_KEY=credentials["secret_access_key"],
+        ).items():
+            monkeypatch.setattr(settings, name, value)
+        archive = zip_bytes({"reproduce.sh": "echo hi\n", ".nonce": os.urandom(8).hex()})
+        cid = cid_of(archive)
+        with mock_aws():
+            boto3.client(
+                "s3", region_name="us-east-1", aws_access_key_id=credentials["access_key_id"],
+                aws_secret_access_key=credentials["secret_access_key"],
+            ).create_bucket(Bucket=bucket)
+            from app.storage import get_object_store
+
+            get_object_store().put_stream(cid, io.BytesIO(archive))
+
+            docker = FakeDocker(output=b"from the bucket\n")
+            binary = str(make_executable(tmp_path / "docker"))
+            application = create_app(token=TOKEN, runner=docker, docker_bin=binary)
+            with TestClient(application) as client:
+                reply = client.post("/runs", json={"bundle_cid": cid}, headers=AUTH)
+                assert reply.status_code == 202, reply.text
+                done = await_run(client, reply.json()["run_id"])
+                assert done["status"] == "completed"
+                assert done["log_lines"] == ["from the bucket", "[scholium-sandbox] exit status 0"]
+                # A bundle that is not in the bucket is the same 422 as on disk.
+                missing = client.post("/runs", json={"bundle_cid": cid_of(b"never stored")}, headers=AUTH)
+                assert missing.status_code == 422, missing.text
+                # Bytes in the bucket that do not hash to their key are refused.
+                get_object_store().put_stream(cid_of(b"wanted"), io.BytesIO(b"swapped"))
+                swapped = client.post("/runs", json={"bundle_cid": cid_of(b"wanted")}, headers=AUTH)
+                assert swapped.status_code == 422, swapped.text
 
     def test_it_reads_what_the_content_store_wrote(self, monkeypatch, scratch, tmp_path):
         """Existing ``CONTENT_DIR`` data is read as it is: no migration."""

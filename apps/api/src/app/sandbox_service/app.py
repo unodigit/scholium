@@ -70,8 +70,10 @@ Configuration (environment)
         ``docker`` (the default) or ``podman``.
     ``REPRO_DOCKER_IMAGE``
         the sandbox image, already present locally; a run never pulls one.
-    ``STORAGE_BACKEND``, ``CONTENT_DIR``
-        where bundles are read from; see :func:`default_store`.
+    ``STORAGE_BACKEND``, ``CONTENT_DIR``, ``S3_*``
+        where bundles are read from: ``fs`` reads ``CONTENT_DIR``, ``s3`` reads
+        the bucket the ``S3_*`` settings name (the one the API writes to); see
+        :func:`default_store`.
     ``SANDBOX_CONCURRENCY``
         runs executing at once (default :data:`DEFAULT_CONCURRENCY`); each may
         use a CPU and 2 GB.
@@ -243,22 +245,33 @@ def _configured(name: str, default: str = "") -> str:
 def default_store() -> BundleStore:
     """The bundle store ``STORAGE_BACKEND`` selects.
 
-    ``fs`` (the default) reads ``CONTENT_DIR``.
+    ``fs`` (the default) reads ``CONTENT_DIR`` directly.  ``s3`` reads through
+    the application's own object store (:func:`app.storage.get_object_store`),
+    configured by the same ``S3_*`` settings the API writes with, so the service
+    and the API meet in one bucket.  ``ObjectStore.open`` has the shape of
+    :class:`BundleStore`, and its "no such object" error is a
+    ``FileNotFoundError``, which the service already answers with ``422``.
 
     Raises:
-        ServiceConfigError: for any other backend.  The object-store package
-            (``app.storage``, with its S3 driver) is not part of this build; when
-            it is, this function is the one place that hands the service its
-            ``open``.  Failing here is deliberate: reading ``CONTENT_DIR`` while
-            the API writes to a bucket would make every run a "bundle not found".
+        ServiceConfigError: for any other backend, or when the object store is
+            not configured (no ``S3_BUCKET``).  Failing at startup is
+            deliberate: reading ``CONTENT_DIR`` while the API writes to a bucket
+            would make every run a "bundle not found".
     """
     backend = _configured("STORAGE_BACKEND", "fs").lower()
-    if backend != "fs":
-        raise ServiceConfigError(
-            f"STORAGE_BACKEND={backend!r} is not available to the sandbox service; "
-            "only 'fs' (reading CONTENT_DIR) is supported until app.storage is installed"
-        )
-    return FilesystemStore(Path(_configured("CONTENT_DIR", settings.CONTENT_DIR)))
+    if backend == "fs":
+        return FilesystemStore(Path(_configured("CONTENT_DIR", settings.CONTENT_DIR)))
+    if backend == "s3":
+        from app.storage import StorageConfigError, get_object_store
+
+        try:
+            return get_object_store()
+        except StorageConfigError as exc:
+            raise ServiceConfigError(f"STORAGE_BACKEND='s3' is not usable: {exc}") from exc
+    raise ServiceConfigError(
+        f"STORAGE_BACKEND={backend!r} is not available to the sandbox service; "
+        "expected 'fs' (reading CONTENT_DIR) or 's3'"
+    )
 
 
 # --------------------------------------------------------------------------- #

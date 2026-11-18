@@ -36,7 +36,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
-import { LocalDate } from "../ui-kit/format-date";
+import { LocalDate } from "../ui-kit/local-date";
 import {
   anchorSpec,
   changeNoteText,

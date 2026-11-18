@@ -36,6 +36,35 @@ jobs:
       - name: Run npm test
         run: npm test
 
+  test-system:
+    name: npm run test:system
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The shipped programs (API, worker, sandbox service, migration, web build)
+      # started as processes and driven over loopback; no container, no network.
+      - name: Run npm run test:system
+        run: npm run test:system
+
   test-pg:
     name: npm run test:pg
     runs-on: ubuntu-latest

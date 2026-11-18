@@ -136,7 +136,7 @@ Read by `python -m app.sandbox_service` itself (the service is a separate proces
 | `SANDBOX_CONCURRENCY` | `2` | Runs executing at once; each may use a CPU and 2 GB. |
 | `SANDBOX_QUEUE_LIMIT` | `8` | Runs allowed to wait for a slot; past that `POST /runs` answers `503`. |
 | `HOST`, `PORT` | `127.0.0.1`, `8001` | Where it listens. A container sets `HOST=0.0.0.0`. |
-| `STORAGE_BACKEND`, `CONTENT_DIR` | `fs`, `./data/content` | Where bundles are read from. **Only `fs` is accepted today**, see [section 6.2](#62-the-sandbox-service). |
+| `STORAGE_BACKEND`, `CONTENT_DIR`, `S3_*` | `fs`, `./data/content` | Where bundles are read from: `fs` reads `CONTENT_DIR`, `s3` reads the bucket the `S3_*` variables name (the one the api writes to), see [section 6.2](#62-the-sandbox-service). |
 
 **Local stack only:** `COMPOSE_PROFILES=sandbox` starts the `sandbox` service. `SANDBOX_RUNNER` (default `podman`) is the engine the service itself uses; compose passes it as the service's `SANDBOX_BACKEND`, so it does not collide with the api's `SANDBOX_BACKEND=remote`.
 
@@ -345,7 +345,7 @@ podman build -f deploy/containers/web.Containerfile \
 
 ### 4.6 The sandbox profile
 
-`COMPOSE_PROFILES=sandbox npm run stack:up` adds the `sandbox` service, and `SANDBOX_BACKEND=remote` with `SANDBOX_URL=http://sandbox:8001` and a `SANDBOX_TOKEN` (at least 32 characters) points the api at it. **As shipped this does not work end to end**, for two independent reasons ([section 6.2](#62-the-sandbox-service)): the service refuses `STORAGE_BACKEND=s3`, which the stack gives it, and the api image carries no docker or podman CLI for the service to start containers with. Leave `SANDBOX_BACKEND=none` in the stack.
+`COMPOSE_PROFILES=sandbox npm run stack:up` adds the `sandbox` service, and `SANDBOX_BACKEND=remote` with `SANDBOX_URL=http://sandbox:8001` and a `SANDBOX_TOKEN` (at least 32 characters) points the api at it. The service reads bundles from the same bucket the api writes to, so the two meet without sharing a disk. **It does not run code yet**, though ([section 6.2](#62-the-sandbox-service)): the api image carries no docker or podman CLI for the service to start containers with, so every run is reported `not_run` (the paper's AI pre-review says so). Leave `SANDBOX_BACKEND=none` in the stack unless you have given the service an engine.
 
 ### 4.7 Changing and resetting
 
@@ -422,7 +422,7 @@ Every `/runs` call needs `Authorization: Bearer $SANDBOX_TOKEN`. The service fet
 
 Things to know before relying on it:
 
-- **It reads bundles from the filesystem only,** from the `CONTENT_DIR` it sees, so it must run where the api's `CONTENT_DIR` is visible. `default_store()` raises `STORAGE_BACKEND='s3' is not available to the sandbox service` for anything but `fs`, and the process exits with status 2. A node using `STORAGE_BACKEND=s3` therefore cannot use the remote sandbox yet, and the stack's `sandbox` profile (which passes `STORAGE_BACKEND=s3`) does not start. Until the service reads through `app.storage`, use `SANDBOX_BACKEND=docker` or `podman` on the api node, or `none`.
+- **It reads bundles from the same object store as the api.** With `STORAGE_BACKEND=fs` it reads the `CONTENT_DIR` it sees, so it must run where the api's `CONTENT_DIR` is visible. With `STORAGE_BACKEND=s3` it reads the bucket the `S3_*` variables name, through the same driver the api uses, so give it the same `S3_*` values. Any other value, or `s3` without `S3_BUCKET`, stops it at startup with status 2.
 - **It needs a container engine.** The api image contains no docker or podman CLI; without one every run is reported `not_run` (with a warning at startup).
 - **The bundle is untrusted code and this is the machine that runs it.** Keep it off every network but the api's, give it its own engine, and keep `SANDBOX_TOKEN` secret. The service has no database, so it cannot check the file sanitizer's verdict: the api only sends CIDs it has already cleared.
 
@@ -646,7 +646,7 @@ cd /srv/scholium/app && podman-compose exec -T api python -m app.smoke   # ends 
 - **Only the API hostname is published.** The tunnel routes `api_hostname` to the API port and answers 404 for anything else. The web container runs on the host's `127.0.0.1:3000` but nothing in this environment exposes it, and `site_url` and `web_origins` default to the API hostname. Publishing the web app needs an extra ingress rule and DNS record, and `site_url`, `web_origins` and a rebuilt web image (`NEXT_PUBLIC_*` are baked in at build time) to match.
 - **Secrets are in the state.** The generated passwords and keys, the Anthropic key, the SMTP URL and the tunnel token are stored in the state, encrypted. Keep the passphrase safe, restrict who can read the state bucket, and never commit state or plan files.
 - **Narrow `ssh_allowed_cidrs`.** The default opens SSH to every address.
-- **Leave the sandbox off.** `sandbox_backend = "remote"` needs the sandbox service, which cannot start with `STORAGE_BACKEND=s3` ([section 6.2](#62-the-sandbox-service)).
+- **Leave the sandbox off.** `sandbox_backend = "remote"` needs the sandbox service, which can read the bucket but has no container engine in the stack's image, so it would report every run `not_run` ([section 6.2](#62-the-sandbox-service)).
 - **Switching `object_store_provider`** provisions a new, empty bucket. Copying existing blobs across means a full migration into an empty database as well ([section 7](#7-moving-an-existing-node-with-appmigrate_backend)); the tool always copies the database with the objects.
 
 ## 9. Opt-in commands outside `npm test`
@@ -659,6 +659,13 @@ cd /srv/scholium/app && podman-compose exec -T api python -m app.smoke   # ends 
 | `npm run stack:up` | podman-compose or docker compose | Builds the images and starts the local stack ([section 4](#4-the-local-podman-stack)). Its companions: `stack:down`, `stack:logs`, `stack:reset`. |
 | `npm run stack:smoke` | the stack running, curl | Readiness of the api and web, a blob round trip through S3 and a job done by the separate worker. |
 | `npm run infra:check` | `tofu` | OpenTofu formatting and validation of everything under `infra/`, without credentials ([section 8](#8-staging-with-opentofu)). |
+
+Two more are opt-in only because of their cost, not their needs. Neither uses a container, the network beyond loopback, or a credential:
+
+| Command | Needs | What it checks |
+| --- | --- | --- |
+| `npm run test:system` | uv, and `npm install` for the web part | The shipped programs end to end, in `tests/e2e/` ([its README](../tests/e2e/README.md)): `python -m app`, `app.worker`, `app.sandbox_service`, `app.migrate_backend`, the admin commands and `next build` + `next start`, started as processes and driven over HTTP, SMTP and the command line, on SQLite with the filesystem store and with an S3 endpoint. About three minutes; `-m "not web"` leaves out the Next.js build. |
+| `npm run test:e2e` | `npx playwright install chromium` | The browser journeys, in a real browser against the API and a production build of the web app. |
 
 ## 10. Troubleshooting
 
@@ -675,7 +682,7 @@ cd /srv/scholium/app && podman-compose exec -T api python -m app.smoke   # ends 
 | Browser blocks API calls (CORS) | `WEB_ORIGINS` does not list the page's exact origin. |
 | `migrate_backend: error: the target database is not empty` | The application has started against it. Use a freshly created database ([section 7.1](#71-before-you-start)). |
 | `test:pg` cannot start a database | Neither `podman-compose` nor `docker compose` is installed, or the image could not be pulled. Set `TEST_DATABASE_URL` to use a server you already have. |
-| `sandbox service: STORAGE_BACKEND='s3' is not available …` | The service reads bundles from the filesystem only ([section 6.2](#62-the-sandbox-service)). |
+| `sandbox service: STORAGE_BACKEND='s3' is not usable: S3_BUCKET is not configured` | The service reads through the same `S3_*` variables as the api; give it the api's values ([section 6.2](#62-the-sandbox-service)). |
 | `infra:check` says `OpenTofu ('tofu') is not installed` | Install it from https://opentofu.org/docs/intro/install/. |
 | `tofu validate` fails with "Failed to read any lines from plugin's stdout" | `$TMPDIR` is too long for a Unix socket path. Run with a short one, for example `TMPDIR=. tofu validate`. |
 | Stack ports already in use | Set `API_PORT`, `WEB_PORT`, `DB_PORT`, `MINIO_PORT`, … in `.env`; after `API_PORT` or `WEB_PORT` also update `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` and `WEB_ORIGINS`. |

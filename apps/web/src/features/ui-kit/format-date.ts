@@ -10,20 +10,18 @@
  *
  * `formatDate` and `formatDateTime` write the viewer's own calendar date
  * (the browser's zone, when no zone is named), so every page naming the same
- * instant agrees. `LocalDate` renders a `<time datetime>` with the UTC instant
- * as its title and swaps in the local date after hydration: the first HTML is
- * stable in any zone, so the server and the browser never disagree.
+ * instant agrees. They are plain functions, usable from server and client code
+ * alike. `LocalDate` (`./local-date`) renders a `<time datetime>` with the UTC
+ * instant as its title and swaps in the local date after hydration: the first
+ * HTML is stable in any zone, so the server and the browser never disagree.
+ * It is a client component, so it lives in a file of its own: a module that
+ * imports a React hook cannot be reached from a server component's imports
+ * (`next build` refuses it), and these functions must stay reachable from one.
  *
  * ICU's `Intl.DateTimeFormat` with an explicit IANA zone is Baseline widely
  * available, which is why this does not use Temporal (still Limited
  * availability, and a ~15 KB polyfill).
  */
-
-import {
-  createElement,
-  useSyncExternalStore,
-  type ReactElement,
-} from "react";
 
 /** The month spellings the product uses: `2 Mar 2027` or `4 May 2027`. */
 export type DateMonth = "short" | "long";
@@ -43,7 +41,7 @@ export interface DateFormatOptions {
 /** What a formatter accepts: an ISO instant, a `Date`, or nothing usable. */
 export type DateInput = string | Date | null | undefined;
 
-function toDate(value: DateInput): Date | null {
+export function toDate(value: DateInput): Date | null {
   if (value === null || value === undefined) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
@@ -90,52 +88,4 @@ export function formatDateTime(
     .formatToParts(date)
     .find((part) => part.type === "timeZoneName")?.value;
   return zone === undefined ? `${day} ${time}` : `${day} ${time} ${zone}`;
-}
-
-/** A never-notifying store: the value is fixed for the life of the page. */
-const subscribeNever = (): (() => void) => () => undefined;
-const onClient = (): boolean => true;
-const onServer = (): boolean => false;
-
-/**
- * Whether this render is in the browser, in a way that is hydration-safe:
- * React uses the server snapshot for the first HTML *and* the hydration pass,
- * then re-renders with the reader's zone. No mismatch warning, and the local
- * date is there as soon as React takes over.
- */
-function useReaderZone(): boolean {
-  return useSyncExternalStore(subscribeNever, onClient, onServer);
-}
-
-export interface LocalDateProps {
-  /** The instant to show: an ISO string (or a `Date`). */
-  readonly value: DateInput;
-  /** Class for the `<time>` element, e.g. `pm-version__date`. */
-  readonly className?: string;
-}
-
-/**
- * A date as a `<time datetime="…" title="… UTC">…</time>`.
- *
- * The visible text is the reader's local calendar date; the `datetime`
- * attribute carries the machine-readable instant and the `title` the same
- * instant in UTC, so a hover still names the moment exactly. Renders nothing
- * for a value that is not a date.
- */
-export function LocalDate({ value, className }: LocalDateProps): ReactElement | null {
-  const readerZone = useReaderZone();
-  const date = toDate(value);
-  if (date === null) return null;
-  const shown = readerZone
-    ? formatDate(value)
-    : formatDate(value, { timeZone: "UTC" });
-  return createElement(
-    "time",
-    {
-      className,
-      dateTime: typeof value === "string" ? value : date.toISOString(),
-      title: formatDateTime(value, { timeZone: "UTC" }) ?? undefined,
-    },
-    shown,
-  );
 }

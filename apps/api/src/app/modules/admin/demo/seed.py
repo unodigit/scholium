@@ -73,8 +73,13 @@ _LISTING_CLAUSE = "MOD-01"
 
 _JUSTIFICATION = {5: "excellent", 4: "good", 3: "adequate, with gaps", 2: "weak", 1: "poor"}
 
-#: Settings pinned while seeding (see the module docstring).
-_PINNED = {"RATE_LIMIT_ENABLED": 0, "SMTP_URL": "", "AI_PROVIDER": "fake", "JOBS_EAGER": 1}
+#: Settings pinned while seeding (see the module docstring).  The seed needs each
+#: job done by the time the request that queued it returns, so jobs run inline.
+#: ``JOBS_MODE`` is pinned as well as ``JOBS_EAGER``: an explicit ``JOBS_MODE``
+#: (the stack's api container has ``external``) wins over ``JOBS_EAGER``, and
+#: anything but ``eager`` leaves the scan to a thread or a worker this process
+#: does not wait for.
+_PINNED = {"RATE_LIMIT_ENABLED": 0, "SMTP_URL": "", "AI_PROVIDER": "fake", "JOBS_EAGER": 1, "JOBS_MODE": "eager"}
 
 
 class SeedError(RuntimeError):

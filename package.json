@@ -5,6 +5,7 @@
   "scripts": {
     "test": "cd apps/api && uv run --all-packages pytest && cd ../.. && npm run test --workspace apps/web",
     "test:e2e": "npm run test:e2e --workspace apps/web",
+    "test:system": "uv run --project apps/api --all-packages pytest -c tests/e2e/pytest.ini tests/e2e",
     "test:slow": "cd apps/api && uv run --all-packages pytest -m slow",
     "test:pg": "bash scripts/test-pg.sh",
     "stack:up": "c=${STACK_COMPOSE:-$(command -v podman-compose >/dev/null 2>&1 && echo podman-compose || echo docker compose)}; $c -f compose.yaml up -d --build --remove-orphans",

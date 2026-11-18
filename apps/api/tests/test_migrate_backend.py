@@ -42,6 +42,8 @@ BLOBS = {
     "beta": b"beta" * 5000,
     "empty": b"",
 }
+#: The tables of the ORCID module, which declares them on a private base.
+ORCID_TABLES = ("credentials", "nullifiers")
 #: A staged object that is not a CID: copied byte for byte, but with no CID to check.
 OPAQUE_KEY = "uploads/Zk3x/00000001"
 OPAQUE_BYTES = b"half an upload"
@@ -229,6 +231,30 @@ def test_migrates_the_database_and_every_blob(node, dest, capsys):
     assert "3 objects verified against their CIDs" in out
 
 
+def test_a_node_that_has_linked_an_orcid_id_is_migrated_with_its_orcid_tables(node, dest, capsys):
+    """Every running node has the ORCID tables (``nullifiers`` too): none may stop the copy."""
+    from app.modules.orcid.models import Credential, Nullifier
+
+    engine = create_engine(node.url)
+    try:
+        for model in (Credential, Nullifier):
+            model.__table__.create(bind=engine, checkfirst=True)
+        with engine.begin() as connection:
+            connection.execute(Nullifier.__table__.insert(), [{"nullifier": "ab" * 32, "did": "did:key:alice"}])
+            connection.execute(
+                Credential.__table__.insert(),
+                [{"id": "urn:uuid:1", "did": "did:key:alice", "kind": "orcid", "vc": "{}", "status": "active"}],
+            )
+    finally:
+        engine.dispose()
+
+    code, out, err = run(capsys, argv(node, dest))
+
+    assert code == 0, err
+    assert sql(dest.url, "SELECT nullifier, did FROM nullifiers") == [("ab" * 32, "did:key:alice")]
+    assert sql(dest.url, "SELECT id, did, status FROM credentials") == [("urn:uuid:1", "did:key:alice", "active")]
+
+
 def test_tables_are_copied_in_the_metadatas_dependency_order(node, dest, capsys, monkeypatch):
     copied, real = [], mb._copy_table
 
@@ -240,7 +266,7 @@ def test_tables_are_copied_in_the_metadatas_dependency_order(node, dest, capsys,
 
     assert run(capsys, argv(node, dest))[0] == 0
 
-    expected = [t.name for t in mb.schema_tables() if t.name != "credentials"]
+    expected = [t.name for t in mb.schema_tables() if t.name not in ORCID_TABLES]
     assert copied == expected + ["search_fts"]  # the metadata's foreign-key order, then the derived index
 
 
@@ -974,7 +1000,7 @@ def test_tables_are_listed_in_foreign_key_order():
 
     assert [table.name for table in metadata.sorted_tables] == ["parent", "child"]
     names = [table.name for table in mb.schema_tables()]
-    assert names == [table.name for table in db.Base.metadata.sorted_tables] + ["credentials"]
+    assert names == [table.name for table in db.Base.metadata.sorted_tables] + list(ORCID_TABLES)
     assert "event_log" in names and len(names) == len(set(names))
 
 

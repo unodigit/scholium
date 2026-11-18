@@ -219,6 +219,27 @@ def test_a_production_node_is_refused_and_nothing_is_written(node, monkeypatch, 
     assert rows(node, "select name from sqlite_master where name = 'accounts'") == []
 
 
+@pytest.mark.parametrize("mode", ["thread", "external"])
+def test_jobs_run_inline_whatever_jobs_mode_says(node, monkeypatch, mode):
+    """An explicit ``JOBS_MODE`` beats ``JOBS_EAGER``, so the seed pins both."""
+    from app import jobs
+
+    monkeypatch.setattr(settings, "JOBS_MODE", mode)
+    assert not jobs.is_eager()
+    seen = {}
+
+    def run_and_stop(self):
+        seen.update(eager=jobs.is_eager(), mode=settings.JOBS_MODE)
+        raise SeedError("stop")
+
+    monkeypatch.setattr(_Seeder, "run", run_and_stop)
+    with pytest.raises(SeedError, match="stop"):
+        seed_demo(node.root / ".demo-keys.json")
+
+    assert seen == {"eager": True, "mode": "eager"}
+    assert settings.JOBS_MODE == mode and not jobs.is_eager()
+
+
 def test_settings_are_pinned_for_the_run_and_restored_after_a_failure(node, monkeypatch):
     for name, value in {"AI_PROVIDER": "anthropic", "SMTP_URL": "smtp://mail.example", "JOBS_EAGER": 0,
                         "RATE_LIMIT_ENABLED": 1}.items():  # fmt: skip

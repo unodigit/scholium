@@ -24,7 +24,9 @@ this module does not look at ``blobs.scan_status``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from typing import BinaryIO
 
 from multiformats import CID
 from scholium_record_core import CID_BASE
@@ -52,6 +54,21 @@ __all__ = [
 _ATTEMPTS = 2
 
 _SHOW_LIMIT = 60
+
+
+@contextmanager
+def open_seekable_pdf(pdf_cid: str) -> Iterator[BinaryIO]:
+    """The stored PDF as a seekable binary file, whatever the storage backend.
+
+    ``content.open_blob`` streams straight from the object store, and the body
+    of an S3 object cannot seek.  The PDF reader must (it starts from the
+    cross-reference table at the end of the file), so it is handed a snapshot
+    of the object in a temporary file, which is removed when the block ends.
+    Raises what ``content.local_copy`` raises: ``FileNotFoundError`` when the
+    bytes are not stored.
+    """
+    with content.local_copy(pdf_cid) as path, open(path, "rb") as handle:
+        yield handle
 
 
 def _show(value: object) -> str:
@@ -99,7 +116,7 @@ def save_version_text(version_cid: str, pdf_cid: str) -> list[Paragraph]:
     _check_version_cid(version_cid)
     if content.get_blob(pdf_cid) is None:
         raise content.BlobNotFound(f"no blob with cid {_show(pdf_cid)}")
-    with content.open_blob(pdf_cid) as pdf:
+    with open_seekable_pdf(pdf_cid) as pdf:
         paragraphs = extract_paragraphs(pdf)
     _replace(version_cid, paragraphs)
     return paragraphs

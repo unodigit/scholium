@@ -60,7 +60,7 @@ from .extract import extract_first_page_text
 from .metadata import metadata_match as _metadata_match
 from .models import CheckResult, ensure_check_results_table
 from .references import Reference, extract_references
-from .service import _check_version_cid, get_version_text
+from .service import _check_version_cid, get_version_text, open_seekable_pdf
 
 __all__ = [
     "ReferenceCheck",
@@ -245,7 +245,7 @@ def _first_page_text(version_cid: str, pdf_cid: Optional[str]) -> str:
     cid = pdf_cid if pdf_cid is not None else _manuscript_cid(version_cid)
     if content.get_blob(cid) is None:
         raise content.BlobNotFound(f"no blob with cid {_show(cid)}")
-    with content.open_blob(cid) as pdf:
+    with open_seekable_pdf(cid) as pdf:
         return extract_first_page_text(pdf)
 
 

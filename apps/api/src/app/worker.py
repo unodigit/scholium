@@ -123,6 +123,13 @@ def _install_signal_handlers(stop_event: threading.Event) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # A worker is a service with no HTTP server to log for it: without a handler
+    # the INFO lines below ("worker ... started", the jobs' own logging) are
+    # dropped and ``stack:logs`` shows an empty worker.  ``basicConfig`` leaves
+    # an application or test harness that configured logging first alone.
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     args = list(argv) if argv is not None else list(sys.argv[1:])
     if "--once" in args or "once" in args:
         run_once()

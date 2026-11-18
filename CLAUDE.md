@@ -27,6 +27,11 @@
 - Run API: `cd apps/api && uv run python -m app` (serves `create_app` on HOST/PORT, default 127.0.0.1:8000; set FORWARDED_ALLOW_IPS to honour proxy headers)
 - Web only: `npm test --workspace apps/web`
 - Browser journeys: `npm run test:e2e` (Playwright, not part of `npm test`)
+- System tests: `npm run test:system` (`tests/e2e/`, not part of `npm test`): starts the shipped
+  programs (`python -m app`, `app.worker`, `app.sandbox_service`, `app.migrate_backend`, the admin
+  commands, `next build` + `next start`) as processes and drives them over HTTP; about three
+  minutes, `-- -m "not web"` skips the Next.js build. Run it after changing anything that wires
+  processes together (composition root, settings, worker, storage, sandbox, migration, compose)
 - **Opt-in commands outside `npm test`.** `npm test` needs no containers, network or cloud credentials
   (SQLite, `STORAGE_BACKEND=fs`, eager jobs). These do, so they are never part of it; run one only
   when your change touches what it covers:

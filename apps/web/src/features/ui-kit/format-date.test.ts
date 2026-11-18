@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { LocalDate, formatDate, formatDateTime } from "./format-date";
+import { formatDate, formatDateTime } from "./format-date";
+import { LocalDate } from "./local-date";
 
 /**
  * One date format for the whole product, in the reader's own time zone
@@ -122,5 +124,23 @@ describe("LocalDate", () => {
     expect(
       renderToStaticMarkup(createElement(LocalDate, { value: null })),
     ).toBe("");
+  });
+});
+
+describe("the server/client boundary", () => {
+  // `next build` refuses a module that imports a React hook when a server
+  // component's imports reach it, and vitest does not enforce that boundary: the
+  // production build once failed with these two in one file (the not-found page of
+  // a paper reaches `formatDate`).  The hook lives in `local-date.ts`, a client
+  // module, so the functions stay importable from server code.
+  const read = (name: string): string =>
+    readFileSync(new URL(name, import.meta.url), "utf8");
+
+  it("keeps the formatting functions free of React, so server components can import them", () => {
+    expect(read("./format-date.ts")).not.toMatch(/from\s+["']react["']/);
+  });
+
+  it("marks the component that uses a hook as a client module", () => {
+    expect(read("./local-date.ts").trimStart()).toMatch(/^"use client";/);
   });
 });

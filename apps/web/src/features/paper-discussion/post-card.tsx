@@ -32,7 +32,7 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
-import { LocalDate } from "../ui-kit/format-date";
+import { LocalDate } from "../ui-kit/local-date";
 import { ComposeForm } from "./compose-form";
 import {
   describeActionError,

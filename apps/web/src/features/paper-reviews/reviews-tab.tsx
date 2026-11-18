@@ -51,7 +51,8 @@ import {
 import { ReportMarkdown } from "../review-form/report-markdown";
 import { SCORE_MAX } from "../review-form/rubric";
 import { EmptyState, Icon, type IconName } from "../ui-kit";
-import { LocalDate, formatDate } from "../ui-kit/format-date";
+import { formatDate } from "../ui-kit/format-date";
+import { LocalDate } from "../ui-kit/local-date";
 import { tokenStore } from "../../lib/api";
 import {
   dimensionMedians,

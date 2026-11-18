@@ -336,13 +336,16 @@ def schema_tables() -> list[Table]:
     """Every table of the application, parents before the tables that reference them.
 
     The shared metadata in foreign-key dependency order (ties alphabetical,
-    so the order is the same on every run), then the ORCID credentials table,
-    which lives on a private base and is not created by ``create_all``.
+    so the order is the same on every run), then the tables of the ORCID
+    module -- ``credentials`` and ``nullifiers`` -- which live on a private
+    base and are not created by ``create_all``.  Every table of that base is
+    taken, not just one: a table left out here makes a real node (every node
+    has ``nullifiers``) fail the "tables this version does not know" check.
     """
     _register_models()
     from app.modules.orcid.models import Credential
 
-    return [*db.Base.metadata.sorted_tables, Credential.__table__]
+    return [*db.Base.metadata.sorted_tables, *Credential.__table__.metadata.sorted_tables]
 
 
 def _create_schema(engine: Engine, tables: Sequence[Table]) -> None:

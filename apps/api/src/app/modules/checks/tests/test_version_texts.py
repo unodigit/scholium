@@ -18,14 +18,18 @@ import hashlib
 import threading
 import uuid
 
+import boto3
 import pytest
 from fastapi import FastAPI
+from moto import mock_aws
 from multiformats import CID
 from scholium_record_core import compute_file_id, compute_record_id
 from sqlalchemy import inspect, text
 
 from app import db, module_loader
 from app.modules import checks, content
+from app.modules.content import store as content_store
+from app.storage.s3 import S3ObjectStore
 
 from .pdfs import build_pdf, simple_pdf
 
@@ -86,6 +90,53 @@ PARAGRAPHS_ONE = [
     "Second paragraph starts here and continues on this line.",
     "A paragraph on the next page.",
 ]
+
+
+# --- the S3 backend: its object bodies cannot seek --------------------------------
+
+S3_BUCKET = "scholium-checks-test"
+
+
+@pytest.fixture
+def s3_backend(monkeypatch):
+    """The content store on moto's S3: a real S3 driver, whose bodies cannot seek."""
+    with mock_aws():
+        boto3.client(
+            "s3",
+            region_name="us-east-1",
+            aws_access_key_id="test-access-key-id",
+            aws_secret_access_key="test-SECRET-access-key",
+        ).create_bucket(Bucket=S3_BUCKET)
+        remote = S3ObjectStore(
+            S3_BUCKET,
+            region="us-east-1",
+            access_key_id="test-access-key-id",
+            secret_access_key="test-SECRET-access-key",
+        )
+        monkeypatch.setattr(content_store, "get_object_store", lambda: remote)
+        yield remote
+
+
+def test_text_is_extracted_from_a_pdf_kept_on_the_s3_backend(s3_backend):
+    # The PDF reader seeks (it starts from the end of the file); a streamed S3
+    # body cannot, so the check hands it a local copy instead.  Before that, every
+    # manuscript on an S3 node failed extraction with "cannot read PDF text: seek".
+    version = new_version_cid()
+    pdf_cid = store_pdf(PDF_ONE)
+    assert s3_backend.exists(pdf_cid)
+
+    saved = checks.save_version_text(version, pdf_cid)
+
+    assert [paragraph.text for paragraph in saved] == PARAGRAPHS_ONE
+    assert [row[3] for row in rows(version)] == PARAGRAPHS_ONE
+
+
+def test_the_first_page_is_read_from_a_pdf_kept_on_the_s3_backend(s3_backend):
+    version = new_version_cid()
+    pdf_cid = store_pdf(PDF_ONE)
+
+    assert checks.save_metadata_match(version, "Introduction", pdf_cid=pdf_cid) is True
+    assert checks.save_metadata_match(version, "A title this PDF does not have", pdf_cid=pdf_cid) is False
 
 
 # --- saving from the content store ------------------------------------------------
