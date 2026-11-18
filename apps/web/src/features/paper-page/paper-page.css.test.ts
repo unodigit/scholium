@@ -178,6 +178,32 @@ describe("the layout (docs/design.md §5.2)", () => {
     );
   });
 
+  it("keeps the margin panel exactly inside its 360 px column", () => {
+    // The border lives inside the width, and the panel takes its column's
+    // width rather than a content-derived one: it can never be those few
+    // pixels wider that put a sideways scrollbar under the review cards.
+    const margin = declarations(page, ".ppg-margin");
+    expect(margin).toMatch(/box-sizing:\s*border-box/);
+    expect(margin).toMatch(/inline-size:\s*100%/);
+    expect(margin).toMatch(/min-inline-size:\s*0/);
+
+    // Beside the paper it is capped by the column, not left uncapped.
+    const wide = declarationsIn(page, "(min-width: 80rem)", ".ppg-margin");
+    expect(wide).not.toMatch(/max-inline-size:\s*none/);
+    expect(wide).toMatch(/max-inline-size:\s*100%/);
+  });
+
+  it("scrolls the margin vertically only, so no sideways scrollbar appears under the cards", () => {
+    // A scroll container that can scroll one way may scroll the other too;
+    // the panel's and the drawer/sheet body's overflow is pinned to vertical.
+    expect(declarationsIn(page, "(min-width: 80rem)", ".ppg-margin")).toMatch(
+      /overflow-x:\s*hidden/,
+    );
+    expect(
+      declarationsIn(page, "(width < 80rem)", `${ENHANCED} .ppg-margin-body`),
+    ).toMatch(/overflow-x:\s*hidden/);
+  });
+
   it("caps reading lines at the 72-character measure", () => {
     expect(declarations(page, ".ppg-abstract-body")).toMatch(
       /max-inline-size:\s*var\(--measure-reading\)/,

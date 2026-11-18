@@ -43,7 +43,7 @@ import {
   isRecordSigningError,
 } from "../web-auth/errors";
 import { signRecord, type SignedRecord } from "../web-auth/sign-record";
-import { Icon } from "../ui-kit/icons";
+import { Icon, RecordLink } from "../ui-kit";
 
 /** The words on the action that opens the dialog. */
 export const NOTICE_LABEL = "Issue notice";
@@ -334,7 +334,7 @@ export function describeNoticeError(
 
 /** What can take focus inside the dialog, for keeping Tab inside it. */
 const FOCUSABLE =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 type Phase = "editing" | "confirming" | "signing" | "issued";
 
@@ -594,11 +594,21 @@ function NoticePanel({
             <p className="ppg-notice-done" role="status">
               <Icon name="check" className="ppg-notice-icon ppg-notice-icon--verified" />
               <span>
-                Every version of this paper will show it. The signed record is{" "}
-                <span className="ppg-notice-id">{issued.id}</span>.
+                Every version of this paper will show it. It is signed into the
+                public record.
               </span>
             </p>
+            {/* The id is a technical detail, not the confirmation: it is
+                disclosed on request rather than printed at the reader. */}
+            <details className="ppg-notice-record">
+              <summary>Record details</summary>
+              <p>
+                The signed record’s id is{" "}
+                <span className="ppg-notice-id">{issued.id}</span>.
+              </p>
+            </details>
             <div className="ppg-notice-buttons">
+              <RecordLink cid={issued.id} label="View the signed record" />
               <button
                 ref={done}
                 type="button"

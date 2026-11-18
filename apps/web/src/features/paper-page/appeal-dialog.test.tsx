@@ -182,6 +182,26 @@ describe("the dialog", () => {
     expect(screen.getByText("bafyrei-appeal-record")).toBeTruthy();
   });
 
+  it("confirms in words, with the record id behind a disclosure and a link to it", async () => {
+    show();
+    await waitFor(() => expect(trigger()).toBeTruthy());
+    await open();
+    type("The paper is in scope.");
+
+    await submitForm();
+
+    await waitFor(() => expect(screen.getByText("Your appeal is filed")).toBeTruthy());
+    // The confirmation says what happened; the raw record id is not the news.
+    expect(screen.getByRole("status").textContent).not.toContain("bafyrei-appeal-record");
+    expect(
+      screen.getByRole("button", { name: "View the signed record" }),
+    ).toBeTruthy();
+    // The id is still reachable, in the details disclosure.
+    const details = document.querySelector("details.ppg-appeal-record");
+    expect(details).not.toBeNull();
+    expect(details?.textContent).toContain("bafyrei-appeal-record");
+  });
+
   it("tells the page the appeal was filed, so the banner behind the dialog can update", async () => {
     const events: unknown[] = [];
     const unsubscribe = subscribeAppealFiled((event) => events.push(event));

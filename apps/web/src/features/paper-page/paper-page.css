@@ -607,6 +607,9 @@
 
 .ppg-margin {
   box-sizing: border-box;
+  /* Exactly the column the page gives it: the border is inside the width, so
+     the panel can never be a few pixels wider than its track. */
+  inline-size: 100%;
   min-inline-size: 0;
   max-inline-size: var(--reading-column);
   border: 1px solid var(--rule);
@@ -621,7 +624,11 @@
     inset-block-start: calc(var(--space-unit) * 16 + var(--space-unit) * 4);
     max-block-size: calc(100vh - var(--space-unit) * 16 - var(--space-unit) * 8);
     max-block-size: calc(100dvh - var(--space-unit) * 16 - var(--space-unit) * 8);
-    max-inline-size: none;
+    max-inline-size: 100%;
+    /* The panel scrolls with the paper, vertically only: a sideways scrollbar
+       under the review cards would mean its content is wider than the column,
+       which must never happen. */
+    overflow-x: hidden;
     overflow-y: auto;
   }
 }
@@ -705,6 +712,8 @@
   .ppg-margin[data-enhanced="true"] .ppg-margin-body {
     flex: 1 1 auto;
     min-block-size: 0;
+    /* Scrolling is vertical: the body never scrolls sideways under the cards. */
+    overflow-x: hidden;
     overflow-y: auto;
     /* Scrolling to the end of the panel must not carry on into the paper. */
     overscroll-behavior: contain;

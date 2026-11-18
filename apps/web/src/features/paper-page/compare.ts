@@ -423,8 +423,9 @@ function tokens(text: string): string[] {
  *
  * Joining the segments that are not `added` gives `from` back and joining the
  * ones that are not `removed` gives `to`, whitespace included, so a reader sees
- * exactly what the author typed. Adjacent words that went (or came) together
- * are one segment: `and preference`, not `and`, `preference`.
+ * exactly what the author typed — including punctuation staying attached to the
+ * word it follows. Adjacent words that went (or came) together are one segment:
+ * `and preference`, not `and`, `preference`.
  */
 export function diffText(from: string, to: string): TextSegment[] {
   if (from === to) {
@@ -456,6 +457,7 @@ export function diffText(from: string, to: string): TextSegment[] {
 
   const segments: TextSegment[] = [];
   const push = (kind: TextSegmentKind, text: string): void => {
+    if (text === "") return;
     const last = segments[segments.length - 1];
     if (last !== undefined && last.kind === kind) {
       segments[segments.length - 1] = { kind, text: last.text + text };
@@ -463,12 +465,27 @@ export function diffText(from: string, to: string): TextSegment[] {
       segments.push({ kind, text });
     }
   };
+  // A matched word's trailing whitespace belongs to its own side: `types.` in
+  // the old version and `types of nursing work.` in the new one share the word
+  // `types`, not the space after it. Taking the newer spelling for both sides
+  // left the old text reading "types ." (a space before the period).
+  const body = (token: string): string => token.trimEnd();
+  const tail = (token: string): string => token.slice(body(token).length);
   let i = 0;
   let j = 0;
   while (i < a.length && j < b.length) {
     if (key(a[i]) === key(b[j])) {
-      // Keep the newer spelling of the whitespace so "same" reads as the new text.
-      push("same", b[j]);
+      const gone = tail(a[i]);
+      const came = tail(b[j]);
+      if (gone === came) {
+        // The same word with the same spacing on both sides: shared text.
+        push("same", body(a[i]) + gone);
+      } else {
+        // The word is shared, its spacing is not: each side keeps its own.
+        push("same", body(b[j]));
+        push("removed", gone);
+        push("added", came);
+      }
       i += 1;
       j += 1;
     } else if (table[(i + 1) * cols + j] >= table[i * cols + j + 1]) {

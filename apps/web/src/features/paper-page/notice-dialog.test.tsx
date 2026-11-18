@@ -140,6 +140,27 @@ describe("a correction", () => {
     );
     expect(screen.getByText("bafyrei-notice-record")).toBeTruthy();
   });
+
+  it("confirms in words, with the record id behind a disclosure and a link to it", async () => {
+    show();
+    open();
+    type("The y-axis of Figure 2 was mislabelled.");
+
+    await submitForm();
+
+    await waitFor(() =>
+      expect(screen.getByText(/Your correction is on record/)).toBeTruthy(),
+    );
+    // The confirmation says what happened; the raw record id is not the news.
+    expect(screen.getByRole("status").textContent).not.toContain("bafyrei-notice-record");
+    expect(
+      screen.getByRole("button", { name: "View the signed record" }),
+    ).toBeTruthy();
+    // The id is still reachable, in the details disclosure.
+    const details = document.querySelector("details.ppg-notice-record");
+    expect(details).not.toBeNull();
+    expect(details?.textContent).toContain("bafyrei-notice-record");
+  });
 });
 
 describe("a retraction or a withdrawal", () => {

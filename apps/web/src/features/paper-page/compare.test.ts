@@ -337,6 +337,41 @@ describe("diffText", () => {
   it("is a single unchanged segment for identical text", () => {
     expect(diffText("Same words.", "Same words.")).toEqual([{ kind: "same", text: "Same words." }]);
   });
+
+  it("keeps each side's own spacing, so punctuation never separates from its word", () => {
+    // A word added right after "types" must not borrow the newer text's space
+    // for the older side: that read "five shift types ." with a space before
+    // the period.
+    const from = "We studied five shift types.";
+    const to = "We studied five shift types of nursing work.";
+    const segments = diffText(from, to);
+
+    const read = (skip: "added" | "removed"): string =>
+      segments
+        .filter((segment) => segment.kind !== skip)
+        .map((segment) => segment.text)
+        .join("");
+
+    expect(read("added")).toBe(from);
+    expect(read("removed")).toBe(to);
+    expect(read("added")).not.toContain(" .");
+  });
+
+  it("reconstructs both texts exactly however the words move", () => {
+    const pairs = [
+      ["We studied five shift types.", "We studied five shift types of nursing work."],
+      ["We studied five shift types of nursing work.", "We studied five shift types."],
+      ["We studied five shift types.", "We studied five shift types, all in one hospital."],
+      ["We studied five shift types (nursing).", "We studied five shift types."],
+      ["We studied five shift types. Each was observed.", "We studied five shift types."],
+      ["A  double  space.", "A double space."],
+    ] as const;
+    for (const [from, to] of pairs) {
+      const segments = diffText(from, to);
+      expect(segments.filter((s) => s.kind !== "added").map((s) => s.text).join("")).toBe(from);
+      expect(segments.filter((s) => s.kind !== "removed").map((s) => s.text).join("")).toBe(to);
+    }
+  });
 });
 
 function manifestBody(n: number, files: CompareFile[]): Record<string, unknown> {
@@ -558,7 +593,10 @@ describe("CompareView — files and details", () => {
         },
       ],
     });
-    expect(html).toContain("<ins>with the appendix</ins>");
+    // The space before the new words is part of what v2 added, so it sits
+    // inside the insertion: v1's side is unchanged, spacing included.
+    expect(html).toContain("<ins> with the appendix</ins>");
+    expect(html).not.toContain("version .");
     // A note that only differs is not a change to the paper: the empty state stands.
     expect(html).toContain("Nothing changed between these versions.");
   });

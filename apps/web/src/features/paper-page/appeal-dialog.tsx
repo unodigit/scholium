@@ -43,7 +43,7 @@ import {
   isRecordSigningError,
 } from "../web-auth/errors";
 import { signRecord, type SignedRecord } from "../web-auth/sign-record";
-import { Icon } from "../ui-kit/icons";
+import { Icon, RecordLink } from "../ui-kit";
 import { formatRemovalDate } from "./unlisted-paper";
 
 /** The words on the action that opens the dialog. */
@@ -590,7 +590,7 @@ export function describeAppealError(error: unknown): AppealFailure {
 
 /** What can take focus inside the dialog, for keeping Tab inside it. */
 const FOCUSABLE =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 type Phase = "editing" | "signing" | "filed";
 
@@ -891,11 +891,21 @@ function AppealPanel({
             <p className="ppg-appeal-done" role="status">
               <Icon name="check" className="ppg-appeal-icon ppg-appeal-icon--verified" />
               <span>
-                A panel will be drawn to decide it. The signed record is{" "}
-                <span className="ppg-notice-id">{filed.id}</span>.
+                A panel will be drawn to decide it. Your appeal is signed into
+                the public record.
               </span>
             </p>
+            {/* The id is a technical detail, not the confirmation: it is
+                disclosed on request rather than printed at the reader. */}
+            <details className="ppg-appeal-record">
+              <summary>Record details</summary>
+              <p>
+                The signed record’s id is{" "}
+                <span className="ppg-notice-id">{filed.id}</span>.
+              </p>
+            </details>
             <div className="ppg-appeal-buttons">
+              <RecordLink cid={filed.id} label="View the signed record" />
               <button
                 ref={done}
                 type="button"
