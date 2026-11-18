@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TOAST_REGION_ID } from "../ui-kit";
 import { parseManifestResponse, type LoadManifest, type VersionManifest } from "./manifest-source";
+import { useFileCheck } from "./use-file-check";
 import { SIGNED_BYTES, VERSION_ID, fileOf, manifestBody } from "./verify-fixtures";
 import { VerifyPage } from "./verify-page";
 import type { VersionRef } from "./version-ref";
@@ -61,5 +62,37 @@ describe("bugfix: dropping an archive clears a previous verdict", () => {
     expect(zone(container).textContent).toContain("Drop a file here");
     expect(zone(container).textContent).not.toContain("main.pdf");
     expect(zone(container).querySelector(".vp-drop__notice")!.textContent).toContain("paper archive");
+  });
+});
+
+describe("bugfix: /verify manifest is not re-requested when the loader changes identity", () => {
+  it("requests the manifest once even when loadManifest is a new function on every render, and once more after retry", async () => {
+    const spy = vi.fn<LoadManifest>(async (ref: VersionRef) =>
+      parseManifestResponse(manifestBody({ n: ref.version, version: ref.version }), ref),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ loadManifest }: { loadManifest: LoadManifest }) =>
+        useFileCheck({ initialId: VERSION_ID, loadManifest }),
+      { initialProps: { loadManifest: ((ref, signal) => spy(ref, signal)) as LoadManifest } },
+    );
+
+    // Re-render several times, each with a fresh loader identity (as an inline
+    // arrow in a re-rendering parent would), without changing the id.
+    for (let i = 0; i < 5; i++) {
+      rerender({ loadManifest: ((ref, signal) => spy(ref, signal)) as LoadManifest });
+    }
+
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+
+    // The loader must not have been called again by the re-renders.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // A retry asks for the manifest once more.
+    act(() => {
+      result.current.retry();
+    });
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
   });
 });
