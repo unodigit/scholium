@@ -10,12 +10,19 @@ Scholium runs the same code everywhere. What changes between a laptop and a clou
 
 | Backend | Choices | Selected by |
 | --- | --- | --- |
-| Database | SQLite file (default) or PostgreSQL 16 | `DATABASE_URL` |
-| Object storage | a directory on disk (default) or an S3-API bucket | `STORAGE_BACKEND` |
+| Database | PostgreSQL 16, or a SQLite file (the default, **deprecated**: tests and local development only) | `DATABASE_URL` |
+| Object storage | an S3-API bucket, or a directory on disk (the default, for tests and local development) | `STORAGE_BACKEND` |
 | Background jobs | inline (default), an in-process thread, or a separate worker process | `JOBS_MODE` |
 | Code sandbox | docker (default), podman, a remote sandbox service, or off | `SANDBOX_BACKEND` |
 
 The defaults need nothing installed beyond Python and Node, and they are what `npm test` uses. Everything that needs a container engine or a cloud account is opt-in and lives outside `npm test`: see [section 9](#9-opt-in-commands-outside-npm-test).
+
+**Supported backends, and what is deprecated.** PostgreSQL 16 and S3-API object storage (AWS S3, Cloudflare R2, MinIO and the like) are the supported backends. **SQLite is deprecated**: use it for tests and local development only. Deprecated means a warning and a production refusal, not removal. SQLite behaves exactly as before, and `npm test` still runs on it with no container, network or credential. Two things follow from the deprecation:
+
+- A process that opens a SQLite database logs one `WARNING` (once per process): `SQLite is deprecated; use PostgreSQL and move existing data with python -m app.migrate_backend (see docs/deploy.md). SQLite remains only for tests and local development`.
+- A production start (`SCHOLIUM_ENV=production`) on SQLite, or on `STORAGE_BACKEND=fs`, stops with `Unsafe production configuration: DATABASE_URL must be a PostgreSQL URL in production (SQLite is deprecated); STORAGE_BACKEND must be s3 in production; …`. The first problem names `DATABASE_URL`, the second `STORAGE_BACKEND`; the message goes on to list every other problem too ([section 2.11](#211-what-production-refuses-to-start-without)).
+
+To move an existing SQLite and `fs` node to PostgreSQL and S3, see [section 7](#7-moving-an-existing-node-with-appmigrate_backend). To develop on your machine against PostgreSQL and S3, see [section 3.2](#32-against-postgresql-and-s3-with-npm-run-stackdeps).
 
 ## Contents
 
@@ -34,14 +41,14 @@ The defaults need nothing installed beyond Python and Node, and they are what `n
 
 | | Host (development) | Local stack | Staging |
 | --- | --- | --- | --- |
-| How it starts | `uv run python -m app` | `npm run stack:up` | `tofu apply` in `infra/envs/staging` |
-| Where | your machine, no containers | podman or docker on your machine | one Hetzner Cloud VM running the same compose file under systemd |
-| Database | SQLite file (`./scholium.db`) | PostgreSQL 16 + pgvector container | PostgreSQL container on the VM |
-| Objects | files under `CONTENT_DIR` | MinIO container (`STORAGE_BACKEND=s3`) | AWS S3 or Cloudflare R2 (`STORAGE_BACKEND=s3`) |
+| How it starts | `uv run python -m app` (add `npm run stack:deps` for PostgreSQL, MinIO and Mailpit) | `npm run stack:up` | `tofu apply` in `infra/envs/staging` |
+| Where | your machine, no containers (or with the dependencies in containers) | podman or docker on your machine | one Hetzner Cloud VM running the same compose file under systemd |
+| Database | SQLite file (`./scholium.db`, deprecated), or the stack's PostgreSQL ([section 3.2](#32-against-postgresql-and-s3-with-npm-run-stackdeps)) | PostgreSQL 16 + pgvector container | PostgreSQL container on the VM |
+| Objects | files under `CONTENT_DIR`, or the stack's MinIO | MinIO container (`STORAGE_BACKEND=s3`) | AWS S3 or Cloudflare R2 (`STORAGE_BACKEND=s3`) |
 | Jobs | eager (inline) | separate `worker` container (`JOBS_MODE=external`) | separate `worker` container |
 | Sandbox | docker (default); `not_run` if there is no engine | off (`SANDBOX_BACKEND=none`) | off by default |
-| Mail | none (`SMTP_URL` empty) | Mailpit, inbox on `:8025` | your SMTP server |
-| Environment | `SCHOLIUM_ENV=dev` | `dev` | `production` (insecure defaults are refused) |
+| Mail | none (`SMTP_URL` empty), or the stack's Mailpit | Mailpit, inbox on `:8025` | your SMTP server |
+| Environment | `SCHOLIUM_ENV=dev` | `dev` | `production` (insecure defaults are refused, SQLite and `fs` among them) |
 | Public access | `127.0.0.1` | `127.0.0.1` only | API through a Cloudflare Tunnel |
 
 The stack is the cloud deployment in miniature: only `S3_ENDPOINT_URL`, the credentials and a few secrets differ between the local stack and staging.
@@ -53,7 +60,7 @@ The stack is the cloud deployment in miniature: only `S3_ENDPOINT_URL`, the cred
 - The API, the worker and the sandbox service read **their process environment** when they start. Restart after changing a value. None of them loads a `.env` file.
 - `compose.yaml` and `scripts/stack-smoke.sh` read **`.env` next to `compose.yaml`**, then the environment. To run something on the host with the values from a file: `set -a; . ./.env; set +a`.
 - `.env.example` is the template. It lists every variable with a placeholder. Copy it to `.env` (`.env` is git-ignored) and never commit real secrets.
-- With `SCHOLIUM_ENV=production` the API refuses to start unless the settings are safe ([section 2.11](#211-what-production-refuses-to-start-without)). Independently of the environment, an unknown `JOBS_MODE`, `STORAGE_BACKEND` or `SCHOLIUM_ENV` is refused rather than guessed at.
+- With `SCHOLIUM_ENV=production` the API refuses to start unless the settings are safe ([section 2.11](#211-what-production-refuses-to-start-without)). Independently of the environment, an unknown `JOBS_MODE`, `STORAGE_BACKEND`, `AI_PROVIDER` or `SCHOLIUM_ENV` is refused rather than guessed at.
 - `S3_FORCE_PATH_STYLE` is a *flag*: `1`/`0` or `true`/`false`, `yes`/`no`, `on`/`off`. The other on/off settings (`ORCID_MOCK`, `ARXIV_MOCK`, `JOBS_EAGER`, `RATE_LIMIT_ENABLED`) take digits only, and an unparsable number silently keeps its default.
 
 The "Default" column is the default of the application on the host. Where the container image or `compose.yaml` chooses differently, the description says so.
@@ -62,11 +69,13 @@ The "Default" column is the default of the application on the host. Where the co
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DATABASE_URL` | `sqlite:///./scholium.db` | SQLAlchemy URL. `postgresql://…` and `postgres://…` are rewritten to the psycopg 3 driver (`postgresql+psycopg://…`); an explicit driver is respected. The API image defaults to `sqlite:////data/scholium.db`; compose builds a PostgreSQL URL from the `POSTGRES_*` variables below. |
+| `DATABASE_URL` | `sqlite:///./scholium.db` (SQLite is **deprecated**) | SQLAlchemy URL. Production requires PostgreSQL: `postgresql://…`, `postgres://…` or `postgresql+psycopg://…`. SQLite, including an unset `DATABASE_URL`, and every other scheme are refused there ([section 2.11](#211-what-production-refuses-to-start-without)). `postgresql://…` and `postgres://…` are rewritten to the psycopg 3 driver (`postgresql+psycopg://…`). The API image sets no `DATABASE_URL`: compose builds a PostgreSQL URL from the `POSTGRES_*` variables below, and anything else that runs the image must supply one. |
 | `DB_POOL_SIZE` | `5` | PostgreSQL connection pool size per process. Ignored for SQLite. |
 | `DB_MAX_OVERFLOW` | `10` | Extra PostgreSQL connections allowed above the pool size under load. Ignored for SQLite. |
 
 PostgreSQL connections are checked with a ping before use (`pool_pre_ping`) and run in UTC. Tables are created at startup (`create_all`); on PostgreSQL that runs under an advisory lock, so replicas started together do not race.
+
+With a SQLite URL the process logs the one-line deprecation warning quoted at the top of this guide, once per process, and otherwise behaves as it always has. To get off SQLite, see [section 7](#7-moving-an-existing-node-with-appmigrate_backend).
 
 **Local stack only** (read by `compose.yaml`, not by the application):
 
@@ -84,7 +93,7 @@ Content blobs (named by their CID) and in-flight tus uploads go through one `Obj
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `STORAGE_BACKEND` | `fs` | `fs` keeps objects under `CONTENT_DIR`; `s3` keeps them in an S3-API bucket. Anything else is refused at startup. |
+| `STORAGE_BACKEND` | `fs` | `s3` keeps objects in an S3-API bucket and is required in production. `fs` keeps them under `CONTENT_DIR`, for tests and local development; production refuses it. Anything else is refused at startup. |
 | `CONTENT_DIR` | `./data/content` | Root of the `fs` backend (image: `/data/content`). The layout is one file per CID, unchanged from before the backend existed, so an existing directory is read as it stands. |
 | `S3_BUCKET` | *(none)* | Bucket name. Required when `STORAGE_BACKEND=s3`. |
 | `S3_ENDPOINT_URL` | *(empty)* | S3 endpoint. Empty uses the client's default (AWS). Set it for MinIO, Cloudflare R2 and other S3-compatible services. |
@@ -165,12 +174,51 @@ A node without a signing key still works but signs nothing of its own (rendition
 | `ARXIV_MOCK` | `1` | `1` answers arXiv imports locally. Production requires `0`. |
 | `ARXIV_API_URL` | `https://export.arxiv.org/api/query` | Override the arXiv endpoint. |
 | `CROSSREF_ENABLED` | *(off)* | Set to exactly `1` to resolve DOIs through Crossref. |
-| `AI_PROVIDER` | `fake` | `fake`, `anthropic` or `ollama`. Production refuses `fake`. |
-| `AI_HOSTED_MODEL` | `claude-sonnet-5-5` | Model used when `AI_PROVIDER=anthropic`. |
-| `ANTHROPIC_API_KEY` | *(empty)* | **Secret.** Required in production when `AI_PROVIDER=anthropic`. |
+| `AI_PROVIDER` | `fake` | `fake`, `anthropic`, `openai` or `ollama` (any case). Anything else is refused at startup, in every environment. Production refuses `fake`. The ids name protocols, not vendors: see [Choosing an AI provider](#choosing-an-ai-provider) below. |
+| `AI_HOSTED_MODEL` | `claude-sonnet-5-5` | Model id the hosted providers (`anthropic` and `openai`) send. The default is an Anthropic model id, which another server rejects: set it for anything else (production requires it for `openai`), with the id taken from the provider's documentation. |
+| `ANTHROPIC_API_KEY` | *(empty)* | **Secret.** Key for `AI_PROVIDER=anthropic`, whichever server `ANTHROPIC_BASE_URL` names. Required in production when `AI_PROVIDER=anthropic`. |
+| `ANTHROPIC_BASE_URL` | *(empty: the Anthropic SDK's default)* | Where `AI_PROVIDER=anthropic` sends requests, for a server that speaks the Anthropic protocol. The SDK appends `/v1/messages`. |
+| `OPENAI_API_KEY` | *(empty)* | **Secret.** Bearer key for `AI_PROVIDER=openai`. Required in production when `AI_PROVIDER=openai`. |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL of a server that speaks the OpenAI chat-completions protocol, for `AI_PROVIDER=openai`. Requests go to this URL plus `/chat/completions`, so include any `/v1` the server needs. A trailing slash is ignored; empty means the default. |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server for `AI_PROVIDER=ollama`. Setting it in the environment also selects Ollama embeddings for semantic search; unset, a built-in hashing embedder is used. |
 | `OLLAMA_MODEL` | `llama3.1` | Chat model for `AI_PROVIDER=ollama`. |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model, used when `OLLAMA_URL` is set. |
+
+#### Choosing an AI provider
+
+`AI_PROVIDER` chooses who answers the chat requests of the AI pre-review:
+
+| `AI_PROVIDER` | Protocol | Runs | Settings |
+| --- | --- | --- | --- |
+| `fake` | none: deterministic text, no network | in the process | none. Tests and development; production refuses it. |
+| `anthropic` | Anthropic Messages | hosted | `ANTHROPIC_API_KEY`, `AI_HOSTED_MODEL`, and `ANTHROPIC_BASE_URL` for any server but Anthropic's. |
+| `openai` | OpenAI-compatible chat completions (`POST …/chat/completions`) | hosted | `OPENAI_API_KEY`, `AI_HOSTED_MODEL`, and `OPENAI_BASE_URL` for any server but OpenAI's. |
+| `ollama` | Ollama | self-hosted | `OLLAMA_URL`, `OLLAMA_MODEL`. |
+
+The ids name wire protocols, not vendors. `openai` is a plain HTTP client for the chat-completions format (no OpenAI SDK), so it works with any server that speaks it; `anthropic` with `ANTHROPIC_BASE_URL` works with any server that speaks the Anthropic protocol. There is no setting named after a vendor. DeepSeek serves both protocols, so it shows both (placeholders; no real key or model id belongs in a file you commit):
+
+```sh
+# DeepSeek, OpenAI protocol
+AI_PROVIDER=openai
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_API_KEY=<your DeepSeek API key>
+AI_HOSTED_MODEL=<model id from DeepSeek's documentation>
+
+# DeepSeek, Anthropic protocol
+AI_PROVIDER=anthropic
+ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+ANTHROPIC_API_KEY=<your DeepSeek API key>
+AI_HOSTED_MODEL=<model id from DeepSeek's documentation>
+```
+
+The model id is left out on purpose: model ids change, so copy the one you want from the provider's own documentation, which also gives the two endpoint roots (DeepSeek's differ, as above). `.env.example` has the same lines, commented out. `compose.yaml` passes all of these variables to the api and worker, so in the stack they go in `.env`.
+
+- **Hosted providers see listed papers only.** `anthropic` and `openai` send paper text to a third party, so an unlisted draft is refused with `PrivateDraftError` before any request is made. Private drafts need `ollama` (or `fake`).
+- **Keys stay out of every output.** They are never logged, never part of an error message and never stored in a review record. A failure names the provider and the HTTP status only, for example `openai provider: HTTP 401 from POST https://…/chat/completions`.
+- **Retries (`openai`).** A 429, a 5xx answer, a timeout or another transport failure is retried twice more (three requests in all) after an exponential wait that starts at one second, or after the server's `Retry-After` when that is a whole number of seconds (at most 30). Any other error fails at once, as does an answer with no content or one cut off at the token limit (`finish_reason` `length`). A `reasoning_content` field, when a server sends one, is ignored.
+- **Chat completions only.** Semantic-search embeddings are unaffected: `OLLAMA_URL` still selects Ollama embeddings, and the built-in hashing embedder stays the default.
+- **Production.** `openai` needs `OPENAI_API_KEY` and an explicit `AI_HOSTED_MODEL`; `anthropic` needs `ANTHROPIC_API_KEY`. Production cannot tell an Anthropic model id from another server's, so when you set `ANTHROPIC_BASE_URL`, set `AI_HOSTED_MODEL` too.
+- **Check against the real endpoint.** `npm run test:llm-live` sends one request through each protocol ([section 9.1](#91-the-live-llm-check)).
 
 ### 2.8 HTTP, web and process
 
@@ -214,14 +262,18 @@ None of these is tied to a backend; all have safe defaults. The `UPLOAD_*` varia
 | `PYTHON` | `scripts/test-pg.sh` | Interpreter used to pick a free port. |
 | `STACK_COMPOSE` | every `stack:*` script | Compose command to use. Note the different name from `COMPOSE`. |
 | `STACK_SMOKE_TIMEOUT` | `scripts/stack-smoke.sh` | Seconds each readiness wait may take (default 180). |
+| `STACK_UP_TIMEOUT`, `STACK_UP_POLL_INTERVAL` | `npm run stack:up`, `npm run stack:deps` | Seconds each stage waits for a service before it gives up (default 300), and seconds between two status checks (default 2, may be fractional). See [section 4.4](#44-npm-scripts). |
+| `LLM_LIVE_BASE_URL`, `LLM_LIVE_API_KEY`, `LLM_LIVE_MODEL`, `LLM_LIVE_OPENAI_BASE_URL` | `npm run test:llm-live` | Endpoint, key and model of the opt-in live LLM check; the last is optional. Without the first three the check is skipped ([section 9.1](#91-the-live-llm-check)). |
 | `MIGRATE_FROM_S3_ACCESS_KEY_ID`, `MIGRATE_FROM_S3_SECRET_ACCESS_KEY`, `MIGRATE_FROM_S3_FORCE_PATH_STYLE` | `app.migrate_backend` | S3 credentials and addressing for the *source* side. Fall back to the `S3_*` variables when unset. |
 | `MIGRATE_TO_S3_ACCESS_KEY_ID`, `MIGRATE_TO_S3_SECRET_ACCESS_KEY`, `MIGRATE_TO_S3_FORCE_PATH_STYLE` | `app.migrate_backend` | The same for the *target* side. |
 | `HCLOUD_TOKEN`, `CLOUDFLARE_API_TOKEN`, `AWS_*`, `TF_VAR_*` | OpenTofu in `infra/envs/staging` | Provider credentials and secret inputs ([section 8](#8-staging-with-opentofu)). |
 
 ### 2.11 What production refuses to start without
 
-With `SCHOLIUM_ENV=production`, `create_app()` raises `Unsafe production configuration: …` and the process exits, listing every problem at once, unless:
+With `SCHOLIUM_ENV=production`, `create_app()` raises `Unsafe production configuration: …` and the process exits, listing every problem at once, unless every item of this production checklist holds:
 
+- `DATABASE_URL` is a PostgreSQL URL: `postgresql://…`, `postgres://…` or `postgresql+psycopg://…`. SQLite is refused, and so is leaving `DATABASE_URL` unset, because unset means SQLite (`DATABASE_URL must be a PostgreSQL URL in production (SQLite is deprecated)`);
+- `STORAGE_BACKEND=s3`, and `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` are set. `fs` is refused (`STORAGE_BACKEND must be s3 in production`);
 - `JWT_SECRET` and `REVIEW_UNIQUENESS_KEY` are random values of at least 32 characters (and the review key is not the development-derived one);
 - `COMMITTEE_PUBLIC_KEY` is 32 bytes of hex or base64;
 - `SMTP_URL` is set;
@@ -229,16 +281,19 @@ With `SCHOLIUM_ENV=production`, `create_app()` raises `Unsafe production configu
 - `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET` are set, and `ORCID_MOCK=0` and `ARXIV_MOCK=0`;
 - jobs are not eager (`JOBS_MODE` is `thread` or `external`);
 - `SANDBOX_BACKEND` is one of `docker`, `podman`, `remote`, `none`, and for `remote` both `SANDBOX_URL` and a 32-character `SANDBOX_TOKEN` are set;
-- with `STORAGE_BACKEND=s3`: `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` are set;
-- `AI_PROVIDER` is not `fake`, and the provider's key is set (`ANTHROPIC_API_KEY` for `anthropic`);
+- `AI_PROVIDER` is not `fake`, and the provider is configured: `ANTHROPIC_API_KEY` for `anthropic`; `OPENAI_API_KEY` and an explicitly set `AI_HOSTED_MODEL` for `openai` (its default is an Anthropic model id, see [Choosing an AI provider](#choosing-an-ai-provider));
 - `RATE_LIMIT_ENABLED=1`;
 - `WEB_ORIGINS` lists explicit `https` origins, none of them localhost, and `NEXT_PUBLIC_API_URL` is not a loopback address.
+
+A node that is still on SQLite and files, started in production unchanged, therefore stops at once with `Unsafe production configuration: DATABASE_URL must be a PostgreSQL URL in production (SQLite is deprecated); STORAGE_BACKEND must be s3 in production; …` and then the remaining problems. Move it first: [section 7](#7-moving-an-existing-node-with-appmigrate_backend). The local stack and the staging environment already satisfy both checks: compose builds a PostgreSQL URL and always runs `STORAGE_BACKEND=s3`, and the staging configuration sets a `postgresql+psycopg://…` URL and `STORAGE_BACKEND=s3` itself.
 
 The worker and the sandbox service do not run this validation; they fail on their own missing settings (for example the service's short token).
 
 ## 3. Running on the host
 
-No containers, no account, no configuration: SQLite, files under `./data/content`, eager jobs.
+### 3.1 With nothing installed: SQLite and files
+
+No containers, no account, no configuration: SQLite, files under `./data/content`, eager jobs. This is the setup of `npm test` and of quick local development. SQLite is deprecated, so the API logs the deprecation warning once at startup ([top of this guide](#running-and-deploying-scholium)), and a production start refuses this setup. For development against the backends production uses, see [section 3.2](#32-against-postgresql-and-s3-with-npm-run-stackdeps).
 
 ```sh
 npm install                                   # once, at the repository root
@@ -266,13 +321,55 @@ JOBS_MODE=external uv run --all-packages python -m app.worker    # terminal 2
 
 The tests need none of this: `npm test` runs the API suite (SQLite, `STORAGE_BACKEND=fs`, eager jobs) and then the web suite, with no containers, network or credentials.
 
+### 3.2 Against PostgreSQL and S3 with `npm run stack:deps`
+
+To run the API on the host against the backends production uses, start only the stack's backing services. `npm run stack:deps` runs the first two stages of `npm run stack:up` ([section 4.4](#44-npm-scripts)) and returns when they are done:
+
+```sh
+npm run stack:deps     # db, minio, mailpit and the minio-init bucket job; not api, worker or web
+```
+
+It starts `db` (PostgreSQL 16 with pgvector), `minio` and `mailpit` and waits until each is healthy, then runs `minio-init` and waits until it has exited with status 0, which means the bucket `scholium` exists. The prerequisites are those of the stack ([section 4.1](#41-prerequisites)).
+
+Then start the API in a shell with these values. They are what `compose.yaml` publishes on `127.0.0.1` when no `.env` changes the ports or credentials:
+
+```sh
+export DATABASE_URL=postgresql+psycopg://scholium:scholium-local-only@127.0.0.1:5433/scholium
+export STORAGE_BACKEND=s3
+export S3_ENDPOINT_URL=http://127.0.0.1:9000
+export S3_BUCKET=scholium
+export S3_REGION=us-east-1
+export S3_FORCE_PATH_STYLE=1
+export S3_ACCESS_KEY_ID=scholium-minio              # the MinIO user, MINIO_ROOT_USER
+export S3_SECRET_ACCESS_KEY=scholium-minio-secret   # its password, MINIO_ROOT_PASSWORD
+export SMTP_URL=smtp://127.0.0.1:1025
+cd apps/api
+uv run --all-packages python -m app                 # API on http://127.0.0.1:8000
+```
+
+| Value | Where it comes from |
+| --- | --- |
+| `127.0.0.1:5433`, user `scholium`, password `scholium-local-only`, database `scholium` | `DB_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` ([section 2.2](#22-database-backend)) |
+| `http://127.0.0.1:9000` | `MINIO_PORT` ([section 2.3](#23-object-storage-backend)) |
+| `scholium-minio` and `scholium-minio-secret` as the S3 keys | `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`: MinIO's administrator, which is also what the stack's api uses |
+| bucket `scholium`, region `us-east-1`, `S3_FORCE_PATH_STYLE=1` | the defaults of `S3_BUCKET`, `S3_REGION` and `S3_FORCE_PATH_STYLE` in `compose.yaml`. MinIO needs path-style addressing. |
+| `smtp://127.0.0.1:1025` | `MAILPIT_SMTP_PORT`. The inbox is at http://localhost:8025. |
+
+If your `.env` changes any of these (a different port, other credentials), use your values: the table lists the defaults. The API reads its process environment, not `.env` ([section 2.1](#21-how-they-are-read)).
+
+- **Environment and jobs stay development.** `SCHOLIUM_ENV` is `dev` and jobs are eager, so no worker is needed. To run a separate worker as in [section 3.1](#31-with-nothing-installed-sqlite-and-files), give both processes these same variables and `JOBS_MODE=external`.
+- **The data is the stack's.** It lives in the stack's volumes (`db-data`, `minio-data`), so it survives `npm run stack:down` and a later `npm run stack:up` finds it. `npm run stack:down` stops these services too.
+- **Do this after, not before, moving a node in.** The first host start creates the tables and a bookkeeping row, and `app.migrate_backend` refuses a target that holds any row ([section 7.1](#71-before-you-start)). To move an existing node into this database, run the migration before you start the API against it.
+- **Tests are unchanged.** `npm test` stays on SQLite; to run the API suite against PostgreSQL use `npm run test:pg` ([section 5](#5-the-postgresql-test-lane)).
+
 ## 4. The local podman stack
 
 `compose.yaml` at the repository root starts the cloud shape of Scholium on your machine.
 
 ### 4.1 Prerequisites
 
-- **podman 4.9 or newer with `podman-compose`**, rootless is fine; or **docker with the compose plugin**. The scripts use `podman-compose` when it is installed and `docker compose` otherwise. `STACK_COMPOSE="docker compose" npm run stack:up` picks one explicitly.
+- **podman 4.9 or newer with `podman-compose` 1.6.0 or newer**, rootless is fine; or **docker with the compose plugin**. The scripts use `podman-compose` when it is installed and `docker compose` otherwise. `STACK_COMPOSE="docker compose" npm run stack:up` picks one explicitly.
+- **Why 1.6.0.** `compose.yaml` uses nested variable defaults (`${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-scholium-minio}}`) and `COMPOSE_PROFILES`, which podman-compose only understands from 1.6.0. Every `stack:*` script goes through `scripts/stack-compose.sh`, which reads `podman-compose --version` and refuses an older one with exit status 1, naming the version it found. Upgrade with `pipx install podman-compose`, or use docker compose (`STACK_COMPOSE="docker compose"`), whose version is not checked.
 - Node and npm (the scripts are npm scripts), and `curl` for `stack:smoke`.
 - Network access for the first build: it pulls `python:3.12-slim`, `node:22-alpine`, PostgreSQL, MinIO and Mailpit images, and installs the dependencies inside the build.
 - Free host ports 3000, 8000, 5433, 9000, 9001, 1025 and 8025 (all configurable, [section 2](#2-environment-variables)).
@@ -281,11 +378,11 @@ The tests need none of this: `npm test` runs the API suite (SQLite, `STORAGE_BAC
 
 ```sh
 cp .env.example .env     # optional: every value has the same default inside compose.yaml
-npm run stack:up         # build the images and start everything in the background
+npm run stack:up         # build the images and start everything in the background, in stages
 npm run stack:smoke      # wait for readiness and check the whole path end to end
 ```
 
-Without a `.env` the stack starts with local-only placeholder credentials. Use different values for anything another machine can reach.
+`stack:up` starts the services in three stages and waits between them ([section 4.4](#44-npm-scripts)); the first run also builds the images, which takes several minutes. Without a `.env` the stack starts with local-only placeholder credentials. Use different values for anything another machine can reach.
 
 The first start has no node signing key. The stack works without one but signs nothing of its own; make one on the volume the api and worker share, then restart them:
 
@@ -317,13 +414,24 @@ Named volumes `db-data`, `minio-data`, `mailpit-data`, `app-data` and `sandbox-w
 
 | Script | What it does |
 | --- | --- |
-| `npm run stack:up` | `up -d --build --remove-orphans`: build the images and start the stack detached. |
-| `npm run stack:down` | `down --remove-orphans`: stop and remove the containers. **The volumes stay.** |
+| `npm run stack:up` | Build the images and start the stack detached, **in three stages** (below). |
+| `npm run stack:deps` | The first two stages only: `db`, `minio`, `mailpit` and the `minio-init` bucket job, with no api, worker or web. For running the API on the host ([section 3.2](#32-against-postgresql-and-s3-with-npm-run-stackdeps)) and for moving a node into the stack's database ([section 7.5](#75-example-a-host-install-into-the-local-stack)). |
+| `npm run stack:down` | `down --remove-orphans`: stop and remove the containers. **The volumes stay.** Extra arguments are appended: `npm run stack:down -- --volumes` also deletes them. |
 | `npm run stack:logs` | Follow the logs, 100 lines back. One service: `npm run stack:logs -- api`. |
-| `npm run stack:reset` | `down --volumes`, then `up`: deletes the database, the bucket, the inbox and the node key, and starts from scratch. |
+| `npm run stack:reset` | `down --volumes`, then a plain `up -d --build --remove-orphans` in one step, not in stages: deletes the database, the bucket, the inbox and the node key, and starts from scratch. On podman 4.9 prefer `npm run stack:down -- --volumes` followed by `npm run stack:up` (see the next subsection). |
 | `npm run stack:smoke` | Verify the running stack (below). Exit status 0 only if every step passed. |
 
 All of them honour `COMPOSE_PROFILES` and `STACK_COMPOSE`. They are not part of `npm test`.
+
+**Why `stack:up` starts services in stages.** `compose.yaml` orders its services with `depends_on`: the api and the worker wait for `db` to be healthy and for the one-shot `minio-init` to complete. podman-compose 1.6 turns every `depends_on` entry into a `--requires` of the container it creates, and podman 4.9 cannot start a service whose `depends_on` names a service that has already exited. By the time the api and worker are due, `minio-init` has done its job and exited, so a single `up -d` can leave them unstarted on podman 4.9 (`generating dependency graph … not found in input list`). `npm run stack:up` (`scripts/stack-up-staged.sh`) therefore never relies on `depends_on`: every stage passes `--no-deps`, and the script itself waits for what the next stage needs.
+
+| Stage | Command (through `scripts/stack-compose.sh`) | The script then waits until |
+| --- | --- | --- |
+| 1 | `up -d --no-deps db minio mailpit` | each of the three reports `(healthy)` |
+| 2 | `up -d --no-deps minio-init` | `minio-init` has exited with status 0: the bucket exists |
+| 3 | `up -d --no-deps --build --remove-orphans api worker web`, plus `sandbox` when `COMPOSE_PROFILES` enables it | nothing: it returns once they are started. `npm run stack:smoke` waits for readiness. |
+
+`npm run stack:deps` stops after stage 2. Each wait gives up after `STACK_UP_TIMEOUT` seconds (default 300), naming the service and the last status it saw; `STACK_UP_POLL_INTERVAL` (default 2) is the time between two status checks. A `minio-init` that exits with a non-zero status fails the run at once, because it does not run again; read its output with `npm run stack:logs -- minio-init`. A compose command that fails ends the script with that command's exit status. `depends_on` stays in `compose.yaml` for plain `docker compose up` and for anyone who runs the file directly.
 
 `stack:smoke` runs three steps in order and stops at the first failure, naming it:
 
@@ -351,7 +459,7 @@ podman build -f deploy/containers/web.Containerfile \
 
 - After changing `.env`, run `npm run stack:up` again (it recreates what changed).
 - Changing `NEXT_PUBLIC_API_URL` or `NEXT_PUBLIC_SITE_URL` needs a rebuild of the web image, which `stack:up` does.
-- Starting over: `npm run stack:reset`.
+- Starting over: `npm run stack:reset`. It does not use the staged start ([section 4.4](#44-npm-scripts)), so on podman 4.9 start over with `npm run stack:down -- --volumes` and then `npm run stack:up`.
 
 ## 5. The PostgreSQL test lane
 
@@ -380,7 +488,7 @@ TEST_DATABASE_URL=postgresql+psycopg://scholium:scholium@localhost:5432/scholium
 
 The role must be allowed to create databases, and the database in the URL must exist.
 
-**In CI** (`.github/workflows/ci.yml`) four jobs run on every push and pull request: `npm test`, `npm run test:pg` against a `pgvector/pgvector:pg16` service container, a build of both images from `deploy/containers/`, and `npm run infra:check`. Any failing job fails the workflow.
+**In CI** (`.github/workflows/ci.yml`) five jobs run on every push and pull request: `npm test`, `npm run test:system`, `npm run test:pg` against a `pgvector/pgvector:pg16` service container, a build of both images from `deploy/containers/`, and `npm run infra:check`. Any failing job fails the workflow. The live LLM check ([section 9.1](#91-the-live-llm-check)) is not among them.
 
 ## 6. The worker and sandbox processes
 
@@ -430,6 +538,13 @@ Things to know before relying on it:
 
 `python -m app.migrate_backend` copies a running node's data to new backends (SQLite to PostgreSQL, a content directory to an S3 bucket, or both) and **proves the copy is the node it was copied from**. It copies; the source is only read and stays as it was.
 
+**This is the way off SQLite.** SQLite is deprecated and a production start refuses SQLite and `STORAGE_BACKEND=fs` ([section 2.11](#211-what-production-refuses-to-start-without)), so a node that began on a SQLite file and a content directory moves here, to PostgreSQL and an S3 bucket, in one run. In short:
+
+1. Stop the node and its worker, and back up the SQLite file and `CONTENT_DIR` ([7.1](#71-before-you-start)).
+2. Have an empty PostgreSQL database and an empty bucket. To try it locally, `npm run stack:deps` provides both ([7.5](#75-example-a-host-install-into-the-local-stack)).
+3. Run `python -m app.migrate_backend --from-db sqlite:///… --from-storage fs --from-content-dir … --to-db postgresql://… --to-storage s3 --to-s3-bucket …` with `--dry-run` first, then without it ([7.2](#72-dry-run-then-copy)).
+4. Rebuild the search index, point the node at PostgreSQL and S3 with its secrets unchanged, and start it ([7.4](#74-after-the-copy)).
+
 ### 7.1 Before you start
 
 1. **Stop the node and its worker.** The database is read in one snapshot, but the object store is not transactional, so a node that keeps writing can hand the copy a database and a set of blobs that do not belong together.
@@ -463,7 +578,7 @@ event_log: 0 entries, head seq 0, hash chain intact
 blobs: 1 objects, 14 bytes
 ```
 
-(Counts are those of an empty node; yours will be larger.) Passwords in URLs are never printed. Leave out `--dry-run` to copy. S3 credentials never travel on the command line: put them in the environment, per side:
+(Counts are those of an empty node; yours will be larger.) Passwords in URLs are never printed. Because the source is SQLite, the tool also logs the one-line SQLite deprecation warning quoted at the top of this guide; that is expected. Leave out `--dry-run` to copy. S3 credentials never travel on the command line: put them in the environment, per side:
 
 ```sh
 export MIGRATE_TO_S3_ACCESS_KEY_ID=...        # falls back to S3_ACCESS_KEY_ID
@@ -493,7 +608,7 @@ Any failure exits non-zero with `migrate_backend: error: …` on stderr. Once st
      uv run --all-packages python -c "from app.modules.search import rebuild_index; print(rebuild_index())"
    ```
 
-2. **Point the node at the new backends:** `DATABASE_URL`, `STORAGE_BACKEND=s3` and the `S3_*` variables ([sections 2.2](#22-database-backend) and [2.3](#23-object-storage-backend)), together with the unchanged secrets from [7.1](#71-before-you-start). Start the api and the worker.
+2. **Point the node at the new backends:** `DATABASE_URL`, `STORAGE_BACKEND=s3` and the `S3_*` variables ([sections 2.2](#22-database-backend) and [2.3](#23-object-storage-backend)), together with the unchanged secrets from [7.1](#71-before-you-start). A production node needs exactly these two backends to start at all ([section 2.11](#211-what-production-refuses-to-start-without)). Start the api and the worker.
 3. **Check:** `GET /readyz` returns 200, and the papers you know are there.
 4. Keep the source until you are satisfied. The migration did not change it.
 
@@ -502,7 +617,7 @@ Any failure exits non-zero with `migrate_backend: error: …` on stderr. Once st
 ```sh
 # 1. Start only the services that hold data. Do not start api or worker yet:
 #    they would write to the empty database and make it "not empty".
-podman-compose up -d db minio minio-init
+npm run stack:deps
 
 # 2. Dry run, then the copy (section 7.2), with MIGRATE_TO_S3_* set to the MinIO
 #    credentials from .env (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD by default).
@@ -512,7 +627,16 @@ npm run stack:up
 npm run stack:smoke
 ```
 
-The stack's `db` service creates its database empty on first start, which is exactly what the target must be.
+The stack's `db` service creates its database empty on first start, which is exactly what the target must be, and `stack:deps` returns only once the bucket exists, so the copy can start as soon as it does. With the stack's defaults the target of step 2 is:
+
+```sh
+export MIGRATE_TO_S3_ACCESS_KEY_ID=scholium-minio
+export MIGRATE_TO_S3_SECRET_ACCESS_KEY=scholium-minio-secret
+export MIGRATE_TO_S3_FORCE_PATH_STYLE=1
+#   --to-db postgresql://scholium:scholium-local-only@127.0.0.1:5433/scholium
+#   --to-storage s3 --to-s3-bucket scholium
+#   --to-s3-endpoint-url http://127.0.0.1:9000 --to-s3-region us-east-1
+```
 
 ## 8. Staging with OpenTofu
 
@@ -573,6 +697,8 @@ ssh_allowed_cidrs     = ["203.0.113.7/32"]                    # the default is t
 ```
 
 The full list, with defaults and validation, is `infra/envs/staging/variables.tf`. Useful ones: `object_store_provider` (`s3` or `r2`), `r2_jurisdiction`, `aws_region` (default `eu-central-1`), `server_type`, `location`, `repository_url` and `repository_ref` (what the host deploys, default `main`), `sandbox_backend` (default `none`), `web_origins`, `site_url`, and `stack_environment` (extra or overriding variables for the stack's `.env`, such as `FORWARDED_ALLOW_IPS`).
+
+`ai_provider` accepts only `anthropic` or `ollama`. For `AI_PROVIDER=openai`, or for an Anthropic-protocol server at another address, set the variables of [Choosing an AI provider](#choosing-an-ai-provider) in `stack_environment`: it is applied after everything else, so it overrides `ai_provider`, and the variable is marked `sensitive`, so the API key it carries stays out of plan output (it is stored in the encrypted state like every other secret).
 
 **4. Initialise with the state backend.** OpenTofu cannot read variables inside a backend block, so the provider-specific parts are given at init time (this is the form documented in `infra/envs/staging/backend.tf`, here for Cloudflare R2):
 
@@ -643,6 +769,7 @@ cd /srv/scholium/app && podman-compose exec -T api python -m app.smoke   # ends 
 ### 8.4 Read this before you rely on staging
 
 - **PostgreSQL's data is on the server's own disk, not on the data volume.** Cloud-init formats and mounts the Hetzner volume at `/srv/scholium` and checks the repository out there, but it does not move podman's storage, so the compose named volumes (`db-data`, `app-data`) live in podman's default location. Replacing the server (any cloud-init change, see step 9) or destroying it loses the database. Take a dump first (`podman-compose exec -T db pg_dump -U scholium scholium > scholium.sql`, with the user and database names of `database_user` and `database_name`) and copy it off the host, and treat staging data as disposable until backups are in place. The blobs are safe: they are in the bucket.
+- **The unit starts the stack with one `podman-compose up -d`.** `scholium-stack.service` runs `podman-compose up -d --remove-orphans --build` as a single command, not the staged start of `npm run stack:up` (the host has no npm; [section 4.4](#44-npm-scripts)). [Section 4.4](#44-npm-scripts) explains why podman 4.9 can leave the api and worker unstarted that way. After the first boot, confirm with `podman-compose ps` (step 7) that `api` and `worker` are running before you rely on the node; `journalctl -u scholium-stack` shows the error if they are not.
 - **Only the API hostname is published.** The tunnel routes `api_hostname` to the API port and answers 404 for anything else. The web container runs on the host's `127.0.0.1:3000` but nothing in this environment exposes it, and `site_url` and `web_origins` default to the API hostname. Publishing the web app needs an extra ingress rule and DNS record, and `site_url`, `web_origins` and a rebuilt web image (`NEXT_PUBLIC_*` are baked in at build time) to match.
 - **Secrets are in the state.** The generated passwords and keys, the Anthropic key, the SMTP URL and the tunnel token are stored in the state, encrypted. Keep the passphrase safe, restrict who can read the state bucket, and never commit state or plan files.
 - **Narrow `ssh_allowed_cidrs`.** The default opens SSH to every address.
@@ -656,9 +783,11 @@ cd /srv/scholium/app && podman-compose exec -T api python -m app.smoke   # ends 
 | Command | Needs | What it checks |
 | --- | --- | --- |
 | `npm run test:pg` | podman-compose or docker compose, uv | The whole API suite on PostgreSQL 16 ([section 5](#5-the-postgresql-test-lane)). |
-| `npm run stack:up` | podman-compose or docker compose | Builds the images and starts the local stack ([section 4](#4-the-local-podman-stack)). Its companions: `stack:down`, `stack:logs`, `stack:reset`. |
+| `npm run stack:up` | podman-compose (1.6.0 or newer) or docker compose | Builds the images and starts the local stack, in stages ([section 4](#4-the-local-podman-stack)). Its companions: `stack:down`, `stack:logs`, `stack:reset`. |
+| `npm run stack:deps` | podman-compose (1.6.0 or newer) or docker compose | Starts only PostgreSQL, MinIO, Mailpit and the bucket, for running the API on the host ([section 3.2](#32-against-postgresql-and-s3-with-npm-run-stackdeps)). |
 | `npm run stack:smoke` | the stack running, curl | Readiness of the api and web, a blob round trip through S3 and a job done by the separate worker. |
 | `npm run infra:check` | `tofu` | OpenTofu formatting and validation of everything under `infra/`, without credentials ([section 8](#8-staging-with-opentofu)). |
+| `npm run test:llm-live` | network, a real LLM endpoint and key, `op` (the 1Password CLI) | Both hosted AI providers against that endpoint ([section 9.1](#91-the-live-llm-check)). The only command that calls a real LLM. |
 
 Two more are opt-in only because of their cost, not their needs. Neither uses a container, the network beyond loopback, or a credential:
 
@@ -667,15 +796,50 @@ Two more are opt-in only because of their cost, not their needs. Neither uses a 
 | `npm run test:system` | uv, and `npm install` for the web part | The shipped programs end to end, in `tests/e2e/` ([its README](../tests/e2e/README.md)): `python -m app`, `app.worker`, `app.sandbox_service`, `app.migrate_backend`, the admin commands and `next build` + `next start`, started as processes and driven over HTTP, SMTP and the command line, on SQLite with the filesystem store and with an S3 endpoint. About three minutes; `-m "not web"` leaves out the Next.js build. |
 | `npm run test:e2e` | `npx playwright install chromium` | The browser journeys, in a real browser against the API and a production build of the web app. |
 
+Both run on SQLite. The one system test that boots a complete production configuration needs PostgreSQL, because production refuses SQLite, so it runs only when `TEST_DATABASE_URL` names a server ([section 5](#5-the-postgresql-test-lane)) and is skipped otherwise.
+
+### 9.1 The live LLM check
+
+`npm run test:llm-live` sends one small request through each hosted provider, `anthropic` and `openai`, to a real endpoint and checks the answer. It is the only test that calls a real LLM, so it is opt-in twice over: pytest's `live_llm` marker is excluded by default (`addopts` in `apps/api/pyproject.toml`), so `npm test`, `npm run test:pg`, `npm run test:system` and CI never run it; and its tests skip unless the endpoint is configured. It makes two requests, each allowed up to 2,048 output tokens, so it costs a little each time.
+
+Run it through `op run`, which resolves the 1Password references in `deploy/llm-live.env.tpl` and injects the values into that one command only; nothing is written to disk:
+
+```sh
+op run --env-file=deploy/llm-live.env.tpl -- npm run test:llm-live
+```
+
+It needs the 1Password CLI signed in (or a service account token in the environment) and network access to the endpoint. The template holds `op://` references and no secret; edit them, and the model id, to point at your own item. It sets:
+
+| Variable | Meaning |
+| --- | --- |
+| `LLM_LIVE_BASE_URL` | Root of the endpoint. Used as it is for the `anthropic` provider (the value you would give `ANTHROPIC_BASE_URL`), and with `/v1` appended for the `openai` provider unless the next variable is set. |
+| `LLM_LIVE_API_KEY` | **Secret.** The key, for both providers. |
+| `LLM_LIVE_MODEL` | The model id, taken from the provider's documentation. |
+| `LLM_LIVE_OPENAI_BASE_URL` | Optional, not in the template. The full base URL for the `openai` provider when it is not `LLM_LIVE_BASE_URL` plus `/v1`. |
+
+The names are `LLM_LIVE_*` rather than `ANTHROPIC_*` or `OPENAI_*` on purpose: injecting them cannot reroute any other tool that reads those names. A gateway that serves both protocols under one root fits the template as it is. DeepSeek serves them at different roots, so set `LLM_LIVE_BASE_URL=https://api.deepseek.com/anthropic` and `LLM_LIVE_OPENAI_BASE_URL=https://api.deepseek.com`. Without 1Password, export the three variables from your own secret store and run `npm run test:llm-live`.
+
+Each test sends a listed request with one quoted data block through the provider and asserts that the reply is not empty, that the model the endpoint reports is `LLM_LIVE_MODEL` (an endpoint that reports another name fails the check), and that no thinking block (Anthropic protocol) or `reasoning_content` (OpenAI protocol) leaked into the returned text. The key goes only to the provider and appears in no output. If any of the three variables is missing, both tests are **skipped** with the reason; a skipped run checked nothing.
+
 ## 10. Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
 | `Unsafe production configuration: …` at startup | `SCHOLIUM_ENV=production` with a development default. The message lists every problem ([section 2.11](#211-what-production-refuses-to-start-without)). |
+| `Unsafe production configuration: DATABASE_URL must be a PostgreSQL URL in production (SQLite is deprecated); …` | A production start on SQLite, or with `DATABASE_URL` unset. Point it at PostgreSQL; to keep an existing node's data, move it first ([section 7](#7-moving-an-existing-node-with-appmigrate_backend)). |
+| `Unsafe production configuration: … STORAGE_BACKEND must be s3 in production; …` | A production start on `STORAGE_BACKEND=fs`. Use `s3` with `S3_BUCKET` and the two keys; move existing blobs with [section 7](#7-moving-an-existing-node-with-appmigrate_backend). |
 | `Unknown JOBS_MODE 'x'; expected one of eager, thread, external.` (same for `STORAGE_BACKEND`, `SCHOLIUM_ENV`) | A typo. These are refused instead of guessed at. |
+| `Unknown AI_PROVIDER 'x'; expected one of fake, anthropic, openai, ollama.` | A typo, or a vendor name: the ids name protocols. For another vendor use `openai` or `anthropic` with a base URL ([section 2.7](#27-mail-orcid-arxiv-crossref-and-ai)). |
+| `openai provider: HTTP 404 from POST …/chat/completions` (or another 4xx) | `OPENAI_BASE_URL` or the model is wrong. The provider appends `/chat/completions` to the base URL, so a missing or extra `/v1` is the usual cause; 401 means the key. The same holds for `anthropic` with `ANTHROPIC_BASE_URL`, where the SDK appends `/v1/messages`. |
+| `PrivateDraftError: hosted provider …` | An unlisted draft was sent to `anthropic` or `openai`. Hosted providers take listed papers only ([section 2.7](#27-mail-orcid-arxiv-crossref-and-ai)). |
+| A `WARNING: SQLite is deprecated; …` line in the log | The process opened a SQLite database. Expected in tests and local development; production refuses SQLite. |
 | `GET /readyz` returns 503 with `"failing": ["object_store"]` | Wrong endpoint, credentials or bucket. In the stack, check that `minio-init` exited successfully (`podman ps -a`) and the `S3_*` values. The response never says why; the api log does. |
 | `GET /readyz` returns 503 with `"failing": ["database"]` | `DATABASE_URL` is wrong or the server is down. In the stack, `db` must be healthy. |
 | Jobs stay `queued` | Nothing is running a worker. In `JOBS_MODE=external` the api never runs jobs. Start `python -m app.worker`, or check the `worker` container. |
+| `stack-compose: podman-compose 1.5.0 is older than 1.6.0.` (any version below 1.6.0) | Every `stack:*` script needs podman-compose 1.6.0 or newer ([section 4.1](#41-prerequisites)). Upgrade with `pipx install podman-compose`, or use `STACK_COMPOSE="docker compose"`. |
+| `stack-up-staged: FAILED: <service> was not healthy after 300s` (or `had not exited with status 0`) | The service named did not come up. `npm run stack:logs -- <service>` shows why; a slow machine may need a larger `STACK_UP_TIMEOUT` ([section 4.4](#44-npm-scripts)). For `minio-init` the status is the one it exited with, and it does not run again. |
+| `generating dependency graph … not found in input list` when starting `api` or `worker` | podman 4.9 refuses to start a service whose `depends_on` names an exited one-shot (`minio-init`). Start the stack with `npm run stack:up`, which starts it in stages, not with a plain `up` ([section 4.4](#44-npm-scripts)). |
+| `npm run test:llm-live` reports every test skipped | `LLM_LIVE_BASE_URL`, `LLM_LIVE_API_KEY` or `LLM_LIVE_MODEL` is not set. Run it through `op run --env-file=deploy/llm-live.env.tpl` ([section 9.1](#91-the-live-llm-check)). |
 | `stack:smoke` fails at `readyz` or `web` | The stack is not up yet (wait, or `npm run stack:up`) or a dependency is down; the message includes the body of `/readyz`. |
 | `stack:smoke` fails at `api smoke` on the job step | The worker is not claiming jobs: `npm run stack:logs -- worker`. |
 | The web app calls the wrong API address | `NEXT_PUBLIC_API_URL` is baked in at build time. Change it and run `npm run stack:up` again so the web image is rebuilt. |

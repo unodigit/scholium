@@ -5,8 +5,9 @@
 <!-- TODO: describe what this project does -->
 
 ## Stack
-- API: Python 3.12, FastAPI, SQLAlchemy 2.0, SQLite by default or PostgreSQL 16 (`DATABASE_URL`) — `apps/api` (uv workspace; packages in `apps/api/packages/*`)
-- Backends, chosen by environment variables and all defaulting to the no-container setup: database (SQLite | PostgreSQL), objects (`STORAGE_BACKEND=fs` | `s3`), jobs (`JOBS_MODE=eager` | `thread` | `external`), sandbox (`SANDBOX_BACKEND=docker` | `podman` | `remote` | `none`)
+- API: Python 3.12, FastAPI, SQLAlchemy 2.0, PostgreSQL 16 (`DATABASE_URL`; SQLite is deprecated and for tests only) — `apps/api` (uv workspace; packages in `apps/api/packages/*`)
+- Backends, chosen by environment variables; the defaults are the no-container setup that `npm test` runs on: database (PostgreSQL 16 | SQLite, deprecated, tests only), objects (`STORAGE_BACKEND=s3` | `fs`), jobs (`JOBS_MODE=eager` | `thread` | `external`), sandbox (`SANDBOX_BACKEND=docker` | `podman` | `remote` | `none`). Production refuses SQLite and `fs` (it needs a PostgreSQL `DATABASE_URL` and `STORAGE_BACKEND=s3`). The deprecation only warns: no SQLite code path is removed or changed, and `npm test`, the claw-forge gate and the Playwright journeys stay on SQLite
+- Host development against PostgreSQL and S3: `npm run stack:deps` starts only PostgreSQL, MinIO, Mailpit and the bucket job from `compose.yaml`; the `DATABASE_URL`, `S3_*` and `SMTP_URL` values to export are in `docs/deploy.md` section 3.2
 - Web: Next.js 16 App Router, TypeScript, Tailwind — `apps/web`
 - Delivery: `compose.yaml` and `deploy/` (Containerfiles, compose test file), `infra/` (OpenTofu); no cloud-provider code outside `infra/`
 - Spec: `app_spec.xml`; product docs in `docs/` (`docs/design.md` is the UI authority; `docs/deploy.md` is the operations guide)
@@ -39,15 +40,24 @@
     podman-compose (or `docker compose`) container; extra arguments go to pytest
     (`npm run test:pg -- -k ledger`); `TEST_DATABASE_URL` set means "use that server, start nothing"
   - `npm run stack:up` — build the images and start the local stack from `compose.yaml` (web, api,
-    worker, PostgreSQL, MinIO, Mailpit); companions `stack:down`, `stack:logs`, `stack:reset`
-    (`reset` deletes the volumes)
+    worker, PostgreSQL, MinIO, Mailpit) in stages (needs podman-compose 1.6.0 or newer, or
+    `docker compose`; podman 4.9 cannot start a service whose `depends_on` names an exited
+    one-shot); companions `stack:down`, `stack:logs`, `stack:reset` (`reset` deletes the volumes)
+  - `npm run stack:deps` — only the first two stages of `stack:up`: PostgreSQL, MinIO, Mailpit and
+    the bucket job, no api, worker or web, so the API can run on the host against them
+    (`docs/deploy.md` section 3.2)
   - `npm run stack:smoke` — with the stack up: wait for `/readyz` and the web app, then a blob round
     trip through S3 and a job run by the separate worker
   - `npm run infra:check` — `tofu fmt -check` and `tofu validate` of everything under `infra/`, no
     cloud credentials; needs `tofu`
-- Running and deploying (every environment variable by backend, the stack, the worker and sandbox
-  processes, `python -m app.migrate_backend`, the OpenTofu staging walkthrough): `docs/deploy.md`;
-  variables with placeholders: `.env.example`
+  - `npm run test:llm-live` — sends one request through each hosted AI provider (`anthropic`,
+    `openai`) to a real endpoint; needs network and a key, so run it through
+    `op run --env-file=deploy/llm-live.env.tpl -- npm run test:llm-live`; without the `LLM_LIVE_*`
+    variables it skips. Keep `ANTHROPIC_*`, `OPENAI_*` and `LLM_LIVE_*` out of the root `.env.tpl`
+    (it is injected into every claw-forge agent)
+- Running and deploying (every environment variable by backend, the AI providers, the stack, the
+  worker and sandbox processes, `python -m app.migrate_backend`, the OpenTofu staging walkthrough):
+  `docs/deploy.md`; variables with placeholders: `.env.example`
 
 <!-- claw-forge:policy start -->
 ## How work reaches claw-forge
