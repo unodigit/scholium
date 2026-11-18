@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 13b: test-only follow-up to round 13 bug 1. 1678779 fixed the /verify manifest loop (loaders read through
+  refs; verified by hand on the production build: 0 manifest fetches in 2 s after load) but added none of the tests
+  the spec required, so e2e stayed at 31 and nothing guards against the regression, which is only visible in a
+  minified production build.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/web/src/features/verify-page/verify-page.bugfix.test.tsx,apps/web/src/features/verify-page/verify-page.test.tsx,apps/web/tests/e2e/**">
+    <title>No test guards the /verify manifest loop fix (1678779) or API request rates on production builds</title>
+    <symptoms>
+      1678779 changed only use-file-check.ts and verify-page.tsx; npm run test:e2e still runs 31 tests and none opens /verify with an id
+      The loop came from the production minifier inlining a module-level loader into a default parameter, which unit tests on source cannot see; only a production-build browser test catches it
+    </symptoms>
+    <reproduction_steps>
+      git show --stat 1678779; npm run test:e2e (31 tests, no /verify?id case)
+    </reproduction_steps>
+    <expected>A unit test renders useFileCheck/VerifyPage with an id and a loader that is a new function on every render (e.g. an inline arrow in a re-rendering parent), re-renders several times, and asserts the loader ran once, and once more after retry; a Playwright test (production build, as the suite already runs) opens /verify?id={seeded version}/v1, counts manifest requests over 2 s after load (at most 1), drops the version's main.pdf and sees the match verdict, then drops an unrelated file and sees the mismatch verdict; the same Playwright file visits /, a paper page and its Reviews/Discussion/Proof tabs, /verify, /network, /search?q=reward and /c/cs.AI, and asserts no API path is requested more than 5 times within 3 s of load; the Playwright test fails against a build with the loop reintroduced (check by temporarily reverting 1678779 locally, not in the commit)</expected>
+    <actual>The fix is unguarded</actual>
+    <constraints>
+      <constraint>Test-only: do not change application code unless a new test exposes a defect</constraint>
+    </constraints>
+  </bug>
+
+</bug_spec>
