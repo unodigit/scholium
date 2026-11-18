@@ -34,20 +34,24 @@ WORKDIR /app
 
 # Dependency layer: only the manifests and the workspace members, so changing
 # application code does not re-resolve or re-download the environment.
-#
-# --chmod=a+rX because the build context is a checkout, and a checkout made
-# under umask 007 leaves its files mode 660 (owner/group only). uid 10001 runs
-# the container and is neither the owner nor in that group, so without this it
-# cannot read the sources: the API fails with "No module named app.__main__"
-# and the worker with "No module named app.worker", so /healthz never answers.
-# X grants execute only to directories; ordinary files stay non-executable.
-COPY --chmod=a+rX apps/api/pyproject.toml apps/api/uv.lock ./apps/api/
-COPY --chmod=a+rX apps/api/packages ./apps/api/packages
+COPY apps/api/pyproject.toml apps/api/uv.lock ./apps/api/
+COPY apps/api/packages ./apps/api/packages
 RUN uv sync --frozen --no-dev --all-packages --project apps/api --no-install-project
 
 # Application layer.
-COPY --chmod=a+rX apps/api/src ./apps/api/src
+COPY apps/api/src ./apps/api/src
 RUN uv sync --frozen --no-dev --all-packages --project apps/api
+
+# The build context is a checkout, and a checkout made under umask 007 leaves
+# its files mode 660 (owner/group only). uid 10001 runs the container and is
+# neither the owner nor in that group, so without this it cannot read the
+# sources: the API fails with "No module named app.__main__" and the worker
+# with "No module named app.worker", so /healthz never answers. X grants
+# execute only to directories; ordinary files stay non-executable.
+# A RUN, not COPY --chmod=a+rX: podman 4.9's builder accepts only octal
+# --chmod modes ("Error parsing chmod a+rX"), and no single octal mode gives
+# directories the execute bit without giving it to every file as well.
+RUN chmod -R a+rX apps/api/pyproject.toml apps/api/uv.lock apps/api/packages apps/api/src
 
 # One unprivileged account owns the mutable state. A fixed uid/gid keeps bind
 # mounts and named volumes usable under rootless podman and Docker.

@@ -112,18 +112,31 @@ def test_images_do_not_run_as_root():
 
 def test_api_image_copies_repository_files_readable_by_its_non_root_user():
     """A checkout built under umask 007 leaves files mode 660, owned by a uid the
-    container's user (10001) is not; --chmod=a+rX makes the COPY result readable."""
+    container's user (10001) is not; a RUN chmod -R a+rX over every copied path,
+    before USER, makes them readable. Not COPY --chmod=a+rX: podman 4.9's builder
+    rejects symbolic modes ("Error parsing chmod a+rX")."""
     containerfile = REPO_ROOT / "deploy" / "containers" / "api.Containerfile"
+    lines = [line.strip() for line in _logical_lines(containerfile.read_text())]
     copies = [
-        line.strip()
-        for line in _logical_lines(containerfile.read_text())
-        if re.match(r"^COPY\b", line.strip(), re.IGNORECASE) and "--from=" not in line
+        line
+        for line in lines
+        if re.match(r"^COPY\b", line, re.IGNORECASE) and "--from=" not in line
     ]
     assert copies, "api.Containerfile copies no repository files"
-    missing = [line for line in copies if not re.search(r"--chmod=a\+rX\b", line)]
+    symbolic = [line for line in copies if re.search(r"--chmod=(?![0-7]+(\s|$))", line)]
+    assert not symbolic, f"podman 4.9 cannot build a symbolic COPY --chmod: {symbolic}"
+    user_at = next(i for i, line in enumerate(lines) if re.match(r"^USER\b", line, re.IGNORECASE))
+    chmods = [line for line in lines[:user_at] if re.match(r"^RUN\s+chmod\s+-R\s+a\+rX\s", line)]
+    assert chmods, "no RUN chmod -R a+rX before USER: a umask 007 checkout lands mode 660"
+    covered = set(" ".join(chmods).split())
+    sources = [
+        part
+        for line in copies
+        for part in [p for p in line.split()[1:] if not p.startswith("--")][:-1]
+    ]
+    missing = [source for source in sources if source not in covered]
     assert not missing, (
-        "these COPY instructions can land mode 660 for the image's non-root user "
-        f"(umask 007 checkout): {missing}"
+        f"these copied paths stay mode 660 for the image's non-root user: {missing}"
     )
     copied = " ".join(copies)
     for source in ("apps/api/pyproject.toml", "apps/api/uv.lock", "apps/api/packages", "apps/api/src"):
