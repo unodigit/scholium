@@ -633,7 +633,10 @@ export function incidentDate(occurredAt: string): string {
 /** The whole public archive (`GET /v1/export/archive.car`), relative to the API's origin. */
 export const EXPORT_ARCHIVE_PATH = "/v1/export/archive.car";
 
-/** Checks every block and record of the downloaded archive; exits 1 on any mismatch. */
+/**
+ * Checks every block, record, the log chain and every paper of the downloaded
+ * whole-node archive; exits 1 on any mismatch.
+ */
 export const EXPORT_VERIFY_COMMAND = "scholium verify archive.car";
 
 /** Replays the archive's log into a fresh database; exits 1 (and writes nothing) on any mismatch. */

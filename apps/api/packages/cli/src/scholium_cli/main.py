@@ -18,10 +18,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify_parser = commands.add_parser(
         "verify",
-        help="verify a paper offline from a CAR archive",
-        description="Verify a paper offline from a CARv1 archive and print a "
-        "plain-language checklist.  Exits 0 when verified, 1 on any signature "
-        "or hash mismatch, 2 when the command could not run.",
+        help="verify a paper or a whole node offline from a CAR archive",
+        description="Verify a paper or a whole node offline from a CARv1 "
+        "archive and print a plain-language checklist.  An archive holding "
+        "more than one paper is checked in full -- log chain, signed head, "
+        "every record and every paper -- or one paper with --paper.  Exits 0 "
+        "when verified, 1 on any signature or hash mismatch, 2 when the "
+        "command could not run.",
     )
     verify.add_arguments(verify_parser)
     verify_parser.set_defaults(handler=verify.run)

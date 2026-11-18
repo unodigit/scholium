@@ -3,6 +3,7 @@
 import argparse
 import copy
 import io
+import json
 import subprocess
 import sys
 
@@ -18,6 +19,7 @@ from car_helpers import (
     flip,
     full_record_block,
     header,
+    log_entry_blocks,
     make_paper,
     notice,
     signed,
@@ -27,7 +29,7 @@ from car_helpers import (
 from scholium_cli import verify as verify_module
 from scholium_cli.main import main
 from scholium_cli.verify import verify_car_bytes
-from scholium_record_core import sign_record
+from scholium_record_core import encode_signature, sign_record
 
 
 @pytest.fixture
@@ -364,18 +366,153 @@ def test_some_files_missing_says_how_many(car_file, capsys):
 # --- several papers in one archive --------------------------------------
 
 
-def test_an_archive_of_two_papers_needs_a_choice(car_file, capsys):
-    one, two = make_paper(seed="one"), make_paper(seed="two")
-    data = write_car(one.blocks() + two.blocks())
-    code, out, _ = verify(car_file, data, capsys=capsys)
-    assert code == 1
-    assert "name one with --paper" in out
-    assert "paper=" not in out
+def node_head_block(seq, entry_hash, name="alice", *, signature_over=None):
+    """The signed log head ``GET /v1/sync/head`` serves, as a CAR block.
 
+    ``signature_over`` signs different bytes than the head carries, which is
+    how a forged head is built without breaking its block hash.
+    """
+    node_did = did(name)
+    claimed = {
+        "entry_hash": bytes(entry_hash).hex(),
+        "node_did": node_did,
+        "seq": int(seq),
+    }
+    signed = dict(claimed)
+    signed.update(signature_over or {})
+    message = json.dumps(signed, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    head = dict(claimed)
+    head["signature"] = encode_signature(KEYS[name].sign(message).signature)
+    return full_record_block(head)
+
+
+def whole_node_archive(
+    record_groups, files=(), *, mutate=None, head=True, signature_over=None
+):
+    """A whole-node archive: the signed head, log entries, records and files.
+
+    ``record_groups`` is one list of records per paper.  The log is chained
+    over every record in order, exactly as a node appends them.
+    """
+    records = [record for group in record_groups for record in group]
+    entries = log_entry_blocks(records, mutate=mutate)
+    blocks = []
+    if head and entries:
+        last = dag_cbor.decode(entries[-1][1])
+        blocks.append(
+            node_head_block(last["seq"], bytes(last["entry_hash"]), signature_over=signature_over)
+        )
+    blocks += entries
+    blocks += [full_record_block(record) for record in records]
+    blocks += [file_block(data) for data in files]
+    return write_car(blocks, roots=[blocks[0][0]] if blocks else [])
+
+
+def test_a_whole_node_archive_verifies_every_paper(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two", versions=2)
+    data = whole_node_archive(
+        [one.records(), two.records()], files=[*one.files.values(), *two.files.values()]
+    )
+    code, out, err = verify(car_file, data, capsys=capsys)
+    assert code == 0, out
+    assert err == ""
+    assert "Result: VERIFIED" in out
+    assert one.short_id in out
+    assert two.short_id in out
+    assert "Version history is intact" in out
+    assert "Log chain intact" in out
+
+
+def test_a_whole_node_archive_narrows_to_one_paper_with_paper(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    data = whole_node_archive([one.records(), two.records()])
     for paper in (one, two):
         code, out, _ = verify(car_file, data, "--paper", paper.short_id, capsys=capsys)
         assert code == 0, out
-        assert paper.short_id in out
+        assert f"Paper: {paper.short_id}" in out
+
+
+def test_a_whole_node_archive_names_the_paper_that_fails(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    forged = copy.deepcopy(two.versions[0])
+    forged["body"]["title"] = "tampered after signing"
+    two_records = [forged if record is two.versions[0] else record for record in two.records()]
+    data = whole_node_archive([one.records(), two_records])
+    code, out, _ = verify(car_file, data, capsys=capsys)
+    assert code == 1, out
+    assert "Result: NOT VERIFIED" in out
+    assert two.short_id in out
+    assert "id does not match the hash of its content" in out
+
+
+def test_a_whole_node_archive_checks_the_log_chain(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+
+    def break_link(seq, entry):
+        if seq == 2:
+            entry["prev_hash"] = b"\x01" * 32
+
+    data = whole_node_archive([one.records(), two.records()], mutate=break_link)
+    code, out, _ = verify(car_file, data, capsys=capsys)
+    assert code == 1, out
+    assert "log chain is broken" in out
+    assert "seq 2" in out
+
+
+def test_a_whole_node_archive_checks_the_signed_head(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    data = whole_node_archive([one.records(), two.records()])
+    code, out, _ = verify(car_file, data, capsys=capsys)
+    assert code == 0, out
+    assert "log head" in out.lower()
+
+
+def test_a_forged_head_fails_the_whole_node_archive(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    data = whole_node_archive(
+        [one.records(), two.records()], signature_over={"seq": 999}
+    )
+    code, out, _ = verify(car_file, data, capsys=capsys)
+    assert code == 1, out
+    assert "Result: NOT VERIFIED" in out
+    assert "head" in out.lower()
+
+
+def test_whole_node_log_and_record_blocks_must_agree(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+
+    def rewrite_raw(seq, entry):
+        if seq == 1:
+            entry["raw"] = entry["raw"] + b"\x00"  # entry_hash is recomputed, link holds
+
+    data = whole_node_archive([one.records(), two.records()], mutate=rewrite_raw)
+    code, out, _ = verify(car_file, data, capsys=capsys)
+    assert code == 1, out
+    assert "canonical bytes" in out
+
+
+def test_a_bad_signature_in_a_log_entry_fails_the_whole_node(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+
+    def wrong_signature(seq, entry):
+        if seq == 1:
+            entry["sig"] = encode_signature(
+                KEYS["mallory"].sign(b"not this record").signature
+            )
+
+    data = whole_node_archive(
+        [one.records(), two.records()], mutate=wrong_signature
+    )
+    code, out, _ = verify(car_file, data, capsys=capsys)
+    assert code == 1, out
+    assert "signature that does not verify" in out
+
+
+def test_bad_authorities_are_a_usage_error_not_a_paper_failure():
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    data = whole_node_archive([one.records(), two.records()])
+    with pytest.raises(ValueError, match="authorities"):
+        verify_car_bytes(data, authorities=[5])  # type: ignore[list-item]
 
 
 def test_head_selects_an_earlier_version(car_file, capsys):

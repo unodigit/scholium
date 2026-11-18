@@ -304,6 +304,10 @@ describe("NetworkPage transparency facts (design.md 5.8)", () => {
     expect(
       within(section).getByText("scholium rebuild archive.car --db rebuilt.db"),
     ).toBeTruthy();
+    // The copy describes what the command really checks: a whole-node archive,
+    // not a single paper, and it names the paper that fails.
+    expect(section.textContent).toContain("every paper’s history");
+    expect(section.textContent).toContain("names the one that fails");
   });
 });
 

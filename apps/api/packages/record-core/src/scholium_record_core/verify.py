@@ -98,14 +98,23 @@ forged notices -- is a failed check, never an exception.  Only invalid
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
+
 from .envelope import compute_record_id
 from .manifest import MANIFEST_TYPE, validate_manifest_body
 from .short_id import derive_short_id, parse_short_id, parse_version_id
-from .signing import is_ed25519_did_key, verify_envelope
+from .signing import (
+    decode_signature,
+    is_ed25519_did_key,
+    public_key_from_did_key,
+    verify_envelope,
+)
 
 #: Record types the verifier reads.
 GENESIS_TYPE = "paper.genesis"
@@ -283,6 +292,27 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
+def record_problem(record: Mapping[str, Any]) -> str | None:
+    """Why ``record`` is not authentic, or ``None`` when it is.
+
+    A record is authentic when its ``id`` equals the hash of its content and
+    its ``sig`` verifies against its own ``author`` did:key.  Every failure
+    mode is reported as a phrase, never raised.
+    """
+    try:
+        recomputed = compute_record_id(record)
+    except (ValueError, KeyError, TypeError):
+        return "is not a well-formed record"
+    if record.get("id") != recomputed:
+        return "id does not match the hash of its content"
+    signature = record.get("sig")
+    if not isinstance(signature, (str, bytes, bytearray)):
+        return "has no signature"
+    if not verify_envelope(record, signature):
+        return "signature does not verify against its author"
+    return None
+
+
 class _Index:
     """The input records, indexed by claimed id, with cached authentication."""
 
@@ -323,17 +353,7 @@ class _Index:
         return self._problems[key]
 
     def _authenticate(self, record: Mapping[str, Any]) -> str | None:
-        recomputed = self.recomputed_id(record)
-        if recomputed is None:
-            return "is not a well-formed record"
-        if record.get("id") != recomputed:
-            return "id does not match the hash of its content"
-        signature = record.get("sig")
-        if not isinstance(signature, (str, bytes, bytearray)):
-            return "has no signature"
-        if not verify_envelope(record, signature):
-            return "signature does not verify against its author"
-        return None
+        return record_problem(record)
 
     def of_type(self, record_type: str) -> list[Mapping[str, Any]]:
         return [r for r in self.records if r.get("type") == record_type]
@@ -428,6 +448,16 @@ def _paper_candidates(index: _Index) -> list[str]:
         if record_id is not None:
             ids.add(record_id)
     return sorted(ids)
+
+
+def paper_ids(records: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Every paper the records describe or refer to, as genesis record ids.
+
+    A whole-node archive holds records of many papers; this is the sorted set
+    a verifier loops over to check each paper's history separately, exactly
+    as :func:`verify_paper` would for one ``paper=`` argument.
+    """
+    return _paper_candidates(_Index(records))
 
 
 def _identify_paper(
@@ -1039,6 +1069,84 @@ def _status(checks: dict[str, CheckResult], found: tuple[Supersession, ...]) -> 
     if KIND_CORRECTION in applied:
         return STATUS_CORRECTED
     return STATUS_VERIFIED
+
+
+# --- the node-signed log head -------------------------------------------
+
+
+def head_message(seq: int, entry_hash: bytes, node_did: str) -> bytes:
+    """The bytes a node signs for its log head: canonical JSON of three fields.
+
+    The rule ``GET /v1/sync/head`` documents: ``entry_hash`` as lowercase hex,
+    ``node_did`` and ``seq``, keys sorted, no insignificant whitespace, UTF-8.
+    """
+    return json.dumps(
+        {
+            "entry_hash": bytes(entry_hash).hex(),
+            "node_did": node_did,
+            "seq": int(seq),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _digest(value: Any) -> bytes | None:
+    """A 32-byte digest from bytes or lowercase/uppercase hex, else ``None``."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    if isinstance(value, str):
+        try:
+            return bytes.fromhex(value)
+        except ValueError:
+            return None
+    return None
+
+
+def verify_signed_head(
+    head: Mapping[str, Any], *, last_entry: Mapping[str, Any] | None = None
+) -> str | None:
+    """Why a whole-node archive's signed log head is not authentic, or ``None``.
+
+    The archive ``GET /v1/export/archive.car`` serves is rooted at the document
+    ``GET /v1/sync/head`` returns: ``seq``, ``entry_hash``, ``node_did`` and
+    the node's Ed25519 ``signature`` over :func:`head_message`.  A node that
+    later serves different history for the same ``seq`` equivocates, so the
+    signature must verify and, when the archive carries the entry it names,
+    the head must name that last entry.
+
+    Every failure mode is reported as a phrase, never raised.
+    """
+    if not isinstance(head, Mapping):
+        return "is not a map"
+    seq = head.get("seq")
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
+        return "has no valid seq"
+    digest = _digest(head.get("entry_hash"))
+    if digest is None or len(digest) != 32:
+        return "has no valid entry_hash"
+    node_did = head.get("node_did")
+    if not isinstance(node_did, str):
+        return "names no node_did"
+    signature = head.get("signature")
+    try:
+        public_key = public_key_from_did_key(node_did)
+        raw_signature = decode_signature(signature)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return "has no usable node_did or signature"
+    try:
+        VerifyKey(public_key).verify(
+            head_message(seq, digest, node_did), raw_signature
+        )
+    except (BadSignatureError, ValueError):
+        return "signature does not verify against its node_did"
+
+    if last_entry is not None:
+        last_seq = last_entry.get("seq")
+        last_digest = _digest(last_entry.get("entry_hash"))
+        if last_seq != seq or last_digest != digest:
+            return "does not name the archive's last log entry"
+    return None
 
 
 # --- entry point --------------------------------------------------------

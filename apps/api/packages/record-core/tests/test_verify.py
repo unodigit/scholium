@@ -21,9 +21,16 @@ from scholium_record_core import (
     compute_file_id,
     derive_short_id,
     did_key_from_signing_key,
+    encode_signature,
     format_version_id,
     sign_record,
     verify_paper,
+)
+from scholium_record_core.verify import (
+    head_message,
+    paper_ids,
+    record_problem,
+    verify_signed_head,
 )
 
 KEYS = {
@@ -1214,3 +1221,79 @@ def test_verify_does_not_mutate_its_input():
     before = copy.deepcopy(records)
     verify_paper(records, authorities=[did("committee")])
     assert records == before
+
+
+# --- helpers for a whole node -------------------------------------------
+
+
+def test_record_problem_accepts_an_authentic_record():
+    paper = make_paper()
+    for record in (paper.genesis, paper.versions[0], paper.consents[0][0]):
+        assert record_problem(record) is None
+
+
+def test_record_problem_reports_tampering_and_a_missing_signature():
+    paper = make_paper()
+    unsigned = {key: value for key, value in paper.genesis.items() if key != "sig"}
+    assert record_problem(unsigned) == "has no signature"
+
+    tampered = copy.deepcopy(paper.genesis)
+    tampered["body"]["title"] = "rewritten after signing"
+    assert record_problem(tampered) == "id does not match the hash of its content"
+
+    assert record_problem({"type": "not-a-record"}) == "is not a well-formed record"
+
+
+def test_paper_ids_lists_every_paper_the_records_describe():
+    one, two = make_paper(seed="one"), make_paper(seed="two", versions=2)
+    assert paper_ids(one.records() + two.records()) == sorted(
+        [one.paper_id, two.paper_id]
+    )
+    assert paper_ids(one.records()) == [one.paper_id]
+
+
+def signed_head(seq=3, entry_hash=b"\x11" * 32, name="alice", *, signed=None):
+    """The head document ``GET /v1/sync/head`` serves, signed by ``name``."""
+    node_did = did(name)
+    signed = signed or {"seq": seq, "entry_hash": entry_hash}
+    message = head_message(signed["seq"], signed["entry_hash"], node_did)
+    return {
+        "seq": seq,
+        "entry_hash": bytes(entry_hash).hex(),
+        "node_did": node_did,
+        "signature": encode_signature(KEYS[name].sign(message).signature),
+    }
+
+
+def test_a_signed_head_verifies_and_must_name_the_last_entry():
+    head = signed_head()
+    last = {"seq": 3, "entry_hash": b"\x11" * 32}
+    assert verify_signed_head(head, last_entry=last) is None
+    assert verify_signed_head(head) is None
+
+
+def test_a_head_signature_over_other_bytes_is_rejected():
+    head = signed_head()
+    head["signature"] = signed_head(seq=4)["signature"]
+    assert "does not verify" in (verify_signed_head(head) or "")
+
+
+def test_a_head_that_does_not_name_the_last_entry_is_rejected():
+    head = signed_head()
+    for last in (
+        {"seq": 2, "entry_hash": b"\x11" * 32},
+        {"seq": 3, "entry_hash": b"\x22" * 32},
+    ):
+        assert "last log entry" in (verify_signed_head(head, last_entry=last) or "")
+
+
+def test_a_malformed_head_never_raises():
+    for head in (
+        {},
+        {"seq": True, "entry_hash": "11" * 32, "node_did": did("alice"), "signature": "x"},
+        {"seq": 1, "entry_hash": "zz", "node_did": did("alice"), "signature": "x"},
+        {"seq": 1, "entry_hash": "11" * 32, "node_did": "nope", "signature": "x"},
+        {"seq": 1, "entry_hash": "11" * 32, "node_did": did("alice"), "signature": 5},
+        "not a map",
+    ):
+        assert verify_signed_head(head) is not None

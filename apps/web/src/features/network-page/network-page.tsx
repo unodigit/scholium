@@ -552,7 +552,8 @@ function PublicExportSection() {
       </p>
       <div className="np-step">
         <p className="np-note">
-          Check that every block and record in it is intact:
+          Check every block, every record, the log chain and every paper&rsquo;s
+          history in it:
         </p>
         <pre className="np-code" tabIndex={0}>
           <code>{EXPORT_VERIFY_COMMAND}</code>
@@ -568,7 +569,8 @@ function PublicExportSection() {
       </div>
       <p className="np-note">
         Both commands exit 0 when everything checks out and 1 if anything in the
-        archive was altered; a failed rebuild leaves no database behind.
+        archive was altered; verify prints a summary for every paper and names
+        the one that fails, and a failed rebuild leaves no database behind.
       </p>
     </section>
   );

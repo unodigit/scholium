@@ -1,9 +1,17 @@
-"""``scholium verify <file.car>``: verify a paper offline from its archive.
+"""``scholium verify <file.car>``: verify a paper or a whole node offline.
 
 Reads the CARv1 archive, checks every block against its CID, verifies the
 paper with :func:`scholium_record_core.verify_paper` and prints the
 plain-language checklist (see :mod:`scholium_cli.checklist`).  Nothing here
 touches the network.
+
+An archive exported by ``GET /v1/export/archive.car`` holds a whole node: the
+signed log head, every log entry, and the records of every paper.  When the
+records describe more than one paper, ``verify`` checks the archive as a
+whole -- the log's hash chain, the signed head, every record's signature and
+content id -- and each paper's version history separately, printing a
+per-paper summary.  ``--paper`` narrows that to one paper; a single-paper
+archive is checked exactly as before.
 
 Exit codes:
 
@@ -13,8 +21,8 @@ Exit codes:
     on the checklist, but it is not a failure of the paper's history.
 ``1``
     Not verified: a signature, a hash or the archive itself failed (a block
-    that does not match its CID, a broken version chain, a forged record, an
-    unreadable archive).
+    that does not match its CID, a broken version chain or log chain, a forged
+    record or head, an unreadable archive).
 ``2``
     The command could not run: the file cannot be read or an option is
     invalid.  Nothing was verified.
@@ -28,11 +36,23 @@ import httpx
 import argparse
 import base64
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from scholium_record_core import parse_file_cid, verify_paper
+from scholium_record_core import (
+    derive_short_id,
+    parse_file_cid,
+    verify_envelope,
+    verify_paper,
+)
+from scholium_record_core.verify import (
+    _coerce_authorities,
+    paper_ids,
+    record_problem,
+    verify_signed_head,
+)
 
 from .archive import Archive, load_archive
 from .car import CarError, read_car
@@ -43,14 +63,18 @@ from .checklist import (
     WARN,
     Item,
     Verdict,
+    _archive_item,
     build_verdict,
     unreadable_verdict,
 )
+from .rebuild import _chain_problems, _log_binding_problems, _parse_entry
 
 __all__ = [
     "EXIT_NOT_VERIFIED",
     "EXIT_USAGE",
     "EXIT_VERIFIED",
+    "ArchiveVerdict",
+    "PaperVerdict",
     "add_arguments",
     "render",
     "run",
@@ -67,6 +91,63 @@ _DETAIL_LIMIT = 8
 _UNICODE_MARKS = {PASS: "✓", FAIL: "✗", PENDING: "…", WARN: "!"}
 _ASCII_MARKS = {PASS: "[ok]", FAIL: "[FAIL]", PENDING: "[..]", WARN: "[!]"}
 
+#: The checklist lines that describe one paper, shown under its summary.
+_PAPER_ITEM_KEYS = ("authors", "history", "files", "retraction")
+
+#: ``status`` values, most severe first, when reports of several papers merge.
+_STATUS_SEVERITY = ("invalid", "retracted", "tombstoned", "corrected")
+
+
+@dataclass(frozen=True)
+class PaperVerdict:
+    """One paper's outcome inside a whole-node archive."""
+
+    label: str
+    """``sch:xxxx-xxxx-xxxx/vN`` when known, else the genesis record id."""
+    report: Any = None
+    """The :class:`~scholium_record_core.VerificationReport`, when it ran."""
+    items: tuple[Item, ...] = ()
+    """The paper's own checklist lines (authors, history, files, notices)."""
+    problems: tuple[str, ...] = ()
+    """Why the paper could not be verified at all, when it could not."""
+    status: str = "invalid"
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems and all(item.state != FAIL for item in self.items)
+
+
+@dataclass(frozen=True)
+class ArchiveVerdict:
+    """The outcome of verifying a whole-node archive: every paper in it."""
+
+    items: tuple[Item, ...]
+    """The archive-wide checks: blocks, log chain, signed head, records."""
+    papers: tuple[PaperVerdict, ...]
+    status: str
+    block_count: int = 0
+    record_count: int = 0
+    file_count: int = 0
+    #: Kept for callers that treat both verdict kinds alike.
+    report: None = None
+    version: None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when every archive-wide check and every paper passed."""
+        return all(item.state != FAIL for item in self.items) and all(
+            paper.ok for paper in self.papers
+        )
+
+    @property
+    def failures(self) -> tuple[Item, ...]:
+        found = [item for item in self.items if item.state == FAIL]
+        for paper in self.papers:
+            for problem in paper.problems:
+                found.append(Item("paper", FAIL, f"{paper.label}: {problem}"))
+            found.extend(item for item in paper.items if item.state == FAIL)
+        return tuple(found)
+
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Add the ``verify`` options to ``parser``."""
@@ -74,8 +155,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--paper",
         metavar="ID",
-        help="the paper to verify (sch: id or genesis record id); needed when the "
-        "archive holds more than one paper",
+        help="verify only this paper (sch: id or genesis record id) from an "
+        "archive holding more than one",
     )
     parser.add_argument(
         "--head",
@@ -112,8 +193,12 @@ def verify_car_bytes(
     paper: str | None = None,
     head: str | None = None,
     authorities: Sequence[str] = (),
-) -> Verdict:
+) -> Verdict | ArchiveVerdict:
     """Verify the archive in ``data``.
+
+    A whole-node archive (one whose records describe more than one paper) is
+    verified in full when neither ``paper`` nor ``head`` narrows it; every
+    other archive is verified as one paper, as before.
 
     Raises:
         ValueError: if ``paper``, ``head`` or ``authorities`` is malformed.
@@ -123,8 +208,217 @@ def verify_car_bytes(
     except CarError as exc:
         return unreadable_verdict(str(exc))
     archive = load_archive(car)
+    if paper is None and head is None:
+        described = paper_ids(archive.records)
+        if len(described) > 1:
+            return _whole_node_verdict(archive, authorities)
     report = verify_paper(archive.records, paper=paper, head=head, authorities=authorities)
     return build_verdict(archive, report)
+
+
+# --- a whole node: the log, every record, every paper --------------------
+
+
+def _plural(count: int, noun: str) -> str:
+    if count == 1:
+        return f"1 {noun}"
+    if noun.endswith("y"):
+        return f"{count} {noun[:-1]}ies"
+    return f"{count} {noun}s"
+
+
+def _short(record_id: str) -> str | None:
+    try:
+        return derive_short_id(record_id)
+    except ValueError:
+        return None
+
+
+def _record_label(record: Any) -> str:
+    return f"{record.get('type')} {record.get('id')}"
+
+
+def _log_chain_item(archive: Archive) -> Item | None:
+    """The event log's hash chain, when the archive carries log entries."""
+    if not archive.log_entries:
+        return None
+    entries = []
+    problems: list[str] = []
+    for mapping in archive.log_entries:
+        parsed = _parse_entry(mapping)
+        if isinstance(parsed, str):
+            problems.append(parsed)
+        else:
+            entries.append(parsed)
+    problems.extend(_chain_problems(entries))
+    if problems:
+        return Item(
+            "log",
+            FAIL,
+            f"The log chain is broken: {problems[0]}",
+            tuple(problems),
+        )
+    head_seq = max(entry.seq for entry in entries)
+    return Item(
+        "log",
+        PASS,
+        f"Log chain intact: {_plural(len(entries), 'entry')} (seq 1-{head_seq})",
+    )
+
+
+def _head_item(archive: Archive) -> Item | None:
+    """The node's signed log head, when the archive carries one."""
+    if archive.head is None:
+        return None
+    last = None
+    if archive.log_entries:
+        last = max(
+            archive.log_entries,
+            key=lambda entry: entry["seq"]
+            if isinstance(entry.get("seq"), int) and not isinstance(entry.get("seq"), bool)
+            else -1,
+        )
+    problem = verify_signed_head(archive.head, last_entry=last)
+    if problem is not None:
+        return Item(
+            "head",
+            FAIL,
+            f"The signed log head does not verify: it {problem}",
+        )
+    return Item(
+        "head",
+        PASS,
+        f"The log head is signed by {archive.head.get('node_did')}",
+    )
+
+
+def _records_item(archive: Archive) -> Item:
+    """Every record's content id and signature, whether or not a paper uses it."""
+    records = archive.records
+    if not records:
+        return Item("records", PASS, "The archive carries no records")
+    details = [
+        f"{_record_label(record)}: {problem}"
+        for record in records
+        if (problem := record_problem(record)) is not None
+    ]
+    if details:
+        return Item(
+            "records",
+            FAIL,
+            f"{_plural(len(details), 'record')} failed authentication: {details[0]}",
+            tuple(details),
+        )
+    return Item(
+        "records",
+        PASS,
+        f"All {len(records)} records carry a valid signature from their author",
+    )
+
+
+def _log_records_item(archive: Archive) -> Item | None:
+    """The log's account of the records: binding and its stored signatures.
+
+    A node exports each record's canonical bytes beside a log entry that names
+    them and carries the author's signature.  The chain check proves the log
+    was not rewritten; this check proves the log and the record blocks tell the
+    same story and that each signature in the log authenticates its record.
+    """
+    if not archive.log_entries:
+        return None
+    parsed: list[tuple[Any, Any]] = []
+    for mapping in archive.log_entries:
+        entry = _parse_entry(mapping)
+        if not isinstance(entry, str):  # malformed entries are the chain check's
+            parsed.append((mapping, entry))
+    problems = _log_binding_problems(
+        [entry for _mapping, entry in parsed], archive.records
+    )
+    for mapping, entry in parsed:
+        signature = mapping.get("sig")
+        if not isinstance(signature, (str, bytes, bytearray)):
+            continue  # an unsigned entry is a record-level failure if it matters
+        try:
+            record = dag_cbor.decode(entry.raw)
+        except (ValueError, TypeError, RecursionError):
+            record = None
+        if not isinstance(record, dict) or not verify_envelope(record, signature):
+            problems.append(
+                f"log entry seq {entry.seq} carries a signature that does not "
+                "verify against its author"
+            )
+    if problems:
+        return Item(
+            "log-records",
+            FAIL,
+            f"The log does not match the records: {problems[0]}",
+            tuple(problems),
+        )
+    return Item(
+        "log-records",
+        PASS,
+        "Every log entry carries its record and the author's signature",
+    )
+
+
+def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) -> PaperVerdict:
+    label = _short(paper_id) or paper_id
+    try:
+        report = verify_paper(
+            archive.records, paper=paper_id, authorities=authorities
+        )
+    except ValueError as exc:
+        # A record names a paper with an id that is not a record id at all.
+        return PaperVerdict(label=label, problems=(str(exc),))
+    verdict = build_verdict(archive, report)
+    items = tuple(item for item in verdict.items if item.key in _PAPER_ITEM_KEYS)
+    failed = any(item.state == FAIL for item in items) or not report.valid
+    return PaperVerdict(
+        label=verdict.version or report.short_id or label,
+        report=report,
+        items=items,
+        status="invalid" if failed else report.status,
+    )
+
+
+def _whole_node_status(papers: Sequence[PaperVerdict]) -> str:
+    statuses = {paper.status for paper in papers}
+    for status in _STATUS_SEVERITY:
+        if status in statuses:
+            return status
+    return "verified"
+
+
+def _whole_node_verdict(
+    archive: Archive, authorities: Sequence[str]
+) -> ArchiveVerdict:
+    """Verify a whole-node archive: its log, its records and every paper."""
+    # Bad arguments are a usage error (exit 2), never a paper's failure.
+    trusted = _coerce_authorities(authorities)
+
+    items: list[Item] = [_archive_item(archive)]
+    for item in (
+        _log_chain_item(archive),
+        _head_item(archive),
+        _records_item(archive),
+        _log_records_item(archive),
+    ):
+        if item is not None:
+            items.append(item)
+
+    papers = tuple(
+        _paper_verdict(archive, paper_id, trusted)
+        for paper_id in paper_ids(archive.records)
+    )
+    failed = any(item.state == FAIL for item in items)
+    return ArchiveVerdict(
+        items=tuple(items),
+        papers=papers,
+        status="invalid" if failed else _whole_node_status(papers),
+        block_count=archive.block_count,
+        record_count=len(archive.records),
+        file_count=len(archive.files),
+    )
 
 
 def _marks(stream: TextIO) -> dict[str, str]:
@@ -135,8 +429,17 @@ def _marks(stream: TextIO) -> dict[str, str]:
     return _UNICODE_MARKS
 
 
-def render(verdict: Verdict, name: str, *, verbose: bool = False, marks: dict[str, str]) -> list[str]:
+def render(
+    verdict: Verdict | ArchiveVerdict,
+    name: str,
+    *,
+    verbose: bool = False,
+    marks: dict[str, str],
+) -> list[str]:
     """The checklist as lines of text."""
+    if isinstance(verdict, ArchiveVerdict):
+        return _render_whole_node(verdict, name, verbose=verbose, marks=marks)
+
     report = verdict.report
     lines = [f"Verifying {name}"]
     if report is not None and report.short_id is not None:
@@ -154,17 +457,64 @@ def render(verdict: Verdict, name: str, *, verbose: bool = False, marks: dict[st
         lines.extend(_detail_lines(item, verbose, indent=" " * (width + 5)))
 
     if verbose and report is not None:
-        lines.extend(["", "Technical details"])
-        lines.append(f"  genesis  {report.genesis}")
-        lines.append(f"  head     {report.head}")
-        lines.append(f"  status   {report.status}")
-        for did in report.signers:
-            lines.append(f"  signer   {did}")
-        for check_name, check in report.checks.items():
-            lines.append(f"  {check_name:<12} {'ok' if check.passed else 'FAILED'}: {check.message}")
+        lines.extend(_technical_details(report))
 
     lines.append("")
     lines.append(_result_line(verdict))
+    return lines
+
+
+def _render_whole_node(
+    verdict: ArchiveVerdict,
+    name: str,
+    *,
+    verbose: bool,
+    marks: dict[str, str],
+) -> list[str]:
+    """A whole-node archive: the archive-wide checks, then one block per paper."""
+    lines = [f"Verifying {name}"]
+    if verdict.block_count:
+        lines.append(
+            f"Archive: {verdict.block_count} blocks "
+            f"({verdict.record_count} records, {verdict.file_count} files)"
+        )
+    lines.append("")
+
+    width = max(len(mark) for mark in marks.values())
+    indent = " " * (width + 5)
+    for item in verdict.items:
+        lines.append(f"  {marks[item.state].ljust(width)} {item.text}")
+        lines.extend(_detail_lines(item, verbose, indent=indent))
+
+    for paper in verdict.papers:
+        lines.append("")
+        lines.append(f"Paper {paper.label}")
+        if paper.problems:
+            for problem in paper.problems:
+                lines.append(f"  {marks[FAIL].ljust(width)} {problem}")
+            continue
+        for item in paper.items:
+            lines.append(f"  {marks[item.state].ljust(width)} {item.text}")
+            lines.extend(_detail_lines(item, verbose, indent=indent))
+        if verbose and paper.report is not None:
+            lines.extend(_technical_details(paper.report))
+
+    lines.append("")
+    lines.append(_result_line(verdict))
+    return lines
+
+
+def _technical_details(report: Any) -> list[str]:
+    lines = ["", "Technical details"]
+    lines.append(f"  genesis  {report.genesis}")
+    lines.append(f"  head     {report.head}")
+    lines.append(f"  status   {report.status}")
+    for did in report.signers:
+        lines.append(f"  signer   {did}")
+    for check_name, check in report.checks.items():
+        lines.append(
+            f"  {check_name:<12} {'ok' if check.passed else 'FAILED'}: {check.message}"
+        )
     return lines
 
 
@@ -178,7 +528,7 @@ def _detail_lines(item: Item, verbose: bool, indent: str) -> list[str]:
     return lines
 
 
-def _result_line(verdict: Verdict) -> str:
+def _result_line(verdict: Verdict | ArchiveVerdict) -> str:
     if not verdict.ok:
         count = len(verdict.failures)
         return f"Result: NOT VERIFIED ({count} check{'s' if count != 1 else ''} failed)"

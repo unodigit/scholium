@@ -23,7 +23,14 @@ A paper's CAR carries three kinds of block:
 * **log entries** -- DAG-CBOR blocks holding one ``event_log`` row: a map
   with at least ``seq``, ``record_cid``, ``raw``, ``prev_hash`` and
   ``entry_hash``.  They are kept for ``scholium rebuild``, which verifies the
-  hash chain over them; ``scholium verify`` ignores them.
+  hash chain over them; ``scholium verify`` uses them to attach the author's
+  signature to each canonical record and, for a whole-node archive, to check
+  the log's hash chain.
+* **the signed head** -- a DAG-CBOR block holding the document
+  ``GET /v1/sync/head`` serves (``seq``, ``entry_hash``, ``node_did``,
+  ``signature``).  Only a whole-node export carries one; it commits the node
+  to the entries before the head and is what ``scholium verify`` checks when
+  it verifies every paper of a node.
 * **anything else** -- hash-checked like every block, then ignored.
 
 Every block is hash-checked.  A block whose bytes do not hash to its CID is
@@ -58,6 +65,10 @@ _RECORD_ID_BASE = "base32"
 #: ``origin_node``) rides along unvalidated.
 LOG_ENTRY_KEYS = ("seq", "record_cid", "raw", "prev_hash", "entry_hash")
 
+#: The fields ``GET /v1/sync/head`` signs (and the block a whole-node export
+#: roots the archive at).
+HEAD_KEYS = ("seq", "entry_hash", "node_did", "signature")
+
 
 @dataclass(frozen=True)
 class Archive:
@@ -68,6 +79,8 @@ class Archive:
     """Envelopes of the intact record blocks, in archive order, each with ``id``."""
     log_entries: tuple[dict[str, Any], ...] = ()
     """Decoded event-log entry blocks, in archive order, unvalidated."""
+    head: dict[str, Any] | None = None
+    """The decoded signed log head of a whole-node export, when it carries one."""
     files: dict[bytes, bytes] = field(default_factory=dict)
     """Intact raw blocks: binary CID -> bytes."""
     corrupt: dict[bytes, str] = field(default_factory=dict)
@@ -120,6 +133,21 @@ def _decode_log_entry(data: bytes) -> dict[str, Any] | None:
     return value
 
 
+def _decode_head(data: bytes) -> dict[str, Any] | None:
+    """Decode a signed log-head block, or ``None`` for anything else.
+
+    The shape is exactly the document ``GET /v1/sync/head`` serves; whether
+    the signature is authentic is decided later, by the verifier.
+    """
+    try:
+        value = dag_cbor.decode(data)
+    except (CBORDecodingError, ValueError, RecursionError):
+        return None
+    if not isinstance(value, dict) or any(key not in value for key in HEAD_KEYS):
+        return None
+    return value
+
+
 def _attach_signatures(
     records: list[dict[str, Any]], log_entries: list[dict[str, Any]]
 ) -> None:
@@ -159,6 +187,7 @@ def load_archive(car: Car) -> Archive:
     """Sort the blocks of ``car`` and hash-check every one of them."""
     records: list[dict[str, Any]] = []
     log_entries: list[dict[str, Any]] = []
+    head: dict[str, Any] | None = None
     files: dict[bytes, bytes] = {}
     corrupt: dict[bytes, str] = {}
     cids: dict[bytes, CID] = {}
@@ -188,11 +217,16 @@ def load_archive(car: Car) -> Archive:
             entry = _decode_log_entry(block.data)
             if entry is not None:
                 log_entries.append(entry)
+                continue
+            signed_head = _decode_head(block.data)
+            if signed_head is not None and head is None:
+                head = signed_head
     _attach_signatures(records, log_entries)
     return Archive(
         block_count=len(car.blocks),
         records=tuple(records),
         log_entries=tuple(log_entries),
+        head=head,
         files=files,
         corrupt=corrupt,
         cids=cids,
