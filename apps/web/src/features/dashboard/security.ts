@@ -20,6 +20,7 @@
  */
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+import { formatDate } from "../ui-kit/format-date";
 import {
   RECOVERY_APPROVAL_THRESHOLD,
   RECOVERY_GUARDIAN_COUNT,
@@ -533,10 +534,19 @@ export function formatInstant(value: string | number | null | undefined): string
   );
 }
 
-/** `12 Nov 2026` (date only), for places where the time is noise. */
+/** `12 Nov 2026` (date only), in the reader's own time zone.
+ *
+ * A day shown without a zone label must be the reader's calendar day, as on
+ * every other page: 18 Nov 19:20 UTC is 19 Nov for a reader in Sydney, and the
+ * passkey card must not date the key a day early. The shared `formatDate` is
+ * that one rule. Where the moment itself matters, {@link formatInstant} keeps
+ * the time and its "UTC" label.
+ */
 export function formatDay(value: string | number | null | undefined): string | null {
-  const instant = formatInstant(value);
-  return instant === null ? null : instant.replace(/,.*$/, "");
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return formatDate(typeof value === "number" ? new Date(value) : value);
 }
 
 /** The status line under the guardian count. */

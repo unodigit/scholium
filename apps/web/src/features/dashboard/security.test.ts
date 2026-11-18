@@ -29,6 +29,11 @@ import {
   type SecurityDevice,
 } from "./security";
 
+// The security screen's calendar days are the reader's, so run the suite in the
+// journeys' zone (UTC+11 in November) rather than whatever zone the runner is
+// in: on a UTC runner an unlabelled UTC day would look correct here.
+process.env.TZ = "Australia/Sydney";
+
 const ACCOUNT = "did:key:z6MkAccountAccountAccountAccountAccountAccount1";
 const NEW_KEY = "did:key:z6MkNewKeyNewKeyNewKeyNewKeyNewKeyNewKeyNewKe2";
 const GUARDIANS = [1, 2, 3, 4, 5].map((n) => `did:key:z6MkGuardian${n}${"x".repeat(30)}`);
@@ -546,6 +551,17 @@ describe("formatInstant and formatDay", () => {
 
   it("gives the date alone for the short form", () => {
     expect(formatDay("2026-11-12T09:05:00Z")).toBe("12 Nov 2026");
+  });
+
+  it("gives the calendar day in the reader's zone, not the UTC day", () => {
+    // 19:20 UTC on 18 Nov is 06:20 on 19 Nov in Sydney (GMT+11): a passkey
+    // created just after local midnight was listed a day early.
+    expect(formatDay(Date.UTC(2026, 10, 18, 19, 20))).toBe("19 Nov 2026");
+    expect(formatDay("2026-11-18T19:20:00Z")).toBe("19 Nov 2026");
+    // The same instant is still 18 Nov in UTC, and an instant format says so.
+    expect(formatInstant(Date.UTC(2026, 10, 18, 19, 20))).toBe(
+      "18 Nov 2026, 19:20 UTC",
+    );
   });
 
   it("returns null for anything that is not a date", () => {

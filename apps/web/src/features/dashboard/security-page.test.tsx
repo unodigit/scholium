@@ -8,6 +8,11 @@ import { RotationError, type RotateKey, type RotateKeyInput } from "./rotate-key
 import { SecurityPage, shortDid } from "./security-page";
 import type { DeviceInfo, GuardianState, SecurityData } from "./security";
 
+// The creation day is the reader's calendar day, so run the suite in the
+// journeys' zone (UTC+11 in November): on a UTC runner a UTC day would look
+// correct.
+process.env.TZ = "Australia/Sydney";
+
 const ACCOUNT = "did:key:z6MkAccountAccountAccountAccountAccountAccount1";
 const NEW_KEY = "did:key:z6MkNewKeyNewKeyNewKeyNewKeyNewKeyNewKeyNewKe2";
 const GUARDIANS = [1, 2, 3, 4, 5].map((n) => `did:key:z6MkGuardian${n}${"x".repeat(29)}${n}`);
@@ -128,6 +133,15 @@ describe("Devices card", () => {
     ready({ devices: [{ ...DEVICE, createdAt: null }] });
 
     expect(within(card("Devices")).getByText("Passkey creation date unknown")).toBeTruthy();
+  });
+
+  it("shows the passkey's creation day in the reader's zone, not the UTC day", () => {
+    // Created 06:20 on 19 Nov in Sydney (19:20 UTC on 18 Nov): the member saw
+    // "18 Nov 2026", an unlabelled UTC day.
+    ready({ devices: [{ ...DEVICE, createdAt: Date.UTC(2026, 10, 18, 19, 20) }] });
+
+    expect(within(card("Devices")).getByText("Passkey created 19 Nov 2026")).toBeTruthy();
+    expect(within(card("Devices")).queryByText(/18 Nov 2026/)).toBeNull();
   });
 });
 
