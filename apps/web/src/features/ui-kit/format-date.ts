@@ -41,9 +41,35 @@ export interface DateFormatOptions {
 /** What a formatter accepts: an ISO instant, a `Date`, or nothing usable. */
 export type DateInput = string | Date | null | undefined;
 
+/**
+ * A zone designator at the end of a timestamp: `Z`, `z`, `±hh:mm`, `±hhmm` or
+ * `±hh`.
+ */
+const ZONE_DESIGNATOR = /(?:[Zz]|[+-]\d{2}:?\d{2}|[+-]\d{2})$/;
+
+/**
+ * An ISO 8601 date-time with no zone designator: `2026-11-18T04:53:41`
+ * (seconds and their fraction optional; a space also reads as the `T`).
+ */
+const ZONELESS_ISO_DATETIME =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?$/;
+
 export function toDate(value: DateInput): Date | null {
   if (value === null || value === undefined) return null;
-  const date = value instanceof Date ? value : new Date(value);
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  // The API writes UTC instants with no zone designator, and `new Date` reads
+  // such a string in the runtime's own zone (ECMA-262: no offset means local
+  // time), so a reader east of UTC was told an instant happened up to a day
+  // before it did — the review page dated a reveal one day early. Name the
+  // zone the API means before parsing; a timestamp that carries its own zone,
+  // and anything that is not an ISO date-time, is left exactly as it is.
+  const instant =
+    !ZONE_DESIGNATOR.test(value) && ZONELESS_ISO_DATETIME.test(value)
+      ? `${value.replace(" ", "T")}Z`
+      : value;
+  const date = new Date(instant);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 

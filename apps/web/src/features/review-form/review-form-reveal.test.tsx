@@ -146,7 +146,7 @@ describe("the sealed card's gate copy", () => {
     ).toBeTruthy();
     expect(screen.getByText(/one more independent review/)).toBeTruthy();
     // The 21-day fallback is still named, as the one other way to open it.
-    expect(screen.getByText("14 Dec")).toBeTruthy();
+    expect(screen.getByText("14 Dec 2026")).toBeTruthy();
   });
 
   it("says the gate is open once a second review is committed, not that it still awaits one", async () => {

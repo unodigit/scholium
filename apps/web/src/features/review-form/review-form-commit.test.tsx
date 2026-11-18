@@ -89,7 +89,7 @@ describe("ReviewForm commit", () => {
     expect(sealed).toBeTruthy();
     expect(screen.getByText(/It will be revealed with the others/)).toBeTruthy();
 
-    const date = screen.getByText("14 Dec");
+    const date = screen.getByText("14 Dec 2026");
     expect(date.tagName).toBe("TIME");
     expect(date.getAttribute("dateTime")).toBe("2026-12-14T00:00:00.000Z");
 

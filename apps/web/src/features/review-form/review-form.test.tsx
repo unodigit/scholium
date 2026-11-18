@@ -17,12 +17,18 @@ import {
   ReviewForm,
 } from "./review-form";
 import type { LoadRevealGate, UpdateReview, UpdateReviewResult } from "./reveal";
+import type { MyReview } from "./my-reviews";
 import {
   RUBRIC_DIMENSIONS,
   emptyDraft,
   withDimension,
   type ReviewDraft,
 } from "./rubric";
+
+// The journeys ran in a GMT+11 browser, east of UTC: the zone where a
+// zone-less API timestamp read as local time dated a reveal one day early.
+// Pinned so the date assertions below hold whatever zone the suite runs in.
+process.env.TZ = "Australia/Sydney";
 
 afterEach(cleanup);
 
@@ -488,11 +494,12 @@ describe("ReviewForm update", () => {
 
     // The update is revealed at once, but its written report waits for the
     // version's gate (REV-4): the confirmation may not call the whole review
-    // published. The date is the record's own date plus the 21-day window.
+    // published. The date is the record's own date plus the 21-day window,
+    // in the reader's zone (the shared helper writes the year too).
     expect(screen.getByText(/Your scores and recommendation are public now/)).toBeTruthy();
     expect(
       screen.getByText(
-        /Your written report unseals once 2 reviews are committed on this version, or on 22 Dec\./,
+        /Your written report unseals once 2 reviews are committed on this version, or on 22 Dec 2026\./,
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/now published on the paper/)).toBeNull();
@@ -581,5 +588,49 @@ describe("ReviewForm update", () => {
     expect(alert.textContent).not.toContain("prev");
     // Still editable, so the reviewer can reload or try again.
     expect(screen.getByRole("button", { name: UPDATE_LABEL })).toBeTruthy();
+  });
+});
+
+describe("ReviewForm own revealed review", () => {
+  /** The dashboard's answer for a reviewer whose review is public. */
+  function ownRevealedReview(revealedAt: string): MyReview {
+    return {
+      reviewCid: "bafycommit",
+      paper: "sch:6sel-2dio-orm6",
+      versionCid: "bafyversion",
+      sealed: false,
+      revealed: true,
+      version: 2,
+      recommendation: "sound_as_is",
+      confidence: "high",
+      scores: { soundness: { score: 4, justification: "Fine." } },
+      revealedAt,
+    };
+  }
+
+  it("dates the reveal in the reader's zone, reading the API's zone-less timestamp as UTC", async () => {
+    render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        signedIn
+        loadOwnReviews={vi.fn(async () => [
+          // No zone designator: the API's UTC convention. 04:53 UTC is
+          // 15:53 the same 18 November in Sydney (UTC+11).
+          ownRevealedReview("2026-11-18T04:53:41"),
+        ])}
+        loadOwnReview={vi.fn(async () => {
+          throw new Error("offline");
+        })}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "You already reviewed this paper" }),
+    ).toBeTruthy();
+    // The day the reviewer revealed it — not the UTC day of an instant
+    // misread as Sydney local time, which was one day early.
+    expect(screen.getByText(/Revealed 18 Nov 2026/)).toBeTruthy();
   });
 });

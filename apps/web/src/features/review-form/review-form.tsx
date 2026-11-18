@@ -51,6 +51,7 @@ import {
 
 import { useSignedIn } from "../../components/nav/session";
 import { api, tokenStore } from "../../lib/api";
+import { formatDate, toDate } from "../ui-kit/format-date";
 import { Icon } from "../ui-kit/icons";
 import type { ActionFailure } from "./action-errors";
 import { appendCitation, describeCitation, type Citation } from "./citation";
@@ -58,7 +59,6 @@ import {
   SEALED_HEADLINE,
   commitReview,
   describeCommitError,
-  formatRevealDate,
   revealDateFor,
   type CommitFailure,
   type ReviewCommitInput,
@@ -906,8 +906,8 @@ function updatedRecommendation(value: unknown): string {
 
 /**
  * The day this update's written report unseals on the clock alone, as the
- * design writes dates (`22 Dec`), or `null` when the record carries no usable
- * date.
+ * design writes dates (`22 Dec 2026`), or `null` when the record carries no
+ * usable date.
  *
  * An update is revealed at once, but REV-4 withholds its written report until
  * the target version's gate opens: two reviews committed on it, or 21 days
@@ -915,11 +915,13 @@ function updatedRecommendation(value: unknown): string {
  * brings, and the client's commit flow uses the same window.
  */
 function updatedReportUnsealDate(result: UpdateReviewResult): string | null {
-  try {
-    return formatRevealDate(revealDateFor(result.record.created));
-  } catch {
-    return null;
-  }
+  // `created` can arrive without a zone designator — the API's UTC
+  // convention — so the shared `toDate` names the zone before the 21-day
+  // window is added to the instant. `revealDateFor` then works on a
+  // zone-carrying ISO string it cannot misread.
+  const created = toDate(result.record.created);
+  if (created === null) return null;
+  return formatDate(revealDateFor(created.toISOString()));
 }
 
 /**
@@ -1066,7 +1068,10 @@ export function SealedNotice({
   /** Called when a review key file is imported. */
   onImported?: (sealed: SealedReview) => void;
 }) {
-  const revealDate = formatRevealDate(sealed.revealAt);
+  // The shared date format, in the reader's zone (`toDate` reads a zone-less
+  // API timestamp as UTC): the same instant names the same day here as on the
+  // paper page. The raw string is the fallback for a value that is not a date.
+  const revealDate = formatDate(sealed.revealAt) ?? sealed.revealAt;
   const named = signed || sealed.revealBody.signed === true;
 
   // Whether this browser holds the review key. Read after mount: it is kept in
@@ -1401,8 +1406,13 @@ export function RevealedElsewhereNotice({
 
   const meta: string[] = [];
   if (version !== null) meta.push(`Review of v${version}`);
+  // The shared date format, in the reader's zone: the API's zone-less
+  // `revealed_at` is UTC, so 04:53 UTC is still the 18th in Sydney — the day
+  // the reviewer revealed it, and the day the paper page names.
   meta.push(
-    revealedAt !== null ? `Revealed ${formatRevealDate(revealedAt)}` : "Revealed",
+    revealedAt !== null
+      ? `Revealed ${formatDate(revealedAt) ?? revealedAt}`
+      : "Revealed",
   );
 
   // An update's `prev` names the reviewer's newest `review.formal`; only the

@@ -4,7 +4,7 @@ import { cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { formatDate, formatDateTime } from "./format-date";
+import { formatDate, formatDateTime, toDate } from "./format-date";
 import { LocalDate } from "./local-date";
 
 /**
@@ -17,6 +17,13 @@ import { LocalDate } from "./local-date";
  * `Australia/Sydney` is passed explicitly because that is the zone the
  * journeys ran in (UTC+11 in November); the default is the reader's zone.
  */
+
+// Run in the journeys' zone (UTC+11 in November) whatever zone the suite is
+// started in: the reader's-zone defaults below must be as deterministic as the
+// named zones are, and a UTC runner would otherwise hide the zone-less parse
+// this file guards (below). Vitest isolates each file in its own process, so
+// the pin cannot reach another test file.
+process.env.TZ = "Australia/Sydney";
 
 /** 00:45 on 18 Nov 2026 in Sydney; 13:45 on 17 Nov in UTC. */
 const NEAR_MIDNIGHT = "2026-11-17T13:45:00Z";
@@ -56,6 +63,44 @@ describe("formatDate", () => {
     expect(formatDate(null)).toBeNull();
     expect(formatDate(undefined)).toBeNull();
     expect(formatDate("not a date")).toBeNull();
+  });
+});
+
+describe("a timestamp without a zone designator", () => {
+  // The API writes UTC instants with no zone: `"revealed_at":
+  // "2026-11-18T04:53:41"`. `new Date` reads such a string in the runtime's
+  // own zone (ECMA-262: no offset means local time), so a reader east of UTC
+  // was told an instant happened up to a day before it did — the review page
+  // dated a reveal one day early (04:53 UTC on 18 Nov read as 17 Nov 17:53
+  // UTC in Sydney, then printed as the UTC day). The helper names the zone
+  // the API means before it formats.
+  const ZONELESS = "2026-11-18T04:53:41";
+
+  it("is parsed as UTC — the API's convention — not as the runtime's zone", () => {
+    expect(toDate(ZONELESS)?.toISOString()).toBe("2026-11-18T04:53:41.000Z");
+  });
+
+  it("is shown in the reader's zone from that UTC instant", () => {
+    // 04:53 UTC is 15:53 the same 18 November in Sydney.
+    expect(formatDate(ZONELESS)).toBe("18 Nov 2026");
+    expect(formatDateTime(ZONELESS)).toMatch(/^18 Nov 2026 15:53 /);
+    expect(formatDate(ZONELESS, { timeZone: "UTC" })).toBe("18 Nov 2026");
+  });
+
+  it("writes the day the paper page writes for the same instant", () => {
+    expect(formatDate(ZONELESS, { timeZone: "Australia/Sydney" })).toBe(
+      formatDate("2026-11-18T04:53:41Z", { timeZone: "Australia/Sydney" }),
+    );
+  });
+
+  it("leaves a timestamp that already names its zone alone", () => {
+    expect(toDate("2026-11-18T04:53:41Z")?.toISOString()).toBe(
+      "2026-11-18T04:53:41.000Z",
+    );
+    expect(toDate("2026-11-17T21:53:41-07:00")?.toISOString()).toBe(
+      "2026-11-18T04:53:41.000Z",
+    );
+    expect(formatDate("2026-11-18T15:53:41+11:00")).toBe("18 Nov 2026");
   });
 });
 

@@ -66,6 +66,11 @@ function state(overrides: Partial<SearchState> = {}): SearchState {
   return { ...EMPTY_SEARCH_STATE, q: "pulsar", ...overrides };
 }
 
+// The journeys ran in a GMT+11 browser, east of UTC: the zone where search
+// results and paper pages disagreed on the day of the same instant. Pinned so
+// the date assertion below holds whatever zone the suite runs in.
+process.env.TZ = "Australia/Sydney";
+
 afterEach(cleanup);
 
 describe("SearchPage with server data", () => {
@@ -188,6 +193,28 @@ describe("SearchPage with server data", () => {
 
     expect(container.querySelector(".sp-result-authors")).toBeNull();
     expect(container.querySelector(".sp-result-meta")?.textContent).toContain("v2");
+  });
+
+  it("dates a result the way the paper page does: the reader's zone, the API's zone-less timestamp read as UTC", () => {
+    // No zone designator: the API's UTC convention. 04:53 UTC on 18 November
+    // is 15:53 the same day in Sydney (UTC+11), so the search page must say
+    // 18 Nov — the day the paper page names for the same instant — not the
+    // UTC day of an instant misread as Sydney local time (17 Nov).
+    const { container } = render(
+      <SearchPage
+        initialState={state()}
+        initialResult={{
+          ...RESULT,
+          total: 1,
+          results: [{ ...HIT, listedAt: "2026-11-18T04:53:41" }],
+        }}
+        updateUrl={vi.fn()}
+      />,
+    );
+
+    const listed = container.querySelector(".sp-result-meta time");
+    expect(listed?.textContent).toBe("18 Nov 2026");
+    expect(listed?.getAttribute("datetime")).toBe("2026-11-18T04:53:41");
   });
 
   it("offers Save this search for the query on screen", () => {

@@ -40,6 +40,8 @@ import {
 } from "react";
 
 import { StatusChip, isPaperStatus } from "../ui-kit";
+import { toDate } from "../ui-kit/format-date";
+import { LocalDate } from "../ui-kit/local-date";
 import { profilePath } from "../dashboard/profile";
 import { authorLabel, authorLine } from "../feed/feed";
 import { SaveSearchButton, type SaveSearchButtonProps } from "./save-search-button";
@@ -49,7 +51,6 @@ import {
   clearFilters,
   describeSearchError,
   facetOptions,
-  formatListedAt,
   hasActiveFilters,
   loadKeywordSearch,
   loadSemanticSearch,
@@ -657,7 +658,6 @@ function ResultRow({
   hit: SearchResultItem;
   semantic: boolean;
 }) {
-  const listed = formatListedAt(hit.listedAt);
   const authors = hit.authors ?? [];
   const byline = authorLine(authors);
   const hasByline = byline.shown.length > 0;
@@ -665,8 +665,15 @@ function ResultRow({
   const meta = [
     hit.categories.length > 0 ? hit.categories.join(", ") : "",
     `v${hit.n} of ${total}`,
-    listed,
   ].filter((part) => part !== "");
+  // The listing date is the paper page's date for the same instant: the
+  // shared helper's, in the reader's zone (`toDate` reads the API's zone-less
+  // timestamp as UTC, so the two pages cannot disagree on the day).
+  // `LocalDate` keeps the first HTML stable in any zone — UTC first, the
+  // reader's date as soon as React takes over — so the server and the browser
+  // never disagree either.
+  const listed = toDate(hit.listedAt) !== null;
+  const hasMeta = meta.length > 0 || listed;
 
   return (
     <li className="sp-result">
@@ -674,7 +681,7 @@ function ResultRow({
         <a href={resultHref(hit)}>{hit.title}</a>
       </h2>
 
-      {hasByline || meta.length > 0 ? (
+      {hasByline || hasMeta ? (
         <p className="sp-result-meta">
           {hasByline ? (
             <span
@@ -690,8 +697,17 @@ function ResultRow({
               {byline.more > 0 ? `, +${byline.more}` : null}
             </span>
           ) : null}
-          {hasByline && meta.length > 0 ? " · " : null}
-          {meta.join(" · ")}
+          {hasByline && hasMeta ? " · " : null}
+          {meta.map((part, index) => (
+            <Fragment key={part}>
+              {index > 0 ? " · " : null}
+              {part}
+            </Fragment>
+          ))}
+          {listed && meta.length > 0 ? " · " : null}
+          {listed && hit.listedAt !== null ? (
+            <LocalDate value={hit.listedAt} />
+          ) : null}
         </p>
       ) : null}
 
