@@ -12,6 +12,7 @@
  */
 
 import { ApiError, NetworkError, api, resolveApiBaseUrl } from "../../lib/api";
+import { formatDate as formatReaderDate } from "../ui-kit/format-date";
 // Not the `../web-auth` index: it re-exports hooks that are not client modules,
 // and this plain module reaches the server-rendered `/submit` page through the
 // feature's barrel. These two files hold only plain code, so they are safe there.
@@ -359,16 +360,13 @@ export function recordUrl(cid: string): string {
   return `${resolveApiBaseUrl()}/v1/records/${encodeURIComponent(cid)}`;
 }
 
-/** `16 Nov 2026`, in UTC so it reads the same wherever it is opened. */
+/**
+ * `16 Nov 2026`, in the reader's own time zone through the shared `ui-kit`
+ * formatter: a version co-signed at 00:45 in Sydney is dated the day the
+ * signer signed it (bug_spec_verify12 bug 2).
+ */
 export function formatSigned(created: string | null): string | null {
-  if (created === null) {
-    return null;
-  }
-  const date = new Date(created);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(date);
+  return formatReaderDate(created);
 }
 
 // ---------------------------------------------------------------------------

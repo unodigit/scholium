@@ -31,6 +31,10 @@ import {
 } from "../../lib/api";
 import { formatVersionId, parseShortId, parseVersionId } from "../verify-core";
 import type { IconName } from "../ui-kit";
+import {
+  formatDate as formatReaderDate,
+  formatDateTime as formatReaderDateTime,
+} from "../ui-kit/format-date";
 
 /* -------------------------------------------------------------------------- */
 /* Wire shape                                                                  */
@@ -399,35 +403,24 @@ export function changeNoteText(version: { n: number; changeNote: string | null }
  */
 export { formatBytes } from "../ui-kit/format-bytes";
 
-/** `2 Mar 2027`, in UTC and the same words in every locale. */
+/**
+ * `2 Mar 2027`, in the reader's own time zone, through the shared `ui-kit`
+ * formatter: the Versions tab's day must be the day the feed and the profile
+ * show for the same instant (bug_spec_verify12 bug 2).
+ */
 export function formatDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
+  return formatReaderDate(iso) ?? iso;
 }
 
-/** `2 Mar 2027 04:00 UTC`, the Proof tab's wording for an anchor. */
+/**
+ * `2 Mar 2027 04:00 UTC`, the Proof tab's wording for an anchor.
+ *
+ * An anchor is explicitly a UTC fact (the proof names the instant and the log
+ * head it attests), so this one keeps the `UTC` label and stays in UTC; a
+ * reader-facing date uses `formatDate` above.
+ */
 export function formatDateTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const day = new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
-  const time = new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-    timeZone: "UTC",
-  }).format(date);
-  return `${day} ${time} UTC`;
+  return formatReaderDateTime(iso, { timeZone: "UTC" }) ?? iso;
 }
 
 /** Human words for the licences the catalog uses, keyed case-insensitively. */

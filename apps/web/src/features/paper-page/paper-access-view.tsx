@@ -13,6 +13,7 @@ import { policyHref } from "../policies-page";
 import { DecisionBanner, Icon, RecordLink } from "../ui-kit";
 import { formatDate } from "../ui-kit/format-date";
 import type { FiledAppeal } from "./appeal-dialog";
+import { panelNotFormed } from "./appeal-dialog";
 import type {
   ModerationFact,
   TombstoneFacts,
@@ -112,7 +113,9 @@ function appealDetail(appeal: FiledAppeal): string {
   const filed = formatDate(appeal.filedAt, { month: "long" });
   const opened = filed === null ? "Appeal filed" : `Appeal filed on ${filed}`;
   if (appeal.outcome === null) {
-    return `${opened} — awaiting panel.`;
+    return panelNotFormed(appeal.status)
+      ? `${opened} — panel not yet formed.`
+      : `${opened} — awaiting panel.`;
   }
   const decided = formatDate(appeal.decidedAt, { month: "long" });
   const phrase =

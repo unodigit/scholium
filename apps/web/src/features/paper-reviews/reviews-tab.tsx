@@ -59,7 +59,7 @@ import {
   isRevealed,
   medianText,
   recommendationTone,
-  reportGateDate,
+  reportGateInstant,
   scoreFraction,
   scoreText,
   type AuthorReply,
@@ -256,13 +256,24 @@ interface GateFacts {
   readonly sealed: number;
   /** Earlier-version reviews listed below, all already revealed. */
   readonly earlierRevealed: number;
-  /** The day the clock opens the gate, when a commit date is served. */
-  readonly date: string | null;
+  /**
+   * The instant the clock opens the gate, when a commit date is served. An
+   * instant (not a rendered string) so the note can put a `LocalDate` in its
+   * sentence: the server's HTML is the stable UTC day, and the browser shows
+   * the reader's day — no hydration mismatch (bug_spec_verify12 bug 2).
+   */
+  readonly date: Date | null;
 }
 
 /** When the clock alone opens the gate: a date when one is known. */
-function unsealClock(date: string | null): string {
-  return date !== null ? `on ${date}` : "21 days after the first commit";
+function unsealClock(date: Date | null): ReactNode {
+  return date !== null ? (
+    <>
+      on <LocalDate value={date} />
+    </>
+  ) : (
+    "21 days after the first commit"
+  );
 }
 
 /**
@@ -286,13 +297,14 @@ function gateNote({
   sealed,
   earlierRevealed,
   date,
-}: GateFacts): string {
+}: GateFacts): ReactNode {
   const earlier =
     earlierRevealed > 0
       ? ` ${earlierRevealed} earlier-version review${
           earlierRevealed === 1 ? "" : "s"
         } below ${earlierRevealed === 1 ? "is" : "are"} already revealed.`
       : "";
+  const count = `${commits} review${commits === 1 ? "" : "s"} committed on this version`;
 
   if (revealed > 0) {
     const scores =
@@ -301,38 +313,55 @@ function gateNote({
       sealed > 0
         ? "Written reports on this version, and the rubric of a review still sealed, unseal"
         : "Written reports on this version unseal";
-    const gate = `${reports} once 2 reviews are committed on it, or ${unsealClock(date)}.`;
+    const gate = (
+      <>
+        {reports} once 2 reviews are committed on it, or {unsealClock(date)}.
+      </>
+    );
 
     if (commits <= 0) {
-      return `No review has been committed on this version yet. ${scores} ${gate}${earlier}`;
+      return (
+        <>
+          {`No review has been committed on this version yet. ${scores} `}
+          {gate}
+          {earlier}
+        </>
+      );
     }
 
     if (sealed === 0) {
       // Every review on this version is revealed: only its written report is
       // withheld until the gate opens (REV-4), so say the count and that.
-      return `${commits} review${
-        commits === 1 ? "" : "s"
-      } committed on this version; ${
-        commits === 1
-          ? "its written report unseals"
-          : "their written reports unseal"
-      } once 2 are committed, or ${unsealClock(date)}.${earlier}`;
+      return (
+        <>
+          {`${count}; `}
+          {commits === 1
+            ? "its written report unseals"
+            : "their written reports unseal"}
+          {" once 2 are committed, or "}
+          {unsealClock(date)}.{earlier}
+        </>
+      );
     }
 
-    return `${commits} review${
-      commits === 1 ? "" : "s"
-    } committed on this version. ${scores} ${gate}${earlier}`;
+    return (
+      <>
+        {`${count}. ${scores} `}
+        {gate}
+        {earlier}
+      </>
+    );
   }
 
   if (commits <= 0) {
     return `No review has been committed on this version yet. Reviews are revealed, with their rubric and report, once two independent reviews are committed on this version, or 21 days after the first.${earlier}`;
   }
-  const count =
+  const soFar =
     commits === 1
       ? "1 review has been committed on this version so far."
       : `${commits} reviews have been committed on this version so far.`;
-  if (commits >= 2) return `${count} Reviews are revealed once the gate opens.${earlier}`;
-  return `${count} The review is revealed, with its rubric and report, once one more independent review is committed on this version, or 21 days after the first commit.${earlier}`;
+  if (commits >= 2) return `${soFar} Reviews are revealed once the gate opens.${earlier}`;
+  return `${soFar} The review is revealed, with its rubric and report, once one more independent review is committed on this version, or 21 days after the first commit.${earlier}`;
 }
 
 /** What a card says of a report the version's gate still withholds. */
@@ -343,10 +372,20 @@ const SEALED_REPORT_NOTE =
  * What a card says of an update whose rubric is public but whose report is not
  * served until this version's gate opens (REV-4).
  */
-function updatedReportNote(date: string | null): string {
-  return `Updated report sealed until 2 reviews are committed on this version, or ${
-    date !== null ? `on ${date}` : "21 days after the first"
-  }.`;
+function updatedReportNote(date: Date | null): ReactNode {
+  return (
+    <>
+      Updated report sealed until 2 reviews are committed on this version, or{" "}
+      {date !== null ? (
+        <>
+          on <LocalDate value={date} />
+        </>
+      ) : (
+        "21 days after the first"
+      )}
+      .
+    </>
+  );
 }
 
 /** The earlier revisions of a revised review, oldest first. */
@@ -403,7 +442,7 @@ function ReviewsView({
   // its count.
   const carried = reviews.length - commits;
   const sealed = reviews.filter((review) => !isRevealed(review)).length;
-  const gateDate = reportGateDate(reviews, data.version);
+  const gateDate = reportGateInstant(reviews, data.version);
   const earlierRevealed = reviews.filter(
     (review) =>
       review.version !== null &&
@@ -572,8 +611,8 @@ function ReviewCard({
   listedVersion: number | null;
   paperId: string;
   latestVersion: number | null;
-  /** The day the clock opens this version's gate, when a commit date is served. */
-  gateDate: string | null;
+  /** The instant the clock opens this version's gate, when a commit date is served. */
+  gateDate: Date | null;
   /** The signed-in viewer wrote this review. */
   mine: boolean;
 }) {

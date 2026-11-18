@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { revealDateFor } from "../review-form/commit";
 import {
   confidenceLabel,
   dimensionLabel,
@@ -18,6 +19,10 @@ import {
   scoreFraction,
   scoreText,
 } from "./review";
+
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
 
 /**
  * The wire shape, the labels and the summary arithmetic.
@@ -496,10 +501,20 @@ describe("emptyReviews", () => {
 describe("reportGateDate", () => {
   const at = (committedAt: string | null, version: number | null) => ({ committedAt, version });
 
-  it("is 21 days after the first review counted on the version", () => {
+  it("is 21 days after the first review counted on the version, in the reader's zone", () => {
+    // 5 Mar 23:30 UTC + 21 days is 26 Mar 23:30 UTC, which is 27 Mar in
+    // Sydney (GMT+11) — the same day `revealDateFor` names in the form.
     expect(
       reportGateDate([at("2027-03-10T00:00:00", 2), at("2027-03-05T23:30:00", 2)], 2),
-    ).toBe("26 Mar 2027");
+    ).toBe("27 Mar 2027");
+  });
+
+  it("agrees with the reviewer's form for the same commit instant", () => {
+    const commit = "2027-03-05T23:30:00";
+    const form = revealDateFor(commit);
+    expect(reportGateDate([at(commit, 2)], 2)).toBe(
+      formatReviewDate(form),
+    );
   });
 
   it("crosses a month and a year", () => {

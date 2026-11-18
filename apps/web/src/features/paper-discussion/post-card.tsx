@@ -61,8 +61,13 @@ export interface PostActions {
   readonly voted: ReadonlySet<string>;
   /** Posts this reader has reported in this tab, with the reason given. */
   readonly reported: ReadonlyMap<string, ReportReason>;
-  /** Posts this reader has appealed in this tab, with the date filed. */
-  readonly appealed?: ReadonlyMap<string, string>;
+  /**
+   * Posts this reader has appealed in this tab, with the date filed and the
+   * panel state the filing response named. The state is carried so the card
+   * says "panel not yet formed" at once when no panel could be drawn, exactly
+   * as the next read will.
+   */
+  readonly appealed?: ReadonlyMap<string, { readonly filedAt: string; readonly status: string }>;
   /** Sign and submit a reply. Resolves when it is in; rejects to show why not. */
   reply(parent: DiscussionPost, text: string): Promise<void>;
   /** Mark helpful. Resolves when counted; rejects to show why not. */
@@ -122,15 +127,15 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
   const reportedAs = actions.reported.get(post.cid) ?? null;
   // The node's answer first: it survives a reload and another device. The
   // tab's map only covers the moment between filing and the next read.
-  const appealedAt = actions.appealed?.get(post.cid) ?? null;
+  const appealedNow = actions.appealed?.get(post.cid) ?? null;
   const appeal: PostAppeal | null =
     post.appeal ??
-    (appealedAt === null
+    (appealedNow === null
       ? null
       : {
           cid: "",
-          filedAt: appealedAt,
-          status: "awaiting_panel",
+          filedAt: appealedNow.filedAt,
+          status: appealedNow.status,
           outcome: null,
           decidedAt: null,
         });

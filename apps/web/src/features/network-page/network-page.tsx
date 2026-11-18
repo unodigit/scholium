@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { EmptyState, Icon, IdPill, type IconName } from "../ui-kit";
+import { LocalDate } from "../ui-kit/local-date";
 import { POLICIES_PATH, policyHref } from "../policies-page";
 
 import {
@@ -39,7 +40,6 @@ import {
   anchorSpec,
   archiveExportHref,
   describeNetworkError,
-  incidentDate,
   listedPapersLine,
   loadNetworkStatus as fetchNetworkStatus,
   moderationCountLine,
@@ -516,9 +516,11 @@ function IncidentLogSection({
               className="np-incident"
             >
               <p className="np-incident-head">
-                <time className="np-incident-date" dateTime={incident.occurred_at}>
-                  {incidentDate(incident.occurred_at)}
-                </time>
+                <LocalDate
+                  className="np-incident-date"
+                  value={incident.occurred_at}
+                  month="long"
+                />
                 <span className="np-incident-title">{incident.title}</span>
               </p>
               <p className="np-note">{incident.detail}</p>

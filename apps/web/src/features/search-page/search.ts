@@ -25,6 +25,7 @@ import {
   type QueryParams,
 } from "../../lib/api";
 import { PROFILE_ENDPOINT } from "../feed/feed";
+import { formatDate as formatReaderDate } from "../ui-kit/format-date";
 
 /** The route path (docs/design.md §4). */
 export const SEARCH_PATH = "/search";
@@ -774,21 +775,13 @@ export function resultHref(hit: Pick<SearchResultItem, "shortId" | "paperCid" | 
   return `/p/${encodeURIComponent(id)}/v${hit.n}`;
 }
 
-/** A listing date as `16 Nov 2026` (UTC, so the day never shifts). */
+/**
+ * A listing date as `16 Nov 2026`, in the reader's own time zone, through the
+ * shared `ui-kit` formatter (bug_spec_verify12 bug 2). Empty when there is no
+ * readable date.
+ */
 export function formatListedAt(value: string | null): string {
-  if (value === null) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
+  return formatReaderDate(value) ?? "";
 }
 
 /** The count line under the search form. */

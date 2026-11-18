@@ -27,6 +27,10 @@ import {
   type ProfileEndorsement,
 } from "./endorse";
 
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
+
 /** A signed record as `web-auth`'s signer returns one. */
 function signedRecord(overrides: Record<string, unknown> = {}) {
   return {
@@ -446,8 +450,11 @@ describe("endorserLabel", () => {
 });
 
 describe("formatEndorsementDate", () => {
-  it("writes the UTC day the same way in every time zone", () => {
-    expect(formatEndorsementDate("2026-11-17T23:30:00Z")).toBe("17 Nov 2026");
+  it("writes the day in the reader's own time zone, as every page does", () => {
+    // 23:30 UTC on the 17th is the 18th in Sydney (GMT+11): an endorsement
+    // made after local midnight is dated the day it was made.
+    expect(formatEndorsementDate("2026-11-17T23:30:00Z")).toBe("18 Nov 2026");
+    expect(formatEndorsementDate("2026-11-17T09:30:00Z")).toBe("17 Nov 2026");
     expect(formatEndorsementDate("2026-01-02T00:00:00Z")).toBe("2 Jan 2026");
   });
 

@@ -131,6 +131,13 @@ export interface AppealAccepted {
   readonly id: string;
   /** `pending` until a panel decides it. */
   readonly status: string | null;
+  /**
+   * The panel's state the response names: `awaiting_panel`, `not_formed` or
+   * `decided`. The node draws the panel as it accepts the appeal, so a filing
+   * into a membership too small for one already says `not_formed` — the same
+   * words the next read will.
+   */
+  readonly panelStatus?: string | null;
 }
 
 /** The node’s records for one paper; {@link loadAppealableDecision} by default. */
@@ -248,10 +255,37 @@ export function parseAppealAccepted(
   fallbackId: string,
 ): AppealAccepted {
   const body = isRecord(payload) ? payload : {};
+  const status = readText(body.status);
+  const panel = readText(body.panel_status) ?? readText(body.panelStatus);
   return {
     id: readText(body.id) ?? readText(body.record_id) ?? fallbackId,
-    status: readText(body.status),
+    status,
+    // The appeal's own status is `panel_not_formed` (or `panel_overdue`) when
+    // no panel could be drawn; the reader-facing words are `not_formed`.
+    panelStatus: panelStatusOf(panel ?? status),
   };
+}
+
+/**
+ * The reader-facing panel state for an API status: `not_formed` for the
+ * appeal's `panel_not_formed`/`panel_overdue`, `awaiting_panel` for `pending`,
+ * and a reader-facing value passed through unchanged. `null` when nothing is
+ * known, so a label can say nothing rather than guess.
+ */
+export function panelStatusOf(status: string | null): string | null {
+  if (status === null) return null;
+  if (status === "panel_not_formed" || status === "panel_overdue") return "not_formed";
+  if (status === "pending") return "awaiting_panel";
+  return status;
+}
+
+/** Whether a panel state means no panel could be drawn. */
+export function panelNotFormed(status: string | null | undefined): boolean {
+  return (
+    status === "not_formed" ||
+    status === "panel_not_formed" ||
+    status === "panel_overdue"
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -274,6 +308,13 @@ export interface FiledAppeal {
   readonly decisionCid: string;
   /** When the node received the appeal (ISO), when the record says. */
   readonly filedAt: string | null;
+  /**
+   * The panel's state when the source says: `awaiting_panel`, `not_formed`
+   * (too few eligible members) or `decided`; `null`/absent when it does not.
+   * The filing response names it at once, so the banner behind the dialog
+   * says "panel not yet formed" without waiting for a reload.
+   */
+  readonly status?: string | null;
   /** The panel's outcome, or `null` while the appeal awaits one. */
   readonly outcome: string | null;
   /** cid of the deciding `appeal.decision`, once there is one. */
@@ -305,7 +346,7 @@ export function filedAppeal(
 
   const appeals = new Map<
     string,
-    { decisionCid: string; filedAt: string | null; seq: number }
+    { decisionCid: string; filedAt: string | null; status: string | null; seq: number }
   >();
   const verdicts = new Map<
     string,
@@ -328,6 +369,13 @@ export function filedAppeal(
       appeals.set(cid, {
         decisionCid: target,
         filedAt: readText(item.received_at ?? item.receivedAt),
+        // A read that names the panel's state (some node views do) is kept so
+        // the banner can say "panel not yet formed" without guessing.
+        status: panelStatusOf(
+          readText(item.panel_status) ??
+            readText(item.panelStatus) ??
+            readText(item.status),
+        ),
         seq,
       });
       continue;
@@ -361,6 +409,7 @@ export function filedAppeal(
     cid: string;
     decisionCid: string;
     filedAt: string | null;
+    status: string | null;
     seq: number;
   } | null = null;
 
@@ -386,6 +435,7 @@ export function filedAppeal(
     appealCid: wanted.cid,
     decisionCid: wanted.decisionCid,
     filedAt: wanted.filedAt,
+    status: verdict === null ? wanted.status : "decided",
     outcome: verdict?.outcome ?? null,
     verdictCid: verdict?.cid ?? null,
     decidedAt: verdict?.decidedAt ?? null,
@@ -457,13 +507,19 @@ const OUTCOME_PHRASES: Readonly<Record<string, string>> = {
 /**
  * The banner sentence for a filed appeal: when it was filed and whether a
  * panel is still to decide it, or the panel's outcome. Dates read as the paper
- * page writes them (`5 March 2027`).
+ * page writes them (`5 March 2027`), in the reader's own time zone.
+ *
+ * When the panel could not be drawn, the sentence says so ("panel not yet
+ * formed") rather than "awaiting panel" — the state the filing response and
+ * the next read both name (bug_spec_verify12 bug 2).
  */
 export function appealStatus(appeal: FiledAppeal): string {
   const filed = formatRemovalDate(appeal.filedAt);
   const opened = filed === null ? "Appeal filed" : `Appeal filed on ${filed}`;
   if (appeal.outcome === null) {
-    return `${opened} — awaiting panel.`;
+    return panelNotFormed(appeal.status)
+      ? `${opened} — panel not yet formed.`
+      : `${opened} — awaiting panel.`;
   }
   const decided = formatRemovalDate(appeal.decidedAt);
   const phrase =
@@ -809,6 +865,9 @@ function AppealPanel({
         appealCid: accepted.id,
         decisionCid: decision.decisionCid,
         filedAt: new Date().toISOString(),
+        // `submitAppeal` derives `panelStatus`; a seam (or an older answer)
+        // that names only the appeal's own status still says the same thing.
+        status: accepted.panelStatus ?? panelStatusOf(accepted.status ?? null),
         outcome: null,
         verdictCid: null,
         decidedAt: null,

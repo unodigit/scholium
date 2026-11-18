@@ -29,6 +29,10 @@ import {
   type NetworkClient,
 } from "./network";
 
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
+
 /** A client whose only method is `get`, returning `payload`. */
 function clientReturning(payload: unknown) {
   const get = vi.fn(async () => payload);
@@ -385,8 +389,11 @@ describe("probeSummary", () => {
 });
 
 describe("incidentDate", () => {
-  it("writes the date the way the site does, in UTC", () => {
-    expect(incidentDate("2027-05-04T23:30:00Z")).toBe("4 May 2027");
+  it("writes the date the way the site does, in the reader's own time zone", () => {
+    // 18:30 UTC is 05:30 the next day in Sydney (GMT+11), and that is the day
+    // the reader sees on the paper, the profile and this page.
+    expect(incidentDate("2027-05-04T18:30:00Z")).toBe("5 May 2027");
+    expect(incidentDate("2027-05-04T09:00:00Z")).toBe("4 May 2027");
   });
 
   it("keeps an unreadable date as it was sent", () => {

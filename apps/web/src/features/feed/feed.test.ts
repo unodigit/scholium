@@ -29,6 +29,10 @@ import {
   type FeedState,
 } from "./feed";
 
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
+
 const DID_A = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 
 /** The wire shape of one `GET /v1/papers` item. */
@@ -603,11 +607,12 @@ describe("rowAge", () => {
     expect(rowAge({ listedAt: null, updatedAt: null }, "newest", now)).toBeNull();
   });
 
-  it("does not shift the day with the viewer's time zone", () => {
-    // 23:30 UTC on the 15th is the 16th in Tokyo; the title must still say 15.
+  it("names the day in the reader's own time zone, as every page does", () => {
+    // 23:30 UTC on the 15th is the 16th in Sydney (GMT+11); the feed row, the
+    // profile and the Versions tab must all say 16 (bug_spec_verify12 bug 2).
     expect(
       rowAge({ listedAt: "2026-11-15T23:30:00", updatedAt: null }, "newest", now)?.title,
-    ).toBe("Listed 15 Nov 2026");
+    ).toBe("Listed 16 Nov 2026");
   });
 });
 

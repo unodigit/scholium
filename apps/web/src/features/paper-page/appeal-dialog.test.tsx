@@ -8,10 +8,12 @@ import type { SignedRecord } from "../web-auth/sign-record";
 import {
   APPEAL_EMPTY_GROUNDS,
   AppealDialog,
+  appealStatus,
   describeAppealError,
   filedAppeal,
   latestAppealableDecision,
   loadAppealableDecision,
+  parseAppealAccepted,
   submitAppeal,
   subscribeAppealFiled,
   type AppealAccepted,
@@ -229,6 +231,49 @@ describe("the dialog", () => {
     }
   });
 
+  it("hands the panel state from the filing response to the banner", async () => {
+    // No eligible members, so the node drew no panel as it accepted the
+    // appeal: the banner behind the dialog must say "panel not yet formed"
+    // at once, not wait for a reload to find out.
+    const events: unknown[] = [];
+    const unsubscribe = subscribeAppealFiled((event) => events.push(event));
+    try {
+      show({
+        // Only the appeal's own status: the dialog derives the panel state
+        // the same way `parseAppealAccepted` does.
+        submit: async () => ({
+          id: "bafyrei-appeal-record",
+          status: "panel_not_formed",
+        }),
+      });
+      await waitFor(() => expect(trigger()).toBeTruthy());
+      await open();
+      type("The paper is in scope.");
+
+      await submitForm();
+
+      expect(events).toEqual([
+        {
+          paperId: PAPER,
+          appeal: expect.objectContaining({ status: "not_formed" }),
+        },
+      ]);
+      expect(
+        appealStatus({
+          appealCid: "bafyrei-appeal-record",
+          decisionCid: DECISION,
+          filedAt: "2027-03-05T10:00:00Z",
+          status: "not_formed",
+          outcome: null,
+          verdictCid: null,
+          decidedAt: null,
+        }),
+      ).toBe("Appeal filed on 5 March 2027 — panel not yet formed.");
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("stops offering File an appeal once the filed dialog is closed", async () => {
     show();
     await waitFor(() => expect(trigger()).toBeTruthy());
@@ -368,9 +413,21 @@ describe("the appeal a decision already has", () => {
       appealCid: "bafyrei-appeal-5",
       decisionCid: "bafyrei-held",
       filedAt: "2027-03-05T10:00:00Z",
+      status: null,
       outcome: null,
       verdictCid: null,
       decidedAt: null,
+    });
+  });
+
+  it("keeps the panel state a read names, and says decided once there is a verdict", () => {
+    const entry = { ...filed(5), panel_status: "not_formed" };
+    expect(filedAppeal([hold, entry], hold)).toMatchObject({
+      status: "not_formed",
+    });
+    expect(filedAppeal([entry, verdict(6)], hold)).toMatchObject({
+      status: "decided",
+      outcome: "upheld",
     });
   });
 
@@ -428,6 +485,27 @@ describe("the failure sentences", () => {
     const accepted = await submitAppeal(signed, { post } as never);
 
     expect(post).toHaveBeenCalledWith("/appeals", signed);
-    expect(accepted).toEqual({ id: "bafyrei-appeal-record", status: "pending" });
+    expect(accepted).toEqual({
+      id: "bafyrei-appeal-record",
+      status: "pending",
+      panelStatus: "awaiting_panel",
+    });
+  });
+
+  it("reads a filing with no panel as 'not_formed', the words the next read uses", () => {
+    // `POST /v1/appeals` answers with the appeal's own status: the node drew
+    // the panel as it accepted the appeal, so `panel_not_formed` already says
+    // no panel could form.
+    expect(
+      parseAppealAccepted({ id: "bafyrei-appeal", status: "panel_not_formed" }, "x"),
+    ).toMatchObject({ status: "panel_not_formed", panelStatus: "not_formed" });
+    expect(
+      parseAppealAccepted({ id: "bafyrei-appeal", panel_status: "not_formed" }, "x"),
+    ).toMatchObject({ panelStatus: "not_formed" });
+    expect(parseAppealAccepted({}, "fallback")).toEqual({
+      id: "fallback",
+      status: null,
+      panelStatus: null,
+    });
   });
 });

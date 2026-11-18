@@ -28,6 +28,7 @@ import {
   type QueryParams,
 } from "../../lib/api";
 import { DEFAULT_CATEGORIES, type NavCategory } from "../../components/nav/categories";
+import { formatDate as formatReaderDate } from "../ui-kit/format-date";
 
 /** The route path (docs/design.md §4). */
 export const FEED_PATH = "/";
@@ -589,14 +590,14 @@ export function formatAge(from: Date, now: Date): string {
   return plural(Math.floor(days / 365), "year");
 }
 
-/** A date as `2 Mar 2027` (UTC, so the day never shifts with the viewer). */
+/**
+ * A date as `2 Mar 2027`, in the reader's own time zone: the feed row, the
+ * profile's review date and the paper's Versions tab must name the same day
+ * for the same instant (bug_spec_verify12 bug 2). A value explicitly labelled
+ * `UTC` is written with the same helper's `{ timeZone: "UTC" }` option.
+ */
 export function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
+  return formatReaderDate(date) ?? "";
 }
 
 /** The age shown on a row. */

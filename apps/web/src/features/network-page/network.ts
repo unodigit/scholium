@@ -50,6 +50,7 @@ import {
   resolveApiBaseUrl,
   type ApiClient,
 } from "../../lib/api";
+import { formatDate as formatReaderDate } from "../ui-kit/format-date";
 
 /** The `/network` route (docs/design.md §4: Network · nodes, replication, status). */
 export const NETWORK_PATH = "/network";
@@ -616,18 +617,13 @@ export function probeSummary(probes: ProbeStatistics): ProbeSummary {
   };
 }
 
-/** An incident's date as the site writes dates (`4 May 2027`), in UTC; unreadable ones stay as sent. */
+/**
+ * An incident's date as the site writes dates (`4 May 2027`), in the reader's
+ * own time zone through the shared `ui-kit` formatter; an unreadable value
+ * stays as sent (bug_spec_verify12 bug 2).
+ */
 export function incidentDate(occurredAt: string): string {
-  const date = new Date(occurredAt);
-  if (Number.isNaN(date.getTime())) {
-    return occurredAt;
-  }
-  return date.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  return formatReaderDate(occurredAt, { month: "long" }) ?? occurredAt;
 }
 
 /** The whole public archive (`GET /v1/export/archive.car`), relative to the API's origin. */

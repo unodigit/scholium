@@ -12,6 +12,7 @@ import {
   SELF_HELPFUL_TYPE,
   WrongPostRecordError,
   addPost,
+  appealFiledLabel,
   authorLabel,
   comparePosts,
   countHiddenPosts,
@@ -47,6 +48,10 @@ import {
   type DiscussionData,
   type DiscussionPost,
 } from "./discussion";
+
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
 
 const ME = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const SHORT = "sch:6sel-2dio-orm6";
@@ -831,11 +836,41 @@ describe("words and formats", () => {
     expect(describeWait(61)).toBe("2 minutes");
   });
 
-  it("formats dates in UTC with the same words in every locale", () => {
-    expect(formatDate("2026-02-01T23:59:00Z")).toBe("1 Feb 2026");
+  it("formats dates in the reader's zone, with the same words in every locale", () => {
+    // 23:59 UTC on 1 Feb is 2 Feb in Sydney (GMT+11): the post's own date and
+    // the appeal label under it must name the same day.
+    expect(formatDate("2026-02-01T23:59:00Z")).toBe("2 Feb 2026");
+    // The `<time>` title names the instant itself, so it stays UTC-labelled.
     expect(formatDateTime("2026-02-01T04:00:00Z")).toBe("1 Feb 2026 04:00 UTC");
     expect(formatDate("not a date")).toBe("not a date");
     expect(formatDateTime("not a date")).toBe("not a date");
+  });
+
+  it("files an appeal with an em dash and the panel state it knows", () => {
+    const filed = (status: string, outcome: string | null = null) => ({
+      filedAt: "2026-11-17T13:45:00Z",
+      status,
+      outcome,
+      decidedWithoutPanel: false,
+    });
+    // 00:45 on 18 Nov in Sydney: the same day the post itself shows.
+    expect(appealFiledLabel(filed("awaiting_panel"))).toBe(
+      "Appeal filed on 18 Nov 2026 — awaiting panel",
+    );
+    expect(appealFiledLabel(filed("not_formed"))).toBe(
+      "Appeal filed on 18 Nov 2026 — panel not yet formed",
+    );
+    // The filing response's own spelling names the same state at once.
+    expect(appealFiledLabel(filed("panel_not_formed"))).toBe(
+      "Appeal filed on 18 Nov 2026 — panel not yet formed",
+    );
+    expect(appealFiledLabel(filed("decided", "overturned"))).toBe(
+      "Appeal filed on 18 Nov 2026 — decided: overturned the decision",
+    );
+    // No hyphen anywhere: the paper page's labels use the em dash too.
+    for (const status of ["awaiting_panel", "not_formed", "panel_not_formed"]) {
+      expect(appealFiledLabel(filed(status))).not.toContain(" - ");
+    }
   });
 
   it("shortens a DID to something recognisable, and says so when there is none", () => {

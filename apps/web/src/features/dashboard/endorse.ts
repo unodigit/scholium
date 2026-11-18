@@ -27,6 +27,7 @@
  */
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+import { formatDate as formatReaderDate } from "../ui-kit/format-date";
 import {
   isPasskeyCancellation,
   signRecord,
@@ -422,32 +423,15 @@ export function endorserLabel(
   return row.endorserName ?? shortDid(row.endorserDid);
 }
 
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
-
 /**
  * `17 Nov 2026` for an ISO 8601 instant, or `null` for none or a non-date.
  *
- * Built by hand from UTC fields, as the rest of the dashboard does, so the
- * day is the same in every browser and time zone.
+ * Written through the shared `ui-kit` formatter in the reader's own time zone,
+ * so an endorsement made at 00:45 in Sydney is dated the day the endorser made
+ * it, not the previous UTC day (bug_spec_verify12 bug 2).
  */
 export function formatEndorsementDate(value: string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+  return formatReaderDate(value);
 }
 
 /* -------------------------------------------------------------------------- */

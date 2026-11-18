@@ -7,6 +7,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatDate, formatDateTime, toDate } from "./format-date";
 import { LocalDate } from "./local-date";
 
+// The feature-level formatters, for the cross-page agreement test below.
+import { formatDate as discussionDate } from "../paper-discussion/discussion";
+import { formatDate as consoleDate } from "../mod-console/wire";
+import { formatDate as feedDate } from "../feed/feed";
+import { formatEndorsementDate as endorseDate } from "../dashboard/endorse";
+import {
+  formatReviewDate as reviewDate,
+  reportGateDate as reportGate,
+} from "../paper-reviews/review";
+import { formatRevealDate as revealDate, revealDateFor } from "../review-form/commit";
+import { formatListedAt as searchDate } from "../search-page/search";
+import { formatDate as metaDate } from "../paper-meta/meta";
+import { incidentDate } from "../network-page/network";
+import { formatRemovalDate as removalDate } from "../paper-page/unlisted-paper";
+import { formatSigned as consentDate } from "../submit/consent-version";
+
 /**
  * One date format for the whole product, in the reader's own time zone
  * (bug_spec_verify6 bug 4). An action taken at 00:45 on 18 November in AEDT is
@@ -162,6 +178,28 @@ describe("LocalDate", () => {
     container.remove();
   });
 
+  it("can write the long month the site's prose uses", () => {
+    const container = document.createElement("div");
+    container.innerHTML = renderToStaticMarkup(
+      createElement(LocalDate, { value: NEAR_MIDNIGHT, month: "long" }),
+    );
+    // The first HTML is the stable UTC form; the reader's browser replaces it
+    // with the long-month local date, exactly as the short form does.
+    expect(container.querySelector("time")?.textContent).toBe("17 November 2026");
+    document.body.append(container);
+    const local = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(new Date(NEAR_MIDNIGHT));
+    render(createElement(LocalDate, { value: NEAR_MIDNIGHT, month: "long" }), {
+      container,
+      hydrate: true,
+    });
+    expect(container.querySelector("time")?.textContent).toBe(local);
+    container.remove();
+  });
+
   it("renders nothing for a value that is not a date", () => {
     expect(
       renderToStaticMarkup(createElement(LocalDate, { value: "not a date" })),
@@ -169,6 +207,39 @@ describe("LocalDate", () => {
     expect(
       renderToStaticMarkup(createElement(LocalDate, { value: null })),
     ).toBe("");
+  });
+});
+
+describe("every page names the same day for the same instant", () => {
+  // bug_spec_verify12 bug 2: each feature used to format in UTC on its own, so
+  // one instant dated the 18th on the discussion and the 17th on the feed.
+  // These are the real module-level formatters, not the shared helper they all
+  // delegate to, so a regression in any one of them fails here.
+  const NEAR_MIDNIGHT_LOCAL = "2026-11-17T13:45:00Z"; // 18 Nov in Sydney
+
+  it("writes the reader's day from each feature's formatter", () => {
+    expect(discussionDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov 2026");
+    expect(consoleDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov 2026");
+    expect(feedDate(new Date(NEAR_MIDNIGHT_LOCAL))).toBe("18 Nov 2026");
+    expect(endorseDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov 2026");
+    expect(reviewDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov 2026");
+    expect(searchDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov 2026");
+    expect(metaDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov 2026");
+    expect(consentDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov 2026");
+    // The long-month pages say the same day with a longer word.
+    expect(incidentDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 November 2026");
+    expect(removalDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 November 2026");
+    // The short design form drops only the year.
+    expect(revealDate(NEAR_MIDNIGHT_LOCAL)).toBe("18 Nov");
+  });
+
+  it("agrees on the report-gate day between the form and the public page", () => {
+    const commit = "2026-11-17T13:45:00Z";
+    // `revealDateFor` adds the window to the instant; the public page must
+    // name that instant's day, never a truncated UTC day.
+    expect(reportGate([{ committedAt: commit, version: 2 }], 2)).toBe(
+      formatDate(revealDateFor(commit)),
+    );
   });
 });
 

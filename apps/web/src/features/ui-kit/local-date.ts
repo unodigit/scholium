@@ -10,7 +10,7 @@
 
 import { createElement, useSyncExternalStore, type ReactElement } from "react";
 
-import { formatDate, formatDateTime, toDate, type DateInput } from "./format-date";
+import { formatDate, formatDateTime, toDate, type DateInput, type DateMonth } from "./format-date";
 
 /** A never-notifying store: the value is fixed for the life of the page. */
 const subscribeNever = (): (() => void) => () => undefined;
@@ -32,6 +32,8 @@ export interface LocalDateProps {
   readonly value: DateInput;
   /** Class for the `<time>` element, e.g. `pm-version__date`. */
   readonly className?: string;
+  /** `short` (default) writes `Mar`; `long` writes `March`. */
+  readonly month?: DateMonth;
 }
 
 /**
@@ -42,13 +44,13 @@ export interface LocalDateProps {
  * instant in UTC, so a hover still names the moment exactly. Renders nothing
  * for a value that is not a date.
  */
-export function LocalDate({ value, className }: LocalDateProps): ReactElement | null {
+export function LocalDate({ value, className, month }: LocalDateProps): ReactElement | null {
   const readerZone = useReaderZone();
   const date = toDate(value);
   if (date === null) return null;
   const shown = readerZone
-    ? formatDate(value)
-    : formatDate(value, { timeZone: "UTC" });
+    ? formatDate(value, { month })
+    : formatDate(value, { month, timeZone: "UTC" });
   return createElement(
     "time",
     {

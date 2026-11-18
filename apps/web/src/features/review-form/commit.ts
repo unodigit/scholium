@@ -29,6 +29,10 @@ import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
 
 import { ApiError, NetworkError, api } from "../../lib/api";
+import {
+  formatDayMonth as formatReaderDayMonth,
+  toDate,
+} from "../ui-kit/format-date";
 import { isDeviceKeyError, isPasskeyCancellation, isRecordSigningError } from "../web-auth/errors";
 import {
   signRecord,
@@ -294,8 +298,11 @@ export function revealDateFor(
   committedAt: string,
   days: number = REVEAL_WINDOW_DAYS,
 ): string {
-  const moment = new Date(committedAt);
-  if (Number.isNaN(moment.getTime())) {
+  // The shared `toDate` names the zone the API means for a timestamp without
+  // a designator, so the window is added to the instant, never to a local
+  // reading of it.
+  const moment = toDate(committedAt);
+  if (moment === null) {
     throw new ReviewCommitInputError(
       `The commit's date (${committedAt}) is not an instant.`,
     );
@@ -304,32 +311,16 @@ export function revealDateFor(
   return moment.toISOString();
 }
 
-const SHORT_MONTHS: readonly string[] = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
 /**
  * The design's short date: `"14 Dec"`.
  *
- * UTC is used on purpose: the record's date is UTC, so the day shown does not
- * shift with the reader's time zone or differ between the server and the
- * browser.
+ * Written in the reader's own time zone through the shared `ui-kit` helper,
+ * so the reveal day the reviewer is shown is the day the reviews page names
+ * for the same instant (bug_spec_verify12 bug 2). A value that is not a date
+ * is returned as sent.
  */
 export function formatRevealDate(iso: string): string {
-  const moment = new Date(iso);
-  if (Number.isNaN(moment.getTime())) return iso;
-  return `${moment.getUTCDate()} ${SHORT_MONTHS[moment.getUTCMonth()]}`;
+  return formatReaderDayMonth(iso) ?? iso;
 }
 
 function utf8(text: string): Uint8Array {

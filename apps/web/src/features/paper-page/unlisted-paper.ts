@@ -30,6 +30,7 @@ import { contentUrl } from "../paper-meta/meta";
 import { fetchConsents, type ConsentReport } from "../submit/consents";
 import { deriveShortId } from "../verify-core";
 import type { IconName } from "../ui-kit";
+import { formatDate as formatReaderDate } from "../ui-kit/format-date";
 import { loadReadingText, type ReadingText } from "./reading";
 
 /** The sentence for an id this node does not list (matches `describePaperError`'s 404). */
@@ -328,21 +329,13 @@ export function tombstoneOf(
   };
 }
 
-/** The removal date as design.md writes it (`4 May 2027`), in UTC. */
+/**
+ * The removal date as design.md writes it (`4 May 2027`), in the reader's own
+ * time zone through the shared `ui-kit` formatter: the standoff banner must
+ * name the day the reader's own clock knows (bug_spec_verify12 bug 2).
+ */
 export function formatRemovalDate(iso: string | null): string | null {
-  if (iso === null) {
-    return null;
-  }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
+  return formatReaderDate(iso, { month: "long" });
 }
 
 /* -------------------------------------------------------------------------- */

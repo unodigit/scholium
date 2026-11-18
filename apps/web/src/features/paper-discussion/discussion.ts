@@ -30,6 +30,10 @@
  */
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
+import {
+  formatDate as formatReaderDate,
+  formatDateTime as formatReaderDateTime,
+} from "../ui-kit/format-date";
 import { isDeviceKeyError, isPasskeyCancellation, isRecordSigningError } from "../web-auth/errors";
 import { signRecord, type SignedRecord } from "../web-auth/sign-record";
 
@@ -780,29 +784,22 @@ export function describeActionError(error: unknown, action: DiscussionAction): A
 /* Words and formats                                                           */
 /* -------------------------------------------------------------------------- */
 
-/** `1 Feb 2026`, in UTC and the same words in every locale. */
+/**
+ * `1 Feb 2026`, in the reader's own time zone.
+ *
+ * Every page naming the same instant must agree on its calendar date, so this
+ * and `paper-meta`, `mod-console`, `feed` and the rest use the shared
+ * `ui-kit` formatter rather than each printing the UTC day (bug_spec_verify12
+ * bug 2). A date that is explicitly a UTC instant is labelled so; this one is
+ * the reader's date.
+ */
 export function formatDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
+  return formatReaderDate(iso) ?? iso;
 }
 
 /** `1 Feb 2026 04:00 UTC`, for the hover title and the machine-readable time. */
 export function formatDateTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const time = new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-    timeZone: "UTC",
-  }).format(date);
-  return `${formatDate(iso)} ${time} UTC`;
+  return formatReaderDateTime(iso, { timeZone: "UTC" }) ?? iso;
 }
 
 /** `did:key:z6MkhaXg…2doK`: enough to recognise an author without a 50-character line. */
@@ -879,15 +876,19 @@ export function appealOutcomePhrase(outcome: string): string {
 /**
  * The placeholder where the author's own post was hidden:
  *
- * `Appeal filed on 2 Dec 2026 - awaiting panel`,
- * `Appeal filed on 2 Dec 2026 - panel not yet formed`,
- * `Appeal filed on 2 Dec 2026 - decided: the panel overturned the decision`.
+ * `Appeal filed on 2 Dec 2026 — awaiting panel`,
+ * `Appeal filed on 2 Dec 2026 — panel not yet formed`,
+ * `Appeal filed on 2 Dec 2026 — decided: the panel overturned the decision`.
  *
  * An appeal a tier-4 moderator had to decide because no panel could be formed
- * says so: `… - decided without a panel: upheld the decision`.
+ * says so: `… — decided without a panel: upheld the decision`.
  *
  * The state comes from the node, so it survives a reload and follows the
- * reader to another device; nothing here lives only in the tab.
+ * reader to another device; nothing here lives only in the tab. The filing
+ * response names the same state (`panel_not_formed`), so the card says "panel
+ * not yet formed" the moment the appeal is filed rather than waiting for the
+ * next read. Every label uses an em dash, as the paper page's does
+ * (bug_spec_verify12 bug 2).
  */
 export function appealFiledLabel(
   appeal: Pick<PostAppeal, "filedAt" | "status" | "outcome" | "decidedWithoutPanel">,
@@ -897,12 +898,43 @@ export function appealFiledLabel(
   if (appeal.outcome !== null) {
     const decided =
       appeal.decidedWithoutPanel === true ? "decided without a panel" : "decided";
-    return `${opened} - ${decided}: ${appealOutcomePhrase(appeal.outcome)}`;
+    return `${opened} — ${decided}: ${appealOutcomePhrase(appeal.outcome)}`;
   }
-  if (appeal.status === "not_formed") {
-    return `${opened} - panel not yet formed`;
+  if (panelNotFormed(appeal.status)) {
+    return `${opened} — panel not yet formed`;
   }
-  return `${opened} - awaiting panel`;
+  return `${opened} — awaiting panel`;
+}
+
+/**
+ * Whether a panel state means no panel could be drawn.
+ *
+ * The node reports the reader-facing `not_formed` on a thread read and the
+ * appeal's own `panel_not_formed` (or the later `panel_overdue`) on a filing;
+ * all three mean the same thing to the author.
+ */
+export function panelNotFormed(status: string | null | undefined): boolean {
+  return (
+    status === "not_formed" ||
+    status === "panel_not_formed" ||
+    status === "panel_overdue"
+  );
+}
+
+/**
+ * The panel state a filing response names, in the reader-facing vocabulary.
+ *
+ * `POST /v1/appeals` answers with the appeal's own status: `pending` while a
+ * panel sits, `panel_not_formed` when too few members are eligible, and later
+ * `panel_overdue`. The tab shows the same words the next read will, without
+ * waiting for a reload.
+ */
+export function filedPanelStatus(payload: unknown): string {
+  const raw = isRecord(payload)
+    ? pickText(payload, "panel_status", "panelStatus", "status")
+    : null;
+  if (raw === null || raw === "pending") return "awaiting_panel";
+  return raw;
 }
 
 /** The paper page: `/p/6sel-2dio-orm6` (docs/design.md §4 drops the `sch:`). */

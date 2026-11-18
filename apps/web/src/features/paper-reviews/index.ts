@@ -33,6 +33,7 @@ export {
   recommendationLabel,
   recommendationTone,
   reportGateDate,
+  reportGateInstant,
   reviewerLabelAt,
   scoreFraction,
   scoreText,

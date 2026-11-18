@@ -30,6 +30,10 @@ import {
   type SearchState,
 } from "./search";
 
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
+
 const HIT = {
   version_cid: "bafy-version-1",
   paper_cid: "bafy-paper-1",
@@ -397,8 +401,10 @@ describe("display helpers", () => {
     );
   });
 
-  it("formats a listing date in UTC", () => {
-    expect(formatListedAt("2026-11-02T23:30:00Z")).toBe("2 Nov 2026");
+  it("formats a listing date in the reader's own time zone", () => {
+    // 23:30 UTC on 2 Nov is 3 Nov in Sydney (GMT+11), as on the feed row.
+    expect(formatListedAt("2026-11-02T23:30:00Z")).toBe("3 Nov 2026");
+    expect(formatListedAt("2026-11-02T09:00:00Z")).toBe("2 Nov 2026");
     expect(formatListedAt("not a date")).toBe("");
     expect(formatListedAt(null)).toBe("");
   });

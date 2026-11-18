@@ -29,6 +29,10 @@ import {
 } from "./consent-version";
 import type { ConsentReport } from "./consents";
 
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
+
 const A = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const B = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
 const C = "did:key:z6MknGc3ocHs3zdPiJbnaaqDi58NGb4pk1Sp9WxWufuXSRPnE";
@@ -359,8 +363,11 @@ describe("urls and dates", () => {
     expect(recordUrl("a/b")).toBe("https://api.scholium.test/v1/records/a%2Fb");
   });
 
-  it("writes the signing date in UTC, or nothing for a date that is not one", () => {
-    expect(formatSigned("2026-11-14T23:59:00Z")).toBe("14 Nov 2026");
+  it("writes the signing date in the reader's zone, or nothing for a date that is not one", () => {
+    // 23:59 UTC is 10:59 the next day in Sydney (GMT+11): the co-signer sees
+    // the day they signed, as on every other page.
+    expect(formatSigned("2026-11-14T23:59:00Z")).toBe("15 Nov 2026");
+    expect(formatSigned("2026-11-14T05:33:00Z")).toBe("14 Nov 2026");
     expect(formatSigned("not a date")).toBeNull();
     expect(formatSigned(null)).toBeNull();
   });

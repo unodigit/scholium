@@ -88,6 +88,20 @@ export function formatDate(
   }).format(date);
 }
 
+/** `14 Dec` for a reader in Sydney: the day and month, without the year. */
+export function formatDayMonth(
+  value: DateInput,
+  options: DateFormatOptions = {},
+): string | null {
+  const date = toDate(value);
+  if (date === null) return null;
+  return new Intl.DateTimeFormat(options.locale ?? "en-GB", {
+    day: "numeric",
+    month: options.month ?? "short",
+    timeZone: options.timeZone,
+  }).format(date);
+}
+
 /**
  * `18 Nov 2026 00:45 GMT+11` in Sydney, `17 Nov 2026 13:45 UTC` for the
  * instant itself (pass `{ timeZone: "UTC" }`, as the `<time>` title does).

@@ -55,6 +55,7 @@ import {
   describeActionError,
   describeLoadError,
   findPost,
+  filedPanelStatus,
   loadThreads,
   markPostHelpful,
   orderThreads,
@@ -183,7 +184,9 @@ export function DiscussionTab({
   const [requestSeq, setRequestSeq] = useState<number>(() => (serverAnsweredInitially ? 0 : 1));
   const [voted, setVoted] = useState<ReadonlySet<string>>(() => new Set());
   const [reported, setReported] = useState<ReadonlyMap<string, ReportReason>>(() => new Map());
-  const [appealed, setAppealed] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [appealed, setAppealed] = useState<
+    ReadonlyMap<string, { filedAt: string; status: string }>
+  >(() => new Map());
   const [announcement, setAnnouncement] = useState("");
   const [starting, setStarting] = useState(false);
   // A host may swap `paperId` (an SPA navigating between papers) without
@@ -335,8 +338,15 @@ export function DiscussionTab({
       grounds: grounds.trim(),
       paper: paperCid,
     }, null);
-    await api.post("/appeals", record);
-    setAppealed((current) => new Map(current).set(target.cid, record.created));
+    const accepted = await api.post("/appeals", record);
+    // The response already says whether a panel could be drawn; carry it so
+    // the card reads the same before and after a reload.
+    setAppealed((current) =>
+      new Map(current).set(target.cid, {
+        filedAt: record.created,
+        status: filedPanelStatus(accepted),
+      }),
+    );
     setAnnouncement("Appeal filed.");
   };
 

@@ -41,6 +41,7 @@ import {
   RUBRIC_DIMENSIONS,
   SCORE_MAX,
 } from "../review-form/rubric";
+import { formatDate as formatReaderDate, toDate } from "../ui-kit/format-date";
 
 /** A compact label for a rubric dimension, as the review card shows it. */
 const DIMENSION_LABELS: Readonly<Record<string, string>> = {
@@ -224,22 +225,6 @@ const RECOMMENDATION_LABELS: Readonly<Record<string, string>> = {
 /** How a recommendation reads: supportive, concerned, rejecting, or unknown. */
 export type RecommendationTone = "supportive" | "concerned" | "rejecting" | "neutral";
 
-/** The month names `formatReviewDate` writes; fixed, so tests and readers agree. */
-const MONTHS: readonly string[] = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
 /** Lowercase a field name and turn whitespace/hyphens into underscores. */
 function normaliseKey(value: string): string {
   return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -378,17 +363,13 @@ export function medianText(score: number): string {
   return `${score.toFixed(1)} of ${SCORE_MAX}`;
 }
 
-/** How a date is written: `2 Mar 2027`. */
+/**
+ * How a date is written: `2 Mar 2027`, in the reader's own time zone through
+ * the shared `ui-kit` formatter, so the review card names the same day as the
+ * discussion and the profile (bug_spec_verify12 bug 2).
+ */
 export function formatReviewDate(value: string | null | undefined): string | null {
-  const raw = textOf(value);
-  if (raw === null) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-  if (match === null) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return `${day} ${MONTHS[month - 1]} ${year}`;
+  return formatReaderDate(value);
 }
 
 /** Days after the first commit on a version that its reports unseal regardless (REV-4). */
@@ -404,21 +385,37 @@ export const REPORT_GATE_DAYS = 21;
  * date. `null` when no counted review has a served commit date, and then the
  * copy falls back to "21 days after the first".
  */
+export function reportGateInstant(
+  reviews: readonly Pick<Review, "committedAt" | "version">[],
+  version: number | null,
+): Date | null {
+  let first: Date | null = null;
+  for (const review of reviews) {
+    if (version !== null && review.version !== null && review.version !== version) continue;
+    // The earliest commit *instant* counted on the version; the window is
+    // added to that instant, never to a truncated UTC day, so this page and
+    // the reviewer's form (`revealDateFor`) name the same calendar day.
+    const committed = toDate(textOf(review.committedAt));
+    if (committed === null) continue;
+    if (first === null || committed.getTime() < first.getTime()) first = committed;
+  }
+  if (first === null) return null;
+  return new Date(first.getTime() + REPORT_GATE_DAYS * 86_400_000);
+}
+
+/**
+ * The gate day as a string, in the reader's own time zone.
+ *
+ * A page that renders the date inside its first HTML uses
+ * {@link reportGateInstant} with `LocalDate` instead, so the server's stable
+ * UTC form and the reader's local day never disagree during hydration.
+ */
 export function reportGateDate(
   reviews: readonly Pick<Review, "committedAt" | "version">[],
   version: number | null,
 ): string | null {
-  let first: number | null = null;
-  for (const review of reviews) {
-    if (version !== null && review.version !== null && review.version !== version) continue;
-    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(textOf(review.committedAt) ?? "");
-    if (match === null) continue;
-    const day = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-    if (Number.isNaN(day)) continue;
-    if (first === null || day < first) first = day;
-  }
-  if (first === null) return null;
-  return formatReviewDate(new Date(first + REPORT_GATE_DAYS * 86_400_000).toISOString());
+  const gate = reportGateInstant(reviews, version);
+  return gate === null ? null : formatReaderDate(gate);
 }
 
 /* -------------------------------------------------------------------------- */

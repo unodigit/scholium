@@ -7,6 +7,8 @@
  * given" instead of throwing in the middle of a render.
  */
 
+import { formatDate as formatReaderDate } from "../ui-kit/format-date";
+
 /** True for a plain JSON object (not an array, not `null`). */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -45,21 +47,10 @@ export function readReasons(value: unknown): string[] {
 }
 
 /**
- * `4 May 2027` for an ISO instant, in UTC so the same record reads the same
- * on every machine; `null` when the value is not a date.
+ * `4 May 2027` for an ISO instant, in the reader's own time zone: the same
+ * instant reads the same day here as on the paper page, the profile and the
+ * feed (bug_spec_verify12 bug 2). `null` when the value is not a date.
  */
 export function formatDate(iso: string | null): string | null {
-  if (iso === null) {
-    return null;
-  }
-  const time = Date.parse(iso);
-  if (!Number.isFinite(time)) {
-    return null;
-  }
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(time));
+  return formatReaderDate(iso);
 }

@@ -1175,11 +1175,36 @@ describe("DiscussionTab: the author's hidden post", () => {
       typeInto(screen.getByLabelText("Why should this decision be reconsidered?"), "  Context was missing. ");
       fireEvent.click(screen.getByRole("button", { name: "Sign and file appeal" }));
 
-      await waitFor(() => expect(notice().textContent).toMatch(/^Appeal filed on .* - awaiting panel$/));
+      await waitFor(() => expect(notice().textContent).toMatch(/^Appeal filed on .* — awaiting panel$/));
       expect(sign).toHaveBeenCalledWith(
         "appeal",
         { target: "bafyrei-decision", grounds: "Context was missing.", paper: "bafyrei-genesis" },
         null,
+      );
+    } finally {
+      fetched.mockRestore();
+    }
+  });
+
+  it("says no panel could form as soon as the filing response says so", async () => {
+    // The node draws the panel as it accepts the appeal: `panel_not_formed`
+    // already names the state the next read will report.
+    const { actions } = seams();
+    const fetched = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ id: "bafyrei-new", status: "panel_not_formed" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    try {
+      renderTab({ viewerDid: ME, actions }, ownHidden("Off topic."));
+      fireEvent.click(within(card("mine")).getByRole("button", { name: "Appeal" }));
+      typeInto(screen.getByLabelText("Why should this decision be reconsidered?"), "Context was missing.");
+      fireEvent.click(screen.getByRole("button", { name: "Sign and file appeal" }));
+
+      await waitFor(() =>
+        expect(notice().textContent).toBe("Appeal filed on 1 Feb 2026 — panel not yet formed"),
       );
     } finally {
       fetched.mockRestore();
@@ -1212,7 +1237,7 @@ describe("DiscussionTab: the author's hidden post", () => {
       },
     );
 
-    expect(notice().textContent).toBe("Appeal filed on 18 Nov 2026 - panel not yet formed");
+    expect(notice().textContent).toBe("Appeal filed on 18 Nov 2026 — panel not yet formed");
     expect(within(card("mine")).queryByRole("button", { name: "Appeal" })).toBeNull();
   });
 
@@ -1243,7 +1268,7 @@ describe("DiscussionTab: the author's hidden post", () => {
     );
 
     expect(notice().textContent).toBe(
-      "Appeal filed on 18 Nov 2026 - decided: overturned the decision",
+      "Appeal filed on 18 Nov 2026 — decided: overturned the decision",
     );
   });
 
@@ -1275,7 +1300,7 @@ describe("DiscussionTab: the author's hidden post", () => {
     );
 
     expect(notice().textContent).toBe(
-      "Appeal filed on 18 Nov 2026 - decided without a panel: upheld the decision",
+      "Appeal filed on 18 Nov 2026 — decided without a panel: upheld the decision",
     );
   });
 

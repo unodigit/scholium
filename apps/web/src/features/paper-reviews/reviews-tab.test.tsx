@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiErrorFrom, tokenStore } from "../../lib/api";
+
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone gate date asserted here is deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
 
 import { ReviewsTab } from "./reviews-tab";
 import { emptyReviews, parseReviews, type ReviewsData } from "./review";
@@ -862,15 +867,60 @@ describe("the listing of a newer version once a review is updated to it", () => 
       }),
     );
 
-    expect(screen.getByRole("note").textContent).toContain("or on 26 Mar 2027.");
+    // 5 Mar 23:30 UTC + 21 days is 26 Mar 23:30 UTC, which is 27 Mar in
+    // Sydney (GMT+11) — the day the reviewer's form names too.
+    expect(screen.getByRole("note").textContent).toContain("or on 27 Mar 2027.");
+  });
+
+  it("server-renders the gate day in UTC and hydrates to the reader's day", () => {
+    // bug_spec_verify12 bug 2: the note is in the server's first HTML, so the
+    // date must be the stable UTC form there and the reader's day after
+    // hydration — never a warning that the two disagreed.
+    const data = parseReviews({
+      paper: PAPER,
+      version: 2,
+      gate_open: false,
+      reviews: [
+        review({ review_cid: "bafy-b", label: "Reviewer B", version: 2, committed_at: "2027-03-10T00:00:00", revealed_at: "2027-04-01T00:00:00" }),
+        review({ review_cid: "bafy-a", version: 2, committed_at: "2027-03-05T23:30:00", revealed_at: "2027-04-02T00:00:00" }),
+      ],
+    });
+    // `renderToString` is Next's server form (it keeps the text-node
+    // separators hydration expects).
+    const html = renderToString(
+      <ReviewsTab paperId={PAPER} initial={data} />,
+    );
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    document.body.append(container);
+    const note = () => container.querySelector('[role="note"]')?.textContent ?? "";
+    // On the server the date is UTC (26 Mar), so the markup is stable in any
+    // server zone.
+    expect(note()).toContain("or on 26 Mar 2027.");
+
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(<ReviewsTab paperId={PAPER} initial={data} />, {
+      container,
+      hydrate: true,
+    });
+    expect(errors).not.toHaveBeenCalled();
+    // In Sydney the same instant is the 27th: the reader's day, as the
+    // reviewer's form names it.
+    expect(note()).toContain("or on 27 Mar 2027.");
+    errors.mockRestore();
+    container.remove();
   });
 
   it("says an updated report is sealed, and until when, on the card", () => {
     renderTab(updatedListing());
 
-    expect(
-      screen.getByText("Updated report sealed until 2 reviews are committed on this version, or on 23 Mar 2027."),
-    ).toBeTruthy();
+    // The gate day is a `LocalDate` inside the sentence (the server's first
+    // HTML is the stable UTC day and the browser shows the reader's), so the
+    // match is on the sentence's own text node and the assertion on the rest.
+    const sealed = screen.getByText(/^Updated report sealed/);
+    expect(sealed.textContent).toBe(
+      "Updated report sealed until 2 reviews are committed on this version, or on 23 Mar 2027.",
+    );
     expect(screen.queryByText(/No written report/)).toBeNull();
   });
 

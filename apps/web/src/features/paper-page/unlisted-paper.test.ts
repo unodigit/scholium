@@ -20,6 +20,10 @@ import {
   unlistedBanner,
 } from "./unlisted-paper";
 
+// The journeys run east of UTC (GMT+11 in November); pin the zone so the
+// reader's-zone dates asserted here are deterministic on any machine.
+process.env.TZ = "Australia/Sydney";
+
 /**
  * The data layer behind the hydrated retry on a 404 paper page: the paper's
  * public records are joined into the version an author sees, the decision that
@@ -183,8 +187,10 @@ describe("tombstoneOf", () => {
 });
 
 describe("formatRemovalDate", () => {
-  it("writes design.md's reading date, in UTC", () => {
-    expect(formatRemovalDate("2027-05-04T18:30:00Z")).toBe("4 May 2027");
+  it("writes design.md's reading date, in the reader's own time zone", () => {
+    // 18:30 UTC is 05:30 the next day in Sydney (GMT+11); the banner names
+    // the day the reader's clock knows.
+    expect(formatRemovalDate("2027-05-04T18:30:00Z")).toBe("5 May 2027");
     expect(formatRemovalDate("2026-11-17T00:00:00Z")).toBe("17 November 2026");
   });
 
