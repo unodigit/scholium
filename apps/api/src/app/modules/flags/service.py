@@ -183,8 +183,10 @@ def flag_decided_payload(flag: Flag) -> dict[str, Any]:
     of item, and ``link`` opens the item -- the paper page, the Discussion tab
     (where a hidden post's placeholder is), or the reviews tab.  The inbox
     renders the words instead of a bare status code.  The sentence names the
-    paper and quotes the flagged text, and ``reason`` is the reporter's reason in
-    words (``reason_code`` keeps the code they filed it with).
+    paper, labels the reporter's category as theirs ("reported as ...") and
+    quotes the moderator's reason from the decision record as their note;
+    ``reason`` is the reporter's reason in words (``reason_code`` keeps the code
+    they filed it with).
     """
     action = _decision_action(flag.decision_cid)
     reason = flag.reason
@@ -198,7 +200,11 @@ def flag_decided_payload(flag: Flag) -> dict[str, Any]:
 
         kind = target_kind(flag.target_cid)
         summary = reporter_summary(
-            kind, action, target=flag.target_cid, reason=flag.reason
+            kind,
+            action,
+            target=flag.target_cid,
+            reason=flag.reason,
+            decision_cid=flag.decision_cid,
         )
         link = item_link(flag.target_cid, kind)
         reason = reason_label(flag.reason)

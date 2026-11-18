@@ -152,8 +152,8 @@ def test_deciding_a_flag_notifies_the_reporter_once_with_the_decision():
         "action": None,
         "target_kind": "item",
         "item_kind": "item",
-        "summary": "The record you reported was reviewed: Spam or advertising.",
-        "outcome": "The record you reported was reviewed: Spam or advertising.",
+        "summary": 'The record you reported as "Spam or advertising" was reviewed.',
+        "outcome": 'The record you reported as "Spam or advertising" was reviewed.',
         "link": None,
     }
 

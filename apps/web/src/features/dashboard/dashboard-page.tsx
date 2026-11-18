@@ -173,6 +173,39 @@ export function DashboardPage({
     signedIn,
   ]);
 
+  // The header's bell deep-links to /me#notifications. The cards only exist
+  // once the dashboard document has loaded, so the browser's own fragment
+  // scroll fires too early on a cold load and leaves the reader at the top.
+  // Once the cards have rendered -- and again on a later hash change -- bring
+  // the Notifications section into view and put focus on its heading, so a
+  // keyboard or screen-reader user lands there too.
+  useEffect(() => {
+    if (state.status !== "ready") {
+      return;
+    }
+    const reveal = () => {
+      if (window.location.hash !== "#notifications") {
+        return;
+      }
+      const section = document.getElementById("notifications");
+      if (section === null) {
+        return;
+      }
+      section.scrollIntoView({ block: "start" });
+      const heading = section.querySelector<HTMLElement>("h2");
+      if (heading === null) {
+        return;
+      }
+      if (!heading.hasAttribute("tabindex")) {
+        heading.setAttribute("tabindex", "-1");
+      }
+      heading.focus({ preventScroll: true });
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [state.status]);
+
   if (state.status === "signed-out") {
     return (
       <div className="db-page">

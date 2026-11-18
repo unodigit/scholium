@@ -82,69 +82,77 @@ def _reporter_note(reporter: str) -> Any:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_notice_names_the_paper_quotes_the_post_and_says_the_reason_in_words(
+def test_the_notice_names_the_paper_and_labels_the_reporters_category(
     client, moderator, subscribed
 ):
     submission = Submission(state="listed")
-    text = "A short reply that fits well inside the excerpt."
-    post = _post_saying(text, submission)
+    post = _post_saying("A short reply that fits well inside the excerpt.", submission)
     flag_id, reporter = _file(client, post["id"], "duplicated-figures")
+    decision = decide_on(
+        moderator, post["id"], "hide", reason="The figures are the authors' own."
+    )
 
     assert client.post(
-        DECISIONS_URL, json=decide_on(moderator, post["id"], "hide"), headers=moderator.headers
+        DECISIONS_URL, json=decision, headers=moderator.headers
     ).status_code == 201
 
     note = _reporter_note(reporter)
     assert note.payload["summary"] == (
-        f'The post you reported on "{submission.title}" ("{text}") was hidden: Duplicated figures.'
+        f'The post you reported as "Duplicated figures" on "{submission.title}" '
+        "was hidden. Moderator's note: The figures are the authors' own."
     )
     assert note.payload["outcome"] == note.payload["summary"]
-    # The reason shown beside the sentence is the label too, never the code...
+    # The reason shown beside the sentence is the reporter's label, never the code...
     assert note.payload["reason"] == "Duplicated figures"
     # ...which stays available to a client that wants it.
     assert note.payload["reason_code"] == "duplicated-figures"
     assert note.payload["flag_id"] == flag_id
 
 
-def test_a_long_post_is_quoted_for_its_first_80_characters_and_an_ellipsis(
+def test_a_long_post_notice_carries_the_moderators_note_without_the_excerpt(
     client, moderator, subscribed
 ):
     submission = Submission(state="listed")
     text = "".join(f"word{index:02d} " for index in range(40))  # 280 characters
     post = _post_saying(text, submission)
     _, reporter = _file(client, post["id"], "off-topic")
+    decision = decide_on(moderator, post["id"], "dismiss", reason="The thread stays.")
 
     assert client.post(
-        DECISIONS_URL, json=decide_on(moderator, post["id"], "dismiss"), headers=moderator.headers
+        DECISIONS_URL, json=decision, headers=moderator.headers
     ).status_code == 201
 
-    excerpt = text[:80].rstrip()
     assert _reporter_note(reporter).payload["summary"] == (
-        f'The post you reported on "{submission.title}" ("{excerpt}...") '
-        "was reviewed and kept: Off topic."
+        f'The post you reported as "Off topic" on "{submission.title}" '
+        "was reviewed and kept. Moderator's note: The thread stays."
     )
 
 
 def test_a_paper_notice_names_the_paper_and_the_reason_in_words(client, moderator, subscribed):
     submission = Submission(state="listed")
     _, reporter = _file(client, submission.version_cid, "misleading")
+    decision = decide_on(
+        moderator, submission.version_cid, "dismiss", reason="The claim is supported."
+    )
 
     assert client.post(
         DECISIONS_URL,
-        json=decide_on(moderator, submission.version_cid, "dismiss"),
+        json=decision,
         headers=moderator.headers,
     ).status_code == 201
 
     note = _reporter_note(reporter)
     assert note.payload["summary"] == (
-        "The paper you reported (reason: Misleading or false) "
-        "was reviewed and kept listed."
+        'The paper you reported as "Misleading or false" was reviewed and kept listed. '
+        "Moderator's note: The claim is supported."
     )
     assert note.payload["reason"] == "Misleading or false"
     assert note.payload["link"] == f"/p/{submission.short_id}"
 
 
-def test_a_review_notice_quotes_the_report(client, moderator, subscribed):
+def test_a_review_notice_names_the_review_and_the_moderators_note(
+    client, moderator, subscribed
+):
     submission = Submission(state="listed")
     report = "The reviewer's report: the method is sound but the figures repeat."
     review = RecordAuthor().sign(
@@ -164,14 +172,78 @@ def test_a_review_notice_quotes_the_report(client, moderator, subscribed):
     )
     ledger.append(review)
     _, reporter = _file(client, review["id"], "misconduct")
+    decision = decide_on(
+        moderator, review["id"], "hide", reason="The report names a participant."
+    )
 
     assert client.post(
-        DECISIONS_URL, json=decide_on(moderator, review["id"], "hide"), headers=moderator.headers
+        DECISIONS_URL, json=decision, headers=moderator.headers
     ).status_code == 201
 
     assert _reporter_note(reporter).payload["summary"] == (
-        f'The review you reported on "{submission.title}" ("{report}") '
-        "was hidden: Research misconduct."
+        f'The review you reported as "Research misconduct" on "{submission.title}" '
+        "was hidden. Moderator's note: The report names a participant."
+    )
+
+
+def test_the_reporters_category_is_theirs_and_the_note_is_the_moderators(
+    client, moderator, subscribed
+):
+    """Regression (journey 07): a kept notice misattributed the two reasons.
+
+    The reporter's category belongs after "reported as", and the moderator's
+    own reason -- taken from the decision record -- is the note.  Before this,
+    the sentence ended "was reviewed and kept: Off topic.", which read as the
+    reason for keeping and never showed what the moderator said.
+    """
+    submission = Submission(state="listed")
+    post = _post_saying("A reply that stays up.", submission)
+    _, reporter = _file(client, post["id"], "off-topic")
+    decision = decide_on(moderator, post["id"], "dismiss", reason="The post is on topic.")
+
+    assert client.post(
+        DECISIONS_URL, json=decision, headers=moderator.headers
+    ).status_code == 201
+
+    summary = _reporter_note(reporter).payload["summary"]
+    assert summary == (
+        f'The post you reported as "Off topic" on "{submission.title}" '
+        "was reviewed and kept. Moderator's note: The post is on topic."
+    )
+    # The reporter's own category is never offered as the reason for keeping.
+    assert "kept: Off topic" not in summary
+
+
+def test_a_hidden_notice_carries_the_moderators_note(client, moderator, subscribed):
+    submission = Submission(state="listed")
+    post = _post_saying("A reply that goes.", submission)
+    _, reporter = _file(client, post["id"], "duplicated-figures")
+    decision = decide_on(moderator, post["id"], "hide", reason="The figures are original.")
+
+    assert client.post(
+        DECISIONS_URL, json=decision, headers=moderator.headers
+    ).status_code == 201
+
+    assert _reporter_note(reporter).payload["summary"] == (
+        f'The post you reported as "Duplicated figures" on "{submission.title}" '
+        "was hidden. Moderator's note: The figures are original."
+    )
+
+
+def test_a_kept_paper_notice_carries_the_moderators_note(client, moderator, subscribed):
+    submission = Submission(state="listed")
+    _, reporter = _file(client, submission.version_cid, "misleading")
+    decision = decide_on(
+        moderator, submission.version_cid, "dismiss", reason="The claim is supported."
+    )
+
+    assert client.post(
+        DECISIONS_URL, json=decision, headers=moderator.headers
+    ).status_code == 201
+
+    assert _reporter_note(reporter).payload["summary"] == (
+        'The paper you reported as "Misleading or false" was reviewed and kept listed. '
+        "Moderator's note: The claim is supported."
     )
 
 

@@ -8,10 +8,11 @@ things, written from the target rather than from the record type's internals:
   annotation or a review -- so the sentence says "post" where it is a post and
   "paper" where it is a paper;
 * the outcome in words, never a raw action or status code -- and, for the
-  reporter, which item it was: the paper's title, the start of the flagged text
-  and the reason they gave in words, not as a code
-  ('The post you reported on "Title" ("First words...") (reason: Off topic)
-  was hidden.');
+  reporter, which item it was, the category they filed it under (labelled as
+  theirs, never as the reason for the outcome) and, when the decision states
+  one, the moderator's own note read from the decision record
+  ('The post you reported as "Off topic" on "Title" was reviewed and kept.
+  Moderator's note: The post is on topic.');
 * where to open it: the paper page, the paper's Discussion tab (where a hidden
   post's placeholder is), or the reviews tab (where a review lives).
 
@@ -29,6 +30,7 @@ __all__ = [
     "EXCERPT_LIMIT",
     "REASON_LABELS",
     "author_summary",
+    "decision_reason",
     "excerpt",
     "item_link",
     "paper_title",
@@ -60,6 +62,7 @@ REASON_LABELS: Mapping[str, str] = {
 }
 
 #: Record types this module names, kept as strings so it stays import-light.
+_DECISION_TYPE = "moderation.decision"
 _DISCUSSION_POST = "discussion.post"
 _PAPER_GENESIS = "paper.genesis"
 _PAPER_VERSION = "paper.version"
@@ -265,43 +268,84 @@ def _reporter_outcome(kind: str, action: Optional[str]) -> str:
     return "was reviewed"
 
 
+def decision_reason(decision_cid: Optional[str]) -> Optional[str]:
+    """The moderator's stated reason in the decision record, when readable.
+
+    The reason stays in the signed record rather than in the projection table,
+    so this reads the ledger entry by its cid.  A decision that names a
+    ``reasonCid`` instead of inline text is read through the same path the
+    moderation endpoint uses to show it to the author.  Anything this node
+    cannot read is ``None`` -- a notice never invents a reason.
+    """
+    entry = _entry(decision_cid)
+    if entry is None:
+        return None
+    body = _body(entry)
+    reason = body.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return " ".join(reason.split())
+    reason_cid = body.get("reasonCid")
+    if isinstance(reason_cid, str) and reason_cid.strip():
+        try:
+            from app.modules.submissions.notices import read_reason_file
+
+            signer = getattr(entry, "author_did", None)
+            text = read_reason_file(_DECISION_TYPE, reason_cid.strip(), signer)
+        except Exception:  # pragma: no cover - an unreadable file leaves no note
+            return None
+        flat = " ".join(text.split())
+        return flat or None
+    return None
+
+
+def _moderator_note(decision_cid: Optional[str]) -> Optional[str]:
+    """The sentence that follows the outcome, one period at its end."""
+    reason = decision_reason(decision_cid)
+    if not reason:
+        return None
+    return reason if reason.endswith((".", "!", "?")) else f"{reason}."
+
+
 def reporter_summary(
     kind: str,
     action: Optional[str],
     *,
     target: Optional[str] = None,
     reason: Optional[str] = None,
+    decision_cid: Optional[str] = None,
 ) -> str:
     """The reporter's outcome in words: what happened to what they reported.
 
-    With the flag's ``target`` the sentence says which item it was -- for a
-    post or a review, the paper's title and the first :data:`EXCERPT_LIMIT`
-    characters of it -- and with the flag's ``reason`` why they reported it, in
-    words.  For a paper the reason sits in parentheses
-    before the outcome, so it cannot be read as the reason for keeping it::
+    With the flag's ``target`` the sentence names the item -- for a post or a
+    review, the paper's title -- and with the flag's ``reason`` the category
+    the reporter filed it under, labelled as theirs.  ``decision_cid`` names
+    the decision record; its own reason becomes the moderator's note, so the
+    two can never be read as one::
 
-        The paper you reported (reason: Duplicated figures) was reviewed and kept listed.
-        The post you reported on "Title" ("First words...") was hidden: Off topic.
+        The post you reported as "Off topic" on "Title" was reviewed and kept. Moderator's note: The post is on topic.
+        The paper you reported as "Duplicated figures" was hidden. Moderator's note: The figures are original.
 
     Whatever the node cannot read is left out, never replaced by a placeholder.
     """
     noun = _KIND_WORDS.get(kind, "record")
-    title = paper_title(target) if target else None
+    category = reason_label(reason) if isinstance(reason, str) and reason.strip() else None
     if kind == "paper":
         subject = "The paper you reported"
-        if isinstance(reason, str) and reason.strip():
-            subject += f" (reason: {reason_label(reason)})"
-        return f"{subject} {_reporter_outcome(kind, action)}."
-    subject = f"The {noun} you reported"
-    if title:
-        subject += f' on "{title}"'
-    quote = excerpt(target) if target else None
-    if quote:
-        subject += f' ("{quote}")'
-    sentence = f"{subject} {_reporter_outcome(kind, action)}"
-    if isinstance(reason, str) and reason.strip():
-        return f"{sentence}: {reason_label(reason)}."
-    return f"{sentence}."
+        if category:
+            subject += f' as "{category}"'
+        sentence = f"{subject} {_reporter_outcome(kind, action)}."
+    else:
+        subject = f"The {noun} you reported"
+        if category:
+            subject += f' as "{category}"'
+        title = paper_title(target) if target else None
+        if title:
+            subject += f' on "{title}"'
+        sentence = f"{subject} {_reporter_outcome(kind, action)}."
+    note = _moderator_note(decision_cid)
+    if note:
+        sentence += f" Moderator's note: {note}"
+    return sentence
 
 
 def author_summary(kind: str, action: Optional[str], *, target: Optional[str] = None) -> str:

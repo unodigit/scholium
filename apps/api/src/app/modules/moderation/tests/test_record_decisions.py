@@ -402,7 +402,9 @@ def test_the_reporter_hears_the_outcome_in_words_and_where_to_open_it(
     flag = _file_flag(client, post_record["id"])
     stored = flags.get_flag(flag["id"])
     assert stored is not None
-    decision = decide_on(moderator, post_record["id"], "hide")
+    decision = decide_on(
+        moderator, post_record["id"], "hide", reason="The post breaks the rules."
+    )
 
     assert client.post(
         DECISIONS_URL, json=decision, headers=moderator.headers
@@ -411,15 +413,16 @@ def test_the_reporter_hears_the_outcome_in_words_and_where_to_open_it(
     [note] = [
         n for n in _notifications(stored.reporter_did) if n.kind == flags.FLAG_DECIDED_KIND
     ]
-    # The notice names the paper and quotes the post, and gives the reason in
-    # words ("spam" was the code the flag was filed with).
+    # The notice names the paper, labels the reporter's category as theirs and
+    # quotes the moderator's own reason from the decision record ("spam" was
+    # the code the flag was filed with).
     from app.modules import ledger
 
     genesis = ledger.entry_by_cid(post_record["body"]["paper"])
     title = genesis.body["title"]
-    text = post_record["body"]["text"]
     assert note.payload["summary"] == (
-        f'The post you reported on "{title}" ("{text}") was hidden: Spam or advertising.'
+        f'The post you reported as "Spam or advertising" on "{title}" was hidden. '
+        "Moderator's note: The post breaks the rules."
     )
     assert note.payload["outcome"] == note.payload["summary"]
     assert note.payload["reason"] == "Spam or advertising"
@@ -461,7 +464,9 @@ def test_dismissing_a_paper_flag_tells_the_reporter_but_not_the_author(
         headers={"Authorization": f"Bearer {issue_access_token(reporter, 1)}"},
     )
     assert response.status_code == 201, response.text
-    decision = decide_on(moderator, submission.version_cid, "dismiss")
+    decision = decide_on(
+        moderator, submission.version_cid, "dismiss", reason="Nothing about it violates policy."
+    )
 
     assert client.post(
         DECISIONS_URL, json=decision, headers=moderator.headers
@@ -471,8 +476,8 @@ def test_dismissing_a_paper_flag_tells_the_reporter_but_not_the_author(
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
     assert note.payload["summary"] == (
-        "The paper you reported (reason: Spam or advertising) "
-        "was reviewed and kept listed."
+        'The paper you reported as "Spam or advertising" was reviewed and kept listed. '
+        "Moderator's note: Nothing about it violates policy."
     )
     assert note.payload["link"] == f"/p/{submission.short_id}"
     # A dismiss makes no new listing decision, so the authors are not told
@@ -515,7 +520,9 @@ def test_a_list_decision_tells_the_reporter_the_paper_was_kept_listed(
         headers={"Authorization": f"Bearer {issue_access_token(reporter, 1)}"},
     )
     assert response.status_code == 201, response.text
-    decision = decide_on(moderator, submission.version_cid, "list")
+    decision = decide_on(
+        moderator, submission.version_cid, "list", reason="The prior work is distinct."
+    )
 
     assert client.post(
         DECISIONS_URL, json=decision, headers=moderator.headers
@@ -525,7 +532,8 @@ def test_a_list_decision_tells_the_reporter_the_paper_was_kept_listed(
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
     assert note.payload["summary"] == (
-        "The paper you reported (reason: Plagiarism) was kept listed."
+        'The paper you reported as "Plagiarism" was kept listed. '
+        "Moderator's note: The prior work is distinct."
     )
     assert note.payload["link"] == f"/p/{submission.short_id}"
 

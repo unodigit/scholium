@@ -665,3 +665,99 @@ describe("hasPendingAppeal (reads the paper's public records)", () => {
     expect(hasPendingAppeal([], VERSION)).toBe(false);
   });
 });
+
+describe("the bell's /me#notifications deep link", () => {
+  type Scrollable = Element & { scrollIntoView: (options?: ScrollIntoViewOptions) => void };
+
+  function stubScrollIntoView() {
+    const calls: Element[] = [];
+    const spy = vi.fn(function (this: Element) {
+      calls.push(this);
+    });
+    const proto = Element.prototype as Scrollable;
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = spy as Scrollable["scrollIntoView"];
+    return {
+      spy,
+      calls,
+      restore() {
+        if (original === undefined) {
+          delete (Element.prototype as Partial<Scrollable>).scrollIntoView;
+        } else {
+          proto.scrollIntoView = original;
+        }
+      },
+    };
+  }
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("scrolls the Notifications section into view and focuses its heading", async () => {
+    window.history.replaceState(null, "", "/me#notifications");
+    const stub = stubScrollIntoView();
+    try {
+      render(
+        <DashboardPage
+          initialDashboard={DATA}
+          signedIn
+          loadNotifications={async () => []}
+        />,
+      );
+
+      const heading = screen.getByRole("heading", { name: "Notifications" });
+      await waitFor(() => expect(stub.spy).toHaveBeenCalledTimes(1));
+      expect(stub.calls[0]).toBe(card("Notifications"));
+      expect(document.activeElement).toBe(heading);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("waits for the cards to render before scrolling", async () => {
+    window.history.replaceState(null, "", "/me#notifications");
+    const stub = stubScrollIntoView();
+    let resolve: (data: DashboardData) => void = () => {};
+    const loadDashboard = () =>
+      new Promise<DashboardData>((done) => {
+        resolve = done;
+      });
+    try {
+      render(
+        <DashboardPage
+          signedIn
+          loadDashboard={loadDashboard}
+          loadNotifications={async () => []}
+        />,
+      );
+      expect(stub.spy).not.toHaveBeenCalled();
+
+      resolve(DATA);
+      await screen.findByRole("region", { name: "Notifications" });
+      await waitFor(() => expect(stub.spy).toHaveBeenCalledTimes(1));
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "Notifications" }),
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("leaves the page alone when the URL has no fragment", async () => {
+    const stub = stubScrollIntoView();
+    try {
+      render(
+        <DashboardPage
+          initialDashboard={DATA}
+          signedIn
+          loadNotifications={async () => []}
+        />,
+      );
+      await screen.findByRole("region", { name: "Notifications" });
+      expect(stub.spy).not.toHaveBeenCalled();
+    } finally {
+      stub.restore();
+    }
+  });
+});
