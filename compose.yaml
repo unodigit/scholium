@@ -1,0 +1,311 @@
+#
+# Scholium local stack: the cloud deployment in miniature.
+#
+#   npm run stack:up      build the images and start everything in the background
+#   npm run stack:logs    follow the logs (npm run stack:logs -- api  for one service)
+#   npm run stack:down    stop and remove the containers; the data volumes stay
+#   npm run stack:reset   delete the data volumes too, then start from scratch
+#
+# The scripts use podman-compose when it is installed and `docker compose`
+# otherwise; STACK_COMPOSE="docker compose" npm run stack:up picks one.
+#
+#   service       what it is                                      http://localhost:...
+#   web           Next.js app                                     :3000
+#   api           FastAPI, JOBS_MODE=external, STORAGE_BACKEND=s3 :8000  (/healthz, /readyz)
+#   worker        the same image running python -m app.worker     -
+#   db            PostgreSQL 16 with the pgvector extension       :5433  (psql, tests)
+#   minio         S3-compatible object store                      :9000 API, :9001 console
+#   minio-init    one-shot: creates the bucket, then exits        -
+#   mailpit       SMTP sink with a web inbox                      :8025 inbox, :1025 SMTP
+#   sandbox       reproducibility runner, opt-in: profile "sandbox"  (not published)
+#
+# Configuration comes from a .env file next to this one (see .env.example) or
+# the environment; every value has a default, so the stack also starts with no
+# .env at all. Only the stack's own settings are read from there. The API and
+# worker are always started with STORAGE_BACKEND=s3 and JOBS_MODE=external.
+#
+# Opt-in profiles are chosen once, for every command, with COMPOSE_PROFILES in
+# .env or the environment:  COMPOSE_PROFILES=sandbox npm run stack:up
+#
+# The file is meant for local development and for the single-host staging
+# deployment (infra/envs/staging), which runs it under systemd. Host ports are
+# bound to 127.0.0.1 only; put a proxy or tunnel in front to reach it from
+# elsewhere. NEXT_PUBLIC_API_URL is baked into the web bundle at build time, so
+# after changing API_PORT, WEB_PORT or NEXT_PUBLIC_API_URL run stack:up again.
+#
+# The first API start has no node signing key. Make one on the shared /data
+# volume (the worker reads the same file), then restart:
+#
+#   podman-compose exec api python -m app.modules.admin init-node
+#   podman-compose restart api worker
+#
+
+# --- shared definitions ------------------------------------------------------
+
+# The api, worker and sandbox are one image started with different commands.
+# Each service carries the build so any of them can be built or started alone;
+# the layers are cached, so the repeat builds are instant.
+x-api-service: &api-service
+  image: ${SCHOLIUM_API_IMAGE:-scholium-api:local}
+  build:
+    context: .
+    dockerfile: deploy/containers/api.Containerfile
+  restart: unless-stopped
+
+# Where objects live. The same bucket and credentials reach MinIO here and an
+# S3-API service (AWS S3, Cloudflare R2, ...) in staging: S3_ENDPOINT_URL and the
+# credentials are the only things that change. Unless set, the credentials are
+# the MinIO root user, which is what the bucket is created with.
+x-storage-environment: &storage-environment
+  STORAGE_BACKEND: s3
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-scholium}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-scholium-minio}}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-scholium-minio-secret}}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-1}
+
+# What the api and the worker both need: they share the database, the object
+# store, the signing keys and the mail server.
+x-app-environment: &app-environment
+  <<: *storage-environment
+  SCHOLIUM_ENV: ${SCHOLIUM_ENV:-dev}
+  DATABASE_URL: "${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-scholium}:${POSTGRES_PASSWORD:-scholium-local-only}@db:5432/${POSTGRES_DB:-scholium}}"
+  JOBS_MODE: external
+  JOBS_EAGER: "0"
+  JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+  REVIEW_UNIQUENESS_KEY: ${REVIEW_UNIQUENESS_KEY:-}
+  NODE_KEY: ${NODE_KEY:-}
+  COMMITTEE_PUBLIC_KEY: ${COMMITTEE_PUBLIC_KEY:-}
+  SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025}
+  ORCID_CLIENT_ID: ${ORCID_CLIENT_ID:-}
+  ORCID_CLIENT_SECRET: ${ORCID_CLIENT_SECRET:-}
+  ORCID_MOCK: ${ORCID_MOCK:-1}
+  ARXIV_MOCK: ${ARXIV_MOCK:-1}
+  AI_PROVIDER: ${AI_PROVIDER:-fake}
+  AI_HOSTED_MODEL: ${AI_HOSTED_MODEL:-claude-sonnet-5-5}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:${WEB_PORT:-3000}}
+  NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${API_PORT:-8000}}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-1}
+  # The api reaches the sandbox runner over HTTP when SANDBOX_BACKEND=remote.
+  # The image carries no container engine, so out of the box runs are not_run.
+  SANDBOX_BACKEND: ${SANDBOX_BACKEND:-none}
+  SANDBOX_URL: ${SANDBOX_URL:-http://sandbox:8001}
+  SANDBOX_TOKEN: ${SANDBOX_TOKEN:-}
+
+# --- services ------------------------------------------------------------------
+#
+# Healthchecks are written as shell strings (compose's CMD-SHELL form). Both
+# docker compose and podman-compose pass that through unchanged, whereas the
+# list form is flattened into a shell line by podman and loses its quoting.
+#
+# depends_on waits (service_healthy, service_completed_successfully) only for
+# what is certain to finish: the database and the one-shot bucket job. Anything
+# else is service_started. podman-compose waits for a healthy dependency with no
+# timeout, so gating web on a healthy api would make `stack:up` hang whenever the
+# api is not ready; npm run stack:smoke is what waits for GET /readyz.
+
+services:
+  db:
+    # pgvector's image is PostgreSQL 16 with the vector extension installed.
+    image: ${POSTGRES_IMAGE:-docker.io/pgvector/pgvector:pg16}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-scholium}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scholium-local-only}
+      POSTGRES_DB: ${POSTGRES_DB:-scholium}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
+    healthcheck:
+      test: pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  minio:
+    # MinIO stopped publishing minio/minio, so the default is the community
+    # build pgsty/minio, which keeps the layout of the old official image
+    # (server, mc and curl). MINIO_IMAGE swaps in any image that has all three.
+    image: ${MINIO_IMAGE:-docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z}
+    restart: unless-stopped
+    command: ["minio", "server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-scholium-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-scholium-minio-secret}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: curl -fsS http://127.0.0.1:9000/minio/health/ready >/dev/null || mc ready local
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  # Runs once: retries until MinIO answers, creates the bucket, exits 0. The api,
+  # worker and sandbox start after it has finished. It has no healthcheck: its
+  # exit status is the result. The script is in deploy/compose/minio-init.sh.
+  minio-init:
+    image: ${MINIO_IMAGE:-docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z}
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: ["/bin/sh", "/minio-init.sh"]
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-scholium-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-scholium-minio-secret}
+      S3_BUCKET: ${S3_BUCKET:-scholium}
+    volumes:
+      - ./deploy/compose/minio-init.sh:/minio-init.sh:ro,z
+
+  mailpit:
+    image: ${MAILPIT_IMAGE:-docker.io/axllent/mailpit:v1.34.0}
+    restart: unless-stopped
+    environment:
+      # Keep the inbox across restarts (stack:reset empties it).
+      MP_DATABASE: /data/mailpit.db
+    volumes:
+      - mailpit-data:/data
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  api:
+    <<: *api-service
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+    environment:
+      <<: *app-environment
+      # python -m app honours X-Forwarded-* only from these addresses; set it to
+      # the proxy's address when something terminates TLS in front of the api.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+    volumes:
+      # The node signing key (NODE_KEY_PATH=/data/node.key), shared with the worker.
+      - app-data:/data
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      # Readiness, not liveness: the container is healthy once the database and
+      # the object store answer, which is what web and worker wait for.
+      test: |-
+        python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 30s
+
+  # The same image and settings as the api, running the job loop. It needs the
+  # database and the bucket, not the api: both create the tables under the
+  # database's own lock, so they may start together.
+  worker:
+    <<: *api-service
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment: *app-environment
+    volumes:
+      - app-data:/data
+    healthcheck:
+      # The worker serves no port. It is healthy while it can reach the database
+      # it claims jobs from; a worker that has died is a stopped container.
+      test: |-
+        python -c "from sqlalchemy import text; from app.db import engine; engine.connect().execute(text('SELECT 1'))"
+      interval: 15s
+      timeout: 10s
+      retries: 4
+      start_period: 30s
+
+  web:
+    image: ${SCHOLIUM_WEB_IMAGE:-scholium-web:local}
+    build:
+      context: .
+      dockerfile: deploy/containers/web.Containerfile
+      args:
+        # Inlined into the browser bundle and the Content-Security-Policy.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${API_PORT:-8000}}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:${WEB_PORT:-3000}}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      SCHOLIUM_ENV: ${SCHOLIUM_ENV:-dev}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    healthcheck:
+      # The runtime image is node:alpine: node is there, curl and wget may not be.
+      test: |-
+        node -e "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 20s
+
+  # Opt-in: COMPOSE_PROFILES=sandbox. The service the api calls when
+  # SANDBOX_BACKEND=remote (SANDBOX_URL=http://sandbox:8001). It is not published
+  # on the host: only the api needs to reach it. SANDBOX_TOKEN is the shared
+  # bearer token and must be at least 32 characters; the service refuses to
+  # start without it (openssl rand -hex 32).
+  #
+  # It runs a bundle by starting a container, so it needs a docker or podman CLI
+  # and an engine to talk to. The api image has neither yet, and the service's
+  # scratch directory must then be the same path on the host. Until then the
+  # service answers and reports every run as not_run.
+  sandbox:
+    <<: *api-service
+    profiles: ["sandbox"]
+    command: ["python", "-m", "app.sandbox_service"]
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *storage-environment
+      HOST: 0.0.0.0
+      PORT: "8001"
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:-}
+      # The runner the service itself uses (docker or podman). Not the api's
+      # SANDBOX_BACKEND, which is "remote" when it talks to this service.
+      SANDBOX_BACKEND: ${SANDBOX_RUNNER:-podman}
+      REPRO_DOCKER_IMAGE: ${REPRO_DOCKER_IMAGE:-python:3.12-slim}
+      # Unpacked bundles go in /data (owned by the image's app user), on a
+      # volume, so they never grow the container's own layer.
+      TMPDIR: /data
+    volumes:
+      - sandbox-work:/data
+    healthcheck:
+      test: |-
+        python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=4)"
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 20s
+
+# Named volumes survive stack:down and are deleted by stack:reset.
+volumes:
+  db-data:
+  minio-data:
+  mailpit-data:
+  app-data:
+  sandbox-work:
