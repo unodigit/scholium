@@ -313,5 +313,5 @@ class TestGetProvider:
         assert isinstance(get_provider("ollama"), OllamaProvider)
 
     def test_unknown_provider_name_raises(self):
-        with pytest.raises(ValueError, match="Unknown AI provider 'openai'"):
-            get_provider("openai")
+        with pytest.raises(ValueError, match="Unknown AI provider 'no-such-provider'"):
+            get_provider("no-such-provider")
