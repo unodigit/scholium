@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 13: findings of verify sweep 13 (2026-11-19, worktree @ 061ef03 = main, next 16.4.6 from its own npm ci).
+  15/16 journeys pass; 02 fails (/verify with a version id never finishes).
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Root cause of bug 1 (found in the production bundle): the Next 16 production minifier inlines the module-level
+  `loadVersionManifest` arrow into useFileCheck's default parameter (`loadManifest:t=(e,t)=>(...)()(e,t)`), so
+  the default loader is a new function on every render; it is a dependency of the manifest effect, so the effect
+  re-runs every render (abort, fetch, setState, render): ~1,700 fetches/s, 12,106 manifest requests in the API log.
+  vitest (unminified source) cannot see it. Sweeps 11-12 built with a stale next 15 and passed this step.
+  Decision (recorded here): export formats (RIS DA, BibTeX) keep the UTC calendar date of the record.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/web/src/features/verify-page/use-file-check.ts,apps/web/src/features/verify-page/verify-page.tsx,apps/web/src/features/verify-page/verify-page.test.tsx,apps/web/src/features/verify-page/verify-page.bugfix.test.tsx,apps/web/tests/e2e/**">
+    <title>/verify with a version id loops forever on the manifest request in production builds</title>
+    <symptoms>
+      Typing sch:ayy7-sc3b-4mze/v1 (or opening /verify?id=...) leaves the panel on "Checking... Loading the files signed for ..." for any dropped file; the page re-renders ~1,800 times a second and sends GET /v1/papers/{id}/v/1/manifest ~1,700 times a second, each cancelled by the next (status 0); the same URL answers 200 from curl
+      In the production bundle, useFileCheck's default `loadManifest` is an inline arrow (the minifier inlined the single-use module constant loadVersionManifest), so its identity changes every render and the effect whose dependencies include it re-runs every render; unit tests on source cannot reproduce it
+      The Playwright suite never opens /verify with an id, so e2e 31/31 stayed green
+    </symptoms>
+    <reproduction_steps>
+      Production build (next build + next start, next 16.4.6): open /verify?id=sch:{seeded id}/v1, wrap window.fetch to count manifest calls for 1 s (~1,700); journey 02 step 7 (screenshots/02-search-and-discover/07a-verify-page-id-entered.png, 07b-verify-with-id-stuck-checking.png, 07c-verify-unrelated-with-id-stuck.png)
+    </reproduction_steps>
+    <expected>The manifest effect and the content-versions effect depend only on values (schId, file cid, attempt), never on loader function identity: loaders are read through a ref updated each render (latest-callback pattern), so an inline or re-created loader never restarts a request; the manifest is requested once per id and per retry; a unit test re-renders the hook with a new loader function each render and asserts one request; a Playwright test on the production build opens /verify?id={seeded version}, counts manifest requests over 2 s (at most 1), drops the version's main.pdf and sees the match verdict, and drops an unrelated file and sees the mismatch verdict; the same Playwright file visits the main public routes (/, a paper page and its tabs, /verify, /network, /search, /c/cs.AI) and asserts no API path is requested more than 5 times within 3 s of load</expected>
+    <actual>The check never finishes; the node is flooded with requests</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/appeals/subject.py,apps/api/src/app/modules/appeals/router.py,apps/api/src/app/modules/appeals/tests/test_appeal_polish.py,apps/api/src/app/modules/appeals/tests/test_appeal_panels.py,apps/api/src/app/modules/notifications/panel.py,apps/api/src/app/modules/notifications/restoration.py,apps/api/src/app/modules/notifications/tests/test_panel_notices.py,apps/web/src/features/mod-console/appeal-vote-form.tsx,apps/web/src/features/mod-console/appeal-vote-form.test.tsx,apps/web/src/features/mod-console/appeals.ts,apps/web/src/features/mod-console/appeals.test.ts,apps/web/src/features/mod-console/appeals-section.tsx,apps/web/src/features/mod-console/appeal-polish.test.tsx,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts">
+    <title>Appeal panel polish: two post appeals read identically; overturn labelled "Moderation outcome"; changing a vote loses the reasons; /mod summary stale after the deciding vote</title>
+    <symptoms>
+      A panellist on two appeals about posts on the same paper sees two identical attention items and notices ("Vote on the appeal of a hidden post on "{title}" by 3 Dec 2026"); only the /mod cards tell them apart
+      The upheld notice is labelled "Appeal outcome" but an overturned appeal reaches the appellant as the restoration notice labelled "Moderation outcome"
+      "Change my vote" can never pre-fill the member's reasons (the appeal detail returns viewer_vote and viewer_voted_at but not the reasons) and shows "This server did not send the reasons you gave before..."
+      Right after the deciding vote the Appeals summary still reads "1 appeal waiting for a panel · 0 decided" while the card says "Decided by the panel" (a reload fixes it)
+    </symptoms>
+    <reproduction_steps>
+      Journey 05 step 6 (screenshots/05-follow-search-notify/06a-solheim-attention-appeal-panel.png); journey 07 step 8 (08h vs 08l, 08i); journey 11 step 11 (screenshots/11-moderation-hold-and-appeal/11b-deciding-vote.png)
+    </reproduction_steps>
+    <expected>Post appeal panel items and notices quote the start of the hidden post ('Vote on the appeal of a hidden post on "{title}" ("{excerpt}...") by 3 Dec 2026') for seated members, who may see the excerpt; a restoration that answers an appeal is labelled "Appeal outcome" on the dashboard, like the upheld notice; the appeal detail returns the viewer's own recorded reasons (viewer_reasons) to that seated member only, and "Change my vote" pre-fills them; the Appeals summary counts update in the same render as the card when a vote decides the panel</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/security.ts,apps/web/src/features/dashboard/security.test.ts,apps/web/src/features/dashboard/security-page.tsx,apps/web/src/features/dashboard/security-page.test.tsx">
+    <title>/me/security shows the passkey creation day in UTC without saying so</title>
+    <symptoms>
+      A passkey created at about 06:20 on 19 Nov (GMT+11) is listed as "Passkey created 18 Nov 2026"; formatDay in dashboard/security.ts formats in UTC and strips the " UTC" suffix (security-page.tsx line 220)
+    </symptoms>
+    <reproduction_steps>
+      Journey 03 step 5 in a browser east of UTC (screenshots/03-new-member-onboarding/05a-security.png)
+    </reproduction_steps>
+    <expected>Calendar days on /me/security use the shared ui-kit date helpers in the reader's zone; times that stay in UTC keep their "UTC" label; tests run in a non-UTC zone</expected>
+    <actual>An unlabelled UTC day</actual>
+  </bug>
+
+</bug_spec>
