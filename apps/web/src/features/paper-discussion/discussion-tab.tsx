@@ -155,6 +155,10 @@ export function DiscussionTab({
   const viewer = useViewer(pinnedViewer);
   const signedIn = viewer.signedIn;
   const viewerDid = viewer.did;
+  // A key for "who this read is for": signed-out readers share one anonymous
+  // read; a signed-in reader's read depends on their account (and on the
+  // token the API client attaches), so a change of account re-reads.
+  const viewerKey = signedIn ? (viewerDid ?? "\u0001signed-in") : null;
 
   // The sign-in link follows the live address, so a signed-out reader comes
   // back to the Discussion tab with its fragment (#discussion) rather than to
@@ -170,6 +174,13 @@ export function DiscussionTab({
 
   const [view, setView] = useState<View>(() => initialView(initial, initialError));
   const [attempt, setAttempt] = useState(0);
+  // A counter that re-triggers a read: on a retry, on a paper change, or when
+  // the viewer's identity changes (sign-in / sign-out / account switch). 0 means
+  // "the server's answer stands and no viewer change has happened yet", which
+  // keeps the first anonymous render from being refetched.
+  const serverAnsweredInitially =
+    initial !== undefined || (initialError !== undefined && initialError !== "");
+  const [requestSeq, setRequestSeq] = useState<number>(() => (serverAnsweredInitially ? 0 : 1));
   const [voted, setVoted] = useState<ReadonlySet<string>>(() => new Set());
   const [reported, setReported] = useState<ReadonlyMap<string, ReportReason>>(() => new Map());
   const [appealed, setAppealed] = useState<ReadonlyMap<string, string>>(() => new Map());
@@ -186,6 +197,9 @@ export function DiscussionTab({
     setReported(new Map());
     setAnnouncement("");
     setStarting(false);
+    const answered =
+      initial !== undefined || (initialError !== undefined && initialError !== "");
+    setRequestSeq(answered ? 0 : 1);
   }
 
   // The latest loader without making an inline function restart the request.
@@ -194,17 +208,45 @@ export function DiscussionTab({
     loadRef.current = load ?? loadThreads;
   }, [load]);
 
+  // Refs that track the viewer and view without re-triggering effects.
+  const loadedViewerKeyRef = useRef<string | null>(null);
+  const lastViewerKeyRef = useRef<string | null>(viewerKey);
+  const viewRef = useRef<View>(view);
+  viewRef.current = view;
+  const viewerKeyRef = useRef<string | null>(viewerKey);
+  viewerKeyRef.current = viewerKey;
+
   // The server already asked: with an answer, or with a failure the reader is
   // looking at. Either way only a retry asks again, so an error the server
   // reported is not replaced by a spinner the moment the page hydrates.
   const serverAnswered = initial !== undefined || (initialError !== undefined && initialError !== "");
+
+  // Re-read when the viewer's identity changes (sign-in, sign-out, account
+  // switch, or the session resolving after a reload). `lastViewerKeyRef` starts
+  // at the first viewer so a pinned viewer does not refetch on mount; a viewer
+  // that only resolves after mount (the real reload case) does change it.
   useEffect(() => {
-    if (attempt === 0 && serverAnswered) return;
+    if (lastViewerKeyRef.current !== viewerKey) {
+      lastViewerKeyRef.current = viewerKey;
+      setRequestSeq((count) => count + 1);
+    }
+  }, [viewerKey]);
+
+  useEffect(() => {
+    // 0 means "the server's anonymous answer stands and nothing has changed":
+    // do not refetch, and do not flash a spinner over the content already shown.
+    if (requestSeq === 0 && attempt === 0) return;
     const controller = new AbortController();
-    setView({ kind: "loading" });
+    // Keep showing what is already on screen while a background re-read
+    // (viewer change) is in flight; only spin when there is nothing to show.
+    const background = viewRef.current.kind === "ready";
+    if (!background) setView({ kind: "loading" });
     loadRef.current(paperId, controller.signal).then(
       (data) => {
-        if (!controller.signal.aborted) setView({ kind: "ready", data });
+        if (!controller.signal.aborted) {
+          setView({ kind: "ready", data });
+          loadedViewerKeyRef.current = viewerKeyRef.current;
+        }
       },
       (error: unknown) => {
         if (!controller.signal.aborted) {
@@ -213,7 +255,7 @@ export function DiscussionTab({
       },
     );
     return () => controller.abort();
-  }, [paperId, attempt, serverAnswered]);
+  }, [paperId, attempt, requestSeq]);
 
   const retry = () => setAttempt((count) => count + 1);
 
