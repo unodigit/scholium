@@ -44,7 +44,13 @@ from .emailer import (
 from .models import Notification, ensure_table
 from .router import router
 from .schemas import NotificationOut
-from .service import list_notifications, mark_read, mark_read_for_subject, notify
+from .service import (
+    list_notifications,
+    mark_read,
+    mark_read_for_subject,
+    notify,
+    resolve_for_subject,
+)
 
 # Feature 59: listen for versions entering ``awaiting_consent`` and tell every
 # listed author.  Subscribing at import time is the plugin convention (the
@@ -87,6 +93,7 @@ __all__ = [
     "notify_consent_requests",
     "on_startup",
     "parse_smtp_url",
+    "resolve_for_subject",
     "router",
     "send_consent_links",
     "send_email",

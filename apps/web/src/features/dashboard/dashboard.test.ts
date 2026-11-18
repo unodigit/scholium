@@ -23,6 +23,7 @@ import {
   loadNotifications,
   markNotificationRead,
   moderationChip,
+  notificationDetail,
   notificationKindLabel,
   notificationLink,
   notificationSummary,
@@ -507,15 +508,149 @@ describe("notification wording", () => {
       }),
     ).toBe('You signed your consent on "Sparse attention" (version 2).');
     expect(
-      notificationSummary({
-        kind: "recovery.request",
-        read: true,
-        payload: { account_name: "Ana Costa" },
-      }),
-    ).toBe("You approved the recovery request from Ana Costa.");
-    expect(
       notificationSummary({ kind: "email.verify", read: true, payload: {} }),
     ).toBe("You confirmed your email address.");
+  });
+
+  describe("a recovery notice says what the guardian did, never what was merely read", () => {
+    const HANNA = { account_name: "Hanna Varga", request_id: "rec_1" };
+
+    it("does not claim an approval just because the notice was read", () => {
+      for (const payload of [HANNA, { ...HANNA, closed: "quorum", approval_count: 3, guardian_count: 5 }]) {
+        const summary = notificationSummary({ kind: "recovery.request", read: true, payload });
+        expect(summary).not.toMatch(/You approved/);
+        expect(summary).not.toMatch(/You declined/);
+      }
+    });
+
+    it("says 'You approved' with the date, only for the guardian's own approval", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...HANNA, answer: "approved", answered_at: "2026-11-17T12:00:00Z" },
+        }),
+      ).toBe("You approved the recovery request from Hanna Varga on 17 Nov 2026.");
+    });
+
+    it("says 'You declined' for a recorded decline", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...HANNA, answer: "declined", answered_at: "2026-11-17T12:00:00Z" },
+        }),
+      ).toBe("You declined the recovery request from Hanna Varga on 17 Nov 2026.");
+    });
+
+    it("leaves the date out when none was recorded", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...HANNA, answer: "approved" },
+        }),
+      ).toBe("You approved the recovery request from Hanna Varga.");
+    });
+
+    it("says it closed, with how many guardians approved, for a guardian who did not answer", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...HANNA, closed: "quorum", approval_count: 3, guardian_count: 5 },
+        }),
+      ).toBe("The recovery request from Hanna Varga closed (3 of 5 guardians approved).");
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...HANNA, closed: "finalized", approval_count: 4, guardian_count: 5 },
+        }),
+      ).toBe("The recovery request from Hanna Varga closed (4 of 5 guardians approved).");
+    });
+
+    it("says it was cancelled when the account holder cancelled it", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...HANNA, closed: "cancelled", approval_count: 1, guardian_count: 5 },
+        }),
+      ).toBe("The recovery request from Hanna Varga was cancelled.");
+    });
+
+    it("lets the guardian's own answer win over the request closing", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: {
+            ...HANNA,
+            answer: "approved",
+            answered_at: "2026-11-17T12:00:00Z",
+            closed: "quorum",
+            approval_count: 3,
+            guardian_count: 5,
+          },
+        }),
+      ).toBe("You approved the recovery request from Hanna Varga on 17 Nov 2026.");
+    });
+
+    it("still asks an unanswered, unclosed request's guardian to approve", () => {
+      expect(notificationSummary({ kind: "recovery.request", payload: HANNA })).toBe(
+        "A recovery request from Hanna Varga needs your approval as a guardian.",
+      );
+    });
+  });
+
+  it("shows a panel notice's own sentence, whether or not it was read", () => {
+    const voted = 'You voted upheld on the appeal for "A paper under appeal".';
+    expect(
+      notificationSummary({
+        kind: "appeal.panel",
+        read: true,
+        payload: { title: "A paper under appeal", summary: voted, outcome: voted },
+      }),
+    ).toBe(voted);
+    const decided = "The panel decided: overturned.";
+    expect(
+      notificationSummary({
+        kind: "appeal.panel",
+        read: false,
+        payload: { title: "A paper under appeal", summary: decided, outcome: decided },
+      }),
+    ).toBe(decided);
+    // Read without a vote recorded is not a vote: nothing here says the member voted.
+    expect(
+      notificationSummary({
+        kind: "appeal.panel",
+        read: true,
+        payload: {
+          title: "A paper under appeal",
+          summary: 'Vote on the appeal for "A paper under appeal" by 2026-12-02.',
+        },
+      }),
+    ).not.toMatch(/You voted/);
+  });
+
+  it("does not repeat a reason the sentence already carries", () => {
+    const sentence =
+      'The post you reported as "Off topic" on "Sparse attention" was reviewed and kept. Moderator\'s note: The post is on topic.';
+    expect(
+      notificationDetail({
+        kind: "flag.decided",
+        payload: { summary: sentence, outcome: sentence, reason: "Off topic" },
+      }),
+    ).toBeNull();
+    // A reason the sentence leaves out is still shown.
+    expect(
+      notificationDetail({
+        kind: "moderation.decision",
+        payload: { action: "hold", reason: "Needs a licence." },
+      }),
+    ).toBe("Needs a licence.");
+    expect(notificationDetail({ payload: { reason: "Needs a licence." } })).toBe("Needs a licence.");
   });
 
   it("keeps an unread notification's imperative wording", () => {

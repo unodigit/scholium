@@ -157,6 +157,35 @@ describe("NotificationsCard: what it shows", () => {
     expect(within(item).queryByRole("link", { name: /open/i })).toBeNull();
   });
 
+  it("does not repeat on a second line a reason the sentence already carries", async () => {
+    const sentence =
+      'The post you reported as "Off topic" on "Sparse attention" was reviewed and kept. Moderator\'s note: The post is on topic.';
+    render(
+      <NotificationsCard
+        signedIn
+        loadNotifications={loaderOf(
+          row({
+            id: 8,
+            kind: "flag.decided",
+            payload: { summary: sentence, outcome: sentence, reason: "Off topic", reason_code: "off-topic" },
+          }),
+        )}
+      />,
+    );
+    const item = (await screen.findAllByRole("listitem"))[0];
+
+    expect(within(item).getByText(sentence)).toBeTruthy();
+    expect(within(item).queryByText("Off topic")).toBeNull();
+    expect(item.textContent?.match(/Off topic/g)).toHaveLength(1);
+  });
+
+  it("still shows a reason the sentence leaves out", async () => {
+    render(<NotificationsCard signedIn loadNotifications={loaderOf(MODERATION)} />);
+    const item = (await screen.findAllByRole("listitem"))[0];
+
+    expect(within(item).getByText("Needs a licence.")).toBeTruthy();
+  });
+
   it("never turns a link it does not trust into an href", async () => {
     render(
       <NotificationsCard

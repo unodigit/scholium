@@ -26,8 +26,15 @@ from app.settings import settings
 
 from .emailer import build_email, log_to_outbox, send_email
 from .models import Notification, ensure_table
+from .panel import settle_panel_notices
 
-__all__ = ["list_notifications", "mark_read", "mark_read_for_subject", "notify"]
+__all__ = [
+    "list_notifications",
+    "mark_read",
+    "mark_read_for_subject",
+    "notify",
+    "resolve_for_subject",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +164,15 @@ def list_notifications(did: str) -> list[Notification]:
 
     Both unread and read rows come back, ordered by ``id`` (insertion order),
     so the caller can render an inbox and count the unread ones itself.
+
+    A panel seat's notice is settled against the seat first (see
+    :func:`~app.modules.notifications.panel.settle_panel_notices`): the vote
+    handler lives in another module, so the recorded vote is what tells the
+    inbox the member has answered.
     """
     _require_did(did)
     ensure_table()
+    settle_panel_notices(did)
 
     with db.SessionLocal() as session:
         return (
@@ -230,6 +243,48 @@ def mark_read_for_subject(did: str, kind: str, subject_value: str) -> None:
         for row in rows:
             subject = _subject_of(row.payload)
             if subject is not None and subject[1] == subject_value.strip():
+                row.read = True
+                changed = True
+        if changed:
+            session.commit()
+    finally:
+        session.close()
+
+
+def resolve_for_subject(
+    did: str, kind: str, subject_value: str, facts: Mapping[str, Any]
+) -> None:
+    """Record what became of a subject on ``did``'s notifications about it, and mark them read.
+
+    ``mark_read_for_subject`` says only that the notice no longer needs
+    attention; this also writes ``facts`` -- what the person answered, or how
+    the thing closed -- into the payload, so a client words the notice from what
+    happened instead of guessing it from the read flag.  Every notification of
+    ``kind`` about ``subject_value`` is resolved, an already-read one (opened
+    before it was answered) included.  Unknown recipients or subjects are a
+    no-op.
+    """
+    if not isinstance(did, str) or not did.strip():
+        return
+    if not isinstance(kind, str) or not kind.strip():
+        return
+    if not isinstance(subject_value, str) or not subject_value.strip():
+        return
+    ensure_table()
+
+    session = db.SessionLocal()
+    try:
+        rows = (
+            session.query(Notification)
+            .filter(Notification.did == did, Notification.kind == kind)
+            .all()
+        )
+        changed = False
+        for row in rows:
+            subject = _subject_of(row.payload)
+            if subject is not None and subject[1] == subject_value.strip():
+                # A new dict: the JSON column only notices a reassignment.
+                row.payload = {**dict(row.payload), **facts}
                 row.read = True
                 changed = True
         if changed:

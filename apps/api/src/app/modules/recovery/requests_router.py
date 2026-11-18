@@ -44,7 +44,7 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from app import db
 from app.security import Principal, get_current_principal
-from app.modules.notifications import mark_read_for_subject
+from .notices import record_closure
 from . import problems
 from . import approvals as _approvals
 from .opening import InvalidRecoveryRequest, NoGuardians, UnknownAccount, open_recovery_request
@@ -326,16 +326,16 @@ async def cancel_recovery_request(request_id: str, request: Request, authorizati
 
         raise HTTPException(status_code=401, detail="Not authorized to cancel this recovery request.")
 
+    approvals: list = []
     with db.SessionLocal() as session:
         row = session.get(RecoveryRequest, row_id)
         if row is not None:
             row.status = "cancelled"
+            approvals = list(row.approvals or [])
             session.commit()
 
     try:
-        guardians = get_guardians(did)
-        for g in guardians:
-            mark_read_for_subject(g, "recovery.request", request_id)
+        record_closure(request_id, did, "cancelled", approvals)
     except Exception:
         pass
 

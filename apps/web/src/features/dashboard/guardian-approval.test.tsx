@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStore } from "../../lib/api";
 
+import { NOTIFICATIONS_CHANGED_EVENT, type NotificationItem } from "./dashboard";
 import { GuardianApprovalPage, type GuardianApprovalData } from "./guardian-approval";
 
 const VIEWER = "did:key:z6MkGuardianViewerViewerViewerViewerViewerViewer1";
@@ -100,5 +101,74 @@ describe("GuardianApprovalPage", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
     expect(approve).toHaveBeenCalledWith("rec_1");
+  });
+
+  describe("the bell", () => {
+    const notice = (id: number, read: boolean): NotificationItem => ({
+      id,
+      did: VIEWER,
+      kind: "recovery.request",
+      payload: { request_id: `rec_${id}` },
+      read,
+    });
+    const heard: number[] = [];
+    const listen = (event: Event) => {
+      heard.push((event as CustomEvent<{ unread: number }>).detail.unread);
+    };
+
+    beforeEach(() => {
+      heard.length = 0;
+      window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, listen);
+    });
+    afterEach(() => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, listen));
+
+    it("is told the new unread count as soon as the guardian approves", async () => {
+      const approve = vi.fn(async () => undefined);
+      // The server resolved this guardian's notice when the approval landed.
+      const loadNotifications = vi.fn(async () => [notice(1, true), notice(2, false)]);
+      renderPage(request(), { approve, loadNotifications });
+
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+      await waitFor(() => expect(heard).toEqual([1]));
+      expect(loadNotifications).toHaveBeenCalledTimes(1);
+    });
+
+    it("is told after a decline too", async () => {
+      const decline = vi.fn(async () => undefined);
+      const loadNotifications = vi.fn(async () => [notice(1, false)]);
+      renderPage(request(), { decline, loadNotifications });
+
+      fireEvent.click(screen.getByRole("button", { name: "Decline" }));
+
+      await waitFor(() => expect(heard).toEqual([1]));
+    });
+
+    it("hears nothing when the approval fails", async () => {
+      const approve = vi.fn(async () => {
+        throw new Error("Approval failed.");
+      });
+      const loadNotifications = vi.fn(async () => [notice(1, false)]);
+      renderPage(request(), { approve, loadNotifications });
+
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+      await screen.findByText("Approval failed.");
+      expect(loadNotifications).not.toHaveBeenCalled();
+      expect(heard).toEqual([]);
+    });
+
+    it("still shows the answer when the count cannot be fetched", async () => {
+      const approve = vi.fn(async () => undefined);
+      const loadNotifications = vi.fn(async () => {
+        throw new Error("offline");
+      });
+      renderPage(request(), { approve, loadNotifications });
+
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+      await waitFor(() => expect(screen.getByText(/You approved on/)).toBeTruthy());
+      expect(heard).toEqual([]);
+    });
   });
 });

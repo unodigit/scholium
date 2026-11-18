@@ -19,7 +19,7 @@
  * Opening a notification, or pressing "Mark as read", marks it read through
  * `POST /v1/me/notifications/{id}/read`. The row only turns read once the API
  * confirms; a refusal keeps it unread and says why on the row. Each confirmed
- * change is announced on `window` ({@link NOTIFICATIONS_CHANGED_EVENT}) so the
+ * change is announced on `window` ({@link announceUnread}) so the
  * header's bell can lower its count.
  */
 
@@ -30,8 +30,8 @@ import { EmptyState } from "../ui-kit";
 
 import { Card } from "./card";
 import {
-  NOTIFICATIONS_CHANGED_EVENT,
   SIGNIN_HREF,
+  announceUnread,
   describeMarkReadError,
   describeNotificationsError,
   loadNotifications as fetchNotifications,
@@ -144,11 +144,7 @@ export function NotificationsCard({
       }
       setState({ status: "ready", items: next });
       setNotice("Marked as read.");
-      window.dispatchEvent(
-        new CustomEvent(NOTIFICATIONS_CHANGED_EVENT, {
-          detail: { unread: next.filter((row) => !row.read).length },
-        }),
-      );
+      announceUnread(next.filter((row) => !row.read).length);
     } catch (error: unknown) {
       setRowErrors((current) => ({ ...current, [item.id]: describeMarkReadError(error) }));
     } finally {

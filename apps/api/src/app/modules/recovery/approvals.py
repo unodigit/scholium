@@ -25,7 +25,7 @@ from . import signatures
 from .models import RecoveryRequest, REQUEST_PENDING, ensure_requests_table
 from .finalize import JOB_KIND
 from .service import GUARDIAN_COUNT, get_guardians
-from app.modules.notifications import mark_read_for_subject
+from .notices import guardian_of as _guardian_of, record_answer, record_closure
 
 __all__ = [
     "APPROVAL_THRESHOLD",
@@ -117,17 +117,6 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _guardian_of(approval: Any) -> Optional[str]:
-    if isinstance(approval, str):
-        return approval
-    if isinstance(approval, dict):
-        for key in ("guardian", "guardian_did", "did", "signer", "approver", "guardianDid"):
-            value = approval.get(key)
-            if isinstance(value, str):
-                return value
-    return None
-
-
 def get_approval_count(request_id: str) -> int:
     ensure_requests_table()
     with db.SessionLocal() as session:
@@ -214,19 +203,18 @@ def approve_recovery_request(
         contest_until = row.contest_until
         approvals_out = list(row.approvals or [])
 
-    # The guardian's own recovery-approval notice no longer needs attention.
-    try:
-        mark_read_for_subject(guardian_did, "recovery.request", request_id)
-    except Exception:
-        pass
-    # Once quorum is met, every guardian's notice is stale.
+    # The guardian's own notice records their answer, as the request has it.
+    own = next((item for item in approvals_out if _guardian_of(item) == guardian_did), None)
+    record_answer(
+        guardian_did,
+        request_id,
+        own.get("approved_at") if isinstance(own, dict) else None,
+    )
+    # Once quorum is met the request is closed to the guardians who have not
+    # answered: say so, with how many approved, instead of leaving a notice
+    # that still asks them.
     if count >= APPROVAL_THRESHOLD:
-        guardians = get_guardians(did)
-        for g in guardians:
-            try:
-                mark_read_for_subject(g, "recovery.request", request_id)
-            except Exception:
-                pass
+        record_closure(request_id, did, "quorum", approvals_out)
 
     return ApprovalResult(
         request_id=request_id,

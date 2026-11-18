@@ -25,8 +25,7 @@ REQUEST_CONTEST = "contest"
 from .models import RecoveryRequest, ensure_requests_table
 from .rotation import apply_rotation, KEY_ROTATION_TYPE
 from app.modules import ledger
-from app.modules.notifications import mark_read_for_subject
-from .service import get_guardians
+from .notices import record_closure
 
 __all__ = [
     "JOB_KIND",
@@ -97,8 +96,7 @@ def finalize_recovery_request(request_id: str) -> bool:
             row.status = "finalized"
             session.commit()
     try:
-        for g in get_guardians(did):
-            mark_read_for_subject(g, "recovery.request", request_id)
+        record_closure(request_id, did, "finalized", approvals)
     except Exception:
         pass
     return True

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { tokenStore, api, ApiError, NetworkError } from "../../lib/api";
+import { refreshUnread, type NotificationItem } from "./dashboard";
 import { Card } from "./dashboard-page";
 import { EmptyState } from "../ui-kit";
 import { deviceKey } from "../web-auth";
@@ -39,6 +40,11 @@ export interface GuardianApprovalPageProps {
   decline?: (requestId: string) => Promise<unknown>;
   onApproved?: () => void;
   onDeclined?: () => void;
+  /**
+   * Replace the notifications loader the bell's count is refreshed from after an
+   * answer, for tests or an alternate API client.
+   */
+  loadNotifications?: () => Promise<readonly NotificationItem[]>;
   signedIn?: boolean;
   /** The signed-in guardian's DID; read from the device key when omitted. */
   viewerDid?: string;
@@ -285,6 +291,9 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
         setState({ status: "approved", at: new Date().toISOString() });
         props.onApproved?.();
       }
+      // The API resolved this guardian's notification with the approval: the
+      // bell's count is stale until it is told, so tell it now, not on the next page.
+      void refreshUnread(props.loadNotifications);
     } catch (err) {
       if (mounted.current) setError(err instanceof Error ? err.message : "Approval failed.");
     } finally {
@@ -304,6 +313,7 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
         setState({ status: "declined" });
         props.onDeclined?.();
       }
+      void refreshUnread(props.loadNotifications);
     } catch (err) {
       if (mounted.current) setError(err instanceof Error ? err.message : "Decline failed.");
     } finally {

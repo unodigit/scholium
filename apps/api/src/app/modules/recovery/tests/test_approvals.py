@@ -338,3 +338,128 @@ def test_guardians_are_not_notified_of_approvals(recovery):
 
     after = len([n for n in list_notifications(guardian_did) if n.kind == "recovery.request"])
     assert after == before
+
+
+# --- the guardians' notices record what each guardian did --------------------
+#
+# The notice a guardian opens a request from is later shown as history.  What it
+# says must come from what happened: the guardian's own answer, or the request
+# having closed without them -- never from the notice merely being read.
+
+
+def guardian_notice(recovery, seed: SigningKey):
+    did = did_key_from_signing_key(seed)
+    [row] = [
+        n
+        for n in list_notifications(did)
+        if n.kind == "recovery.request" and n.payload["request_id"] == recovery.request_id
+    ]
+    return row
+
+
+def test_a_pending_request_leaves_every_notice_waiting_for_its_guardian(recovery):
+    assert approve(recovery, recovery.guardians[0]).status_code == 200
+
+    for guardian in recovery.guardians[1:]:
+        row = guardian_notice(recovery, guardian)
+        assert row.read is False
+        assert "answer" not in row.payload
+        assert "closed" not in row.payload
+
+
+def test_an_approval_records_the_guardians_own_answer_on_their_notice(recovery):
+    assert approve(recovery, recovery.guardians[0]).status_code == 200
+
+    row = guardian_notice(recovery, recovery.guardians[0])
+    recorded = stored(recovery).approvals[0]
+    assert row.read is True
+    assert row.payload["answer"] == "approved"
+    assert row.payload["answered_at"] == recorded["approved_at"]
+    assert "closed" not in row.payload
+
+
+def test_a_repeated_approval_keeps_the_first_answer_time(recovery):
+    assert approve(recovery, recovery.guardians[0]).status_code == 200
+    first = guardian_notice(recovery, recovery.guardians[0]).payload["answered_at"]
+
+    assert approve(recovery, recovery.guardians[0]).status_code == 200
+
+    assert guardian_notice(recovery, recovery.guardians[0]).payload["answered_at"] == first
+
+
+def test_a_guardian_who_never_answered_is_told_it_closed_not_that_they_approved(recovery):
+    for guardian in recovery.guardians[:3]:
+        assert approve(recovery, guardian).status_code == 200
+
+    silent = guardian_notice(recovery, recovery.guardians[4])
+    assert silent.read is True
+    assert "answer" not in silent.payload
+    assert "answered_at" not in silent.payload
+    assert silent.payload["closed"] == "quorum"
+    assert silent.payload["approval_count"] == 3
+    assert silent.payload["guardian_count"] == 5
+
+    # The three who did answer keep their own answer, not the closure.
+    for guardian in recovery.guardians[:3]:
+        answered = guardian_notice(recovery, guardian)
+        assert answered.payload["answer"] == "approved"
+        assert "closed" not in answered.payload
+
+
+def test_cancelling_a_request_tells_the_guardians_who_never_answered_it_was_cancelled(recovery):
+    assert approve(recovery, recovery.guardians[0]).status_code == 200
+
+    response = recovery.client.post(
+        f"{REQUESTS_URL}/{recovery.request_id}/cancel", headers=auth(recovery.did)
+    )
+    assert response.status_code == 200, response.text
+
+    silent = guardian_notice(recovery, recovery.guardians[3])
+    assert silent.read is True
+    assert silent.payload["closed"] == "cancelled"
+    assert "answer" not in silent.payload
+    # Their own answer is still theirs, even though the request was cancelled.
+    answered = guardian_notice(recovery, recovery.guardians[0])
+    assert answered.payload["answer"] == "approved"
+    assert "closed" not in answered.payload
+
+
+def test_finalizing_a_request_records_how_many_guardians_approved(recovery, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.recovery import finalize
+
+    for guardian in recovery.guardians[:3]:
+        assert approve(recovery, guardian).status_code == 200
+    with db.SessionLocal() as session:
+        row = session.get(RecoveryRequest, recovery.request_id)
+        row.contest_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        session.commit()
+    monkeypatch.setattr(finalize, "apply_rotation", lambda *_args, **_kwargs: None)
+
+    assert finalize.finalize_recovery_request(recovery.request_id) is True
+
+    silent = guardian_notice(recovery, recovery.guardians[4])
+    assert silent.read is True
+    assert silent.payload["closed"] == "finalized"
+    assert silent.payload["approval_count"] == 3
+    assert silent.payload["guardian_count"] == 5
+    assert "answer" not in silent.payload
+
+
+def test_a_guardian_who_approves_after_quorum_still_has_their_own_answer_recorded(recovery):
+    for guardian in recovery.guardians[:3]:
+        assert approve(recovery, guardian).status_code == 200
+    assert guardian_notice(recovery, recovery.guardians[4]).payload["closed"] == "quorum"
+
+    assert approve(recovery, recovery.guardians[4]).status_code == 200
+
+    late = guardian_notice(recovery, recovery.guardians[4])
+    recorded = next(
+        item
+        for item in stored(recovery).approvals
+        if item["guardian"] == did_key_from_signing_key(recovery.guardians[4])
+    )
+    assert late.read is True
+    assert late.payload["answer"] == "approved"
+    assert late.payload["answered_at"] == recorded["approved_at"]

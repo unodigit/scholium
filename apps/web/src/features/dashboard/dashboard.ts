@@ -13,6 +13,9 @@
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
 
+import { NOTIFICATIONS_CHANGED_EVENT } from "../../components/nav/notifications";
+import { formatDate } from "../ui-kit/format-date";
+
 import { loadProfile, profilePath, type ProfileClient } from "./profile";
 
 /** The `/me` route (docs/design.md §4: Dashboard). */
@@ -740,6 +743,20 @@ export function notificationReadEndpoint(id: number): string {
  */
 export { NOTIFICATIONS_CHANGED_EVENT } from "../../components/nav/notifications";
 
+/**
+ * Tell the bell how many notifications are unread now.
+ *
+ * Whoever knows the count says it: the notifications card after it marks a
+ * row, and any page where a member answers something the API resolves a
+ * notification for (see {@link refreshUnread}).
+ */
+export function announceUnread(unread: number): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(NOTIFICATIONS_CHANGED_EVENT, { detail: { unread } }));
+}
+
 /** One row of `GET /v1/me/notifications` (`NotificationOut`). */
 export interface NotificationItem {
   readonly id: number;
@@ -798,6 +815,25 @@ export async function loadNotifications(
 ): Promise<NotificationItem[]> {
   const payload = await client.get<unknown>(NOTIFICATIONS_ENDPOINT, { cache: "no-store" });
   return parseNotifications(payload);
+}
+
+/**
+ * Ask the API how many notifications are unread and tell the bell.
+ *
+ * An answer given on its own page (approving a recovery request, voting on an
+ * appeal) resolves the member's notification on the server, so the count the
+ * bell holds is already stale. Failing to fetch is not an error worth showing:
+ * the bell keeps its count until the next load.
+ */
+export async function refreshUnread(
+  load: () => Promise<readonly NotificationItem[]> = loadNotifications,
+): Promise<void> {
+  try {
+    const rows = await load();
+    announceUnread(rows.filter((row) => !row.read).length);
+  } catch {
+    // Offline or signed out mid-flight: leave the bell as it is.
+  }
 }
 
 /**
@@ -862,6 +898,12 @@ function consentSubject(payload: Readonly<Record<string, unknown>>): {
  *
  * An answered notification is a record of what they did, not a call to do it
  * again: it is worded in the past tense and carries no action link.
+ *
+ * Only these kinds are worded from the read flag, because nothing records
+ * their answer yet. A recovery request and an appeal panel seat do -- the API
+ * writes what the member did into the payload -- so their wording comes from
+ * that (see {@link recoverySummary}), never from the notice having been read:
+ * opening a notice or marking it read is not answering it.
  */
 function answeredSummary(
   kind: string,
@@ -876,17 +918,6 @@ function answeredSummary(
       }
       return `You signed your consent${versionPart}.`;
     }
-    case "recovery.request": {
-      const requester =
-        readText(payload.account_name) ??
-        readText(payload.name) ??
-        readText(payload.accountName) ??
-        readText(payload.requester_name) ??
-        readText(payload.requesterName);
-      return requester
-        ? `You approved the recovery request from ${requester}.`
-        : "You approved the recovery request.";
-    }
     case "email.verify":
       return "You confirmed your email address.";
     case "review.invitation":
@@ -896,20 +927,62 @@ function answeredSummary(
         ? `You responded to the invitation to review "${title}".`
         : "You responded to the invitation to review a paper.";
     }
-    case "appeal.panel": {
-      const title = readText(payload.title);
-      return title
-        ? `You voted on the appeal for "${title}".`
-        : "You voted on an appeal panel.";
-    }
     default:
       return null;
   }
 }
 
+/** Who a recovery request is from, as the notice's payload names them. */
+function recoveryRequester(payload: Readonly<Record<string, unknown>>): string | null {
+  return (
+    readText(payload.account_name) ??
+    readText(payload.name) ??
+    readText(payload.accountName) ??
+    readText(payload.requester_name) ??
+    readText(payload.requesterName)
+  );
+}
+
+/**
+ * The sentence for what is on record about a recovery request, or `null` when
+ * nothing is: the request is still waiting for this guardian.
+ *
+ * Their own answer (`answer`, `answered_at`) is the only thing that reads
+ * "You approved". A request that closed without them (`closed`, with how many
+ * of the guardians had approved) says that it closed, or that it was
+ * cancelled. The guardian's answer wins when both are recorded.
+ */
+function recoverySummary(payload: Readonly<Record<string, unknown>>): string | null {
+  const requester = recoveryRequester(payload);
+  const from = requester ? ` from ${requester}` : "";
+  const answer = readText(payload.answer);
+  if (answer === "approved" || answer === "declined") {
+    const on = formatDate(readText(payload.answered_at));
+    const verb = answer === "approved" ? "approved" : "declined";
+    return `You ${verb} the recovery request${from}${on ? ` on ${on}` : ""}.`;
+  }
+  const closed = readText(payload.closed);
+  if (closed === null) {
+    return null;
+  }
+  if (closed === "cancelled") {
+    return `The recovery request${from} was cancelled.`;
+  }
+  const approved = readNumber(payload.approval_count);
+  const guardians = readNumber(payload.guardian_count);
+  return approved !== null && guardians !== null
+    ? `The recovery request${from} closed (${Math.trunc(approved)} of ${Math.trunc(guardians)} guardians approved).`
+    : `The recovery request${from} closed.`;
+}
+
 /** One plain sentence for what happened, never the payload's keys. */
 export function notificationSummary({ kind, payload, read }: NotificationLike): string {
-  if (read === true) {
+  if (kind === "recovery.request") {
+    const recorded = recoverySummary(payload);
+    if (recorded !== null) {
+      return recorded;
+    }
+  } else if (read === true) {
     const answered = answeredSummary(kind, payload);
     if (answered !== null) {
       return answered;
@@ -926,12 +999,7 @@ export function notificationSummary({ kind, payload, read }: NotificationLike): 
       return `A co-author consent is waiting for your signature${versionPart}.`;
     }
     case "recovery.request": {
-      const requester =
-        readText(payload.account_name) ??
-        readText(payload.name) ??
-        readText(payload.accountName) ??
-        readText(payload.requester_name) ??
-        readText(payload.requesterName);
+      const requester = recoveryRequester(payload);
       return requester
         ? `A recovery request from ${requester} needs your approval as a guardian.`
         : "A recovery request needs your approval as a guardian.";
@@ -977,9 +1045,32 @@ export function notificationSummary({ kind, payload, read }: NotificationLike): 
   }
 }
 
-/** The reason a moderator or panel gave, when the notification carries one. */
-export function notificationDetail({ payload }: Pick<NotificationItem, "payload">): string | null {
-  return readText(payload.reason);
+/** Lower-cased, single-spaced text with no closing full stop, for comparing. */
+function comparable(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "");
+}
+
+/**
+ * The reason a moderator or panel gave, when the notification carries one and
+ * its sentence does not already say it.
+ *
+ * A reporter's notice names their own category in the sentence ("The post you
+ * reported as "Off topic" ..."), so the same words on a line beneath it would
+ * say one thing twice.
+ */
+export function notificationDetail(
+  item: Pick<NotificationItem, "payload"> & Partial<Pick<NotificationItem, "kind" | "read">>,
+): string | null {
+  const reason = readText(item.payload.reason);
+  if (reason === null) {
+    return null;
+  }
+  const sentence = notificationSummary({
+    kind: item.kind ?? "",
+    payload: item.payload,
+    read: item.read,
+  });
+  return comparable(sentence).includes(comparable(reason)) ? null : reason;
 }
 
 /** A path segment, with `:` left readable as the API's own links leave it. */
