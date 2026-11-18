@@ -162,8 +162,9 @@ describe("FollowedCategoriesCard on /me", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Follows" })).toBeTruthy();
+    // The heading is there while the list still loads; wait for the links.
     expect(
-      screen.getByRole("link", { name: "cs.AI" }).getAttribute("href"),
+      (await screen.findByRole("link", { name: "cs.AI" })).getAttribute("href"),
     ).toBe("/c/cs.AI");
     expect(
       screen.getByRole("link", { name: "cs.LG" }).getAttribute("href"),
