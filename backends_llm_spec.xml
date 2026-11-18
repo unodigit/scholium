@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Supported backends and LLM providers (2026-11-18). Decisions taken with the user:
+  - Backends: PostgreSQL and an S3-API object store (the db and minio services of compose.yaml) are the supported
+    backends. SQLite is deprecated: production refuses it, every other environment logs a deprecation warning, and it
+    stays only as the throwaway database of npm test, the claw-forge gate and the Playwright journeys (no containers
+    there). No SQLite code path is removed in this spec.
+  - LLM: AI_PROVIDER names a wire protocol, not a vendor. "anthropic" gains a configurable base URL; a new "openai"
+    provider speaks the OpenAI Chat Completions protocol to any compatible endpoint. DeepSeek (the likely provider)
+    works through either: https://api.deepseek.com (OpenAI protocol) or https://api.deepseek.com/anthropic.
+  - "Check podman compose": the compose stack is the reference shape; developers run the API on the host against the
+    stack's PostgreSQL, MinIO and Mailpit, and the stack scripts refuse a podman-compose too old for compose.yaml.
+  Deployment target (Cloudflare-only) is out of scope here.
+-->
+<project_specification mode="brownfield">
+  <project_name>Scholium — PostgreSQL-only backends and OpenAI-compatible LLM providers</project_name>
+  <addition_summary>
+    Make PostgreSQL and S3-API object storage the only supported backends for running Scholium: production refuses a
+    SQLite database or filesystem storage, every other environment warns that SQLite is deprecated, the delivery files
+    stop defaulting to SQLite, and developers get one command that starts the compose stack's PostgreSQL, MinIO and
+    Mailpit for running the API on the host. In the same change, the AI pre-review pipeline gains an OpenAI-compatible
+    provider and a configurable Anthropic base URL, so any endpoint speaking either protocol (DeepSeek in particular)
+    can serve the reviews without vendor-specific code.
+  </addition_summary>
+
+  <existing_context>
+    <stack>Python 3.12 / FastAPI / SQLAlchemy 2.0 / PostgreSQL 16 or SQLite (apps/api, uv workspace) + Next.js App Router / TypeScript / Tailwind (apps/web, npm workspace); compose.yaml stack with PostgreSQL (pgvector pg16), MinIO, Mailpit, api, worker and web</stack>
+    <test_baseline>web measured 2026-11-18: 268 files, 5464 tests passed (npm test --workspace apps/web, on the Next 16 branch); API suite unmeasured in this session, run cd apps/api &amp;&amp; uv run --all-packages pytest before relying on it</test_baseline>
+    <conventions>Modules under apps/api/src/app/modules/&lt;name&gt; with colocated tests/ folders; settings read from env vars in app/settings.py and checked by Settings.validate_for_environment (production lists every problem in one RuntimeError); AI providers under app/modules/ai_review/providers implement LLMProvider and register in providers/__init__.py; HTTP clients are httpx and injectable for tests; pytest with xdist (-n 4); system tests in tests/e2e run the shipped programs (npm run test:system); npm only, root package.json holds scripts only</conventions>
+  </existing_context>
+
+  <features_to_add>
+    <category name="Supported backends">
+      <feature index="1" shape="core" depends_on=""
+               touches_files="apps/api/src/app/settings.py,apps/api/tests/test_app_factory.py,apps/api/tests/test_node_key_env.py,tests/e2e/test_startup_config.py"
+               creates="apps/api/tests/test_production_backends.py">
+        <description>System refuses SQLite and filesystem storage in production: with SCHOLIUM_ENV=production, Settings.validate_for_environment adds "DATABASE_URL must be a PostgreSQL URL in production (SQLite is deprecated)" when the scheme of DATABASE_URL is anything other than postgres, postgresql or postgresql+psycopg (sqlite:///, sqlite+pysqlite://, in-memory SQLite, mysql:// and the unset default sqlite:///./scholium.db all get it) and "STORAGE_BACKEND must be s3 in production" when STORAGE_BACKEND is fs, listed together with every other problem in the one Unsafe production configuration error; postgres://, postgresql:// and postgresql+psycopg:// URLs with STORAGE_BACKEND=s3 pass these two checks; dev and test environments still accept SQLite and fs; existing unit tests that build a passing production configuration set a PostgreSQL URL and S3 settings, and the system test that boots a complete production configuration uses the FakeS3 server that tests/e2e/conftest.py already provides through NodeFactory.s3() and the PostgreSQL named by TEST_DATABASE_URL, skipping with the reason "needs TEST_DATABASE_URL (PostgreSQL)" when it is unset</description>
+      </feature>
+      <feature index="2" shape="core" depends_on=""
+               touches_files="apps/api/src/app/db.py"
+               creates="apps/api/tests/test_sqlite_deprecation.py">
+        <description>System warns that SQLite is deprecated outside production: the first time a process builds a SQLite engine, app/db.py writes one WARNING record to the log through the logger named "app.db" (the logging module, not warnings.warn) saying "SQLite is deprecated; use PostgreSQL and move existing data with python -m app.migrate_backend (see docs/deploy.md). SQLite remains only for tests and local development", the api and the worker build their engines through app/db.py and each log it at most once per process, and no warning is logged for a PostgreSQL engine; a module-level function in app/db.py resets the once-per-process flag so tests can start from a clean state; a test that captures the log sees exactly one WARNING record with that message after two SQLite engines are built, and none after a PostgreSQL engine is built</description>
+      </feature>
+      <feature index="3" shape="core" depends_on=""
+               touches_files="deploy/containers/api.Containerfile,.env.example,tests/e2e/test_delivery_wiring.py">
+        <description>System stops defaulting to SQLite in its delivery files: the api image no longer sets DATABASE_URL (a container started without one gets the settings default sqlite:///./scholium.db, which stays the development default and which production refuses), .env.example shows the compose PostgreSQL URL postgresql+psycopg://scholium:scholium-local-only@db:5432/scholium as the example DATABASE_URL and says SQLite is deprecated, and a delivery-wiring test asserts that no ENV or ARG line of a Containerfile under deploy/containers and no uncommented KEY=value line of .env.example holds a sqlite URL (comments may still mention SQLite)</description>
+      </feature>
+      <feature index="4" shape="core" depends_on=""
+               touches_files="package.json,scripts/stack-smoke.sh"
+               creates="scripts/stack-compose.sh,tests/e2e/test_stack_compose_script.py">
+        <description>System starts only the backing services when a developer runs npm run stack:deps, which brings up the db, minio, minio-init and mailpit services of compose.yaml and leaves api, worker and web stopped; stack:up, stack:down, stack:logs, stack:reset, stack:deps and stack:smoke run their compose commands through scripts/stack-compose.sh, executed with the compose arguments (for example scripts/stack-compose.sh up -d --build), which picks the engine as today (STACK_COMPOSE, else podman-compose, else docker compose) and, whenever the chosen engine is podman-compose (auto-detected or named in STACK_COMPOSE), reads the first X.Y.Z from its --version output and refuses a podman-compose older than 1.6.0 with exit status 1 and a message naming the installed version, why (nested ${A:-${B}} defaults and COMPOSE_PROFILES in compose.yaml need 1.6.0) and the fix (pipx install podman-compose, or STACK_COMPOSE="docker compose"); a test runs the script against fake engine executables that print "podman-compose version 1.0.6" and "podman-compose version 1.6.0" and checks the exit status and the arguments passed through</description>
+      </feature>
+    </category>
+
+    <category name="LLM providers">
+      <feature index="5" shape="core" depends_on=""
+               touches_files="apps/api/src/app/settings.py,apps/api/tests/test_app_factory.py"
+               creates="apps/api/tests/test_ai_provider_settings.py">
+        <description>System reads the LLM provider settings: AI_PROVIDER accepts fake, anthropic, openai and ollama, and any other value is refused in every environment by the same Settings check that refuses an unknown JOBS_MODE, with an error listing the accepted values; new string settings ANTHROPIC_BASE_URL (empty string when unset, meaning the Anthropic SDK default), OPENAI_API_KEY (empty string when unset) and OPENAI_BASE_URL (default https://api.openai.com/v1, trailing slash removed) are read from the environment as Settings attributes of those names; production refuses AI_PROVIDER=openai without OPENAI_API_KEY, and refuses AI_PROVIDER=openai when the AI_HOSTED_MODEL environment variable is unset or empty, because its default is an Anthropic model id; no setting value of an API key appears in any error message</description>
+      </feature>
+      <feature index="6" shape="core" depends_on="5"
+               touches_files="apps/api/src/app/modules/ai_review/providers/__init__.py"
+               creates="apps/api/src/app/modules/ai_review/providers/openai_provider.py,apps/api/src/app/modules/ai_review/tests/test_openai_provider.py">
+        <description>System generates AI pre-reviews through any OpenAI-compatible endpoint with AI_PROVIDER=openai: OpenAIProvider (name "openai", hosted, so unlisted drafts are refused before any request) takes model, base_url, api_key, client and sleep as optional constructor arguments that default to settings.AI_HOSTED_MODEL, settings.OPENAI_BASE_URL, settings.OPENAI_API_KEY, a lazily built client and time.sleep (so get_provider keeps calling it with no arguments), and POSTs to base_url + "/chat/completions" with Authorization: Bearer OPENAI_API_KEY, the AI_HOSTED_MODEL model, a system message holding the instructions and a user message holding the data blocks quoted as &lt;data id="..."&gt; exactly as the Ollama provider quotes them, max_tokens from the request, temperature 0 and stream false; it returns choices[0].message.content as the text (ignoring any reasoning_content) and the response's model as the model; a non-2xx answer that is not retried raises an error naming the provider and the HTTP status without the key; it retries a 429 or 5xx answer, a timeout or a dropped connection at most 2 more times (3 requests in total) with exponential backoff starting at 1 second, waiting the Retry-After value instead when the header holds a whole number of seconds (capped at 30 seconds; any other form falls back to the backoff), raises an error naming the provider and the exception class when a timeout or dropped connection outlasts the retries, and never retries any other 4xx; an answer with no choices, null or empty message content, or finish_reason "length" raises an error naming the provider and the reason instead of returning a partial review; the httpx client can be injected, otherwise one with a 120 second timeout is built on first use; tests use httpx.MockTransport and a fake sleep, and check the URL, headers, body, parsing, the unlisted refusal, each retry case with the number of requests made, and each rejected answer</description>
+      </feature>
+      <feature index="7" shape="core" depends_on="5"
+               touches_files="apps/api/src/app/modules/ai_review/providers/anthropic_provider.py,apps/api/src/app/modules/ai_review/tests/test_providers.py">
+        <description>System sends Anthropic-protocol requests to the endpoint named by ANTHROPIC_BASE_URL: AnthropicProvider takes an optional base_url constructor argument defaulting to settings.ANTHROPIC_BASE_URL (get_provider keeps calling it with no arguments); when that is non-empty it builds its client with that base_url (for example https://api.deepseek.com/anthropic) and the same API key handling as today; when it is empty the client uses the SDK default exactly as before; a test checks the base URL the client is built with in both cases</description>
+      </feature>
+      <feature index="8" shape="core" depends_on="3,5"
+               touches_files="compose.yaml,.env.example">
+        <description>System passes the provider settings through the stack: compose.yaml passes ANTHROPIC_BASE_URL, OPENAI_API_KEY and OPENAI_BASE_URL to the api and worker with empty defaults, AI_PROVIDER keeps its fake default, and .env.example lists the three new settings with placeholders plus commented DeepSeek examples for both protocols (AI_PROVIDER=openai with OPENAI_BASE_URL=https://api.deepseek.com, and AI_PROVIDER=anthropic with ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic), each with AI_HOSTED_MODEL set to a placeholder model id rather than a real one</description>
+      </feature>
+      <feature index="9" shape="integration" depends_on="6,8"
+               creates="tests/e2e/test_openai_compatible_review.py">
+        <description>System produces an AI pre-review through a running OpenAI-compatible server: a system test runs a stub HTTP server on 127.0.0.1 inside the test process that records each request and answers POST /v1/chat/completions with a fixed completion, starts the api with JOBS_MODE=thread, AI_PROVIDER=openai, OPENAI_BASE_URL=http://127.0.0.1:&lt;stub port&gt;/v1, a test key and AI_HOSTED_MODEL=stub-model through the node environment, submits and lists a paper with the existing tests/e2e/e2e_harness.py helpers (a version becoming listed enqueues the ai_review job), and asserts that GET /v1/papers/{id}/ai-reviews returns a review naming provider openai and model stub-model and that the stub received the bearer key</description>
+      </feature>
+      <feature index="12" shape="core" depends_on="4,6,7"
+               touches_files="apps/api/pyproject.toml,package.json"
+               creates="apps/api/tests/test_llm_live.py,deploy/llm-live.env.tpl">
+        <description>System checks both providers against a real endpoint when a developer runs npm run test:llm-live, which runs the apps/api tests marked live_llm, which the default pytest run excludes (addopts becomes -m 'not slow and not live_llm'), and each test sends one listed request with one quoted data block through AnthropicProvider (base_url LLM_LIVE_BASE_URL as given) and through OpenAIProvider (base_url LLM_LIVE_OPENAI_BASE_URL, else LLM_LIVE_BASE_URL with /v1 appended) using LLM_LIVE_API_KEY and LLM_LIVE_MODEL passed as constructor arguments, asserting non-empty text, the echoed model, and that no thinking block or reasoning_content text reaches the returned text; every live_llm test is skipped with the reason "LLM_LIVE_BASE_URL, LLM_LIVE_API_KEY and LLM_LIVE_MODEL are not set" when any is missing; the variables are deliberately not the ANTHROPIC_* or OPENAI_* names, so injecting them never reroutes other tools; deploy/llm-live.env.tpl holds the 1Password references LLM_LIVE_BASE_URL=op://VAULT/ITEM/model-iq-base-url, LLM_LIVE_API_KEY=op://VAULT/ITEM/model-iq-key and LLM_LIVE_MODEL=deepseek-v4-1-flash for op run --env-file=deploy/llm-live.env.tpl -- npm run test:llm-live, and the key never appears in test output</description>
+      </feature>
+    </category>
+
+    <category name="Documentation">
+      <feature index="10" shape="integration" depends_on="1,2,3,4,5,6,7,8,12"
+               touches_files="docs/deploy.md,docs/tech_architect.md,CLAUDE.md">
+        <description>System documents the supported backends and providers: docs/deploy.md marks SQLite deprecated (tests and local development only; a production start on SQLite or STORAGE_BACKEND=fs stops with the Unsafe production configuration error naming DATABASE_URL or STORAGE_BACKEND), shows moving an existing SQLite and fs node to PostgreSQL and S3 with python -m app.migrate_backend, shows host development against npm run stack:deps with the values for the ports compose.yaml publishes (DATABASE_URL=postgresql+psycopg://scholium:scholium-local-only@127.0.0.1:5433/scholium, STORAGE_BACKEND=s3, S3_ENDPOINT_URL=http://127.0.0.1:9000, S3_FORCE_PATH_STYLE=1, the MinIO user and password as S3 keys, SMTP_URL=smtp://127.0.0.1:1025), states the podman-compose 1.6.0 minimum, adds STORAGE_BACKEND=s3 and a PostgreSQL DATABASE_URL to the production checklist, and documents AI_PROVIDER=openai, OPENAI_API_KEY, OPENAI_BASE_URL and ANTHROPIC_BASE_URL with DeepSeek shown for both protocols and the model id left to the provider's documentation, and documents the opt-in npm run test:llm-live check run through op run with deploy/llm-live.env.tpl; docs/tech_architect.md names PostgreSQL and S3-API storage as the supported backends; the CLAUDE.md Stack section says PostgreSQL 16 with SQLite deprecated (tests only) and lists npm run stack:deps</description>
+      </feature>
+    </category>
+
+    <category name="End-to-End Verification">
+      <feature index="11" shape="integration" depends_on="1,2,3,4,5,6,7,8,9,10"
+               touches_files="apps/api/src/app/**,tests/e2e/**">
+        <description>System passes every suite after the change: npm test exits 0 with no containers running (SQLite stays the test database there), npm run test:pg exits 0 against PostgreSQL 16, and npm run test:system exits 0 with TEST_DATABASE_URL set, including the production-boot and OpenAI-compatible review tests; starting python -m app with SCHOLIUM_ENV=production and a sqlite DATABASE_URL exits non-zero naming DATABASE_URL, and with STORAGE_BACKEND=fs exits non-zero naming STORAGE_BACKEND, and starting it in dev on SQLite writes the "SQLite is deprecated" warning to its log once and serves /readyz with 200; this feature fixes in application code whatever stops these from holding, it does not re-implement features 1 to 9</description>
+      </feature>
+    </category>
+  </features_to_add>
+
+  <integration_points>
+    app/settings.py: production validation gains the database and storage checks; AI_PROVIDER validation and the ANTHROPIC_BASE_URL, OPENAI_API_KEY and OPENAI_BASE_URL settings
+    app/db.py: one deprecation warning per process when the engine is SQLite
+    app/modules/ai_review/providers: new openai_provider.py registered in __init__.py; anthropic_provider.py honours ANTHROPIC_BASE_URL
+    compose.yaml and .env.example pass and describe the new provider settings
+    Root package.json gains the stack:deps script and routes the stack:* scripts through scripts/stack-compose.sh
+    deploy/containers/api.Containerfile drops its sqlite DATABASE_URL default
+    tests/e2e gains the OpenAI-compatible review test; the production-boot test moves to PostgreSQL and S3
+    Opt-in npm run test:llm-live (pytest marker live_llm) with 1Password references in deploy/llm-live.env.tpl, run through op run
+  </integration_points>
+
+  <constraints>
+    <constraint>npm test must keep passing with no containers, no network and no credentials: SQLite stays the database of npm test, the claw-forge gate and the Playwright journeys, and nothing in this spec makes those suites need PostgreSQL</constraint>
+    <constraint>Deprecation only: no SQLite code path (FTS5 search index, SQLite ledger triggers, dialect branches, app.migrate_backend's SQLite source) is removed or changed in behaviour</constraint>
+    <constraint>All existing tests must stay green; change a test only where it builds a production configuration that the new database or storage checks now refuse, and then give it a PostgreSQL URL and S3 settings rather than weakening the check</constraint>
+    <constraint>No new runtime dependency: the OpenAI-compatible provider uses httpx, already a dependency; do not add the openai SDK</constraint>
+    <constraint>Provider ids name protocols, not vendors: no DeepSeek-specific code, setting or model default anywhere under apps/; DeepSeek appears only in documentation, commented .env.example examples and the live-check template deploy/llm-live.env.tpl</constraint>
+    <constraint>Live LLM checks are opt-in only: no test in npm test, the claw-forge gate, test:pg or test:system calls a real LLM endpoint, and .env.tpl (which run.sh injects into claw-forge agents) gains no ANTHROPIC_*, OPENAI_* or LLM_LIVE_* entry</constraint>
+    <constraint>Every hosted provider keeps the listed-only guard of LLMProvider.complete: unlisted drafts are refused before any network request</constraint>
+    <constraint>API keys never appear in logs, error messages, review records or test output</constraint>
+    <constraint>Semantic search embeddings are out of scope: the hashing embedder stays the default and OLLAMA_URL keeps selecting Ollama embeddings; the new provider serves chat completions only</constraint>
+    <constraint>Never add dependencies to the root package.json (scripts only); use npm, never pnpm or yarn; compose files keep working with podman-compose 1.6.0 or later and with docker compose</constraint>
+  </constraints>
+
+  <success_criteria>
+    npm test is green with no containers running
+    npm run test:pg is green against PostgreSQL 16
+    npm run test:system is green with TEST_DATABASE_URL set
+    npm run stack:deps starts PostgreSQL, MinIO and Mailpit only, and the API runs on the host against them
+    A production start on SQLite or filesystem storage is refused with the reason
+    AI_PROVIDER=openai produces AI pre-reviews through an OpenAI-compatible endpoint, and AI_PROVIDER=anthropic honours ANTHROPIC_BASE_URL
+    op run --env-file=deploy/llm-live.env.tpl -- npm run test:llm-live passes against the model-iq gateway on both protocols
+  </success_criteria>
+</project_specification>

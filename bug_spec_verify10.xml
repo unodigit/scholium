@@ -44,4 +44,26 @@
     <actual>As described</actual>
   </bug>
 
+  <bug index="3" shape="core" severity="high" depends_on="1"
+       touches_files="apps/api/src/app/modules/appeals/**">
+    <title>The public appeal detail leaks the opening of the hidden post, or the still-sealed review report, that the appeal is about</title>
+    <symptoms>
+      GET /v1/appeals/{cid} needs no token (appeals/router.py get_appeal_detail: "any reader may see it"), and it returns excerpt and target_link built by appeals/subject.py describe_subject, which calls moderation/outcomes.excerpt(): the first characters of a discussion post's text or a formal review's report, read straight from the ledger with no check of moderation hides or of the version's report gate
+      So anyone who knows an appeal id reads the opening of the post a moderator hid; for an appeal on a decision about a formal review, the excerpt shows the report before reviews/history.py report_gate_open would serve it ("a sealed report stays out")
+      Found by an automated security review of 895dc62 (Appeal polish), 2026-11-18
+    </symptoms>
+    <reproduction_steps>
+      1. As a tier-4 moderator, hide a discussion post (moderation decision with action hide)
+      2. As the post's author, file an appeal on that decision and note the appeal cid
+      3. With no Authorization header, GET /v1/appeals/{appeal_cid}: excerpt holds the hidden post's text and target_link points at it
+      4. Repeat with a decision about a formal review on a version whose report gate is still closed: excerpt holds the sealed report's text
+    </reproduction_steps>
+    <expected>excerpt and target_link are filled only for a caller who may judge or contest the decision: a member seated on the appeal's panel, a tier-4 moderator, or the appellant; for every other caller, including a caller with no token, both are null. Whatever the caller, a formal review's report excerpt is withheld while that version's report gate is closed unless the caller is a tier-4 moderator or the review's author. API tests cover an anonymous reader, an unrelated signed-in reader, a seated member, a moderator and the appellant, for a hidden post and for a sealed review</expected>
+    <actual>Every reader, signed in or not, gets the excerpt and link of hidden content and of sealed review reports</actual>
+    <constraints>
+      <constraint>The appeal itself stays a public record: id, decision, appellant, grounds, status, filed date, outcome and resolution are returned to every reader as today; target_cid, target_kind, record_type, paper_title and decision_action stay public because the public decision record already names them</constraint>
+      <constraint>Panel visibility (panel, viewer_on_panel, viewer_vote) keeps its current rules</constraint>
+    </constraints>
+  </bug>
+
 </bug_spec>
