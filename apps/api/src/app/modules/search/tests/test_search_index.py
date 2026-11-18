@@ -1,10 +1,18 @@
 """Tests for saving listed versions into ``search_fts`` (feature 85).
 
-Covers: the FTS5 table and its columns; a version's title, abstract and text
-landing in the index when it is listed (and only then); ``held`` and
-``rejected`` removing it and re-listing restoring it with current text; the
-ledger's ``paper.version`` subscription as a path of its own; idempotence and
-concurrency; the repair pass; and discovery by the module loader.
+Covers: the index and its columns on both dialects (SQLite's FTS5 virtual
+table; PostgreSQL's weighted ``tsvector`` behind a GIN index); a version's
+title, authors, abstract and text landing in the index when it is listed (and
+only then); ``held`` and ``rejected`` removing it and re-listing restoring it
+with current text; the ledger's ``paper.version`` subscription as a path of
+its own; idempotence and concurrency; the repair pass; and discovery by the
+module loader.
+
+The tests are written for whichever database the suite runs against: the
+default lane is SQLite, and ``npm run test:pg`` runs the same file against
+PostgreSQL.  Places where the two dialects genuinely differ (FTS5 syntax,
+``sqlite_master``, the ``tsvector`` column) branch on
+:data:`IS_POSTGRES`; the behaviour they assert is the same.
 
 The two triggers are exercised separately.  ``save_version`` and
 ``transition_version`` both emit ``version.state_changed``, so a test of the
@@ -17,16 +25,17 @@ random cids and asserts on its own rows, never on table totals.
 
 from __future__ import annotations
 
-import sys
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 from scholium_record_core import compute_record_id, did_key_from_signing_key, sign_record
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app import db, module_loader
 from app.modules import checks, ledger, search
@@ -39,6 +48,7 @@ from app.modules.submissions import (
     MODERATION,
     REJECTED,
     SCANNING,
+    VersionAuthor,
     VersionStateChanged,
     clear_state_changed_subscribers,
     emit_state_changed,
@@ -51,6 +61,13 @@ from app.modules.submissions import (
 
 PAPER_VERSION_TYPE = "paper.version"
 AUTHOR = "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb"
+
+#: The suite's database for this worker.  ``npm test`` uses SQLite; the opt-in
+#: ``npm run test:pg`` lane runs everything below against PostgreSQL.
+IS_POSTGRES = db.engine.dialect.name == "postgresql"
+
+#: Index field -> ``tsvector`` weight, for the PostgreSQL field filter.
+_TSVECTOR_WEIGHTS = {"title": "A", "authors": "B", "abstract": "C", "body": "D"}
 
 
 # --------------------------------------------------------------------------- #
@@ -81,6 +98,7 @@ def make_version(
     title: str = "A study of dormant pulsars",
     abstract: str = "We observe pulsars.",
     state: str = AWAITING_CONSENT,
+    authors: tuple[VersionAuthor, ...] = (),
 ) -> str:
     """Save a version directly and return its cid."""
     cid = version_cid or new_cid()
@@ -94,6 +112,7 @@ def make_version(
         licence="CC-BY-4.0",
         prev_cid=None,
         state=state,
+        authors=authors,
     )
     return cid
 
@@ -104,16 +123,41 @@ def list_version(cid: str) -> None:
     transition_version(cid, LISTED)
 
 
-def match(query: str) -> list[str]:
-    """The version cids ``search_fts`` finds for an FTS5 ``query``."""
-    with db.engine.connect() as connection:
-        return [
-            row[0]
-            for row in connection.execute(
-                text("SELECT version_cid FROM search_fts WHERE search_fts MATCH :q"),
-                {"q": query},
+def match(*words: str, field: str | None = None) -> list[str]:
+    """The version cids the index finds for ``words`` (ANDed).
+
+    With ``field``, only that field may hold the (single) word.  SQLite asks
+    FTS5 (``MATCH``, with its ``field : word`` and quoted-token syntax);
+    PostgreSQL asks the ``document`` tsvector (``plainto_tsquery``, or
+    ``to_tsquery`` with a weight restriction).
+    """
+    if IS_POSTGRES:
+        if field is None:
+            query = " ".join(words)
+            sql = text(
+                "SELECT version_cid FROM search_fts "
+                "WHERE document @@ plainto_tsquery('simple', :q)"
             )
-        ]
+        else:
+            query = f"'{words[0]}':{_TSVECTOR_WEIGHTS[field]}"
+            sql = text(
+                "SELECT version_cid FROM search_fts "
+                "WHERE document @@ to_tsquery('simple', :q)"
+            )
+    else:
+        if field is None:
+            query = " AND ".join(f'"{word}"' for word in words)
+        else:
+            query = f"{field} : {words[0]}"
+        sql = text("SELECT version_cid FROM search_fts WHERE search_fts MATCH :q")
+
+    with db.engine.connect() as connection:
+        return [row[0] for row in connection.execute(sql, {"q": query})]
+
+
+def table_columns() -> list[str]:
+    """The columns of ``search_fts`` on the configured database."""
+    return [column["name"] for column in inspect(db.engine).get_columns("search_fts")]
 
 
 def row_count(cid: str) -> int:
@@ -150,6 +194,39 @@ def paper_version_envelope() -> dict:
 # --------------------------------------------------------------------------- #
 
 
+def test_the_index_is_supported_on_the_configured_dialect():
+    assert search.supported() is True
+    assert search.ensure_table() is True
+    assert inspect(db.engine).has_table("search_fts")
+
+
+def test_supported_is_true_for_postgresql(monkeypatch):
+    """``supported()`` says yes to PostgreSQL as well as to SQLite."""
+
+    class _Dialect:
+        name = "postgresql"
+
+    class _Engine:
+        dialect = _Dialect()
+
+    monkeypatch.setattr(db, "engine", _Engine())
+
+    assert search.supported() is True
+
+
+def test_supported_is_false_for_a_dialect_with_neither_fts5_nor_tsvector(monkeypatch):
+    class _Dialect:
+        name = "mysql"
+
+    class _Engine:
+        dialect = _Dialect()
+
+    monkeypatch.setattr(db, "engine", _Engine())
+
+    assert search.supported() is False
+
+
+@pytest.mark.skipif(IS_POSTGRES, reason="FTS5 is SQLite's shape")
 def test_search_fts_is_an_fts5_table_with_the_spec_columns():
     assert search.ensure_table() is True
 
@@ -157,22 +234,141 @@ def test_search_fts_is_an_fts5_table_with_the_spec_columns():
         sql = connection.execute(
             text("SELECT sql FROM sqlite_master WHERE name = 'search_fts'")
         ).scalar_one()
-        columns = [
-            row[1] for row in connection.execute(text("PRAGMA table_info(search_fts)"))
-        ]
 
     assert "fts5" in sql.lower()
-    assert columns == ["version_cid", "title", "abstract", "body"]
+    assert table_columns() == ["version_cid", "title", "abstract", "body"]
 
 
-def test_version_cid_is_stored_but_not_searchable():
-    cid = make_version(title="Indexed words only")
+def test_the_index_has_a_column_for_every_indexed_field():
+    """Title, authors (PostgreSQL), abstract and body are all stored."""
+    assert search.ensure_table() is True
+    assert table_columns()[:2] == ["version_cid", "title"]
+    assert "abstract" in table_columns()
+    assert "body" in table_columns()
+
+
+@pytest.mark.skipif(not IS_POSTGRES, reason="tsvector and GIN are PostgreSQL's shape")
+def test_the_postgres_index_is_a_weighted_tsvector_behind_a_gin_index():
+    assert search.ensure_table() is True
+
+    assert table_columns() == [
+        "version_cid",
+        "title",
+        "authors",
+        "abstract",
+        "body",
+        "document",
+    ]
+    with db.engine.connect() as connection:
+        data_type = connection.execute(
+            text(
+                "SELECT atttypid::regtype::text FROM pg_attribute "
+                "WHERE attrelid = 'search_fts'::regclass AND attname = 'document'"
+            )
+        ).scalar_one()
+        definitions = list(
+            connection.execute(
+                text("SELECT indexdef FROM pg_indexes WHERE tablename = 'search_fts'")
+            ).scalars()
+        )
+
+    assert data_type == "tsvector"
+    assert any("using gin (document)" in d.lower() for d in definitions)
+
+
+@pytest.mark.skipif(not IS_POSTGRES, reason="tsvector weights are PostgreSQL's shape")
+def test_the_postgres_document_weights_title_authors_abstract_and_body():
+    title_word, author_word, abstract_word, body_word = (unique_word() for _ in range(4))
+    cid = make_version(
+        title=title_word,
+        abstract=abstract_word,
+        authors=(VersionAuthor(did=author_word, position=1, credit_roles=None),),
+    )
+    checks.save_paragraphs(cid, [body_word])
+
     list_version(cid)
-    assert search.is_indexed(cid)
 
-    # The cid is in the row, but UNINDEXED: it is not a token anything matches.
-    assert match(f'"{cid}"') == []
-    assert match("indexed") == [cid]
+    with db.engine.connect() as connection:
+        document = connection.execute(
+            text("SELECT document::text FROM search_fts WHERE version_cid = :cid"),
+            {"cid": cid},
+        ).scalar_one()
+    for word, weight in (
+        (title_word, "A"),
+        (author_word, "B"),
+        (abstract_word, "C"),
+    ):
+        assert re.search(rf"'{word}':\d+{weight}", document)
+    # ``D`` is tsvector's default weight, so PostgreSQL prints it without a
+    # letter: the body word must carry no marker at all.
+    assert re.search(rf"'{body_word}':\d+(?![A-D])", document)
+
+
+class _RecordingConnection:
+    """A fake PostgreSQL connection that records the statements it is given."""
+
+    dialect = SimpleNamespace(name="postgresql")
+
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, dict]] = []
+
+    def execute(self, statement, parameters=None):
+        self.statements.append((str(statement), dict(parameters or {})))
+        return self
+
+
+def _flat(statement: str) -> str:
+    return " ".join(statement.split())
+
+
+def _postgres_table_statement() -> str:
+    connection = _RecordingConnection()
+    search_index._create_postgres(connection)
+    return _flat(
+        next(statement for statement, _ in connection.statements if "CREATE TABLE" in statement)
+    )
+
+
+def test_the_postgres_table_weights_title_authors_abstract_and_body():
+    """The generated ``tsvector`` gives each field its own weight class.
+
+    Checked against the DDL itself, so it holds in the SQLite lane too: the
+    PostgreSQL statement is the code ``create_all`` runs there.
+    """
+    table = _postgres_table_statement()
+
+    assert "document tsvector GENERATED ALWAYS AS (" in table
+    assert "STORED" in table
+    for weight, column in (("A", "title"), ("B", "authors"), ("C", "abstract"), ("D", "body")):
+        assert (
+            f"setweight(to_tsvector('simple'::regconfig, coalesce({column}, '')), '{weight}')"
+            in table
+        )
+
+
+def test_the_postgres_index_is_a_gin_index_over_the_document():
+    connection = _RecordingConnection()
+    search_index._create_postgres(connection)
+
+    indexes = [
+        _flat(statement)
+        for statement, _ in connection.statements
+        if "CREATE INDEX" in statement
+    ]
+    assert len(indexes) == 1
+    assert "ON search_fts USING GIN (document)" in indexes[0]
+
+
+def test_the_postgres_upsert_replaces_the_row_in_one_statement():
+    """No DELETE-then-INSERT on PostgreSQL: one atomic ``ON CONFLICT`` upsert."""
+    connection = _RecordingConnection()
+    search_index._upsert_postgres(connection, "cid", "Title", "Abstract", "Body", "author")
+
+    statement = _flat(connection.statements[0][0]).lower()
+
+    assert "insert into search_fts" in statement
+    assert "on conflict (version_cid) do update" in statement
+    assert "authors = excluded.authors" in statement
 
 
 def test_create_all_recreates_a_missing_table(monkeypatch):
@@ -184,11 +380,7 @@ def test_create_all_recreates_a_missing_table(monkeypatch):
 
     db.create_all()
 
-    with db.engine.connect() as connection:
-        found = connection.execute(
-            text("SELECT 1 FROM sqlite_master WHERE name = 'search_fts'")
-        ).first()
-    assert found is not None
+    assert inspect(db.engine).has_table("search_fts")
 
 
 # --------------------------------------------------------------------------- #
@@ -232,13 +424,13 @@ def test_each_field_lands_in_its_own_column():
 
     list_version(cid)
 
-    assert match(f"title : {title_word}") == [cid]
-    assert match(f"abstract : {abstract_word}") == [cid]
-    assert match(f"body : {body_word}") == [cid]
+    assert match(title_word, field="title") == [cid]
+    assert match(abstract_word, field="abstract") == [cid]
+    assert match(body_word, field="body") == [cid]
     # ... and only its own.
-    assert match(f"title : {abstract_word}") == []
-    assert match(f"abstract : {body_word}") == []
-    assert match(f"body : {title_word}") == []
+    assert match(abstract_word, field="title") == []
+    assert match(body_word, field="abstract") == []
+    assert match(title_word, field="body") == []
 
 
 def test_a_listed_version_without_extracted_text_is_still_searchable():
@@ -271,6 +463,23 @@ def test_every_listed_version_of_a_paper_is_indexed():
 
     assert match(word_1) == [first]
     assert match(word_2) == [second]
+
+
+@pytest.mark.skipif(not IS_POSTGRES, reason="only the PostgreSQL index has an authors column")
+def test_a_listed_versions_authors_are_indexed_in_their_own_weight_class():
+    # The authorship table stores the author's DID; it is the ``authors`` text.
+    # A plain token keeps the weight-restricted query below unambiguous.
+    author = unique_word()
+    cid = make_version(
+        title=unique_word(),
+        authors=(VersionAuthor(did=author, position=1, credit_roles=None),),
+    )
+
+    list_version(cid)
+
+    assert match(author) == [cid]
+    assert match(author, field="authors") == [cid]
+    assert match(author, field="title") == []
 
 
 # --------------------------------------------------------------------------- #
@@ -570,7 +779,7 @@ def test_sync_version_for_an_unknown_version_indexes_nothing():
     assert not search.is_indexed(cid)
 
 
-def test_a_text_with_fts_syntax_is_stored_literally():
+def test_a_text_with_query_syntax_is_stored_literally():
     # Values are bound parameters, so quotes and operators in a title are data.
     word = unique_word()
     cid = make_version(title=f'He said "NEAR(x y)" -- {word}; DROP TABLE search_fts')
@@ -675,7 +884,7 @@ def test_the_plugin_routes_are_exposed_for_the_loader_to_mount():
     assert getattr(search, "router", None) is not None
 
 
-def test_nothing_is_subscribed_or_written_on_a_database_without_fts5(monkeypatch):
+def test_nothing_is_subscribed_or_written_on_an_unsupported_database(monkeypatch):
     search.uninstall()
     clear_state_changed_subscribers()
     ledger.clear_subscribers()

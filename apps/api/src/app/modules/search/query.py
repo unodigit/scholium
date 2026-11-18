@@ -14,12 +14,17 @@ version has no row and can never appear.
 How a query is answered
 -----------------------
 
-1. ``q`` is split into plain words (FTS5 query syntax is never passed
+1. ``q`` is split into plain words (full-text query syntax is never passed
    through, so a query cannot be a syntax error) and matched as an implicit
-   AND over the indexed ``title``, ``abstract`` and ``body``.
-2. Matches are ranked with FTS5's BM25, title weighted over abstract over
-   body: the version that matches ``q`` most strongly comes first, ties
-   broken by ``version_cid`` so the order is stable.
+   AND over the indexed fields -- ``title``, ``authors``, ``abstract`` and
+   ``body`` on PostgreSQL, ``title``, ``abstract`` and ``body`` on SQLite's
+   FTS5 index, which has no authors column.
+2. Matches are ranked with the database's own relevance function: FTS5's BM25
+   on SQLite and ``ts_rank_cd`` over the weighted ``tsvector`` on PostgreSQL.
+   Both weight title over abstract over body (and authors between title and
+   abstract on PostgreSQL), so the version that matches ``q`` most strongly
+   comes first and a title match beats a body match on either dialect.  Ties
+   are broken by ``version_cid`` so the order is stable.
 3. The filters -- ``category`` (any of the paper's categories), ``status``
    (the paper's current status), ``has_code`` (a manifest file whose role is
    ``code``) and an inclusive ``listed_at`` date range -- narrow that ranked
@@ -136,6 +141,11 @@ def _match_expression(words: list[str]) -> Optional[str]:
     return " AND ".join(f'"{word}"' for word in words)
 
 
+def _postgres() -> bool:
+    """Whether the configured database is PostgreSQL."""
+    return getattr(db.engine.dialect, "name", "") == "postgresql"
+
+
 def version_has_code(manifest_cid: Optional[str]) -> bool:
     """Whether the signed manifest lists a file whose ``role`` is ``code``.
 
@@ -164,11 +174,20 @@ def version_has_code(manifest_cid: Optional[str]) -> bool:
 #: ``version_cid`` (UNINDEXED), ``title``, ``abstract``, ``body``.
 _BM25_WEIGHTS = "0.0, 10.0, 5.0, 1.0"
 
+#: ``ts_rank_cd`` weight array for PostgreSQL, in the order PostgreSQL names
+#: them: ``{D, C, B, A}`` -- body 0.1, abstract 0.5, authors 0.5, title 1.0.
+#: The same ratios as the BM25 weights above (title 10, abstract 5, body 1);
+#: ``ts_rank_cd`` requires every weight to be in 0..1, so the BM25 numbers are
+#: divided by ten.  Authors (weight ``B`` in the indexed ``tsvector``) sit
+#: alongside the abstract.
+_TSVECTOR_WEIGHTS = "'{0.1, 0.5, 0.5, 1.0}'::float4[]"
 
-def _ranked_rows(match: str) -> list[Any]:
-    """Every listed version matching ``match``, best first, with its metadata."""
-    sql = text(
-        f"""
+#: ``'simple'`` matches the index built by
+#: :data:`app.modules.search.index.WEIGHTED_DOCUMENT`: case-folded words, no
+#: stemming, ordered the way FTS5's ``unicode61`` tokenizer orders them.
+_TSVECTOR_CONFIG = "'simple'::regconfig"
+
+_RANKED_SELECT = """
         SELECT f.version_cid AS version_cid,
                f.rank AS rank,
                pv.paper_cid AS paper_cid,
@@ -180,18 +199,63 @@ def _ranked_rows(match: str) -> list[Any]:
                p.short_id AS short_id,
                p.categories AS categories,
                p.status AS status
-        FROM (
+        FROM ({match_rows}) AS f
+        JOIN paper_versions AS pv ON pv.version_cid = f.version_cid
+        LEFT JOIN papers AS p ON p.paper_cid = pv.paper_cid
+        WHERE pv.state = :listed
+        ORDER BY f.rank ASC, f.version_cid{collation} ASC
+"""
+
+#: The matching rows and their rank, per dialect.  Both report ``rank`` with
+#: the FTS5 convention -- smaller is better -- so the shared outer query and
+#: the ``-rank`` score the caller sees are the same on either dialect.
+_MATCH_ROWS_SQLITE = f"""
             SELECT version_cid,
                    bm25({TABLE_NAME}, {_BM25_WEIGHTS}) AS rank
             FROM {TABLE_NAME}
             WHERE {TABLE_NAME} MATCH :match
-        ) AS f
-        JOIN paper_versions AS pv ON pv.version_cid = f.version_cid
-        LEFT JOIN papers AS p ON p.paper_cid = pv.paper_cid
-        WHERE pv.state = :listed
-        ORDER BY f.rank ASC, f.version_cid ASC
-        """
-    )
+"""
+
+#: ``ts_rank_cd`` returns larger for better matches, so it is negated to keep
+#: the FTS5 convention along with the outer ``ORDER BY f.rank ASC``.
+_MATCH_ROWS_POSTGRES = f"""
+            SELECT version_cid,
+                   -ts_rank_cd(
+                       {_TSVECTOR_WEIGHTS},
+                       document,
+                       plainto_tsquery({_TSVECTOR_CONFIG}, :match)
+                   ) AS rank
+            FROM {TABLE_NAME}
+            WHERE document @@ plainto_tsquery({_TSVECTOR_CONFIG}, :match)
+"""
+
+
+def _ranked_rows(words: list[str]) -> list[Any]:
+    """Every listed version matching every word in ``words``, best first.
+
+    ``words`` are plain words (:func:`tokenize`), never query syntax: SQLite
+    matches them as quoted FTS5 tokens ANDed together, PostgreSQL hands them
+    to ``plainto_tsquery``, which does the same.  The rows carry the paper and
+    version metadata the caller renders, exactly as on the other dialect.
+    """
+    if not words:
+        return []
+    if _postgres():
+        # ``COLLATE "C"`` makes the tie-break byte order, the same order
+        # SQLite's BINARY collation gives, so equal-ranked hits are returned
+        # identically on both dialects.
+        sql = text(
+            _RANKED_SELECT.format(
+                match_rows=_MATCH_ROWS_POSTGRES, collation=' COLLATE "C"'
+            )
+        )
+        match = " ".join(words)
+    else:
+        expression = _match_expression(words)
+        if expression is None:  # pragma: no cover - ``words`` is non-empty
+            return []
+        sql = text(_RANKED_SELECT.format(match_rows=_MATCH_ROWS_SQLITE, collation=""))
+        match = expression
     with db.engine.connect() as connection:
         return list(connection.execute(sql, {"match": match, "listed": LISTED}))
 
@@ -352,7 +416,6 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
     """
     criteria = SearchQuery(**filters)
     words = tokenize(query)
-    match = _match_expression(words)
 
     ensure_tables()
     if not ensure_table():
@@ -365,8 +428,8 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
         priority = _priority_rows(short_id)
 
     fts_rows: list[Any] = []
-    if match is not None:
-        fts_rows = _ranked_rows(match)
+    if words:
+        fts_rows = _ranked_rows(words)
 
     priority_ids = {row.version_cid for row in priority}
     rest = [row for row in fts_rows if row.version_cid not in priority_ids]
