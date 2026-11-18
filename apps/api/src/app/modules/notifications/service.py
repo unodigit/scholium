@@ -177,6 +177,9 @@ def list_notifications(did: str) -> list[Notification]:
     ensure_table()
     settle_panel_notices(did)
     settle_restoration_notices(did)
+    from .reported import settle_reported_paper_notices
+
+    settle_reported_paper_notices(did)
 
     with db.SessionLocal() as session:
         return (

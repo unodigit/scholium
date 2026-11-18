@@ -972,7 +972,9 @@ function recoveryRequester(payload: Readonly<Record<string, unknown>>): string |
  * Their own answer (`answer`, `answered_at`) is the only thing that reads
  * "You approved". A request that closed without them (`closed`, with how many
  * of the guardians had approved) says that it closed, or that it was
- * cancelled. The guardian's answer wins when both are recorded.
+ * cancelled. While it is still inside its safety window it is approved but not
+ * closed (`contest_until`, when the new passkey takes over). The guardian's
+ * answer wins when both are recorded, and a later closure wins over the window.
  */
 function recoverySummary(payload: Readonly<Record<string, unknown>>): string | null {
   const requester = recoveryRequester(payload);
@@ -984,17 +986,24 @@ function recoverySummary(payload: Readonly<Record<string, unknown>>): string | n
     return `You ${verb} the recovery request${from}${on ? ` on ${on}` : ""}.`;
   }
   const closed = readText(payload.closed);
-  if (closed === null) {
-    return null;
+  if (closed !== null) {
+    if (closed === "cancelled") {
+      return `The recovery request${from} was cancelled.`;
+    }
+    const approved = readNumber(payload.approval_count);
+    const guardians = readNumber(payload.guardian_count);
+    return approved !== null && guardians !== null
+      ? `The recovery request${from} closed (${Math.trunc(approved)} of ${Math.trunc(guardians)} guardians approved).`
+      : `The recovery request${from} closed.`;
   }
-  if (closed === "cancelled") {
-    return `The recovery request${from} was cancelled.`;
+  const contestUntil = readText(payload.contest_until) ?? readText(payload.contestUntil);
+  if (contestUntil !== null) {
+    const on = formatDate(contestUntil);
+    return on
+      ? `The recovery request${from} approved - the new passkey takes over on ${on}.`
+      : `The recovery request${from} approved.`;
   }
-  const approved = readNumber(payload.approval_count);
-  const guardians = readNumber(payload.guardian_count);
-  return approved !== null && guardians !== null
-    ? `The recovery request${from} closed (${Math.trunc(approved)} of ${Math.trunc(guardians)} guardians approved).`
-    : `The recovery request${from} closed.`;
+  return null;
 }
 
 /** One plain sentence for what happened, never the payload's keys. */

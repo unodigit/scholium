@@ -256,7 +256,7 @@ describe("AuthorsStep — Continue", () => {
     addCoauthor(ADA, "Ada");
 
     expect(continueButton().disabled).toBe(true);
-    expect(screen.getByText("Choose at least one CRediT role for You.")).toBeTruthy();
+    expect(screen.getByText("Choose at least one CRediT role for yourself.")).toBeTruthy();
 
     fireEvent.click(role(rowFor("You"), "Conceptualization"));
     expect(screen.getByText("Choose at least one CRediT role for Ada.")).toBeTruthy();

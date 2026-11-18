@@ -395,7 +395,8 @@ def test_a_guardian_who_never_answered_is_told_it_closed_not_that_they_approved(
     assert silent.read is True
     assert "answer" not in silent.payload
     assert "answered_at" not in silent.payload
-    assert silent.payload["closed"] == "quorum"
+    assert "closed" not in silent.payload
+    assert "contest_until" in silent.payload
     assert silent.payload["approval_count"] == 3
     assert silent.payload["guardian_count"] == 5
 
@@ -450,7 +451,7 @@ def test_finalizing_a_request_records_how_many_guardians_approved(recovery, monk
 def test_a_guardian_who_approves_after_quorum_still_has_their_own_answer_recorded(recovery):
     for guardian in recovery.guardians[:3]:
         assert approve(recovery, guardian).status_code == 200
-    assert guardian_notice(recovery, recovery.guardians[4]).payload["closed"] == "quorum"
+    assert "closed" not in guardian_notice(recovery, recovery.guardians[4]).payload
 
     assert approve(recovery, recovery.guardians[4]).status_code == 200
 

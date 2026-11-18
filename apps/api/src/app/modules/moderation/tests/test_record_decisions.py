@@ -476,7 +476,7 @@ def test_dismissing_a_paper_flag_tells_the_reporter_but_not_the_author(
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
     assert note.payload["summary"] == (
-        'The paper you reported as "Spam or advertising" was reviewed and kept listed. '
+        f'The paper you reported as "Spam or advertising" on "{submission.title}" was reviewed and kept listed. '
         "Moderator's note: Nothing about it violates policy."
     )
     assert note.payload["link"] == f"/p/{submission.short_id}"
@@ -532,7 +532,7 @@ def test_a_list_decision_tells_the_reporter_the_paper_was_kept_listed(
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
     assert note.payload["summary"] == (
-        'The paper you reported as "Plagiarism" was kept listed. '
+        f'The paper you reported as "Plagiarism" on "{submission.title}" was kept listed. '
         "Moderator's note: The prior work is distinct."
     )
     assert note.payload["link"] == f"/p/{submission.short_id}"

@@ -427,7 +427,8 @@ export function authorsBlockers(authors: readonly DraftAuthor[]): string[] {
 
   for (const author of authors) {
     if (author.creditRoles.length === 0) {
-      blockers.push(`Choose at least one CRediT role for ${authorLabel(author)}.`);
+      const who = author.isSubmitter ? "yourself" : authorLabel(author);
+      blockers.push(`Choose at least one CRediT role for ${who}.`);
     }
   }
 

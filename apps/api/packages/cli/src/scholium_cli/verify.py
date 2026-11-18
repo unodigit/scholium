@@ -36,8 +36,9 @@ import httpx
 import argparse
 import base64
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -96,6 +97,20 @@ _PAPER_ITEM_KEYS = ("authors", "history", "files", "retraction")
 
 #: ``status`` values, most severe first, when reports of several papers merge.
 _STATUS_SEVERITY = ("invalid", "retracted", "tombstoned", "corrected")
+
+#: ``moderation.decision`` actions that set a version's state, as
+#: ``app.modules.status.compute`` reads them.  The newest decision on a target
+#: is the one in force, so a later ``release`` (or ``list``, ``reject``, ...)
+#: ends a hold.
+_STATE_SETTING_ACTIONS = frozenset(
+    {"list", "hold", "reject", "delist", "tombstone", "release"}
+)
+_HOLD_ACTION = "hold"
+_RELEASE_ACTION = "release"
+_HELD_STATE = "held"
+
+#: An unreadable ``created`` sorts before every real time.
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -361,6 +376,70 @@ def _log_records_item(archive: Archive) -> Item | None:
     )
 
 
+def _created(value: Any) -> datetime:
+    """Read an envelope's ``created``; anything unreadable sorts first."""
+    if not isinstance(value, str):
+        return _EPOCH
+    try:
+        when = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return _EPOCH
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
+def _action(value: Any) -> str | None:
+    return value.strip().lower() if isinstance(value, str) and value.strip() else None
+
+
+def _version_record_ids(archive: Archive, paper_id: str) -> set[str]:
+    """The paper's genesis and every version record id a decision may target."""
+    ids = {paper_id}
+    for record in archive.records:
+        if record.get("type") != "paper.version":
+            continue
+        body = record.get("body")
+        if isinstance(body, Mapping) and body.get("paper") == paper_id:
+            record_id = record.get("id")
+            if isinstance(record_id, str):
+                ids.add(record_id)
+    return ids
+
+
+def _held_in_force(archive: Archive, paper_id: str) -> bool:
+    """Whether a moderation hold is in force on any version of ``paper_id``.
+
+    The node settles a version's state by its newest state-setting decision
+    (``app.modules.status.compute``).  An archive carries those same decisions,
+    so the summary can read the state the node's own pages show: a later
+    ``release`` -- or any other state-setting decision -- ends the hold, and
+    only a hold still in force counts.
+    """
+    targets = _version_record_ids(archive, paper_id)
+    current: dict[str, tuple[datetime, str, str]] = {}
+    for record in archive.records:
+        if record.get("type") != "moderation.decision":
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping):
+            continue
+        target = body.get("target")
+        if not isinstance(target, str) or target not in targets:
+            continue
+        action = _action(body.get("action"))
+        if action not in _STATE_SETTING_ACTIONS:
+            continue
+        if action == _RELEASE_ACTION and _action(body.get("state")) == _HELD_STATE:
+            action = _HOLD_ACTION  # released back into a hold: still held
+        record_id = record.get("id")
+        order = (
+            _created(record.get("created")),
+            record_id if isinstance(record_id, str) else "",
+        )
+        if target not in current or order > current[target][:2]:
+            current[target] = (order[0], order[1], action)
+    return any(action == _HOLD_ACTION for _, _, action in current.values())
+
+
 def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) -> PaperVerdict:
     label = _short(paper_id) or paper_id
     try:
@@ -373,11 +452,17 @@ def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) 
     verdict = build_verdict(archive, report)
     items = tuple(item for item in verdict.items if item.key in _PAPER_ITEM_KEYS)
     failed = any(item.state == FAIL for item in items) or not report.valid
+    status = "invalid" if failed else report.status
+    # The report's own status is about the paper's history; a hold is the
+    # node's current moderation state of it and outranks a correction, but
+    # never a retraction or tombstone (nor an invalid history).
+    if not failed and status in ("verified", "corrected") and _held_in_force(archive, paper_id):
+        status = "held"
     return PaperVerdict(
         label=verdict.version or report.short_id or label,
         report=report,
         items=items,
-        status="invalid" if failed else report.status,
+        status=status,
     )
 
 
@@ -548,17 +633,22 @@ def _whole_node_result_line(verdict: ArchiveVerdict) -> str:
     """
     counts = {status: 0 for status in _STATUS_SEVERITY if status != "invalid"}
     listed = 0
+    held = 0
     for paper in verdict.papers:
         if paper.status == "verified":
             listed += 1
+        elif paper.status == "held":
+            held += 1
         else:
             counts[paper.status] = counts.get(paper.status, 0) + 1
     parts = [f"{listed} listed"]
+    if held:
+        parts.append(f"{held} held")
     for status in ("corrected", "retracted", "tombstoned"):
         if counts.get(status):
             parts.append(f"{counts[status]} {status}")
     return (
-        f"Result: VERIFIED - {_plural(len(verdict.papers), 'paper')} "
+        f"Result: VERIFIED — {_plural(len(verdict.papers), 'paper')} "
         f"({', '.join(parts)})"
     )
 

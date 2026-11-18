@@ -7,8 +7,10 @@ notice merely being read:
 
 * the guardian approved: ``answer`` (``"approved"``) and ``answered_at``, the
   time their approval was recorded on the request;
-* the request closed without their answer: ``closed`` (``"quorum"`` when enough
-  guardians approved and the contest window opened, ``"finalized"`` when the
+* enough guardians approved and the request is inside its safety window:
+  ``contest_until``, when the new passkey takes over -- approved, but not
+  closed;
+* the request closed without their answer: ``closed`` (``"finalized"`` when the
   account moved to the new key, ``"cancelled"`` when the account holder
   cancelled it), ``closed_at``, and how many of the account's guardians had
   approved (``approval_count`` of ``guardian_count``).
@@ -65,17 +67,33 @@ def record_answer(
 
 
 def record_closure(
-    request_id: str, account_did: str, closed: str, approvals: Iterable[Any]
+    request_id: str,
+    account_did: str,
+    closed: Optional[str],
+    approvals: Iterable[Any],
+    *,
+    contest_until: Any = None,
 ) -> None:
-    """The request closed: resolve the notice of every guardian who never answered it."""
+    """Resolve the notice of every guardian who never answered the request.
+
+    ``closed`` is the reason the request closed (``quorum`` is no longer used
+    during the safety window: pass ``None`` to record an approval instead);
+    ``contest_until`` records when the new passkey takes over.
+    """
     answered = {did for did in (guardian_of(item) for item in approvals) if did}
     guardians = get_guardians(account_did)
-    facts = {
-        "closed": closed,
-        "closed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    facts: dict[str, Any] = {
         "approval_count": len(answered),
         "guardian_count": len(guardians),
     }
+    if closed is not None:
+        facts["closed"] = closed
+        facts["closed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if contest_until is not None:
+        if isinstance(contest_until, datetime):
+            facts["contest_until"] = contest_until.strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            facts["contest_until"] = contest_until
     for guardian in guardians:
         if guardian in answered:
             continue

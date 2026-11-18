@@ -333,6 +333,9 @@ def reporter_summary(
         subject = "The paper you reported"
         if category:
             subject += f' as "{category}"'
+        title = paper_title(target) if target else None
+        if title:
+            subject += f' on "{title}"'
         sentence = f"{subject} {_reporter_outcome(kind, action)}."
     else:
         subject = f"The {noun} you reported"

@@ -143,7 +143,7 @@ def test_a_paper_notice_names_the_paper_and_the_reason_in_words(client, moderato
 
     note = _reporter_note(reporter)
     assert note.payload["summary"] == (
-        'The paper you reported as "Misleading or false" was reviewed and kept listed. '
+        f'The paper you reported as "Misleading or false" on "{submission.title}" was reviewed and kept listed. '
         "Moderator's note: The claim is supported."
     )
     assert note.payload["reason"] == "Misleading or false"
@@ -242,7 +242,7 @@ def test_a_kept_paper_notice_carries_the_moderators_note(client, moderator, subs
     ).status_code == 201
 
     assert _reporter_note(reporter).payload["summary"] == (
-        'The paper you reported as "Misleading or false" was reviewed and kept listed. '
+        f'The paper you reported as "Misleading or false" on "{submission.title}" was reviewed and kept listed. '
         "Moderator's note: The claim is supported."
     )
 

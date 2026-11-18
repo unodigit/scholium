@@ -440,7 +440,7 @@ def test_a_whole_node_archive_summarises_every_paper_status(car_file, capsys):
 
     assert code == 0, out
     assert err == ""
-    assert "Result: VERIFIED - 2 papers (1 listed, 1 retracted)" in out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 retracted)" in out
     assert "Result: VERIFIED (status: retracted)" not in out
 
 
@@ -451,7 +451,7 @@ def test_a_whole_node_archive_of_listed_papers_says_how_many(car_file, capsys):
     code, out, _ = verify(car_file, data, capsys=capsys)
 
     assert code == 0, out
-    assert "Result: VERIFIED - 2 papers (2 listed)" in out
+    assert "Result: VERIFIED — 2 papers (2 listed)" in out
 
 
 def test_a_whole_node_archive_counts_each_notice_status(car_file, capsys):
@@ -468,8 +468,59 @@ def test_a_whole_node_archive_counts_each_notice_status(car_file, capsys):
 
     assert code == 0, out
     assert (
-        "Result: VERIFIED - 3 papers (1 listed, 1 corrected, 1 retracted)" in out
+        "Result: VERIFIED — 3 papers (1 listed, 1 corrected, 1 retracted)" in out
     )
+
+
+def hold(name, target, *, created="2026-11-14T05:34:00Z"):
+    """A moderator's ``hold`` decision on a version, as the node records it."""
+    return signed(
+        name,
+        "moderation.decision",
+        {"target": target, "action": "hold", "clause": "MOD-05", "reasonCid": "x"},
+        created=created,
+    )
+
+
+def release(name, target, *, state="listed", created="2026-11-14T05:35:00Z"):
+    """A moderator's ``release`` decision, which ends a hold."""
+    return signed(
+        name,
+        "moderation.decision",
+        {"target": target, "action": "release", "state": state, "clause": "MOD-05", "reasonCid": "x"},
+        created=created,
+    )
+
+
+def test_a_whole_node_archive_counts_a_held_paper_as_held(car_file, capsys):
+    """A paper under a moderation hold is not listed, whatever its history verifies.
+
+    The node's own /network counts it out of "listed"; the archive summary must
+    classify it the same way, not sweep it into the listed papers.
+    """
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    two.extra.append(hold("committee", two.versions[0]["id"]))
+    data = whole_node_archive([one.records(), two.records()])
+
+    code, out, err = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert err == ""
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 held)" in out
+
+
+def test_a_released_hold_does_not_count_as_held(car_file, capsys):
+    """The summary reads the current moderation state, not every decision in the log."""
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    target = two.versions[0]["id"]
+    two.extra.append(hold("committee", target))
+    two.extra.append(release("committee", target))
+    data = whole_node_archive([one.records(), two.records()])
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert "Result: VERIFIED — 2 papers (2 listed)" in out
 
 
 def test_a_whole_node_archive_narrows_to_one_paper_with_paper(car_file, capsys):

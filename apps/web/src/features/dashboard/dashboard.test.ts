@@ -597,6 +597,39 @@ describe("notification wording", () => {
       ).toBe("The recovery request from Hanna Varga closed (4 of 5 guardians approved).");
     });
 
+    it("says it is approved, and when the new passkey takes over, while the safety window is open", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: {
+            ...HANNA,
+            contest_until: "2026-11-20T09:00:00Z",
+            approval_count: 3,
+            guardian_count: 5,
+          },
+        }),
+      ).toBe(
+        "The recovery request from Hanna Varga approved - the new passkey takes over on 20 Nov 2026.",
+      );
+    });
+
+    it("says it closed after the window, not that the passkey is about to take over", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: {
+            ...HANNA,
+            closed: "finalized",
+            contest_until: "2026-11-20T09:00:00Z",
+            approval_count: 4,
+            guardian_count: 5,
+          },
+        }),
+      ).toBe("The recovery request from Hanna Varga closed (4 of 5 guardians approved).");
+    });
+
     it("says it was cancelled when the account holder cancelled it", () => {
       expect(
         notificationSummary({

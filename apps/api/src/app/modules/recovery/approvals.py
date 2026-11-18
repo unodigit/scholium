@@ -210,11 +210,11 @@ def approve_recovery_request(
         request_id,
         own.get("approved_at") if isinstance(own, dict) else None,
     )
-    # Once quorum is met the request is closed to the guardians who have not
-    # answered: say so, with how many approved, instead of leaving a notice
-    # that still asks them.
+    # Once quorum is met the request is approved but still inside its safety
+    # window: tell the guardians who have not answered that, with when the new
+    # passkey takes over, instead of saying it is already closed.
     if count >= APPROVAL_THRESHOLD:
-        record_closure(request_id, did, "quorum", approvals_out)
+        record_closure(request_id, did, None, approvals_out, contest_until=contest_until)
 
     return ApprovalResult(
         request_id=request_id,

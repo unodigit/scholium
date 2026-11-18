@@ -260,7 +260,7 @@ describe("Continue", () => {
   it("is closed until every author has a role", () => {
     let roster = add(initialAuthors(ME), ADA, "Ada");
     expect(authorsBlockers(roster)).toEqual([
-      "Choose at least one CRediT role for You.",
+      "Choose at least one CRediT role for yourself.",
       "Choose at least one CRediT role for Ada.",
     ]);
     roster = toggleCreditRole(roster, roster[0].key, "Conceptualization");
