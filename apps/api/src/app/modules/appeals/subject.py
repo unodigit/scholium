@@ -19,11 +19,22 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Mapping, Optional
 
+from app import db
 from app.modules import ledger
 
-__all__ = ["AppealSubject", "describe_subject", "format_day", "seat_summary"]
+__all__ = [
+    "AppealSubject",
+    "describe_subject",
+    "format_day",
+    "readable_content",
+    "report_is_sealed",
+    "seat_summary",
+]
 
 logger = logging.getLogger(__name__)
+
+#: The signed record type of a revealed review, whose report its gate seals.
+_REVIEW_FORMAL = "review.formal"
 
 #: English month abbreviations, fixed so a sentence never depends on the server's locale.
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -117,6 +128,109 @@ def describe_subject(target_cid: str, decision_cid: Optional[str] = None) -> App
         link=link,
         action=action,
     )
+
+
+def report_is_sealed(target_cid: str) -> bool:
+    """Whether ``target_cid`` is a formal review whose version's report gate is closed.
+
+    The gate is the one the reviews listing applies (REV-4,
+    :func:`app.modules.reviews.history.report_gate_open`): open once two reviews
+    are counted on the version the review is of, or 21 days after the first.
+    Anything but a formal review has no report to seal.
+
+    Fails closed: when the gate cannot be worked out, the report counts as sealed.
+    """
+    try:
+        entry = ledger.entry_by_cid(target_cid)
+        if getattr(entry, "record_type", None) != _REVIEW_FORMAL:
+            return False
+        body = entry.body if isinstance(entry.body, Mapping) else {}
+        version_cid = body.get("target")
+        if not isinstance(version_cid, str) or not version_cid:
+            return True
+        return not _report_gate_open(version_cid)
+    except Exception:
+        logger.debug("could not read the report gate of %s", target_cid, exc_info=True)
+        return True
+
+
+def _report_gate_open(version_cid: str) -> bool:
+    """Whether the report gate of paper version ``version_cid`` is open."""
+    from sqlalchemy import or_
+
+    from app.modules import submissions
+    from app.modules.reviews import history
+    from app.modules.reviews.models import Review, ensure_tables
+
+    ensure_tables()
+    version = submissions.get_version(version_cid)
+    number = int(version.n) if version is not None else 0
+    # The reviewers who revised their review to this version are counted on it,
+    # whichever version they first committed on; so are the reviews committed on it.
+    chains = history.paper_revisions({version_cid: number})
+    wanted = [Review.version_cid == version_cid]
+    if chains:
+        wanted.append(Review.review_key.in_(list(chains)))
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(Review)
+            .filter(or_(*wanted))
+            .order_by(Review.committed_at, Review.review_cid)
+            .all()
+        )
+        for row in rows:
+            session.expunge(row)
+    return history.report_gate_open(version_cid, rows, chains)
+
+
+def _is_review_author(target_cid: str, viewer_did: Optional[str]) -> bool:
+    """Whether ``viewer_did`` is the reviewer who took public credit for review ``target_cid``.
+
+    A formal review is signed by a pseudonymous review key; the reviewer's own
+    DID is on record only when they signed it with their name, so an anonymous
+    review has no author this node can name.
+    """
+    if not viewer_did:
+        return False
+    try:
+        from app.modules.moderation.decisions import _review_signer
+
+        return _review_signer(ledger.entry_by_cid(target_cid)) == viewer_did
+    except Exception:
+        logger.debug("could not read the author of review %s", target_cid, exc_info=True)
+        return False
+
+
+def readable_content(
+    subject: AppealSubject,
+    *,
+    may_judge: bool,
+    is_moderator: bool,
+    viewer_did: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """The ``(excerpt, link)`` of ``subject`` that this viewer may read.
+
+    The appeal is public; the record it is about may be hidden, and a formal
+    review's report may still be sealed, so the opening of either is not.  Both
+    are for someone who may judge or contest the decision -- ``may_judge``: a
+    member seated on the panel, a tier-4 moderator (``is_moderator``) or the
+    appellant -- and everybody else gets ``(None, None)``.
+
+    Whoever it is, a formal review's report is held back while its version's
+    report gate is closed, unless the viewer is a tier-4 moderator or the
+    review's own author.
+    """
+    if not may_judge:
+        return None, None
+    excerpt = subject.excerpt
+    if (
+        excerpt is not None
+        and not is_moderator
+        and report_is_sealed(subject.target_cid)
+        and not _is_review_author(subject.target_cid, viewer_did)
+    ):
+        excerpt = None
+    return excerpt, subject.link
 
 
 def seat_summary(subject: Optional[AppealSubject], deadline: Optional[datetime]) -> str:

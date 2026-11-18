@@ -29,7 +29,7 @@ from .service import (
     resolve_decision,
     vote_deadline,
 )
-from .subject import describe_subject
+from .subject import describe_subject, readable_content
 from .votes import cast_vote, decide_without_panel, decision_for_appeal, vote_fields
 
 __all__ = ["AppealAccepted", "AppealDetailOut", "PanelSeatOut", "VoteAccepted", "router"]
@@ -173,9 +173,14 @@ class AppealDetailOut(BaseModel):
     record_type: Optional[str] = None
     #: The title of the paper the target is, or belongs to.
     paper_title: Optional[str] = None
-    #: The first words of a hidden post or review; a paper has none.
+    #: The first words of a hidden post or review; a paper has none.  ``null``
+    #: unless the caller may judge or contest the decision (a seated member, a
+    #: tier-4 moderator or the appellant), and for a formal review's report
+    #: ``null`` while that version's report gate is closed, unless the caller is
+    #: a tier-4 moderator or the review's author.
     excerpt: Optional[str] = None
     #: Where the target can be read: the paper, or the thread a post is in.
+    #: ``null`` unless the caller may judge or contest the decision, like ``excerpt``.
     target_link: Optional[str] = None
     #: What the appealed decision did to it: ``hide``, ``dismiss``, ``reject``, ...
     decision_action: Optional[str] = None
@@ -219,7 +224,12 @@ def get_appeal_detail(
     The appeal itself is a public record, so any reader may see it, with no
     token at all.  The three members the draw seated are not public: ``panel``
     is filled in only for a caller holding a seat on it or at tier 4
-    (Moderator).  An unknown cid is ``404`` problem details.
+    (Moderator).  What the appealed record *says* is not public either, since it
+    may be a hidden post or a review whose report is still sealed: ``excerpt``
+    and ``target_link`` are filled in only for a caller who may judge or contest
+    the decision (a seated member, a tier-4 moderator or the appellant), and a
+    sealed report's excerpt only for a moderator or the review's author.  An
+    unknown cid is ``404`` problem details.
     """
     appeal = get_appeal(cid)
     if appeal is None:
@@ -227,7 +237,9 @@ def get_appeal_detail(
 
     seats = get_panel(cid)
     on_panel = caller is not None and caller.did in {str(seat.member_did) for seat in seats}
-    may_see_panel = on_panel or (caller is not None and caller.tier >= int(Tier.MODERATOR))
+    is_moderator = caller is not None and caller.tier >= int(Tier.MODERATOR)
+    is_appellant = caller is not None and caller.did == str(appeal.appellant_did)
+    may_see_panel = on_panel or is_moderator
 
     viewer_vote: Optional[str] = None
     if on_panel and caller is not None:
@@ -252,6 +264,17 @@ def get_appeal_detail(
     except Exception:  # a decision this node no longer holds describes nothing
         target_cid = None
     subject = describe_subject(target_cid, str(appeal.decision_cid)) if target_cid else None
+    # What the record says is not public: it may be hidden, or a review report
+    # still sealed.  Only whoever may judge or contest the decision reads it.
+    excerpt: Optional[str] = None
+    target_link: Optional[str] = None
+    if subject is not None:
+        excerpt, target_link = readable_content(
+            subject,
+            may_judge=on_panel or is_moderator or is_appellant,
+            is_moderator=is_moderator,
+            viewer_did=caller.did if caller is not None else None,
+        )
     deadline = vote_deadline(appeal)
     if deadline is not None:
         deadline = deadline.replace(tzinfo=timezone.utc)
@@ -274,8 +297,8 @@ def get_appeal_detail(
         target_kind=subject.kind if subject is not None else None,
         record_type=subject.record_type if subject is not None else None,
         paper_title=subject.title if subject is not None else None,
-        excerpt=subject.excerpt if subject is not None else None,
-        target_link=subject.link if subject is not None else None,
+        excerpt=excerpt,
+        target_link=target_link,
         decision_action=subject.action if subject is not None else None,
         panel_status=panel_state(appeal, decided=decision is not None),
         deadline=deadline,
