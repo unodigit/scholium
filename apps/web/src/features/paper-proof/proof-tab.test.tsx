@@ -308,9 +308,12 @@ describe("technical details", () => {
 
     fireEvent.click(button);
 
-    await waitFor(() => expect(button.dataset.copied).toBe("true"));
+    // The tick and the toast are separate updates; wait for both.
+    await waitFor(() => {
+      expect(button.dataset.copied).toBe("true");
+      expect(document.getElementById(TOAST_REGION_ID)!.textContent).toBe("Copied");
+    });
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(paper.versionIds[1]);
-    expect(document.getElementById(TOAST_REGION_ID)!.textContent).toBe("Copied");
   });
 
   it("copies the offline command exactly as shown", async () => {

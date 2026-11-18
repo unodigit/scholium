@@ -481,7 +481,11 @@ describe("a revealed review by this reviewer that this browser does not hold", (
     );
 
     await screen.findByRole("heading", { name: "You already reviewed this paper" });
-    expect(screen.queryByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeNull();
+    // The form tells the session it is gone from an effect, so the notice drops
+    // its identity choice a render after the heading appears.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeNull(),
+    );
   });
 
   it("words the clear conflict check for a reviewer who already has a review", async () => {

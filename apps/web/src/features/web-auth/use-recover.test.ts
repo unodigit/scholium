@@ -272,14 +272,18 @@ describe("progress step", () => {
       useRecover({ services, requestId: "rec_77", initialOrcid: ORCID }),
     );
 
-    await waitFor(() => expect(result.current.snapshot?.requestId).toBe("rec_77"));
+    // The hook shows a placeholder for rec_77 first and the loaded request a
+    // render later, so wait for the loaded values, not just the id.
+    await waitFor(() =>
+      expect(result.current.snapshot).toMatchObject({
+        requestId: "rec_77",
+        orcid: ORCID,
+        status: "contest",
+        approvals: 3,
+      }),
+    );
     expect(client.get).toHaveBeenCalledWith("/recovery/requests/rec_77", {
       auth: false,
-    });
-    expect(result.current.snapshot).toMatchObject({
-      orcid: ORCID,
-      status: "contest",
-      approvals: 3,
     });
   });
 
