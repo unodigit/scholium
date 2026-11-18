@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 7c: sweep-7 items held until round 7a's notifications task merged (shared dashboard/moderation files).
+  Evidence: .claw-forge/journeys/screenshots/05-follow-search-notify/, 07-flag-and-dispute/ (fresh sweep-7 set, local).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/moderation/outcomes.py,apps/api/src/app/modules/moderation/tests/**,apps/web/src/features/dashboard/dashboard-page.tsx,apps/web/src/features/dashboard/dashboard-page.test.tsx,apps/web/src/features/dashboard/notifications-card.tsx,apps/web/src/features/dashboard/notifications-card.test.tsx">
+    <title>A reporter's "kept" notice shows their own reason as if it were the moderator's; the bell's /me#notifications link opens at the top of the page</title>
+    <symptoms>
+      Reporter notifications for kept records read "...was reviewed and kept: Off topic." - the reporter's own reason reads as the reason for keeping, and the moderator's stated reason is never shown to the reporter
+      The global-nav bell links to /me#notifications, but /me opens at the top instead of at the Notifications section (the section renders after data loads, so the browser's fragment scroll misses it)
+    </symptoms>
+    <reproduction_steps>
+      Journey 07: report a post, as priya dismiss the flag with a reason, read the reporter's notification (screenshots/07-flag-and-dispute/)
+      Journey 05: click the bell on any page while signed in (screenshots/05-follow-search-notify/)
+    </reproduction_steps>
+    <expected>Outcome notices for reporters read 'The post you reported as "Off topic" on "{title}" was reviewed and kept. Moderator's note: {decision reason}.' (and the equivalent for hidden/held/dismissed outcomes), with the moderator's reason taken from the decision record and the reporter's category labelled as theirs; /me scrolls the Notifications section into view (and moves focus to its heading) once it has rendered when the URL fragment is #notifications</expected>
+    <actual>Misattributed reason; bell lands at the top</actual>
+  </bug>
+
+</bug_spec>
