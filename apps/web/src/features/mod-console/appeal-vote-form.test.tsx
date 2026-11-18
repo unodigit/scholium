@@ -296,6 +296,76 @@ describe("AppealVoteForm reopening with a vote already on file", () => {
     expect(screen.getByRole("button", { name: "Cast my vote" })).toBeTruthy();
   });
 
+  it("starts from the reasons on file when the API returns them", () => {
+    render(
+      <AppealVoteForm
+        appealCid={APPEAL}
+        castVote={vi.fn()}
+        recordedOutcome="upheld"
+        recordedReasons="The ruling matches MOD-01."
+        recordedAt="2026-11-18T09:30:00Z"
+        votesCast={1}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Change my vote" }));
+
+    expect(outcomeSelect().value).toBe("upheld");
+    expect(reasonsBox().value).toBe("The ruling matches MOD-01.");
+  });
+
+  it("says new reasons replace the old when the API did not return them", () => {
+    render(
+      <AppealVoteForm
+        appealCid={APPEAL}
+        castVote={vi.fn()}
+        recordedOutcome="upheld"
+        recordedAt="2026-11-18T09:30:00Z"
+        votesCast={1}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Change my vote" }));
+
+    expect(reasonsBox().value).toBe("");
+    expect(reasonsBox().getAttribute("aria-describedby")).toContain(
+      "recorded-reasons",
+    );
+    expect(screen.getByText(/new reasons replace them/i)).toBeTruthy();
+  });
+
+  it("offers to keep the recorded vote, returning to it without a request", () => {
+    const castVote = vi.fn<VoteCaster>();
+    render(
+      <AppealVoteForm
+        appealCid={APPEAL}
+        castVote={castVote}
+        recordedOutcome="upheld"
+        recordedReasons="The ruling matches MOD-01."
+        recordedAt="2026-11-18T09:30:00Z"
+        votesCast={1}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Change my vote" }));
+    fireEvent.change(reasonsBox(), { target: { value: "An abandoned edit." } });
+    fireEvent.click(screen.getByRole("button", { name: "Keep my vote" }));
+
+    expect(screen.getByRole("heading", { name: /Your vote is recorded/ })).toBeTruthy();
+    expect(screen.getByText(/You voted to uphold the decision/)).toBeTruthy();
+    expect(castVote).not.toHaveBeenCalled();
+
+    // Reopening starts from the recorded reasons again, not the edit kept aside.
+    fireEvent.click(screen.getByRole("button", { name: "Change my vote" }));
+    expect(reasonsBox().value).toBe("The ruling matches MOD-01.");
+  });
+
+  it("offers no keep-my-vote on the blank form, where there is nothing to keep", () => {
+    render(<AppealVoteForm appealCid={APPEAL} castVote={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Keep my vote" })).toBeNull();
+  });
+
   it("shows the blank form to a member who has not voted", () => {
     render(
       <AppealVoteForm

@@ -60,6 +60,14 @@ export interface AppealVoteFormProps {
    * rather than asking the member to vote again.
    */
   recordedOutcome?: string | null;
+  /**
+   * The reasons the member gave with the vote on file, when the API returns
+   * them to that member. A reload has no component state, so "Change my vote"
+   * opens with these already in the box instead of dropping them. When the
+   * API does not return them the box is empty and the form says new reasons
+   * replace the old.
+   */
+  recordedReasons?: string | null;
   /** When that vote was cast (ISO 8601), when the API said. */
   recordedAt?: string | null;
   /** How many of the panel's seats carry a vote, when the API said. */
@@ -74,14 +82,20 @@ export function AppealVoteForm({
   castVote = castPanelVote,
   onDecided,
   recordedOutcome = null,
+  recordedReasons = null,
   recordedAt = null,
   votesCast = null,
 }: AppealVoteFormProps) {
   const onFile = recordedOutcome !== null && recordedOutcome !== "" ? recordedOutcome : null;
+  // Reasons belong to a vote: ignore them when no vote is on file.
+  const onFileReasons = onFile === null ? "" : (recordedReasons ?? "");
   const [outcome, setOutcome] = useState<VoteOutcome | "">(
     isVoteOutcome(onFile) ? onFile : "",
   );
-  const [reasons, setReasons] = useState("");
+  const [reasons, setReasons] = useState(onFileReasons);
+  // The reasons with the vote on file, as opposed to whatever the member is
+  // drafting now: "Keep my vote" restores these and they follow a new vote.
+  const [recordedReasonsOnFile, setRecordedReasonsOnFile] = useState(onFileReasons);
   const [errors, setErrors] = useState<VoteValidation>({});
   const [phase, setPhase] = useState<Phase>(onFile === null ? "idle" : "recorded");
   const [failure, setFailure] = useState<VoteFailure | null>(null);
@@ -101,12 +115,16 @@ export function AppealVoteForm({
   const baseId = useId();
   const outcomeId = `${baseId}-outcome`;
   const reasonsId = `${baseId}-reasons`;
+  const reasonsKeptId = `${baseId}-recorded-reasons`;
   const noticeId = `${baseId}-notice`;
   const failureId = `${baseId}-failure`;
 
   const draft: VoteDraft = { outcome, reasons };
   const busy = phase === "submitting";
   const chosen = VOTE_CHOICES.find((choice) => choice.value === outcome);
+  // A vote is on file, so the form is a change to it: it can be kept as it is.
+  const changing = accepted !== null;
+  const showReasonsHint = changing && recordedReasonsOnFile.trim() === "";
 
   const clearError = (field: keyof VoteValidation) => {
     setErrors((current) => {
@@ -143,10 +161,21 @@ export function AppealVoteForm({
     // The vote is recorded; a listener failing afterwards must not make the
     // member think it was not.
     setAccepted(result);
+    setRecordedReasonsOnFile(draft.reasons);
     setPhase("recorded");
     if (result.decisionCid !== null) {
       onDecided?.(result);
     }
+  };
+
+  /** Back to the recorded vote, unchanged and with nothing sent. */
+  const keepVote = () => {
+    if (accepted === null) return;
+    setErrors({});
+    setFailure(null);
+    setOutcome(isVoteOutcome(accepted.outcome) ? accepted.outcome : "");
+    setReasons(recordedReasonsOnFile);
+    setPhase("recorded");
   };
 
   if (phase === "not-seated" && failure !== null) {
@@ -163,8 +192,11 @@ export function AppealVoteForm({
       <VoteRecorded
         accepted={accepted}
         onChange={() => {
+          // The vote stays on file while the member edits: the form opens
+          // with it and "Keep my vote" can return to it unchanged.
+          setErrors({});
+          setFailure(null);
           setPhase("idle");
-          setAccepted(null);
         }}
       />
     );
@@ -236,6 +268,7 @@ export function AppealVoteForm({
           aria-invalid={errors.reasons !== undefined}
           aria-describedby={[
             noticeId,
+            showReasonsHint ? reasonsKeptId : null,
             errors.reasons === undefined ? null : `${reasonsId}-error`,
           ]
             .filter((value): value is string => value !== null)
@@ -250,6 +283,12 @@ export function AppealVoteForm({
         />
         {errors.reasons !== undefined ? (
           <FieldError id={`${reasonsId}-error`} message={errors.reasons} />
+        ) : null}
+        {showReasonsHint ? (
+          <p id={reasonsKeptId} className="mc-hint">
+            This server did not send the reasons you gave before, so they are
+            not shown here. New reasons replace them when you cast your vote.
+          </p>
         ) : null}
       </div>
 
@@ -280,6 +319,16 @@ export function AppealVoteForm({
         >
           {busy ? "Recording your vote…" : "Cast my vote"}
         </button>
+        {changing ? (
+          <button
+            type="button"
+            className="mc-button mc-button--quiet"
+            disabled={busy}
+            onClick={keepVote}
+          >
+            Keep my vote
+          </button>
+        ) : null}
       </div>
     </form>
   );

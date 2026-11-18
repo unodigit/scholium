@@ -1,12 +1,28 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 
 import { BrandLogo, BrandMark } from "../../../../features/ui-kit";
 
-export const metadata: Metadata = {
-  title: "Brand · UI kit",
-  description: "Brand mark and logo in every variant and size.",
-  robots: { index: false, follow: false },
-};
+/**
+ * The gallery's title, and its 404 in a production build.
+ *
+ * The layout refuses to render the gallery in production, but a page's
+ * metadata is resolved even when a layout throws `notFound()`: a plain
+ * `metadata` export left the tab titled "Brand · UI kit" above the not-found
+ * body. Reaching the same verdict here makes Next answer 404 from the
+ * metadata too, so the tab is titled by the not-found page
+ * ("Not found · Scholium").
+ */
+export function generateMetadata(): Metadata {
+  if (process.env.NODE_ENV === "production") {
+    notFound();
+  }
+  return {
+    title: "Brand · UI kit",
+    description: "Brand mark and logo in every variant and size.",
+    robots: { index: false, follow: false },
+  };
+}
 
 export default function BrandGalleryPage() {
   return (
