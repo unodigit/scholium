@@ -21,10 +21,17 @@ What an entry carries
     When the paper first appeared in the catalog, and when a version of it was
     most recently listed.
 ``<author>``
-    One per author, in byline order.  Only the DID is public here (profile
-    names are personal data and are not read for a feed).  The feed itself
-    names the publisher as its author, which keeps an entry with no authorship
-    rows valid Atom.
+    One per author, in byline order, named as their public profile is (the
+    display name ``GET /v1/profiles/{did}`` shows every reader; the DID when
+    there is no readable profile -- never saved, erased, or blank).  The DID
+    itself stays as the ``<uri>``, which keeps authors distinguishable when
+    two of them share a name.  The feed itself names the publisher as its
+    author, which keeps an entry with no authorship rows valid Atom.
+``<link>``
+    ``rel="alternate"`` is the paper's page on the web app -- where a person
+    reads it -- and ``rel="related"`` the API's own JSON record.  When no
+    public web origin is configured the API record stands in as the alternate,
+    so an entry always carries one.
 ``<category>``
     One per category the paper is filed under.
 ``<sch:status>``
@@ -72,10 +79,25 @@ _ILLEGAL_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
 
 @dataclass(frozen=True)
 class FeedAuthor:
-    """One author of an entry."""
+    """One author of an entry.
 
-    #: The author's ``did:`` identifier, shown as the ``<name>``.
+    The author is *named* by their public profile display name and
+    *identified* by their DID.  ``name`` is ``None`` when there is no readable
+    profile -- never saved, erased (the crypto-shredded blob reads as "no
+    profile"), or blank -- and the DID is the name then; the DID is never
+    dropped, because a name is not unique and a DID is.
+    """
+
+    #: The author's ``did:`` identifier, shown as the ``<uri>`` (and as the
+    #: ``<name>`` only when no display name exists).
     did: str
+    #: The author's public profile display name, or ``None`` to show the DID.
+    name: Optional[str] = None
+
+    @property
+    def shown_name(self) -> str:
+        """What the feed calls this author: the display name, else the DID."""
+        return self.name if self.name else self.did
 
 
 @dataclass(frozen=True)
@@ -92,13 +114,18 @@ class FeedEntry:
     version: int
     categories: Sequence[str]
     authors: Sequence[FeedAuthor]
-    #: Where a client reads this paper as JSON (``GET /v1/papers/{id}``).
+    #: Where a client reads this paper as JSON (``GET /v1/papers/{id}``); the
+    #: entry's ``rel="related"`` link (its alternate when no web page exists).
     href: str
     #: When the paper first appeared in the catalog (UTC).
     published: Optional[datetime]
     #: When a version of the paper was most recently listed (UTC).
     updated: Optional[datetime]
     licence: Optional[str] = None
+    #: The paper's page on the web app (``.../p/{id}``), from the configured
+    #: public web origin; the entry's ``rel="alternate"`` link.  ``None`` when
+    #: no public web origin is configured.
+    page_href: Optional[str] = None
 
 
 def _text(value: object) -> str:
@@ -129,14 +156,28 @@ def _entry_xml(entry: FeedEntry, fallback: datetime) -> str:
         "  <entry>",
         f"    <id>{_text(entry.short_id)}</id>",
         f"    <title>{_text(entry.title)}</title>",
-        f'    <link rel="alternate" type="application/json" href={_attr(entry.href)}/>',
-        f"    <updated>{rfc3339(updated)}</updated>",
     ]
+    if entry.page_href:
+        # A person follows the alternate link, so it is the paper's page on
+        # the web app; the API's JSON record stays one link away.
+        lines.append(
+            f'    <link rel="alternate" type="text/html" href={_attr(entry.page_href)}/>'
+        )
+        lines.append(
+            f'    <link rel="related" type="application/json" href={_attr(entry.href)}/>'
+        )
+    else:
+        # No public web origin configured: the API record stands in, so the
+        # entry still carries exactly one alternate link.
+        lines.append(
+            f'    <link rel="alternate" type="application/json" href={_attr(entry.href)}/>'
+        )
+    lines.append(f"    <updated>{rfc3339(updated)}</updated>")
     if entry.published is not None:
         lines.append(f"    <published>{rfc3339(entry.published)}</published>")
     for author in entry.authors:
         lines.append(
-            f"    <author><name>{_text(author.did)}</name>"
+            f"    <author><name>{_text(author.shown_name)}</name>"
             f"<uri>{_text(author.did)}</uri></author>"
         )
     for category in entry.categories:

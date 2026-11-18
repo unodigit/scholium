@@ -14,7 +14,11 @@ What an item carries
     version-specific id would make readers show the same paper again as a new
     item).
 ``url``
-    Where a client reads this paper as JSON (``GET /v1/papers/{id}``).
+    The paper's page on the web app (``.../p/{id}``), from the configured
+    public web origin -- where a person reads it.  ``external_url`` carries
+    the API's own JSON record alongside.  When no public web origin is
+    configured the API record is the ``url`` itself, as before, and no
+    ``external_url`` duplicates it.
 ``title`` / ``content_text``
     The title and abstract of the listed version shown.  The abstract is plain
     text, so it goes in ``content_text`` -- the field the format insists an
@@ -23,9 +27,10 @@ What an item carries
     When the paper first appeared in the catalog, and when a version of it was
     most recently listed (RFC 3339, UTC).
 ``authors``
-    One per author, in byline order.  Only the DID is public here (profile
-    names are personal data and are not read for a feed), and a DID is not a
-    URL, so it is the author's ``name`` and nothing else.
+    One per author, in byline order, named as their public profile is (the
+    display name ``GET /v1/profiles/{did}`` shows every reader; the DID when
+    there is no readable profile -- never saved, erased, or blank).  A DID is
+    not a URL, so it is the author's ``name`` and nothing else.
 ``tags``
     The categories the paper is filed under (what other formats call
     categories, JSON Feed calls tags).
@@ -83,15 +88,19 @@ def _item(entry: FeedEntry, fallback: datetime) -> dict[str, Any]:
     # and the extension object last of all.
     item: dict[str, Any] = {
         "id": entry.short_id,
-        "url": entry.href,
-        "title": entry.title,
-        "content_text": entry.abstract,
+        "url": entry.page_href or entry.href,
     }
+    if entry.page_href:
+        # The web page is the item's own url; the API's JSON record is the
+        # related page elsewhere JSON Feed calls external_url.
+        item["external_url"] = entry.href
+    item["title"] = entry.title
+    item["content_text"] = entry.abstract
     if entry.published is not None:
         item["date_published"] = rfc3339(entry.published)
     item["date_modified"] = rfc3339(entry.updated or entry.published or fallback)
     if entry.authors:
-        item["authors"] = [{"name": author.did} for author in entry.authors]
+        item["authors"] = [{"name": author.shown_name} for author in entry.authors]
     if entry.categories:
         item["tags"] = list(entry.categories)
     item[EXTENSION] = scholium

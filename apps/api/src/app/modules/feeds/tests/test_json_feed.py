@@ -22,6 +22,8 @@ from app.modules.feeds.jsonfeed import (
     JSON_FEED_VERSION,
     render_json_feed,
 )
+from app.modules.profiles import ProfileData, erase_profile, save_profile
+from app.settings import settings
 
 from .test_atom_feed import STORABLE_NUL, Paper, Scene, hours_ago
 
@@ -97,15 +99,59 @@ def test_an_item_describes_the_listed_version(client, scene):
     assert RFC3339.match(item["date_modified"])
 
 
-def test_the_item_url_resolves_to_the_paper(client, scene):
+def test_the_item_urls_the_web_paper_page_and_keeps_the_api_record(
+    client, scene, monkeypatch
+):
+    paper = scene.listed(hours=1)
+    monkeypatch.setattr(settings, "WEB_ORIGINS", "https://scholium.example.org")
+
+    (item,) = document(get(client, scene))["items"]
+
+    # A reader's browser opens the paper's page on the web app, from the
+    # configured public web origin; the API record rides along as external_url.
+    assert item["url"] == f"https://scholium.example.org/p/{paper.short_id}"
+    assert item["external_url"].endswith(f"/v1/papers/{paper.short_id}")
+
+
+def test_the_api_record_link_resolves_to_the_paper(client, scene):
     paper = scene.listed(hours=1)
     (item,) = document(get(client, scene))["items"]
 
-    response = client.get(item["url"])
+    response = client.get(item["external_url"])
 
     assert response.status_code == 200, response.text
     assert response.json()["shortId"] == paper.short_id
-    assert item["url"].endswith(f"/v1/papers/{paper.short_id}")
+
+
+def test_an_item_names_authors_by_their_profile_display_name(client, scene):
+    paper = scene.listed(hours=2)
+    save_profile(
+        paper.did,
+        ProfileData(
+            name="Ada Lovelace", affiliation="Analytical Engines", email="ada@example.org"
+        ),
+    )
+
+    (item,) = document(get(client, scene))["items"]
+
+    assert item["authors"] == [{"name": "Ada Lovelace"}]
+
+
+def test_an_erased_profile_never_leaks_its_name(client, scene):
+    paper = scene.listed(hours=2)
+    save_profile(
+        paper.did,
+        ProfileData(
+            name="Ada Lovelace", affiliation="Analytical Engines", email="ada@example.org"
+        ),
+    )
+    erase_profile(paper.did)
+
+    response = get(client, scene)
+    (item,) = document(response)["items"]
+
+    assert item["authors"] == [{"name": paper.did}]
+    assert "Ada Lovelace" not in response.text
 
 
 def test_the_status_follows_the_paper(client):
@@ -345,6 +391,42 @@ def test_render_an_item_without_authors_has_no_authors_key():
     (item,) = _render([_entry(authors=[])])["items"]
 
     assert "authors" not in item
+
+
+def test_render_names_an_author_by_display_name_with_the_did_as_fallback():
+    (item,) = _render(
+        [
+            _entry(
+                authors=[
+                    FeedAuthor("did:key:z6Mk", "Ada Lovelace"),
+                    FeedAuthor("did:key:z6Mk2"),
+                ]
+            )
+        ]
+    )["items"]
+
+    assert item["authors"] == [
+        {"name": "Ada Lovelace"},
+        {"name": "did:key:z6Mk2"},
+    ]
+
+
+def test_render_urls_the_web_page_and_the_api_record_as_external():
+    (item,) = _render(
+        [_entry(page_href="https://web.example.org/p/sch:aaaa-bbbb-cccc")]
+    )["items"]
+
+    assert item["url"] == "https://web.example.org/p/sch:aaaa-bbbb-cccc"
+    assert item["external_url"] == "http://node/v1/papers/sch:aaaa-bbbb-cccc"
+
+
+def test_render_without_a_web_page_the_api_record_is_the_url():
+    (item,) = _render([_entry()])["items"]
+
+    # No public web origin configured: the item's url is the API record, as
+    # before the web page existed, and no external_url duplicates it.
+    assert item["url"] == "http://node/v1/papers/sch:aaaa-bbbb-cccc"
+    assert "external_url" not in item
 
 
 def test_render_the_extension_follows_the_naming_rules():

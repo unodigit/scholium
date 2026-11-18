@@ -27,12 +27,14 @@ from app.modules.feeds.atom import (
     FeedEntry,
     render_feed,
 )
+from app.modules.profiles import ProfileData, erase_profile, save_profile
 from app.modules.submissions import (
     VersionAuthor,
     save_paper,
     save_version,
     transition_version,
 )
+from app.settings import settings
 
 ATOM = f"{{{ATOM_NAMESPACE}}}"
 SCH = f"{{{SCHOLIUM_NAMESPACE}}}"
@@ -192,20 +194,85 @@ def test_an_entry_describes_the_listed_version(client, scene):
     assert entry.findtext(f"{ATOM}author/{ATOM}name") == paper.did
     assert entry.find(f"{ATOM}published") is not None
     assert entry.findtext(f"{ATOM}updated").endswith("Z")
-    (link,) = entry.findall(f"{ATOM}link")
-    assert link.get("rel") == "alternate"
-    assert link.get("href").endswith(f"/v1/papers/{paper.short_id}")
+    (alternate,) = [
+        link for link in entry.findall(f"{ATOM}link") if link.get("rel") == "alternate"
+    ]
+    assert alternate.get("href").endswith(f"/p/{paper.short_id}")
 
 
-def test_the_entry_link_resolves_to_the_paper(client, scene):
+def test_the_entry_links_the_web_paper_page_and_the_api_record(client, scene, monkeypatch):
+    paper = scene.listed(hours=1)
+    monkeypatch.setattr(settings, "WEB_ORIGINS", "https://scholium.example.org")
+
+    (entry,) = entries(parse(scene.get(client)))
+
+    links = entry.findall(f"{ATOM}link")
+    rels = [link.get("rel") for link in links]
+    assert "alternate" in rels and "related" in rels
+    (alternate,) = [link for link in links if link.get("rel") == "alternate"]
+    (related,) = [link for link in links if link.get("rel") == "related"]
+    # A reader's browser opens the paper's page on the web app, from the
+    # configured public web origin.
+    assert alternate.get("href") == f"https://scholium.example.org/p/{paper.short_id}"
+    assert alternate.get("type") == "text/html"
+    # The machine-readable API record stays a link away.
+    assert related.get("href").endswith(f"/v1/papers/{paper.short_id}")
+    assert related.get("type") == "application/json"
+
+
+def test_the_related_link_resolves_to_the_paper(client, scene):
     paper = scene.listed(hours=1)
     (entry,) = entries(parse(scene.get(client)))
-    href = entry.find(f"{ATOM}link").get("href")
+    (related,) = [
+        link for link in entry.findall(f"{ATOM}link") if link.get("rel") == "related"
+    ]
 
-    response = client.get(href)
+    response = client.get(related.get("href"))
 
     assert response.status_code == 200, response.text
     assert response.json()["shortId"] == paper.short_id
+
+
+def test_an_entry_names_authors_by_their_profile_display_name(client, scene):
+    paper = scene.listed(hours=2)
+    save_profile(
+        paper.did,
+        ProfileData(
+            name="Ada Lovelace", affiliation="Analytical Engines", email="ada@example.org"
+        ),
+    )
+
+    (entry,) = entries(parse(scene.get(client)))
+
+    (author,) = entry.findall(f"{ATOM}author")
+    assert author.findtext(f"{ATOM}name") == "Ada Lovelace"
+    # The DID stays as the identifier: a name is not unique, a DID is.
+    assert author.findtext(f"{ATOM}uri") == paper.did
+
+
+def test_an_author_without_a_profile_is_named_by_their_did(client, scene):
+    paper = scene.listed(hours=2)
+
+    (entry,) = entries(parse(scene.get(client)))
+
+    assert entry.findtext(f"{ATOM}author/{ATOM}name") == paper.did
+
+
+def test_an_erased_profile_never_leaks_its_name(client, scene):
+    paper = scene.listed(hours=2)
+    save_profile(
+        paper.did,
+        ProfileData(
+            name="Ada Lovelace", affiliation="Analytical Engines", email="ada@example.org"
+        ),
+    )
+    erase_profile(paper.did)
+
+    response = scene.get(client)
+
+    (entry,) = entries(parse(response))
+    assert entry.findtext(f"{ATOM}author/{ATOM}name") == paper.did
+    assert "Ada Lovelace" not in response.text
 
 
 def test_the_status_follows_the_paper(client, scene):
@@ -418,6 +485,69 @@ def test_render_an_entry_without_authors_is_still_valid_atom():
     (entry,) = entries(root)
     assert entry.find(f"{ATOM}author") is None
     assert root.findtext(f"{ATOM}author/{ATOM}name") == PUBLISHER
+
+
+def test_render_names_an_author_by_display_name_with_the_did_as_fallback():
+    root = ET.fromstring(
+        render_feed(
+            feed_id="urn:x",
+            title="t",
+            self_href="http://node/feed",
+            entries=[
+                _entry(
+                    authors=[
+                        FeedAuthor("did:key:z6Mk", "Ada Lovelace"),
+                        FeedAuthor("did:key:z6Mk2"),
+                    ]
+                )
+            ],
+        )
+    )
+
+    (entry,) = entries(root)
+    assert [a.findtext(f"{ATOM}name") for a in entry.findall(f"{ATOM}author")] == [
+        "Ada Lovelace",
+        "did:key:z6Mk2",
+    ]
+    assert [a.findtext(f"{ATOM}uri") for a in entry.findall(f"{ATOM}author")] == [
+        "did:key:z6Mk",
+        "did:key:z6Mk2",
+    ]
+
+
+def test_render_links_the_web_page_and_keeps_the_api_record():
+    root = ET.fromstring(
+        render_feed(
+            feed_id="urn:x",
+            title="t",
+            self_href="http://node/feed",
+            entries=[_entry(page_href="https://web.example.org/p/sch:aaaa-bbbb-cccc")],
+        )
+    )
+
+    (entry,) = entries(root)
+    links = {link.get("rel"): link for link in entry.findall(f"{ATOM}link")}
+
+    assert links["alternate"].get("href") == "https://web.example.org/p/sch:aaaa-bbbb-cccc"
+    assert links["alternate"].get("type") == "text/html"
+    assert links["related"].get("href") == "http://node/v1/papers/sch:aaaa-bbbb-cccc"
+    assert links["related"].get("type") == "application/json"
+
+
+def test_render_without_a_web_page_the_api_record_is_the_alternate():
+    root = ET.fromstring(
+        render_feed(feed_id="urn:x", title="t", self_href="http://node/feed",
+                    entries=[_entry()])  # fmt: skip
+    )
+
+    (entry,) = entries(root)
+    links = {link.get("rel"): link for link in entry.findall(f"{ATOM}link")}
+
+    # No public web origin configured: the entry still carries exactly one
+    # alternate link, and it is the API record, as before the web page existed.
+    assert set(links) == {"alternate"}
+    assert links["alternate"].get("href") == "http://node/v1/papers/sch:aaaa-bbbb-cccc"
+    assert links["alternate"].get("type") == "application/json"
 
 
 def test_render_an_empty_feed_is_dated_now():

@@ -16,10 +16,11 @@ paper.  Which document carries them depends on ``format``:
         <entry>
           <id>sch:k3f9-q2xz-7mwd</id>
           <title>...</title>
-          <link rel="alternate" type="application/json" href=".../v1/papers/sch:k3f9-q2xz-7mwd"/>
+          <link rel="alternate" type="text/html" href=".../p/sch:k3f9-q2xz-7mwd"/>
+          <link rel="related" type="application/json" href=".../v1/papers/sch:k3f9-q2xz-7mwd"/>
           <updated>2026-02-01T00:00:00Z</updated>
           <published>2026-01-01T00:00:00Z</published>
-          <author><name>did:key:z6Mk...</name><uri>did:key:z6Mk...</uri></author>
+          <author><name>Ada Lovelace</name><uri>did:key:z6Mk...</uri></author>
           <category term="cs.AI"/>
           <summary type="text">...</summary>
           <rights>CC-BY-4.0</rights>
@@ -27,21 +28,31 @@ paper.  Which document carries them depends on ``format``:
           <sch:version>2</sch:version>
         </entry>
 
+    The alternate link is the paper's page on the web app (the configured
+    public web origin, the same one the web's own links use); the API's JSON
+    record stays one link away as ``rel="related"``.  Authors are named as
+    their public profile is (the DID when there is no readable profile, so an
+    erased profile never leaks a name) and stay identified by DID.
+
 ``json``
     The same papers as a JSON Feed 1.1 document
     (``application/feed+json``; feature 89), one item per paper::
 
         {
           "id": "sch:k3f9-q2xz-7mwd",
-          "url": ".../v1/papers/sch:k3f9-q2xz-7mwd",
+          "url": ".../p/sch:k3f9-q2xz-7mwd",
+          "external_url": ".../v1/papers/sch:k3f9-q2xz-7mwd",
           "title": "...",
           "content_text": "the abstract",
           "date_published": "2026-01-01T00:00:00Z",
           "date_modified": "2026-02-01T00:00:00Z",
-          "authors": [{"name": "did:key:z6Mk..."}],
+          "authors": [{"name": "Ada Lovelace"}],
           "tags": ["cs.AI"],
           "_scholium": {"status": "reviewed", "version": 2, "licence": "CC-BY-4.0"}
         }
+
+    The web page is the item's ``url`` and the API record its
+    ``external_url``; authors are named exactly as the Atom feed names them.
 
 In both, the entry's id is the paper's ``sch:`` short id and its status and
 version ride along (``<sch:status>`` in Atom, the ``_scholium`` extension in
@@ -60,12 +71,14 @@ holds; a feed has no pages, a reader follows it by polling.
 from __future__ import annotations
 
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Path, Query, Request, Response
 
 from app.modules.catalog import listing
+from app.modules.export.records import display_name
 from app.modules.submissions import authorship_for
+from app.settings import settings
 
 from .atom import ATOM_MEDIA_TYPE, FeedAuthor, FeedEntry, render_feed
 from .jsonfeed import JSON_FEED_MEDIA_TYPE, render_json_feed
@@ -81,10 +94,28 @@ MAX_LIMIT = listing.MAX_LIMIT
 router = APIRouter(tags=["feeds"])
 
 
-def _entry(entry: listing.CatalogEntry, base_url: str) -> FeedEntry:
+def _web_base() -> Optional[str]:
+    """The public origin of the web app, or ``None`` when none is configured.
+
+    That is the first usable ``WEB_ORIGINS`` entry (an ``http(s)://host[:port]``
+    URL; ``*`` and blanks are skipped), without a trailing slash -- the same
+    origin the ORCID and notifications plugins resolve and the web app's own
+    paper pages live under.  Read on every call, so a changed setting takes
+    effect without a restart.
+    """
+    for origin in settings.web_origins:
+        candidate = origin.strip().rstrip("/")
+        parts = urlsplit(candidate)
+        if parts.scheme in ("http", "https") and parts.netloc:
+            return candidate
+    return None
+
+
+def _entry(entry: listing.CatalogEntry, base_url: str, web_base: Optional[str]) -> FeedEntry:
     """One catalog entry as the feed shows it."""
     paper = entry.paper
     version = entry.version
+    short = quote(paper.short_id, safe=":")
     return FeedEntry(
         short_id=paper.short_id,
         title=version.title,
@@ -93,9 +124,15 @@ def _entry(entry: listing.CatalogEntry, base_url: str) -> FeedEntry:
         version=int(version.n),
         categories=list(paper.categories or []),
         authors=[
-            FeedAuthor(did=row.author_did) for row in authorship_for(version.version_cid)
+            # The display name is public data (GET /v1/profiles/{did} shows it
+            # to every reader); ``display_name`` reads None for a DID with no
+            # readable profile -- never saved, erased, or blank -- and the
+            # renderer shows the DID then, never a leaked name.
+            FeedAuthor(did=row.author_did, name=display_name(row.author_did))
+            for row in authorship_for(version.version_cid)
         ],
-        href=f"{base_url}v1/papers/{quote(paper.short_id, safe=':')}",
+        href=f"{base_url}v1/papers/{short}",
+        page_href=f"{web_base}/p/{short}" if web_base else None,
         published=entry.listed_at,
         updated=entry.updated_at,
         licence=version.licence,
@@ -141,7 +178,8 @@ def get_category_feed(
     base_url = str(request.base_url)
     if not base_url.endswith("/"):
         base_url += "/"
-    entries = [_entry(entry, base_url) for entry in page.entries]
+    web_base = _web_base()
+    entries = [_entry(entry, base_url, web_base) for entry in page.entries]
     if format == "json":
         document = render_json_feed(
             feed_url=str(request.url),
