@@ -139,12 +139,17 @@ def test_a_docker_compose_engine_is_not_version_checked(tmp_path):
 
 
 def test_the_other_stack_scripts_route_through_this_one():
-    """stack:up, down, logs, reset and deps call stack-compose.sh; smoke calls stack-smoke.sh."""
+    """down, logs and reset call stack-compose.sh; up and deps call stack-up-staged.sh, which does;
+    smoke calls stack-smoke.sh."""
     import json
 
     scripts = json.loads((REPO_ROOT / "package.json").read_text())["scripts"]
-    for name in ("stack:up", "stack:down", "stack:logs", "stack:deps"):
+    for name in ("stack:down", "stack:logs"):
         assert "scripts/stack-compose.sh" in scripts[name], name
+    for name in ("stack:up", "stack:deps"):
+        assert "scripts/stack-up-staged.sh" in scripts[name], name
+    staged = (REPO_ROOT / "scripts" / "stack-up-staged.sh").read_text()
+    assert "scripts/stack-compose.sh" in staged, "stack:up and stack:deps must compose through stack-compose.sh"
     reset = scripts["stack:reset"]
     assert "scripts/stack-compose.sh down" in reset and "--volumes" in reset, (
         "stack:reset must delete the volumes through stack-compose.sh"
@@ -157,16 +162,14 @@ def test_the_other_stack_scripts_route_through_this_one():
     assert "scripts/stack-compose.sh" in smoke, "stack:smoke must compose through stack-compose.sh"
 
 
-def test_stack_deps_names_only_the_backing_services():
+def test_stack_deps_starts_only_the_backing_services():
+    """stack:deps is the staged script's --deps-only mode; which services each mode starts, and in
+    what order, is checked against a fake engine in test_stack_up_staged.py."""
     import json
 
     scripts = json.loads((REPO_ROOT / "package.json").read_text())["scripts"]
-    command = scripts["stack:deps"]
-    assert "scripts/stack-compose.sh up" in command
-    for service in ("db", "minio", "minio-init", "mailpit"):
-        assert service in command.split(), f"stack:deps must start {service}"
-    for service in ("api", "worker", "web"):
-        assert service not in command.split(), f"stack:deps must leave {service} stopped"
+    assert scripts["stack:deps"].split() == ["bash", "scripts/stack-up-staged.sh", "--deps-only"]
+    assert "--deps-only" not in scripts["stack:up"].split(), "stack:up must go on to start api, worker and web"
 
 
 @pytest.mark.parametrize("version", ["0.9.9", "1.5.9"])

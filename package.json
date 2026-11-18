@@ -9,11 +9,11 @@
     "test:slow": "cd apps/api && uv run --all-packages pytest -m slow",
     "test:llm-live": "cd apps/api && uv run --all-packages pytest -p no:xdist -m live_llm tests/test_llm_live.py",
     "test:pg": "bash scripts/test-pg.sh",
-    "stack:up": "scripts/stack-compose.sh up -d --build --remove-orphans",
+    "stack:up": "bash scripts/stack-up-staged.sh",
     "stack:down": "scripts/stack-compose.sh down --remove-orphans",
     "stack:logs": "scripts/stack-compose.sh logs -f --tail 100",
     "stack:reset": "scripts/stack-compose.sh down --remove-orphans --volumes && scripts/stack-compose.sh up -d --build --remove-orphans",
-    "stack:deps": "scripts/stack-compose.sh up -d db minio minio-init mailpit",
+    "stack:deps": "bash scripts/stack-up-staged.sh --deps-only",
     "stack:smoke": "bash scripts/stack-smoke.sh",
     "infra:check": "bash scripts/infra-check.sh"
   },
