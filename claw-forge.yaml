@@ -232,7 +232,10 @@ agent:
     #     otherwise leaves the members' own tests out of the gate entirely.
     scope: package
     # command: ""        # override; empty -> auto-detect (pytest/npm/cargo/go)
-    # timeout: 600       # seconds before the test run is killed (exit 124)
+    # The API suite takes ~3 min alone but passed 600 s under load (5 agents
+    # plus a full rerun, 2026-11-19), which turned API gates into
+    # SKIPPED:gate_timeout for the whole run.
+    timeout: 1200      # seconds before the test run is killed (exit 124)
   # Run-boundary assembly verification.  Every other gate runs inside a
   # worktree, which cannot see integration — integration is the property that
   # exists only BETWEEN tasks.  This one runs on target_branch after every
