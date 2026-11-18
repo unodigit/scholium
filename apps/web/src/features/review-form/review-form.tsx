@@ -395,8 +395,10 @@ function ReviewFormBody({
 
   // The editable form is the page's one surface that uses the identity choice
   // and can cite; a card in its place must not offer either.
+  // An update page is only reached from a review the server already revealed
+  // (its ``prev``), so nothing on it can be waiting for a reveal.
   const sealedCard =
-    phase === "sealed" && sealed !== null && !revealedElsewhere;
+    phase === "sealed" && sealed !== null && !revealedElsewhere && !isUpdate;
   const revealedCard =
     revealedElsewhere && ownReview !== null && phase !== "signing";
   const sealedElsewhereCard = sealedElsewhere && phase === "editing";
@@ -621,15 +623,20 @@ function ReviewFormBody({
   return (
     <>
       {/* A reviewer with a review key file from another browser can bring it
-          here before writing anything. */}
-      <ImportReviewKey
-        paperId={paperId}
-        seams={keyFile}
-        onImported={(imported) => {
-          setSealed(imported);
-          setPhase("sealed");
-        }}
-      />
+          here before writing anything. An update is not signed with the review
+          key, and its review is already revealed, so the update form offers
+          no import: importing there used to put the page back on a sealed
+          card whose Reveal the node refuses. */}
+      {isUpdate ? null : (
+        <ImportReviewKey
+          paperId={paperId}
+          seams={keyFile}
+          onImported={(imported) => {
+            setSealed(imported);
+            setPhase("sealed");
+          }}
+        />
+      )}
       <form
         className="rf-form"
       aria-labelledby={`${uid}-title`}

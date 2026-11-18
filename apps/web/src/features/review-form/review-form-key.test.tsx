@@ -453,6 +453,18 @@ describe("a revealed review by this reviewer that this browser does not hold", (
     expect(update).toHaveBeenCalledTimes(1);
   });
 
+  it("does not offer a key import on the update form, so it can never fall back to a sealed card", async () => {
+    // Sweep 7, journey 13: importing the key from the update form switched the
+    // page to "Your review is sealed" with a Reveal the node refuses.
+    renderForm({ prev: "bafyformal", initialDraft: completeDraft() });
+
+    expect(await screen.findByRole("button", { name: UPDATE_LABEL })).toBeTruthy();
+    expect(screen.queryByLabelText(REVIEW_KEY_FILE_LABEL)).toBeNull();
+    expect(screen.queryByRole("form", { name: IMPORT_REVIEW_KEY_LABEL })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Your review is sealed" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reveal review" })).toBeNull();
+  });
+
   it("offers no identity choice beside the revealed card, where no form uses it", async () => {
     render(
       <ReviewSessionProvider>
