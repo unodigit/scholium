@@ -20,6 +20,11 @@ class AnthropicProvider(LLMProvider):
 
     ``client`` may be injected for tests; otherwise an ``anthropic.Anthropic``
     client is created lazily from ``ANTHROPIC_API_KEY``.
+
+    ``base_url`` names the endpoint that speaks the Anthropic protocol and
+    defaults to ``ANTHROPIC_BASE_URL`` (for example
+    ``https://llm-gateway.example/anthropic``).  When it is empty the client is
+    built without one and uses the SDK default.
     """
 
     name = "anthropic"
@@ -30,15 +35,22 @@ class AnthropicProvider(LLMProvider):
         model: str | None = None,
         api_key: str | None = None,
         client: Any | None = None,
+        base_url: str | None = None,
     ) -> None:
         self.model = model or settings.AI_HOSTED_MODEL
         self._api_key = api_key
         self._client = client
+        self.base_url = (
+            base_url if base_url is not None else settings.ANTHROPIC_BASE_URL
+        ).strip()
 
     def _get_client(self) -> Any:
         if self._client is None:
             key = self._api_key if self._api_key is not None else ""
-            self._client = anthropic.Anthropic(api_key=key or None)
+            options: dict[str, Any] = {"api_key": key or None}
+            if self.base_url:
+                options["base_url"] = self.base_url
+            self._client = anthropic.Anthropic(**options)
         return self._client
 
     def _complete(self, request: LLMRequest) -> LLMResponse:

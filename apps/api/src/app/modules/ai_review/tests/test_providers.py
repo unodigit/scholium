@@ -21,6 +21,7 @@ from app.modules.ai_review import (
     PrivateDraftError,
     get_provider,
 )
+from app.modules.ai_review.providers import anthropic_provider
 from app.settings import settings
 
 INSTRUCTIONS = "Review the methodology of the quoted paragraphs."
@@ -186,6 +187,87 @@ class TestAnthropicProvider:
         assert first_block["type"] == "text"
         assert 'id="p1"' in first_block["text"]
         assert BLOCK_P1.content in first_block["text"]
+
+
+class TestAnthropicBaseUrl:
+    """The client is built with the endpoint named by ANTHROPIC_BASE_URL."""
+
+    @pytest.fixture
+    def built(self, monkeypatch) -> list[dict]:
+        """Replace the SDK constructor; each entry is one client's kwargs."""
+        calls: list[dict] = []
+
+        def fake_anthropic(**kwargs):
+            calls.append(kwargs)
+            return StubAnthropicClient()
+
+        monkeypatch.setattr(anthropic_provider.anthropic, "Anthropic", fake_anthropic)
+        monkeypatch.setattr(settings, "ANTHROPIC_BASE_URL", "")
+        return calls
+
+    def test_setting_is_the_default_base_url(self, built, monkeypatch):
+        monkeypatch.setattr(
+            settings, "ANTHROPIC_BASE_URL", "https://llm-gateway.example/anthropic"
+        )
+        provider = AnthropicProvider(api_key="sk-test")
+        assert provider.base_url == "https://llm-gateway.example/anthropic"
+        provider.complete(make_request())
+        assert built == [
+            {"api_key": "sk-test", "base_url": "https://llm-gateway.example/anthropic"}
+        ]
+
+    def test_argument_overrides_the_setting(self, built, monkeypatch):
+        monkeypatch.setattr(settings, "ANTHROPIC_BASE_URL", "https://setting.example/a")
+        provider = AnthropicProvider(api_key="sk-test", base_url="https://arg.example/a")
+        provider.complete(make_request())
+        assert built == [{"api_key": "sk-test", "base_url": "https://arg.example/a"}]
+
+    def test_empty_base_url_leaves_the_sdk_default(self, built):
+        provider = AnthropicProvider(api_key="sk-test")
+        assert provider.base_url == ""
+        provider.complete(make_request())
+        # No base_url at all, exactly the construction used before the setting.
+        assert built == [{"api_key": "sk-test"}]
+
+    def test_blank_argument_also_leaves_the_sdk_default(self, built, monkeypatch):
+        monkeypatch.setattr(settings, "ANTHROPIC_BASE_URL", "https://setting.example/a")
+        AnthropicProvider(api_key="sk-test", base_url="  ").complete(make_request())
+        assert built == [{"api_key": "sk-test"}]
+
+    def test_api_key_handling_is_unchanged(self, built, monkeypatch):
+        monkeypatch.setattr(settings, "ANTHROPIC_BASE_URL", "https://proxy.example/a")
+        # No explicit key: None lets the SDK read ANTHROPIC_API_KEY itself.
+        AnthropicProvider().complete(make_request())
+        AnthropicProvider(api_key="").complete(make_request())
+        assert built == [
+            {"api_key": None, "base_url": "https://proxy.example/a"},
+            {"api_key": None, "base_url": "https://proxy.example/a"},
+        ]
+
+    def test_real_client_is_built_for_the_configured_endpoint(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.setattr(settings, "ANTHROPIC_BASE_URL", "")
+        default = AnthropicProvider(api_key="sk-test")._get_client()
+        configured = AnthropicProvider(
+            api_key="sk-test", base_url="https://llm-gateway.example/anthropic"
+        )._get_client()
+        assert default.base_url == anthropic_provider.anthropic.Anthropic(
+            api_key="sk-test"
+        ).base_url
+        assert str(configured.base_url).startswith("https://llm-gateway.example/anthropic")
+        assert str(configured.base_url) != str(default.base_url)
+
+    def test_unlisted_draft_is_refused_before_any_client_is_built(self, built, monkeypatch):
+        monkeypatch.setattr(settings, "ANTHROPIC_BASE_URL", "https://proxy.example/a")
+        with pytest.raises(PrivateDraftError):
+            AnthropicProvider(api_key="sk-test").complete(make_request(listed=False))
+        assert built == []
+
+    def test_get_provider_reads_the_setting_without_arguments(self, built, monkeypatch):
+        monkeypatch.setattr(settings, "ANTHROPIC_BASE_URL", "https://proxy.example/a")
+        provider = get_provider("anthropic")
+        assert isinstance(provider, AnthropicProvider)
+        assert provider.base_url == "https://proxy.example/a"
 
 
 class TestOllamaProvider:
