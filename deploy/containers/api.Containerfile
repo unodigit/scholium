@@ -51,13 +51,13 @@ RUN groupadd --gid 10001 app \
     && chown -R app:app /data
 
 # Container-friendly defaults. HOST=0.0.0.0 is what makes the uvicorn socket
-# reachable from outside the container; the SQLite/key paths live on the /data
-# volume, and compose overrides DATABASE_URL for PostgreSQL.
+# reachable from outside the container; the data paths live on the /data
+# volume, and compose (or the operator) supplies DATABASE_URL. SQLite is the
+# development default and is refused in production.
 ENV HOST=0.0.0.0 \
     PORT=8000 \
     CONTENT_DIR=/data/content \
-    NODE_KEY_PATH=/data/node.key \
-    DATABASE_URL=sqlite:////data/scholium.db
+    NODE_KEY_PATH=/data/node.key
 
 USER app
 

@@ -243,3 +243,40 @@ def test_secret_opentofu_variables_are_sensitive_and_carry_no_value():
             problems.append(f"{path}: variable {name} has a default value")
     assert seen, "the check found no secret variables at all"
     assert not problems, problems
+
+
+def _logical_lines(text: str):
+    """Join backslash-continued lines, as a shell/Dockerfile parser would."""
+    out = []
+    buf = ""
+    for line in text.splitlines():
+        if buf:
+            buf += " " + line.strip()
+        else:
+            buf = line
+        if buf.rstrip().endswith("\\"):
+            buf = buf.rstrip()[:-1]
+            continue
+        out.append(buf)
+        buf = ""
+    if buf:
+        out.append(buf)
+    return out
+
+
+def test_delivery_files_do_not_default_to_sqlite():
+    for containerfile in sorted((REPO_ROOT / "deploy" / "containers").glob("*.Containerfile")):
+        for line in _logical_lines(containerfile.read_text()):
+            stripped = line.strip()
+            if re.match(r"^(ENV|ARG)\b", stripped, re.I):
+                assert "sqlite" not in stripped.lower(), (
+                    f"{containerfile.name}: ENV/ARG holds a sqlite URL: {stripped}"
+                )
+    for line in (REPO_ROOT / ".env.example").read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", stripped):
+            assert "sqlite" not in stripped.lower(), (
+                f".env.example uncommented KEY=value holds a sqlite URL: {stripped}"
+            )
