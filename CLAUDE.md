@@ -5,9 +5,11 @@
 <!-- TODO: describe what this project does -->
 
 ## Stack
-- API: Python 3.12, FastAPI, SQLAlchemy 2.0, SQLite — `apps/api` (uv workspace; packages in `apps/api/packages/*`)
+- API: Python 3.12, FastAPI, SQLAlchemy 2.0, SQLite by default or PostgreSQL 16 (`DATABASE_URL`) — `apps/api` (uv workspace; packages in `apps/api/packages/*`)
+- Backends, chosen by environment variables and all defaulting to the no-container setup: database (SQLite | PostgreSQL), objects (`STORAGE_BACKEND=fs` | `s3`), jobs (`JOBS_MODE=eager` | `thread` | `external`), sandbox (`SANDBOX_BACKEND=docker` | `podman` | `remote` | `none`)
 - Web: Next.js 15 App Router, TypeScript, Tailwind — `apps/web`
-- Spec: `app_spec.xml`; product docs in `docs/` (`docs/design.md` is the UI authority)
+- Delivery: `compose.yaml` and `deploy/` (Containerfiles, compose test file), `infra/` (OpenTofu); no cloud-provider code outside `infra/`
+- Spec: `app_spec.xml`; product docs in `docs/` (`docs/design.md` is the UI authority; `docs/deploy.md` is the operations guide)
 
 ## Build & Test
 - Install: `npm install` at the repo root (npm workspaces include `apps/web`). Do NOT use pnpm/yarn
@@ -25,6 +27,22 @@
 - Run API: `cd apps/api && uv run python -m app` (serves `create_app` on HOST/PORT, default 127.0.0.1:8000; set FORWARDED_ALLOW_IPS to honour proxy headers)
 - Web only: `npm test --workspace apps/web`
 - Browser journeys: `npm run test:e2e` (Playwright, not part of `npm test`)
+- **Opt-in commands outside `npm test`.** `npm test` needs no containers, network or cloud credentials
+  (SQLite, `STORAGE_BACKEND=fs`, eager jobs). These do, so they are never part of it; run one only
+  when your change touches what it covers:
+  - `npm run test:pg` — the whole API suite against PostgreSQL 16 + pgvector in a throwaway
+    podman-compose (or `docker compose`) container; extra arguments go to pytest
+    (`npm run test:pg -- -k ledger`); `TEST_DATABASE_URL` set means "use that server, start nothing"
+  - `npm run stack:up` — build the images and start the local stack from `compose.yaml` (web, api,
+    worker, PostgreSQL, MinIO, Mailpit); companions `stack:down`, `stack:logs`, `stack:reset`
+    (`reset` deletes the volumes)
+  - `npm run stack:smoke` — with the stack up: wait for `/readyz` and the web app, then a blob round
+    trip through S3 and a job run by the separate worker
+  - `npm run infra:check` — `tofu fmt -check` and `tofu validate` of everything under `infra/`, no
+    cloud credentials; needs `tofu`
+- Running and deploying (every environment variable by backend, the stack, the worker and sandbox
+  processes, `python -m app.migrate_backend`, the OpenTofu staging walkthrough): `docs/deploy.md`;
+  variables with placeholders: `.env.example`
 
 <!-- claw-forge:policy start -->
 ## How work reaches claw-forge

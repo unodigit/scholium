@@ -534,9 +534,44 @@ Idempotency-Key: 6f1c...
 | Chain | Solidity, Foundry, OpenZeppelin, Safe; Ethereum L2 + mainnet checkpoint |
 | Metadata | DataCite/Crossref, OpenAlex, ROR, CRediT |
 | Observability | OpenTelemetry, Prometheus, Grafana, Loki |
-| Delivery | Terraform, Kubernetes, GitHub Actions, Sigstore, SBOM |
+| Delivery | OpenTofu (Terraform-compatible HCL), OCI images run with compose / podman-compose, Kubernetes, GitHub Actions, Sigstore, SBOM |
 
 Pilot sizing (50 researchers, a few hundred papers): 3 small app servers, one managed Postgres, ~100 GB object storage, one GPU machine or Mac Studio for local models.
+
+### 14.1 Backend interfaces
+
+A node is four processes: the **api** (`python -m app`), the **worker** (`python -m app.worker`), an optional **sandbox service** (`python -m app.sandbox_service`) and the **web** app. They are one codebase. What differs between a laptop and a cloud deployment is four backends, each behind a small interface and chosen by environment variables, so no deployment needs a fork and no application code names a cloud provider.
+
+| Interface | Selected by | Implementations | Default | Code |
+| --- | --- | --- | --- | --- |
+| Database | `DATABASE_URL` | SQLite; PostgreSQL 16 (psycopg 3) | SQLite file | `app/db.py` |
+| `ObjectStore` | `STORAGE_BACKEND` | `fs` (files under `CONTENT_DIR`); `s3` (any S3-API service through boto3) | `fs` | `app/storage/` |
+| Job runner | `JOBS_MODE` | `eager` (inline); `thread` (in-process); `external` (a separate worker) | `eager` | `app/jobs.py`, `app/worker.py` |
+| Sandbox runner | `SANDBOX_BACKEND` | `docker`; `podman`; `remote` (HTTP to the sandbox service); `none` | `docker` | `app/modules/ai_review/sandbox.py`, `app/sandbox_service/` |
+
+The defaults need no container, network or credential; they are what the test suite runs on. Production (`SCHOLIUM_ENV=production`) refuses to start with development defaults, including eager jobs. Every variable is listed, by backend, in `deploy.md`.
+
+**Database.** One SQLAlchemy engine, session factory and metadata serve both dialects; `postgres://` and `postgresql://` URLs are rewritten to the psycopg 3 driver. PostgreSQL gets a connection pool (`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`), a liveness ping before each checkout and a UTC session. Replicas that start together serialise `create_all` with a session-level advisory lock. The guarantees of the record model are the same on both dialects: `event_log` is append-only through triggers on SQLite and PL/pgSQL triggers on PostgreSQL that raise the same error, `seq` is never reused, appends serialise on the log head (an advisory lock on PostgreSQL) so two writers cannot fork the hash chain, and full-text search is an FTS5 table on SQLite and a weighted `tsvector` behind a GIN index on PostgreSQL, with the same result shape and ranking.
+
+**`ObjectStore`.** Everything that keeps bytes (content blobs named by CID, in-flight tus uploads) keeps them through one interface:
+
+| Operation | Contract |
+| --- | --- |
+| `put_stream(key, stream)` | Stores everything the stream yields at `key`, replacing any object there, atomically: a reader sees the old object or the whole new one. Returns the key, the size and the SHA-256 of what was stored. |
+| `open(key, offset, length)` | A streaming reader over the object or a byte range of it; need not be seekable. |
+| `size(key)`, `exists(key)` | Metadata without reading the bytes. |
+| `delete(key)` | Removes the object; a missing key is a no-op. |
+| `list(prefix)` | Keys starting with `prefix`, in ascending byte order. |
+
+Keys are `/`-separated paths validated before any I/O: no empty segments, no segment starting with `.`, no control characters or backslash, at most 1,024 bytes. Reading a missing key raises `ObjectNotFoundError`, which is also a `FileNotFoundError`. One contract test suite runs against both drivers. The `fs` driver keeps the layout the content store has always used (one file per CID directly in `CONTENT_DIR`, writes staged in `.tmp` and renamed after an fsync), so an existing local install is read as it stands with no migration. The `s3` driver is one `PutObject` up to the part size and an aborting multipart upload above it, reads by streaming the response body, and serves a byte range as a ranged `GetObject`; boto3 is imported only when it is selected, and it is used as an S3 API client and nothing more. The store is the implementation of the "S3-compatible store" in the hot tier of section 6. It carries no trust: the content store computes each CID from the bytes it writes and checks the hash of what the store reports it put against it, so a blob is never stored under a CID that is not its hash, and clients verify the bytes they receive against the CID (section 1), on either driver.
+
+**Jobs.** Jobs live in the `jobs` table. `enqueue` always persists a row first; the mode decides who runs it. Delivery is at-least-once and safe with many runners on one database: a claim takes a 30-second lease (`FOR UPDATE SKIP LOCKED` on PostgreSQL, a conditional `UPDATE` on SQLite), leases are renewed while a handler runs, an expired lease is re-queued by any runner, and a failing handler is retried with exponential backoff up to three attempts. The worker process runs the claim loop and the periodic schedule (upload reaper hourly, follow digest daily); each period's job has a dedupe key behind a unique index, so any number of workers never queue it twice.
+
+**Sandbox runner.** The reproducibility agent is the only part of the AI pre-review that executes author-supplied code. `docker` and `podman` start a container on the node with no network, a read-only root filesystem, one CPU, 2 GB of memory and a 10-minute limit. `remote` sends the bundle's CID and the limits to the sandbox service with a bearer token; the service fetches the bundle, verifies the bytes against the CID while copying them to a private file, and runs it exactly as the local runners do. `none` disables execution. Anything that stops code from running (no engine, no image, unreachable service, unsafe bundle) is a `not_run` result with a reason code, never an exception and never a guess. The service reads bundles from the filesystem only today.
+
+**Health.** `GET /healthz` is liveness and touches no dependency. `GET /readyz` is readiness: it checks the database and lists the object store within three seconds and answers 200, or 503 naming each dependency that does not answer. Orchestrators and load balancers use `/readyz`; the worker, which serves no port, is checked by its ability to reach the database.
+
+**Invariants across backends.** The hash chain and append-only log, CID verification of stored and served bytes, the review escrow and every security header are required to behave identically on both database dialects and both storage backends. The PostgreSQL test lane (`npm run test:pg`) runs the whole API suite on PostgreSQL 16 to keep that true. An existing node moves between backends with `python -m app.migrate_backend`, which copies the database and the blobs and proves the copy: the hash chain is verified from `seq` 1 on the source and again on the target, and every blob is re-read and hashed against its CID.
 
 ## 15. Repository layout
 
@@ -555,10 +590,64 @@ scholium/
 ├── web/                  # Next.js portal
 ├── sdk/{ts,python}/
 ├── cli/
-├── infra/                # Terraform, Helm charts
+├── deploy/               # Containerfiles and compose files (OCI images, local stack, test database)
+├── infra/                # OpenTofu modules and environments
 ├── eval/                 # AI review benchmark, adversarial papers
-└── docs/                 # PRD.md, tech_architect.md, design.md, runbooks
+└── docs/                 # PRD.md, tech_architect.md, design.md, deploy.md, runbooks
 ```
+
+The tree is the target layout. The repository today is a smaller monorepo that already contains `deploy/` and `infra/` as described below:
+
+```text
+scholium/
+├── apps/
+│   ├── api/              # FastAPI node: src/app (db, storage, jobs, worker, sandbox_service, modules/*)
+│   │   └── packages/     # uv workspace members: record-core (Python), cli
+│   └── web/              # Next.js portal
+├── deploy/
+│   ├── containers/       # api.Containerfile, web.Containerfile
+│   └── compose/          # compose.test.yaml, minio-init.sh
+├── infra/                # OpenTofu: modules/ and envs/staging
+├── scripts/              # test-pg.sh, stack-smoke.sh, infra-check.sh
+├── compose.yaml          # the local stack (also the staging host's stack)
+├── .env.example          # every environment variable, placeholders only
+├── .github/workflows/    # ci.yml
+└── docs/                 # PRD.md, tech_architect.md, design.md, deploy.md
+```
+
+### 15.1 `deploy/` and `compose.yaml`
+
+`deploy/` holds what turns the code into running containers. `docs/deploy.md` is the operator's guide to all of it.
+
+| Path | Purpose |
+| --- | --- |
+| `deploy/containers/api.Containerfile` | One image for the api, the worker and the sandbox service. Built from the repository root: `uv` (pinned to the version that wrote `uv.lock`) installs the workspace in a dependency layer, then the application layer. Runs as the unprivileged `app` user (uid 10001) with state on a `/data` volume. Serves `python -m app`; compose starts the worker and the sandbox service by overriding the command, so there is one image to build and ship. |
+| `deploy/containers/web.Containerfile` | Multi-stage build of the Next.js standalone server; the runtime stage runs as the `node` user. `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_SITE_URL` are build arguments because Next.js inlines them into the client bundle and the Content-Security-Policy. |
+| `compose.yaml` | The cloud shape in miniature: `web`, `api`, `worker`, `db` (PostgreSQL 16 with pgvector), `minio` with a one-shot `minio-init` that creates the bucket, `mailpit`, and an opt-in `sandbox` profile. The api and worker always run `STORAGE_BACKEND=s3` and `JOBS_MODE=external`. Ports bind to `127.0.0.1`. The same file runs on the staging host under systemd. |
+| `deploy/compose/compose.test.yaml` | A single throwaway PostgreSQL 16 service on tmpfs for `npm run test:pg`, started by `scripts/test-pg.sh` under a unique project name and loopback port. |
+| `deploy/compose/minio-init.sh` | Idempotent bucket creation for the `minio-init` service. |
+| `.containerignore` | Build-context filter; dependencies and build output come from `uv` and `npm` inside the build, never from the developer's tree. Podman and buildah read it; `docker build` reads `.dockerignore`, which does not exist yet, so a docker build sends the whole tree as context (the Containerfiles copy only what they need). |
+
+Containers and compose files work with rootless podman 4.9 and `podman-compose` as well as with docker and `docker compose`: health checks are shell strings, `depends_on` waits only for what is certain to finish (the database and the one-shot bucket job), and neither Scholium image runs as root. `scripts/` holds the opt-in commands (`test:pg`, `stack:smoke`, `infra:check`) that need a container engine or OpenTofu; none of them is part of `npm test`.
+
+### 15.2 `infra/`
+
+`infra/` is the only place that names a cloud provider. The application speaks the S3 API and sits behind whatever proxy it is given; provider specifics are OpenTofu modules behind one small contract per concern.
+
+| Path | Purpose |
+| --- | --- |
+| `infra/modules/object-store-s3` | AWS: a private bucket with plain HTTP denied, public access blocked and incomplete multipart uploads aborted after 7 days, plus an IAM user limited to that bucket. |
+| `infra/modules/object-store-r2` | Cloudflare R2: a bucket and an API token scoped to it, with the S3 credentials derived from the token. |
+| `infra/modules/edge-cloudflare` | A Cloudflare Tunnel to the API origin (no inbound port on the host), proxied DNS records and a per-IP rate-limit ruleset. |
+| `infra/modules/host-vm` | A Hetzner Cloud server and volume whose cloud-init installs podman, checks the repository out and runs `compose.yaml` under systemd. |
+| `infra/envs/staging` | Composes the modules into a staging node, generates its secrets, and keeps its state encrypted. |
+
+The two object-store modules are interchangeable. Both expose exactly `s3_endpoint_url`, `s3_region`, `s3_bucket`, `s3_access_key_id` and `s3_secret_access_key` (the last one sensitive), which map one to one onto the `S3_*` settings of the `ObjectStore`, so changing provider changes the module block and the values, never a setting name. Rules that hold across `infra/`:
+
+- Providers are pinned to exact versions; modules do not configure providers, their callers do.
+- No secret value is committed. Credentials come from the environment, secret variables and outputs are marked `sensitive`, and the staging state and saved plans are encrypted client-side (AES-GCM, key derived from a passphrase) with encryption enforced.
+- `npm run infra:check` formats and validates every configuration without cloud credentials (`tofu init -backend=false`), and CI runs it on every push.
+- No Helm charts or Kubernetes manifests exist yet; the staging environment is one VM running the compose stack.
 
 ## 16. Build order and tests
 
