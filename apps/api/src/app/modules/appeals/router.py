@@ -165,6 +165,13 @@ class AppealDetailOut(BaseModel):
     viewer_on_panel: bool = False
     #: The caller's vote on this appeal, when they hold a seat and have voted.
     viewer_vote: Optional[str] = None
+    #: When the caller's vote was cast (UTC), when they hold a seat and have
+    #: voted.  A reloaded vote form opens in its recorded state with it.
+    viewer_voted_at: Optional[datetime] = None
+    #: How many of the panel's seats carry a vote; the panel's own tally, shown
+    #: only to a caller who may see the panel (nobody else is told how the
+    #: panel is getting on).
+    votes_cast: int = 0
     #: cid of the record the appealed decision was about.
     target_cid: Optional[str] = None
     #: What kind of record it was: ``paper``, ``post``, ``annotation`` or ``review``.
@@ -242,10 +249,26 @@ def get_appeal_detail(
     may_see_panel = on_panel or is_moderator
 
     viewer_vote: Optional[str] = None
+    viewer_voted_at: Optional[datetime] = None
     if on_panel and caller is not None:
         for seat in seats:
-            if str(seat.member_did) == caller.did and isinstance(seat.vote, str):
+            if str(seat.member_did) != caller.did:
+                continue
+            if isinstance(seat.vote, str):
                 viewer_vote = str(seat.vote)
+            voted_at = getattr(seat, "voted_at", None)
+            if isinstance(voted_at, datetime):
+                viewer_voted_at = (
+                    voted_at.replace(tzinfo=timezone.utc)
+                    if voted_at.tzinfo is None
+                    else voted_at.astimezone(timezone.utc)
+                )
+    # The tally is the panel's business; a reader outside it is not told.
+    votes_cast = (
+        sum(1 for seat in seats if isinstance(seat.vote, str) and seat.vote)
+        if may_see_panel
+        else 0
+    )
 
     decision = decision_for_appeal(cid)
     outcome: Optional[str] = None
@@ -293,6 +316,8 @@ def get_appeal_detail(
         resolution=resolution,
         viewer_on_panel=on_panel,
         viewer_vote=viewer_vote,
+        viewer_voted_at=viewer_voted_at,
+        votes_cast=votes_cast,
         target_cid=target_cid,
         target_kind=subject.kind if subject is not None else None,
         record_type=subject.record_type if subject is not None else None,

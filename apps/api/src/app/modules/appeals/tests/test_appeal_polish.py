@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -228,7 +229,7 @@ def test_the_detail_says_the_viewer_is_on_the_panel_only_for_a_seated_member(cli
     assert _detail(client, record["id"], None)["viewer_on_panel"] is False
 
 
-def test_the_detail_gives_the_viewers_own_vote(client, pool):
+def test_the_detail_gives_the_viewers_own_vote_and_when_they_cast_it(client, pool):
     scene = HiddenPost(client)
     seated = _seat_pool()[:3]
     pool(*seated)
@@ -236,6 +237,7 @@ def test_the_detail_gives_the_viewers_own_vote(client, pool):
 
     before = _detail(client, record["id"], seated[0])
     assert before["viewer_vote"] is None
+    assert before["viewer_voted_at"] is None
     vote = client.post(
         VOTES_URL.format(cid=record["id"]),
         json={"outcome": "upheld", "reasons": "Sound."},
@@ -243,8 +245,38 @@ def test_the_detail_gives_the_viewers_own_vote(client, pool):
     )
     assert vote.status_code == 200, vote.text
 
-    assert _detail(client, record["id"], seated[0])["viewer_vote"] == "upheld"
-    assert _detail(client, record["id"], seated[1])["viewer_vote"] is None
+    after = _detail(client, record["id"], seated[0])
+    assert after["viewer_vote"] == "upheld"
+    assert after["viewer_voted_at"] is not None
+    voted_at = datetime.fromisoformat(after["viewer_voted_at"].replace("Z", "+00:00"))
+    assert voted_at.tzinfo is not None
+    assert abs(datetime.now(timezone.utc) - voted_at) < timedelta(minutes=1)
+    # The tally is the panel's, not the public's: the viewer sees one of three.
+    assert after["votes_cast"] == 1
+    other = _detail(client, record["id"], seated[1])
+    assert other["viewer_vote"] is None
+    assert other["viewer_voted_at"] is None
+
+
+def test_the_detail_still_gives_the_viewers_vote_once_the_panel_decides(client, pool):
+    scene = HiddenPost(client)
+    seated = _seat_pool()[:3]
+    pool(*seated)
+    record = scene.appeal()
+
+    for member in seated[:2]:
+        vote = client.post(
+            VOTES_URL.format(cid=record["id"]),
+            json={"outcome": "overturned", "reasons": "In scope."},
+            headers=_bearer(member),
+        )
+        assert vote.status_code == 200, vote.text
+
+    body = _detail(client, record["id"], seated[0])
+    assert body["outcome"] == "overturned"
+    assert body["viewer_vote"] == "overturned"
+    assert body["viewer_voted_at"] is not None
+    assert body["votes_cast"] == 2
 
 
 def test_the_detail_describes_the_hidden_post(client, pool):

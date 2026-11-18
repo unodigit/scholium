@@ -344,6 +344,9 @@ def _store_vote(appeal_cid: str, member_did: str, outcome: str, reasons: tuple[s
         if row is None:
             raise VoteNotAuthorized(member_did, appeal_cid)
         row.vote = outcome
+        # Naive UTC, like ``appeals.filed_at``: the detail re-attaches UTC when
+        # it reads the time back, so a reload can say when the vote was cast.
+        row.voted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         detail = session.get(AppealVoteReasons, (appeal_cid, member_did))
         if reasons:
             if detail is None:

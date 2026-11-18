@@ -31,7 +31,7 @@
 
 import { ApiError, NetworkError, api, type ApiClient } from "../../lib/api";
 import { DECISION_ACTION_LABELS, isDecisionAction, parseVersionRecord } from "./decision";
-import { isRecord, readReasons, readText } from "./wire";
+import { isRecord, readCount, readReasons, readText } from "./wire";
 
 /** Endpoint path relative to `/v1`; the API client adds the prefix. */
 export const SYNC_RANGE_ENDPOINT = "/sync/range";
@@ -152,6 +152,17 @@ export interface AppealCase {
   readonly viewerOnPanel?: boolean;
   /** The viewer's own vote, when they hold a seat and have voted. */
   readonly viewerVote?: string | null;
+  /**
+   * When the viewer's vote was cast (ISO 8601), when the API said. A reload has
+   * no component state, so the form tells the vote's date from this.
+   */
+  readonly viewerVotedAt?: string | null;
+  /**
+   * How many of the panel's seats carry a vote, when the API said. The card
+   * shows the same "n of 3 members have voted" after a reload as when the
+   * member had just voted.
+   */
+  readonly votesCast?: number | null;
   /** What the appealed decision was about, once the API has described it. */
   readonly subject?: AppealSubject | null;
   /**
@@ -413,7 +424,7 @@ function readViewerDetail(
   body: unknown,
 ): Pick<
   AppealCase,
-  "viewerOnPanel" | "viewerVote" | "subject" | "panelStatus" | "deadline"
+  "viewerOnPanel" | "viewerVote" | "viewerVotedAt" | "votesCast" | "subject" | "panelStatus" | "deadline"
 > | null {
   if (!isRecord(body) || typeof body.viewer_on_panel !== "boolean") {
     return null;
@@ -422,6 +433,8 @@ function readViewerDetail(
   return {
     viewerOnPanel: body.viewer_on_panel,
     viewerVote: readText(body.viewer_vote),
+    viewerVotedAt: readText(body.viewer_voted_at),
+    votesCast: readCount(body.votes_cast),
     panelStatus: readText(body.panel_status) ?? undefined,
     deadline: readText(body.deadline),
     subject:

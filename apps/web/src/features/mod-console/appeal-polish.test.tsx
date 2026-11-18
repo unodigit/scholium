@@ -145,6 +145,56 @@ describe("an appeal against a hidden post", () => {
   });
 });
 
+describe("a panel member's recorded vote after a reload", () => {
+  it("opens the card's form in its recorded state, with the date and the tally", () => {
+    const view = card(
+      versionAppeal({
+        viewerOnPanel: true,
+        viewerVote: "upheld",
+        viewerVotedAt: "2026-11-18T09:30:00Z",
+        votesCast: 1,
+      }),
+    );
+
+    expect(view.getByRole("heading", { name: /Your vote is recorded/ })).toBeTruthy();
+    expect(view.getByText(/You voted to uphold the decision on 18 Nov 2026/)).toBeTruthy();
+    expect(view.getByText(/1 of 3 members have voted/)).toBeTruthy();
+    expect(view.getByRole("button", { name: "Change my vote" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Cast my vote" })).toBeNull();
+  });
+
+  it("leaves the blank form to a seated member who has not voted", () => {
+    const view = card(
+      versionAppeal({ viewerOnPanel: true, viewerVote: null, votesCast: 0 }),
+    );
+
+    expect(view.getByRole("button", { name: "Cast my vote" })).toBeTruthy();
+    expect(view.queryByRole("heading", { name: /Your vote is recorded/ })).toBeNull();
+  });
+
+  it("is read-only once the panel has decided: the outcome, never a vote form", () => {
+    const view = card(
+      versionAppeal({
+        viewerOnPanel: true,
+        viewerVote: "overturned",
+        viewerVotedAt: "2026-11-18T09:30:00Z",
+        votesCast: 2,
+        verdict: {
+          cid: "bafy-verdict-1",
+          outcome: "overturned",
+          reasons: ["In scope of MOD-01."],
+          votes: [],
+          decidedAt: "2026-11-19T09:30:00Z",
+        },
+      }),
+    );
+
+    expect(view.getByText("Decision overturned")).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Change my vote" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Cast my vote" })).toBeNull();
+  });
+});
+
 describe("an appeal against a paper", () => {
   it("still offers the paper", () => {
     const view = card(versionAppeal({ viewerOnPanel: true }));

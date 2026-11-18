@@ -33,6 +33,8 @@ const DETAIL = {
   id: APPEAL,
   viewer_on_panel: true,
   viewer_vote: "upheld",
+  viewer_voted_at: "2026-11-18T09:30:00Z",
+  votes_cast: 1,
   target_cid: "bafy-post-1",
   target_kind: "post",
   record_type: "discussion.post",
@@ -56,6 +58,10 @@ describe("enrichAppealCases", () => {
 
     expect(enriched?.viewerOnPanel).toBe(true);
     expect(enriched?.viewerVote).toBe("upheld");
+    // A reload needs both the vote and when it was cast, so the form can open
+    // in its recorded state instead of asking the member to vote again.
+    expect(enriched?.viewerVotedAt).toBe("2026-11-18T09:30:00Z");
+    expect(enriched?.votesCast).toBe(1);
     // The caller's own token is sent: the answer is about them.
     expect(api.get).toHaveBeenCalledWith(
       `/appeals/${APPEAL}`,
@@ -66,11 +72,18 @@ describe("enrichAppealCases", () => {
   it("says the viewer is not on the panel when the API does", async () => {
     const [enriched] = await enrichAppealCases(
       [appeal()],
-      client({ ...DETAIL, viewer_on_panel: false, viewer_vote: null }) as never,
+      client({
+        ...DETAIL,
+        viewer_on_panel: false,
+        viewer_vote: null,
+        viewer_voted_at: null,
+        votes_cast: 0,
+      }) as never,
     );
 
     expect(enriched?.viewerOnPanel).toBe(false);
     expect(enriched?.viewerVote).toBeNull();
+    expect(enriched?.viewerVotedAt).toBeNull();
   });
 
   it("describes what the appealed decision was about", async () => {

@@ -259,6 +259,61 @@ describe("AppealVoteForm casting", () => {
   });
 });
 
+describe("AppealVoteForm reopening with a vote already on file", () => {
+  it("opens in the recorded state, with the date and the panel's tally", () => {
+    render(
+      <AppealVoteForm
+        appealCid={APPEAL}
+        castVote={vi.fn()}
+        recordedOutcome="upheld"
+        recordedAt="2026-11-18T09:30:00Z"
+        votesCast={1}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: /Your vote is recorded/ })).toBeTruthy();
+    const status = screen.getByText(/You voted/);
+    expect(status.textContent).toContain("You voted to uphold the decision on 18 Nov 2026");
+    expect(status.textContent).toContain("1 of 3 members have voted");
+    expect(screen.getByRole("button", { name: "Change my vote" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cast my vote" })).toBeNull();
+  });
+
+  it("lets the member change it, starting from the outcome on file", () => {
+    render(
+      <AppealVoteForm
+        appealCid={APPEAL}
+        castVote={vi.fn()}
+        recordedOutcome="upheld"
+        recordedAt="2026-11-18T09:30:00Z"
+        votesCast={1}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Change my vote" }));
+
+    expect(outcomeSelect().value).toBe("upheld");
+    expect(screen.getByRole("button", { name: "Cast my vote" })).toBeTruthy();
+  });
+
+  it("shows the blank form to a member who has not voted", () => {
+    render(
+      <AppealVoteForm
+        appealCid={APPEAL}
+        castVote={vi.fn()}
+        recordedOutcome={null}
+        recordedAt={null}
+        votesCast={0}
+      />,
+    );
+
+    expect(outcomeSelect().value).toBe("");
+    expect(reasonsBox().value).toBe("");
+    expect(screen.getByRole("button", { name: "Cast my vote" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /Your vote is recorded/ })).toBeNull();
+  });
+});
+
 describe("AppealVoteForm refusals", () => {
   it("replaces the form with a plain note when the account holds no seat (403)", async () => {
     const castVote = vi.fn<VoteCaster>().mockRejectedValue(

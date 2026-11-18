@@ -54,6 +54,16 @@ export interface AppealVoteFormProps {
    * so the card around the form can mark the appeal decided.
    */
   onDecided?: (accepted: VoteAccepted) => void;
+  /**
+   * The member's vote already on file, as `GET /v1/appeals/{cid}` returns it.
+   * A reload has no component state, so the form opens in its recorded state
+   * rather than asking the member to vote again.
+   */
+  recordedOutcome?: string | null;
+  /** When that vote was cast (ISO 8601), when the API said. */
+  recordedAt?: string | null;
+  /** How many of the panel's seats carry a vote, when the API said. */
+  votesCast?: number | null;
 }
 
 type Phase = "idle" | "submitting" | "recorded" | "not-seated";
@@ -63,13 +73,30 @@ export function AppealVoteForm({
   appealCid,
   castVote = castPanelVote,
   onDecided,
+  recordedOutcome = null,
+  recordedAt = null,
+  votesCast = null,
 }: AppealVoteFormProps) {
-  const [outcome, setOutcome] = useState<VoteOutcome | "">("");
+  const onFile = recordedOutcome !== null && recordedOutcome !== "" ? recordedOutcome : null;
+  const [outcome, setOutcome] = useState<VoteOutcome | "">(
+    isVoteOutcome(onFile) ? onFile : "",
+  );
   const [reasons, setReasons] = useState("");
   const [errors, setErrors] = useState<VoteValidation>({});
-  const [phase, setPhase] = useState<Phase>("idle");
+  const [phase, setPhase] = useState<Phase>(onFile === null ? "idle" : "recorded");
   const [failure, setFailure] = useState<VoteFailure | null>(null);
-  const [accepted, setAccepted] = useState<VoteAccepted | null>(null);
+  const [accepted, setAccepted] = useState<VoteAccepted | null>(
+    onFile === null
+      ? null
+      : {
+          appealCid,
+          outcome: onFile,
+          votes: votesCast,
+          decisionCid: null,
+          decidedOutcome: null,
+          votedAt: recordedAt,
+        },
+  );
 
   const baseId = useId();
   const outcomeId = `${baseId}-outcome`;

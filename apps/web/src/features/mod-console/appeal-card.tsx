@@ -170,6 +170,9 @@ export function AppealCard({
         <AppealVoteForm
           appealCid={appeal.appealCid}
           castVote={castVote}
+          recordedOutcome={appeal.viewerVote ?? null}
+          recordedAt={appeal.viewerVotedAt ?? null}
+          votesCast={appeal.votesCast ?? null}
           onDecided={() => setDecidedNow(true)}
         />
       )}

@@ -112,6 +112,11 @@ class AppealPanelMember(db.Base):
     member_did = Column(Text, nullable=False)
     #: The member's vote; ``None`` until they have voted.
     vote = Column(Text, nullable=True)
+    #: When the member last cast (or changed) their vote, as naive UTC; ``None``
+    #: until they have voted (and for a vote recorded before this column
+    #: existed).  The appeal detail returns it so a reloaded card can still say
+    #: "You voted to … on {date}" instead of asking the member to vote again.
+    voted_at = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (
