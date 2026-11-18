@@ -1,21 +1,25 @@
 """Pluggable LLM providers for the AI pre-review subsystem.
 
 Available providers: ``fake`` (deterministic, tests), ``anthropic``
-(hosted, listed papers only) and ``ollama`` (self-hosted).  Selection is
-driven by the ``AI_PROVIDER`` setting, overridable per call via
-:func:`get_provider`.
+(hosted, listed papers only), ``openai`` (hosted through any
+OpenAI-compatible chat-completions endpoint, listed papers only) and
+``ollama`` (self-hosted).  Selection is driven by the ``AI_PROVIDER``
+setting, overridable per call via :func:`get_provider`.
 """
 
 from __future__ import annotations
 
 from .anthropic_provider import AnthropicProvider
+from ..errors import ProviderError
 from .base import DataBlock, LLMProvider, LLMRequest, LLMResponse
 from .fake import FakeProvider
 from .ollama_provider import OllamaProvider
+from .openai_provider import OpenAIProvider
 
 _PROVIDER_CLASSES: dict[str, type[LLMProvider]] = {
     FakeProvider.name: FakeProvider,
     AnthropicProvider.name: AnthropicProvider,
+    OpenAIProvider.name: OpenAIProvider,
     OllamaProvider.name: OllamaProvider,
 }
 
@@ -46,5 +50,7 @@ __all__ = [
     "LLMRequest",
     "LLMResponse",
     "OllamaProvider",
+    "OpenAIProvider",
+    "ProviderError",
     "get_provider",
 ]

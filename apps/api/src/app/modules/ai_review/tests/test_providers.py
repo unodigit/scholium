@@ -18,6 +18,7 @@ from app.modules.ai_review import (
     LLMProvider,
     LLMRequest,
     OllamaProvider,
+    OpenAIProvider,
     PrivateDraftError,
     get_provider,
 )
@@ -310,8 +311,9 @@ class TestGetProvider:
     def test_selects_each_provider_by_name(self):
         assert isinstance(get_provider("fake"), FakeProvider)
         assert isinstance(get_provider("anthropic"), AnthropicProvider)
+        assert isinstance(get_provider("openai"), OpenAIProvider)
         assert isinstance(get_provider("ollama"), OllamaProvider)
 
     def test_unknown_provider_name_raises(self):
-        with pytest.raises(ValueError, match="Unknown AI provider 'no-such-provider'"):
-            get_provider("no-such-provider")
+        with pytest.raises(ValueError, match="Unknown AI provider 'not-a-provider'"):
+            get_provider("not-a-provider")

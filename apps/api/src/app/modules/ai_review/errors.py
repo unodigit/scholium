@@ -11,6 +11,18 @@ class PrivateDraftError(Exception):
     """
 
 
+class ProviderError(Exception):
+    """A hosted LLM provider failed, retried out or returned an unusable answer.
+
+    Raised by provider implementations when the endpoint answers with a
+    non-2xx status that is not retried (or a retryable 429/5xx, timeout or
+    transport error that outlasts the provider's retry budget), and for 2xx
+    answers that must never become a partial review (no ``choices``, null or
+    empty message content, ``finish_reason`` ``length``).  The message always
+    names the provider and never includes the API key.
+    """
+
+
 class UnknownAgentError(ValueError):
     """An agent name other than methodology, literature, reproducibility or integrity."""
 
