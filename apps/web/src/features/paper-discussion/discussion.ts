@@ -258,6 +258,15 @@ export function countPosts(posts: readonly DiscussionPost[]): number {
   return total;
 }
 
+/** How many hidden placeholders are listed, replies included. Pure. */
+export function countHiddenPosts(posts: readonly DiscussionPost[]): number {
+  let total = 0;
+  for (const post of posts) {
+    total += (post.hidden === true ? 1 : 0) + countHiddenPosts(post.replies);
+  }
+  return total;
+}
+
 /** The post with this id, anywhere in the tree. */
 export function findPost(
   posts: readonly DiscussionPost[],
@@ -765,9 +774,26 @@ export function helpfulLabel(count: number): string {
   return `${count} ${count === 1 ? "member" : "members"} found this helpful`;
 }
 
-/** `1 post`, `3 posts`; replies count. */
-export function postCountLabel(count: number): string {
-  return `${count} ${count === 1 ? "post" : "posts"}`;
+/**
+ * `1 post`, `3 posts`; replies count. A hidden placeholder is listed but is not
+ * a post, so when there are any the label says so: `1 post, 1 hidden`.
+ */
+export function postCountLabel(count: number, hidden = 0): string {
+  const posts = `${count} ${count === 1 ? "post" : "posts"}`;
+  return hidden > 0 ? `${posts}, ${hidden} hidden` : posts;
+}
+
+/**
+ * What an author reads where their own post was hidden:
+ * `Your post was hidden: <reason>.` The reason is the moderator's own sentence
+ * and often ends in punctuation already, so the full stop is added only when it
+ * is missing (a closing quote or bracket after the punctuation still counts).
+ */
+export function hiddenOwnNotice(reason: string | null | undefined): string {
+  const said = reason?.trim() ?? "";
+  if (said === "") return "Your post was hidden.";
+  const ended = /[.!?…]["'”’)\]]*$/.test(said);
+  return `Your post was hidden: ${ended ? said : `${said}.`}`;
 }
 
 /** The paper page: `/p/6sel-2dio-orm6` (docs/design.md §4 drops the `sch:`). */

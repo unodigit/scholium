@@ -1038,11 +1038,43 @@ describe("DiscussionTab: hidden posts", () => {
     expect(within(card("under-hidden")).getByText(/Text of under-hidden/)).toBeTruthy();
   });
 
-  it("does not count the hidden placeholder in the post count", () => {
+  it("does not count the hidden placeholder as a post, but says it is listed", () => {
     renderTab({}, hiddenThreads());
 
-    // Two visible posts: the reply and the visible root.
-    expect(screen.getByText("2 posts · most helpful first")).toBeTruthy();
+    // Two visible posts (the reply and the visible root) and the placeholder.
+    expect(screen.getByText("2 posts, 1 hidden · most helpful first")).toBeTruthy();
+  });
+
+  it("counts what is listed: one post and one hidden placeholder", () => {
+    renderTab(
+      {},
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [post("hidden", { hidden: true, hiddenReason: "Off topic.", text: null }), post("visible")],
+      },
+    );
+
+    expect(screen.getByText("1 post, 1 hidden · most helpful first")).toBeTruthy();
+  });
+
+  it("does not say there is no discussion while a hidden placeholder is listed", () => {
+    renderTab(
+      {},
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [post("hidden", { hidden: true, hiddenReason: "Off topic.", text: null })],
+      },
+    );
+
+    expect(screen.queryByText(/No discussion yet/)).toBeNull();
+    expect(screen.getByText("0 posts, 1 hidden · most helpful first")).toBeTruthy();
+  });
+
+  it("keeps the plain wording when nothing is hidden", () => {
+    renderTab();
+    expect(screen.getByText("5 posts · most helpful first")).toBeTruthy();
   });
 
   it("offers no helpful, reply or report action on a hidden post", () => {
@@ -1052,6 +1084,102 @@ describe("DiscussionTab: hidden posts", () => {
     expect(scope.queryByRole("button", { name: /Mark helpful/ })).toBeNull();
     expect(scope.queryByRole("button", { name: /^Reply/ })).toBeNull();
     expect(scope.queryByRole("button", { name: /^Report/ })).toBeNull();
+  });
+});
+
+describe("DiscussionTab: the author's hidden post", () => {
+  function ownHidden(reason: string | null): DiscussionData {
+    return {
+      paper: SHORT,
+      paperCid: "bafyrei-genesis",
+      threads: [
+        post("mine", {
+          author: ME,
+          hidden: true,
+          hiddenReason: reason,
+          decisionCid: "bafyrei-decision",
+          text: null,
+        }),
+        post("visible"),
+      ],
+    };
+  }
+
+  function notice(): HTMLElement {
+    const el = card("mine").querySelector("[data-hidden]");
+    if (!(el instanceof HTMLElement)) throw new Error("No hidden notice on the post");
+    return el;
+  }
+
+  it("ends the reason sentence with one full stop, not two", () => {
+    renderTab({ viewerDid: ME }, ownHidden("Needs the claim clarified."));
+
+    expect(notice().textContent).toBe("Your post was hidden: Needs the claim clarified. Appeal");
+    expect(notice().textContent).not.toContain("..");
+  });
+
+  it("still ends a reason that has no punctuation with a full stop", () => {
+    renderTab({ viewerDid: ME }, ownHidden("Off topic"));
+
+    expect(notice().textContent).toBe("Your post was hidden: Off topic. Appeal");
+  });
+
+  it("opens a labelled appeal form, with guidance, submit and cancel", () => {
+    renderTab({ viewerDid: ME }, ownHidden("Off topic."));
+    expect(screen.queryByLabelText("Why should this decision be reconsidered?")).toBeNull();
+
+    fireEvent.click(within(card("mine")).getByRole("button", { name: "Appeal" }));
+
+    const grounds = screen.getByLabelText("Why should this decision be reconsidered?");
+    expect(grounds.tagName).toBe("TEXTAREA");
+    // The same full-width field the reply form uses, not a bare textarea.
+    expect(grounds.className).toContain("pd-compose__text");
+    expect(grounds.getAttribute("aria-describedby")).toBeTruthy();
+
+    // Guidance: what the grounds are for, and a running character count.
+    const form = grounds.closest("form") as HTMLElement;
+    expect(within(form).getByText(/signed into the public record/)).toBeTruthy();
+    expect(within(form).getByText("0 characters")).toBeTruthy();
+    typeInto(grounds, "The quote was taken out of context.");
+    expect(within(form).getByText("35 characters")).toBeTruthy();
+
+    expect(within(form).getByRole("button", { name: "Sign and file appeal" })).toBeTruthy();
+    expect(within(form).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("closes the appeal form on Cancel and puts focus back on Appeal", () => {
+    renderTab({ viewerDid: ME }, ownHidden("Off topic."));
+    const appeal = within(card("mine")).getByRole("button", { name: "Appeal" });
+    fireEvent.click(appeal);
+    typeInto(screen.getByLabelText("Why should this decision be reconsidered?"), "Draft");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByLabelText("Why should this decision be reconsidered?")).toBeNull();
+    expect(document.activeElement).toBe(within(card("mine")).getByRole("button", { name: "Appeal" }));
+  });
+
+  it("signs the appeal against the moderation decision and says it is filed", async () => {
+    const { sign, actions } = seams();
+    // `api.post("/appeals", …)` is the tab's own call; stub it at the transport.
+    const fetched = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("{}", { status: 201, headers: { "content-type": "application/json" } }),
+    );
+    try {
+      renderTab({ viewerDid: ME, actions }, ownHidden("Off topic."));
+      fireEvent.click(within(card("mine")).getByRole("button", { name: "Appeal" }));
+      typeInto(screen.getByLabelText("Why should this decision be reconsidered?"), "  Context was missing. ");
+      fireEvent.click(screen.getByRole("button", { name: "Sign and file appeal" }));
+
+      await waitFor(() => expect(notice().textContent).toMatch(/^Appeal filed on .* - awaiting panel$/));
+      expect(sign).toHaveBeenCalledWith(
+        "appeal",
+        { target: "bafyrei-decision", grounds: "Context was missing.", paper: "bafyrei-genesis" },
+        null,
+      );
+    } finally {
+      fetched.mockRestore();
+    }
   });
 });
 

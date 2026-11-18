@@ -33,10 +33,12 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
 import { LocalDate } from "../ui-kit/local-date";
+import { AppealForm } from "./appeal-form";
 import { ComposeForm } from "./compose-form";
 import {
   describeActionError,
   helpfulLabel,
+  hiddenOwnNotice,
   postAuthorLabel,
   profilePath,
   reportReason,
@@ -78,7 +80,7 @@ export interface PostCardProps {
 }
 
 type Panel = "reply" | "report";
-type FocusTarget = "reply" | "report" | "post" | "reported";
+type FocusTarget = "reply" | "report" | "post" | "reported" | "appeal";
 
 export function PostCard({ post, depth, actions }: PostCardProps) {
   const uid = useId();
@@ -93,14 +95,12 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
   const [helpfulBusy, setHelpfulBusy] = useState(false);
   const [helpfulFailure, setHelpfulFailure] = useState<ActionFailure | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
-  const [appealGrounds, setAppealGrounds] = useState("");
-  const [appealBusy, setAppealBusy] = useState(false);
-  const [appealError, setAppealError] = useState<string | null>(null);
 
   const postRef = useRef<HTMLDivElement>(null);
   const replyButton = useRef<HTMLButtonElement>(null);
   const reportButton = useRef<HTMLButtonElement>(null);
   const reportedNote = useRef<HTMLParagraphElement>(null);
+  const appealButton = useRef<HTMLButtonElement>(null);
   // Where focus goes once the next render has put the DOM in its final shape.
   const pendingFocus = useRef<FocusTarget | null>(null);
   useEffect(() => {
@@ -112,6 +112,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
       report: reportButton.current,
       post: postRef.current,
       reported: reportedNote.current,
+      appeal: appealButton.current,
     }[target];
     element?.focus();
   });
@@ -120,6 +121,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
   const reportedAs = actions.reported.get(post.cid) ?? null;
   const replyId = `${uid}-reply`;
   const reportId = `${uid}-report`;
+  const appealId = `${uid}-appeal`;
 
   const togglePanel = (next: Panel) => {
     setHelpfulFailure(null);
@@ -198,14 +200,15 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
           ) : isOwn ? (
             <>
               <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
-                {post.hiddenReason !== null && post.hiddenReason !== undefined && post.hiddenReason.trim() !== ""
-                  ? `Your post was hidden: ${post.hiddenReason.trim()}.`
-                  : "Your post was hidden."}{" "}
+                {hiddenOwnNotice(post.hiddenReason)}{" "}
                 {actions.appeal !== undefined ? (
                   <button
                     type="button"
                     className="pd-action"
                     data-action="appeal"
+                    ref={appealButton}
+                    aria-expanded={appealOpen}
+                    aria-controls={appealOpen ? appealId : undefined}
                     onClick={() => setAppealOpen((current) => !current)}
                   >
                     Appeal
@@ -217,39 +220,19 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
                 )}
               </p>
               {appealOpen && actions.appeal !== undefined ? (
-                <form
-                  className="pd-appeal-form"
-                  onSubmit={async (event) => {
-                    event.preventDefault();
-                    setAppealBusy(true);
-                    setAppealError(null);
-                    try {
-                      await actions.appeal!(post, appealGrounds);
+                <div id={appealId}>
+                  <AppealForm
+                    signInHref={actions.signInHref}
+                    onCancel={() => {
+                      pendingFocus.current = "appeal";
                       setAppealOpen(false);
-                      setAppealGrounds("");
-                    } catch (error) {
-                      const failure = describeActionError(error, "appeal");
-                      setAppealError(failure.message);
-                    } finally {
-                      setAppealBusy(false);
-                    }
-                  }}
-                >
-                  <textarea
-                    className="pd-textarea"
-                    value={appealGrounds}
-                    onChange={(event) => setAppealGrounds(event.target.value)}
-                    placeholder="Why should the decision be reconsidered?"
+                    }}
+                    onSubmit={async (grounds) => {
+                      await actions.appeal!(post, grounds);
+                      setAppealOpen(false);
+                    }}
                   />
-                  {appealError !== null ? (
-                    <p className="pd-error" role="alert">
-                      {appealError}
-                    </p>
-                  ) : null}
-                  <button type="submit" className="pd-button" disabled={appealBusy}>
-                    {appealBusy ? "Filing…" : "Sign and file appeal"}
-                  </button>
-                </form>
+                </div>
               ) : null}
             </>
           ) : (
