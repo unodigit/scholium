@@ -6,7 +6,14 @@ conventional spellings they use, and get a connection pool that checks
 connections out only after a liveness ping.  Both dialects expose the same
 engine object, sessions and metadata here, so no application code has to know
 which database it is talking to.
+
+SQLite is deprecated outside tests and local development: the first SQLite
+engine a process builds here logs one ``WARNING`` through the ``app.db`` logger
+(see ``build_engine``).  Nothing about SQLite's behaviour changes.
 """
+
+import logging
+import threading
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
@@ -14,6 +21,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .settings import settings
+
+logger = logging.getLogger("app.db")
 
 #: URL spellings that mean "PostgreSQL"; normalised to the psycopg driver.
 _POSTGRES_SCHEMES = ("postgres://", "postgresql://")
@@ -88,12 +97,56 @@ def _pin_session_time_zone(dbapi_connection, _record) -> None:
         dbapi_connection.autocommit = autocommit
 
 
+#: The one WARNING a process logs when it builds a SQLite engine.
+SQLITE_DEPRECATION_MESSAGE = (
+    "SQLite is deprecated; use PostgreSQL and move existing data with "
+    "python -m app.migrate_backend (see docs/deploy.md). "
+    "SQLite remains only for tests and local development"
+)
+
+#: Whether this process has already logged ``SQLITE_DEPRECATION_MESSAGE``, and
+#: the lock that makes "check, then claim" atomic when engines are built from
+#: several threads at once.
+_sqlite_warning_logged = False
+_sqlite_warning_lock = threading.Lock()
+
+
+def _warn_sqlite_deprecated_once() -> None:
+    """Log ``SQLITE_DEPRECATION_MESSAGE`` unless this process already has."""
+    global _sqlite_warning_logged
+    with _sqlite_warning_lock:
+        if _sqlite_warning_logged:
+            return
+        _sqlite_warning_logged = True
+    logger.warning(SQLITE_DEPRECATION_MESSAGE)
+
+
+def reset_sqlite_deprecation_warning() -> None:
+    """Forget that the SQLite deprecation warning was logged.
+
+    The warning is once per process, so a test that captures the log has to
+    start from a clean state: call this first and the next SQLite engine built
+    logs the warning again.
+    """
+    global _sqlite_warning_logged
+    with _sqlite_warning_lock:
+        _sqlite_warning_logged = False
+
+
 def build_engine(database_url: str) -> Engine:
-    """An engine for ``database_url``, normalised and configured for its dialect."""
+    """An engine for ``database_url``, normalised and configured for its dialect.
+
+    The first SQLite engine a process builds also logs the deprecation warning
+    (``SQLITE_DEPRECATION_MESSAGE``) through the ``app.db`` logger; later SQLite
+    engines and every PostgreSQL engine log nothing.  The API and the worker
+    both get their engine from here, so each warns at most once.
+    """
     url = normalise_database_url(database_url)
     engine = create_engine(url, **_engine_options(url))
     if engine.dialect.name == "postgresql":
         event.listen(engine, "connect", _pin_session_time_zone)
+    elif engine.dialect.name == "sqlite":
+        _warn_sqlite_deprecated_once()
     return engine
 
 
