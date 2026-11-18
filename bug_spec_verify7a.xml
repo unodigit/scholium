@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 7a: findings of verify sweep 6 that were held until the cloud-agnostic tasks merged
+  (their footprints covered apps/api/src/app/**). Evidence: .claw-forge/journeys/screenshots/_archive/<journey>/s6-*.png.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/search/**,apps/web/src/features/search-page/**">
+    <title>Author search misses papers published through the UI; keyword search lists one paper per version</title>
+    <symptoms>
+      "Ana Costa" and "Costa" return 0 results; "Rafael Silva" finds only the seeded papers, not sch:wg54-jiif-hogu (Ana Costa, Rafael Silva) submitted through the UI, which is indexed ("ablations" finds it) - author matching works only when the PDF text happens to contain the names
+      Keyword search returns the same paper twice (.../v1 and .../v2, "2 results"); semantic results say "v2" rather than "v2 of 2"; the weakest semantic hit shows no score
+    </symptoms>
+    <reproduction_steps>
+      Journey 02 (screenshots/_archive/02-search-and-discover/s6-12-author-ana-costa-none.png, s6-11-author-rafael.png, s6-10-keyword-duplicate-versions.png)
+    </reproduction_steps>
+    <expected>The search index includes each version's author display names (from profiles, kept current when a profile name changes, and absent after erasure per ID-7) and ORCID iDs as a weighted field; keyword and semantic modes both return one hit per paper (its latest listed version, labelled "v{n} of {total}"); every semantic hit shows its clamped score</expected>
+    <actual>Author search unreliable; duplicates</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/me/**,apps/api/src/app/modules/notifications/**,apps/api/src/app/modules/appeals/**,apps/api/src/app/modules/moderation/**,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/dashboard-page.tsx,apps/web/src/features/dashboard/dashboard-page.test.tsx,apps/web/src/features/dashboard/notifications-card.tsx,apps/web/src/features/dashboard/notifications-card.test.tsx">
+    <title>Needs your attention still mixes in finished or informational items; the appeal-panel notice is a dead end; answered notifications keep their call to action</title>
+    <symptoms>
+      A drawn appeal panellist gets only "You were drawn for an appeal panel." - no paper, no Open link, not in Needs your attention, although they must vote (the form exists only if they type /mod)
+      Sam's hold stays in Needs your attention after his one appeal is filed; the line ends in ".." and the reason is printed twice; "The post you wrote ... was hidden by moderation." appears there without an Open link
+      "The authors replied to your review of sch:wg54-jiif-hogu" uses the raw id and stays after the reviewer updated
+      Answered notifications keep their imperative text and Open link ("Confirm your email address.", "... needs your approval", "A co-author consent is waiting for your signature ..."), only greyed
+      The reporter's "was reviewed and kept: Duplicated figures." reads as the reason for keeping; kind labels are inconsistently capitalised ("Author reply" vs "recovery request")
+    </symptoms>
+    <reproduction_steps>
+      Journeys 05, 06, 07, 11, 13 (screenshots/_archive/05-follow-search-notify/s6-05-me-sam.png, s6-13-okafor-appeal-panel-note.png; 07-flag-and-dispute/s6-14-reporter-notifications.png, s6-15-author-attention.png; 11-moderation-hold-and-appeal/s6-07-sam-me-after-appeal.png, s6-10-solheim-panel-notification.png; 03-new-member-onboarding/s6-11-me-after-verify.png; 06-key-recovery/s6-05-okafor-me.png)
+    </reproduction_steps>
+    <expected>Needs your attention lists exactly the open actions, each with the paper title and a working link, and drops each one the moment it is done: sign a consent, answer a recovery request, vote on an appeal panel ('Vote on the appeal for "{title}" by {deadline}' linking to the panel vote form), appeal a hold or hidden post while an appeal is still possible (gone once filed), reply to an author's response or update the review (gone once the reviewer updated), confirm your email address (until verified); everything else is a notification only; answered notifications are reworded in the past tense ("You signed your consent on ...", "You confirmed your email address", "You approved ...") without an action link; outcome texts read 'The paper you reported (reason: Duplicated figures) was reviewed and kept listed.'; sentences end with one period, no duplicated reason; kind labels use sentence case consistently</expected>
+    <actual>Cluttered attention list; dead-end panel notice; stale calls to action</actual>
+  </bug>
+
+</bug_spec>
