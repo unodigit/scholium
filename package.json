@@ -6,6 +6,7 @@
     "test": "cd apps/api && uv run --all-packages pytest && cd ../.. && npm run test --workspace apps/web",
     "test:e2e": "npm run test:e2e --workspace apps/web",
     "test:slow": "cd apps/api && uv run --all-packages pytest -m slow",
+    "test:pg": "bash scripts/test-pg.sh",
     "stack:up": "c=${STACK_COMPOSE:-$(command -v podman-compose >/dev/null 2>&1 && echo podman-compose || echo docker compose)}; $c -f compose.yaml up -d --build --remove-orphans",
     "stack:down": "c=${STACK_COMPOSE:-$(command -v podman-compose >/dev/null 2>&1 && echo podman-compose || echo docker compose)}; $c -f compose.yaml down --remove-orphans",
     "stack:logs": "c=${STACK_COMPOSE:-$(command -v podman-compose >/dev/null 2>&1 && echo podman-compose || echo docker compose)}; $c -f compose.yaml logs -f --tail 100",

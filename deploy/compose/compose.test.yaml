@@ -1,0 +1,44 @@
+#
+# PostgreSQL 16 with pgvector, for the API test suite only: `npm run test:pg`.
+#
+# scripts/test-pg.sh starts this service under a compose project name and a
+# loopback port that are unique to that invocation:
+#
+#   SCHOLIUM_TEST_PG_PORT=55432 podman-compose -p scholium-test-abc123 \
+#       -f deploy/compose/compose.test.yaml up -d
+#
+# waits for the healthcheck to pass, runs pytest with TEST_DATABASE_URL
+# pointing at it, and removes the container again on exit. Nothing here is
+# used by `npm test`, which stays on SQLite and needs no container.
+#
+# The cluster lives on tmpfs: it is disposable and re-initialised on every run,
+# and tmpfs needs no volume-ownership handling under rootless podman. The
+# image's entrypoint initialises and runs the server as the unprivileged
+# `postgres` user (uid 999); only the one-time preparation of the mount point
+# runs as container root, which under rootless podman is the invoking user.
+#
+# SCHOLIUM_TEST_PG_PORT must be set. Compose refuses to start without it, so a
+# plain `podman-compose up` cannot silently take the default 5432.
+
+services:
+  db:
+    image: docker.io/pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: scholium
+      POSTGRES_PASSWORD: scholium
+      POSTGRES_DB: scholium_test
+      # Same wall clock as the CI service container, whatever the host uses.
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:${SCHOLIUM_TEST_PG_PORT:?run npm run test:pg}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,mode=1777
+    healthcheck:
+      # initdb runs a temporary server on a Unix socket only; probing TCP makes
+      # "healthy" mean the real server accepts connections.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U scholium -d scholium_test"]
+      interval: 1s
+      timeout: 5s
+      retries: 90
+      start_period: 5s
