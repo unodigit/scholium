@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 14: findings of verify sweep 14 (2026-11-19, worktree @ 7307c13 = main, next 16.4.6). 16/16 journeys pass;
+  these are the remaining low gaps. Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png.
+  Decision (recorded here): the whole-archive summary classifies a paper with no moderation decision yet (in the
+  queue, not served by the node) as "awaiting moderation", not "listed", matching /network.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/notifications/panel.py,apps/api/src/app/modules/notifications/restoration.py,apps/api/src/app/modules/notifications/tests/test_panel_notices.py,apps/api/src/app/modules/appeals/votes.py,apps/api/src/app/modules/appeals/tests/test_appeal_outcome_notice.py">
+    <title>Voted, decided and outcome notices for post appeals name only the paper, so two appeals on one paper read alike</title>
+    <symptoms>
+      Round 13 quoted the post in attention items and new-vote notices, but once a member has voted or the panel has decided the notice reads 'You voted to overturn the decision on the appeal for "{paper}".' / 'The panel upheld the decision on "{paper}".' (notifications/panel.py _sentence uses the title only)
+      The appellant's outcome notices read 'The appeal panel overturned/upheld the decision to hide your post on "{paper}"' (overturned: notifications/restoration.py _sentence; upheld: appeals/votes.py _notify_appellant); two appeals with the same outcome on one paper are word-for-word identical
+    </symptoms>
+    <reproduction_steps>
+      Journeys 05 step 6 and 07 step 8 (screenshots/07-flag-and-dispute/08f-*.png, 08h-*.png, 08l-*.png, 08m-*.png; screenshots/05-follow-search-notify/06e-*.png, 06f-*.png)
+    </reproduction_steps>
+    <expected>Every notice about an appeal on a post, annotation or review quotes the start of that record the same way the attention item does ('... the decision to hide your post ("{excerpt}...") on "{paper}"'), for recipients allowed to see the excerpt (seated members, the appellant, tier-4 moderators); paper-hold notices are unchanged; tests assert two appeals on one paper produce distinct voted, decided and outcome notices</expected>
+    <actual>Indistinguishable notices once voted or decided</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/src/scholium_cli/verify.py,apps/api/packages/cli/tests/test_cli_verify_api_export.py,apps/api/packages/cli/tests/test_cli_verify_command.py">
+    <title>Whole-archive verify counts a paper still in the moderation queue as "listed"</title>
+    <symptoms>
+      With sch:lhff-4fnd-vu73 in the moderation queue (no decision; the node answers 404 "No listed paper"), `scholium verify archive.car` on the public export reports "4 papers (4 listed)"; only a hold decision in force makes the CLI say "held" (_held_in_force in scholium_cli/verify.py)
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 5 (screenshots/09-preserve-and-transparency/05b-export-cli-verify-and-rebuild.png)
+    </reproduction_steps>
+    <expected>The summary classifies each paper from the archive's records the way the node does: a paper whose newest version has no listing decision is "awaiting moderation" (e.g. "Result: VERIFIED — 4 papers (3 listed, 1 awaiting moderation)"); held, corrected and retracted stay as they are; a test builds an export with a queued paper and asserts the summary</expected>
+    <actual>A queued paper is reported as listed</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/verify-page/verdict.ts,apps/web/src/features/verify-page/verdict.test.ts">
+    <title>/verify mismatch with one signed file says "It is not the only file signed for ..."</title>
+    <symptoms>
+      With a version id entered, an unrelated file gets "It is not the only file signed for sch:nxop-brb4-edc4/v1.", which reads as if several files were signed; verdict.ts builds it as `It is not ${countPhrase} signed for ...` where countPhrase is "the only file" for a one-file version
+    </symptoms>
+    <reproduction_steps>
+      Journey 02 step 7 (screenshots/02-search-and-discover/07c-verify-with-id-mismatch.png)
+    </reproduction_steps>
+    <expected>"It is not the file signed for {id}." for a one-file version and "It is not any of the {n} files signed for {id}." otherwise; tests cover 1 and several files</expected>
+    <actual>Misleading wording</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/tests/e2e/verify-manifest-loop.spec.ts">
+    <title>The per-route request-rate e2e guard passes even with the /verify loop reintroduced</title>
+    <symptoms>
+      With 1678779's source change reverted locally, "opens /verify with a seeded version and requests the manifest at most once" fails as intended, but "no API path is requested more than 5 times within 3s of load" still passes: its routes include "/verify" without an id (which never loads a manifest), and it waits for networkidle before counting
+    </symptoms>
+    <reproduction_steps>
+      git show 1678779 -- apps/web/src | git apply -R; npx playwright test tests/e2e/verify-manifest-loop.spec.ts (1 failed, 1 passed); restore
+    </reproduction_steps>
+    <expected>The guard's routes include /verify?id={seeded version}/v1 and a paper's version-specific pages; it counts requests per API path over a fixed 3 s window starting at the load event (not after networkidle, which a looping page never reaches); with the loop reintroduced both tests fail</expected>
+    <actual>The general guard misses the regression it was written for</actual>
+  </bug>
+
+</bug_spec>
