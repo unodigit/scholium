@@ -20,9 +20,9 @@
 # retry; its own timeout for the worker is --job-timeout (default 60 seconds).
 #
 # The addresses are http://127.0.0.1:$API_PORT and $WEB_PORT (defaults 8000 and
-# 3000), taken from the environment or from .env like compose does. The container
-# engine is chosen as stack:up chooses it: STACK_COMPOSE, else podman-compose when
-# installed, else `docker compose`.
+# 3000), taken from the environment or from .env like compose does. The compose
+# command runs through scripts/stack-compose.sh, which chooses the engine (and
+# refuses a podman-compose older than 1.6.0) as the other stack:* scripts do.
 
 set -uo pipefail
 
@@ -46,18 +46,6 @@ setting() { # setting NAME DEFAULT
   fi
   printf '%s' "${value:-$default}"
 }
-
-COMPOSE_CMD=()
-if [ -n "${STACK_COMPOSE:-}" ]; then
-  read -r -a COMPOSE_CMD <<< "$STACK_COMPOSE"
-elif command -v podman-compose >/dev/null 2>&1; then
-  COMPOSE_CMD=(podman-compose)
-elif docker compose version >/dev/null 2>&1; then
-  COMPOSE_CMD=(docker compose)
-else
-  echo "stack-smoke: podman-compose or 'docker compose' is required (or set STACK_COMPOSE)" >&2
-  exit 127
-fi
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "stack-smoke: curl is required" >&2
@@ -123,7 +111,7 @@ wait_for_200 "readyz" "http://127.0.0.1:${api_port}/readyz"
 wait_for_200 "web" "http://127.0.0.1:${web_port}/"
 
 echo "==> api smoke: python -m app.smoke in the api container"
-"${COMPOSE_CMD[@]}" -f compose.yaml exec -T api python -m app.smoke "$@" 2>&1 | tee "$log"
+bash "$root/scripts/stack-compose.sh" exec -T api python -m app.smoke "$@" 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 
 if [ "$status" -ne 0 ]; then

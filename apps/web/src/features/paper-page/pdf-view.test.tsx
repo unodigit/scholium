@@ -58,15 +58,22 @@ function stubObserver(): void {
   vi.stubGlobal("IntersectionObserver", FakeObserver);
 }
 
-function observerOf(page: number): FakeObserver {
+/**
+ * The page's observer, once React has attached it. The pages appear as the
+ * document resolves, and their effect may land a tick after the query that
+ * finds them, so wait for it rather than assuming it is already there.
+ */
+async function observerOf(page: number): Promise<FakeObserver> {
   const element = pageElement(page);
-  const observer = FakeObserver.instances.find((candidate) =>
-    candidate.observed.includes(element),
-  );
-  if (observer === undefined) {
-    throw new Error(`no observer on page ${page}`);
-  }
-  return observer;
+  return waitFor(() => {
+    const observer = FakeObserver.instances.find((candidate) =>
+      candidate.observed.includes(element),
+    );
+    if (observer === undefined) {
+      throw new Error(`no observer on page ${page}`);
+    }
+    return observer;
+  });
 }
 
 function pageElement(page: number): HTMLElement {
@@ -189,7 +196,7 @@ describe("PdfView: drawing pages as they come near", () => {
     render(<PdfView url={URL_OF_PDF} loadPdf={fakePdf({ pages: 2 }).loadPdf} />);
     await screen.findAllByRole("img");
 
-    expect(observerOf(1).options?.rootMargin).toBe("100% 0px");
+    expect((await observerOf(1)).options?.rootMargin).toBe("100% 0px");
   });
 
   it("draws a page when it comes near, and only that page", async () => {
@@ -198,7 +205,7 @@ describe("PdfView: drawing pages as they come near", () => {
     render(<PdfView url={URL_OF_PDF} loadPdf={pdf.loadPdf} />);
     await screen.findAllByRole("img");
 
-    observerOf(2).reach(pageElement(2));
+    (await observerOf(2)).reach(pageElement(2));
 
     await waitFor(() => expect(pdf.render).toHaveBeenCalledTimes(1));
     expect(pdf.render.mock.calls[0][0].canvas).toBe(
@@ -212,7 +219,7 @@ describe("PdfView: drawing pages as they come near", () => {
     render(<PdfView url={URL_OF_PDF} loadPdf={pdf.loadPdf} />);
     await screen.findAllByRole("img");
 
-    observerOf(1).reach(pageElement(1), false);
+    (await observerOf(1)).reach(pageElement(1), false);
 
     expect(pdf.render).not.toHaveBeenCalled();
   });
@@ -223,7 +230,7 @@ describe("PdfView: drawing pages as they come near", () => {
     render(<PdfView url={URL_OF_PDF} loadPdf={pdf.loadPdf} />);
     await screen.findAllByRole("img");
 
-    const observer = observerOf(1);
+    const observer = await observerOf(1);
     observer.reach(pageElement(1));
     observer.reach(pageElement(1));
     observer.reach(pageElement(1));
@@ -239,7 +246,7 @@ describe("PdfView: drawing pages as they come near", () => {
     render(<PdfView url={URL_OF_PDF} loadPdf={pdf.loadPdf} />);
     await screen.findAllByRole("img");
     const canvas = pageElement(1).querySelector("canvas") as HTMLCanvasElement;
-    const observer = observerOf(1);
+    const observer = await observerOf(1);
 
     observer.reach(pageElement(1));
     await waitFor(() => expect(canvas.width).toBe(600));
@@ -262,7 +269,7 @@ describe("PdfView: drawing pages as they come near", () => {
     }));
     render(<PdfView url={URL_OF_PDF} loadPdf={pdf.loadPdf} />);
     await screen.findAllByRole("img");
-    const observer = observerOf(1);
+    const observer = await observerOf(1);
 
     observer.reach(pageElement(1));
     await waitFor(() => expect(pdf.render).toHaveBeenCalled());
@@ -277,7 +284,7 @@ describe("PdfView: drawing pages as they come near", () => {
     render(<PdfView url={URL_OF_PDF} loadPdf={pdf.loadPdf} />);
     await screen.findAllByRole("img");
     const canvas = pageElement(1).querySelector("canvas") as HTMLCanvasElement;
-    const observer = observerOf(1);
+    const observer = await observerOf(1);
 
     observer.reach(pageElement(1));
     await waitFor(() => expect(pdf.render).toHaveBeenCalledTimes(1));
@@ -303,7 +310,7 @@ describe("PdfView: drawing pages as they come near", () => {
     });
     render(<PdfView url={URL_OF_PDF} loadPdf={pdf.loadPdf} />);
     await screen.findAllByRole("img");
-    const observer = observerOf(1);
+    const observer = await observerOf(1);
 
     observer.reach(pageElement(1));
     expect(await screen.findByText("This page could not be drawn.")).toBeTruthy();
