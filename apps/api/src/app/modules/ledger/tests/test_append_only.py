@@ -25,8 +25,10 @@ from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine, delete, insert, select, text, update
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.schema import CreateTable
 
 from app import db
 from app.modules import ledger
@@ -42,6 +44,9 @@ from app.modules.ledger import (
     install_append_only_triggers,
 )
 from app.modules.ledger import models as ledger_models
+from app.modules.ledger import service as ledger_service
+from app.modules.ledger import triggers as ledger_triggers
+from app.modules.ledger.triggers import PG_APPEND_ONLY_STATEMENTS
 
 AUTHOR = "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb"
 TRIGGER_NAMES = sorted(APPEND_ONLY_TRIGGERS)
@@ -607,3 +612,295 @@ def test_a_duplicate_append_still_raises_integrity_error():
 
     with pytest.raises(IntegrityError):
         ledger.append(envelope)
+
+
+# --------------------------------------------------------------------------- #
+# PostgreSQL parity
+#
+# No server is available to the default suite (``npm test`` runs without
+# containers), so these tests pin the PostgreSQL half of the feature at the
+# level that matters and can be checked hermetically: the PL/pgSQL the triggers
+# are made of, the statements installation runs, the ``pg_trigger`` bookkeeping
+# and the advisory lock ``append`` takes.  The SQLite tests above are unchanged.
+# --------------------------------------------------------------------------- #
+
+
+def postgres_sql() -> str:
+    """The installation statements as one SQL string."""
+    return "\n".join(PG_APPEND_ONLY_STATEMENTS)
+
+
+def test_postgres_creates_the_same_three_named_triggers():
+    sql = postgres_sql()
+
+    for name in TRIGGER_NAMES:
+        assert f"CREATE TRIGGER {name}" in sql
+        # Idempotent installation: the old trigger (if any) is dropped first,
+        # so running this on every startup upgrades a database in place.
+        assert f"DROP TRIGGER IF EXISTS {name} ON event_log;" in sql
+    assert sql.count("CREATE OR REPLACE FUNCTION") == len(TRIGGER_NAMES)
+
+
+def test_postgres_triggers_fire_on_update_delete_and_insert():
+    sql = postgres_sql()
+
+    assert "BEFORE UPDATE ON event_log" in sql
+    assert "BEFORE DELETE ON event_log" in sql
+    assert "BEFORE INSERT ON event_log" in sql
+    # Row-level: an UPDATE/DELETE matching no row is a no-op, as on SQLite.
+    assert sql.count("FOR EACH ROW") == len(TRIGGER_NAMES)
+
+
+def test_postgres_raises_exactly_the_sqlite_messages():
+    """The wording is what callers match on, so the dialects must agree."""
+    postgres = postgres_sql()
+    sqlite_ddl = "\n".join(APPEND_ONLY_TRIGGERS.values())
+
+    for message in (UPDATE_REJECTED, DELETE_REJECTED, REPLACE_REJECTED):
+        assert message in postgres
+        assert message in sqlite_ddl
+    # One RAISE per trigger function.
+    assert postgres.count("RAISE EXCEPTION") == len(TRIGGER_NAMES)
+
+
+def test_postgres_raises_integrity_errors_not_generic_exceptions():
+    """ERRCODE 23514 is what psycopg maps to ``IntegrityError``."""
+    sql = postgres_sql()
+
+    assert sql.count(f"ERRCODE = '{ledger_triggers.PG_INTEGRITY_ERRCODE}'") == len(
+        TRIGGER_NAMES
+    )
+    assert ledger_triggers.PG_INTEGRITY_ERRCODE == "23514"
+    # ``USING MESSAGE`` carries the text without a format placeholder.  A
+    # ``RAISE EXCEPTION '%', ...`` would be scanned by psycopg's pyformat
+    # parameter parser (SQLAlchemy passes an empty mapping), which rejects
+    # ``%'`` and would stop the triggers from installing at all.
+    assert "RAISE EXCEPTION '%'" not in sql
+
+
+def test_postgres_ddl_passes_psycopgs_pyformat_placeholder_scan():
+    """The exact failure mode: psycopg parses text() SQL before sending it.
+
+    SQLAlchemy executes a parameterless ``text()`` with an *empty* mapping,
+    not ``None``, so psycopg's placeholder scanner runs over the statement.
+    Every installation statement must survive it unchanged.
+    """
+    from psycopg._queries import _query2pg
+
+    for statement in PG_APPEND_ONLY_STATEMENTS:
+        parsed, _want_formats, _order, _parts = _query2pg(
+            statement.encode("utf-8"), "utf-8"
+        )
+        assert parsed.decode("utf-8") == statement
+
+
+class _FakePGConnection:
+    """A connection that records the statements ``install`` executes."""
+
+    class dialect:
+        name = "postgresql"
+
+    def __init__(self, names=None):
+        self.statements: list[str] = []
+        self.no_parameters: list[bool] = []
+        self.names = list(names or [])
+
+    def execute(self, statement, parameters=None):
+        self.statements.append(str(statement))
+        self.no_parameters.append(
+            bool(getattr(statement, "_execution_options", {}).get("no_parameters"))
+        )
+        return [(name,) for name in self.names]
+
+
+def test_install_on_postgres_runs_only_the_postgres_ddl_in_order():
+    connection = _FakePGConnection()
+
+    install_append_only_triggers(connection)
+
+    assert connection.statements == PG_APPEND_ONLY_STATEMENTS
+    # Parameterless, as the psycopg placeholder scanner requires.
+    assert connection.no_parameters == [True] * len(PG_APPEND_ONLY_STATEMENTS)
+    for name in TRIGGER_NAMES:
+        drop = next(
+            i
+            for i, sql in enumerate(connection.statements)
+            if sql.startswith(f"DROP TRIGGER IF EXISTS {name}")
+        )
+        create = next(
+            i
+            for i, sql in enumerate(connection.statements)
+            if sql.lstrip().startswith(f"CREATE TRIGGER {name}")
+        )
+        assert drop < create
+
+
+def test_install_on_postgres_is_idempotent():
+    connection = _FakePGConnection()
+
+    install_append_only_triggers(connection)
+    first = list(connection.statements)
+    install_append_only_triggers(connection)
+
+    assert connection.statements == first + first
+
+
+def test_postgres_installation_finds_its_triggers_in_pg_trigger(monkeypatch):
+    import sqlalchemy
+
+    class _Inspector:
+        def __init__(self, present):
+            self.present = present
+
+        def has_table(self, name):
+            return self.present
+
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda connection: _Inspector(True))
+
+    assert append_only_triggers_installed(_FakePGConnection(TRIGGER_NAMES)) is True
+    assert append_only_triggers_installed(_FakePGConnection(TRIGGER_NAMES[:-1])) is False
+
+    # A database whose ``event_log`` does not exist yet has no triggers; the
+    # check must answer False without querying ``pg_trigger``.
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda connection: _Inspector(False))
+    assert append_only_triggers_installed(_FakePGConnection(TRIGGER_NAMES)) is False
+
+
+def test_install_does_nothing_on_an_unsupported_dialect():
+    class _FakeMySQLConnection:
+        class dialect:
+            name = "mysql"
+
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, statement, parameters=None):  # pragma: no cover - must not run
+            self.statements.append(str(statement))
+
+    connection = _FakeMySQLConnection()
+
+    install_append_only_triggers(connection)
+
+    assert connection.statements == []
+    assert append_only_triggers_installed(connection) is False
+
+
+def test_postgres_seq_is_a_never_reused_identity_column():
+    ddl = str(CreateTable(EventLog.__table__).compile(dialect=postgresql.dialect()))
+
+    assert "seq INTEGER GENERATED BY DEFAULT AS IDENTITY" in ddl
+    assert "PRIMARY KEY (seq)" in ddl
+    # An identity is sequence-backed: PostgreSQL never hands the same value
+    # out twice, even after a rolled-back insert.
+    assert EventLog.__table__.c.seq.identity is not None
+
+
+def test_sqlite_seq_ddl_stays_autoincrement():
+    ddl = str(CreateTable(EventLog.__table__).compile(dialect=sqlite.dialect()))
+
+    assert "seq INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT" in ddl
+    assert "IDENTITY" not in ddl
+
+
+class _RecordingSession:
+    """Just enough of a Session to observe ``_begin_write_transaction``."""
+
+    class _Bind:
+        def __init__(self, dialect_name):
+            self.dialect = type("Dialect", (), {"name": dialect_name})()
+
+    def __init__(self, dialect_name):
+        self.dialect_name = dialect_name
+        self.calls: list[tuple[str, dict]] = []
+
+    def get_bind(self):
+        return self._Bind(self.dialect_name)
+
+    def execute(self, statement, parameters=None):
+        self.calls.append((str(statement), dict(parameters or {})))
+        return self
+
+
+def test_postgres_appends_take_a_transaction_scoped_advisory_lock():
+    session = _RecordingSession("postgresql")
+
+    ledger_service._begin_write_transaction(session)
+
+    assert len(session.calls) == 1
+    sql, parameters = session.calls[0]
+    assert "pg_advisory_xact_lock" in sql
+    assert parameters == {"key": ledger_service._APPEND_LOCK_ID}
+    # ``xact`` = released by COMMIT/ROLLBACK, so a failed append can never
+    # leave the log head locked for every other writer.
+    assert "pg_advisory_lock" not in sql.replace("pg_advisory_xact_lock", "")
+
+
+def test_sqlite_appends_still_begin_immediate():
+    session = _RecordingSession("sqlite")
+
+    ledger_service._begin_write_transaction(session)
+
+    assert session.calls == [("BEGIN IMMEDIATE", {})]
+
+
+def test_other_dialects_do_not_take_a_write_lock():
+    session = _RecordingSession("mysql")
+
+    ledger_service._begin_write_transaction(session)
+
+    assert session.calls == []
+
+
+class _EmptyResult:
+    def scalar_one_or_none(self):
+        return None
+
+
+class _AppendSession(_RecordingSession):
+    """A Session whose statements are appended to ``log`` in execution order."""
+
+    def __init__(self, dialect_name, log):
+        super().__init__(dialect_name)
+        self.log = log
+        self.expire_on_commit = True
+
+    def execute(self, statement, parameters=None):
+        super().execute(statement, parameters)
+        self.log.append(str(statement))
+        return _EmptyResult()
+
+    def add(self, entry):
+        self.log.append("add")
+        entry.seq = 1
+
+    def commit(self):
+        self.log.append("commit")
+
+    def rollback(self):
+        self.log.append("rollback")
+
+    def close(self):
+        self.log.append("close")
+
+
+def test_postgres_append_locks_the_head_before_reading_it(monkeypatch):
+    """The advisory lock must cover reading the predecessor *and* the insert.
+
+    Taking it after the head read (or not at all) would let two writers read
+    the same predecessor and append two children of it -- a forked chain.
+    """
+    log: list[str] = []
+    session = _AppendSession("postgresql", log)
+    monkeypatch.setattr(db, "SessionLocal", lambda: session)
+    monkeypatch.setattr(ledger_service, "ensure_table", lambda: None)
+    ledger.clear_subscribers()
+
+    ledger.append(make_envelope(), origin_node="did:key:node")
+
+    lock_at = next(i for i, entry in enumerate(log) if "pg_advisory_xact_lock" in entry)
+    head_at = next(
+        i for i, entry in enumerate(log) if entry.startswith("SELECT") and "entry_hash" in entry
+    )
+    assert lock_at < head_at
+    assert head_at < log.index("add") < log.index("commit")
+    assert session.expire_on_commit is False

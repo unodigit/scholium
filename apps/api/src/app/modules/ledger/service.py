@@ -84,6 +84,10 @@ RecordSubscriber = Callable[[EventLog], Any]
 # released, so this is belt and braces.
 _append_lock = threading.RLock()
 
+#: Transaction-level advisory lock key that serialises appends on PostgreSQL.
+#: Fixed constant so every process sharing a database agrees on it.
+_APPEND_LOCK_ID = 8_173_920_441_772_109
+
 _subscribers: dict[str, list[RecordSubscriber]] = {}
 _subscribers_lock = threading.Lock()
 
@@ -148,8 +152,13 @@ def _begin_write_transaction(session: Any) -> None:
     file, and so do multiple server processes with SQLite).  Other dialects
     rely on their own isolation level.
     """
-    if session.get_bind().dialect.name == "sqlite":
+    dialect = session.get_bind().dialect.name
+    if dialect == "sqlite":
         session.execute(text("BEGIN IMMEDIATE"))
+    elif dialect == "postgresql":
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"), {"key": _APPEND_LOCK_ID}
+        )
 
 
 # --------------------------------------------------------------------------- #
