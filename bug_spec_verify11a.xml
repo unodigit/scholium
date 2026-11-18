@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 11a: findings of verify sweep 11 (2026-11-19, pinned worktree @ 658675c). 14/16 journeys pass; 07 and 11 fail.
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Both failures are the same shape: per-viewer state the API already returns is never shown after a reload.
+  Held for round 11b (they share apps/api/src/app/** with the pending backends_llm "passes every suite" task): vote lost on reload; wording.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-discussion/discussion-tab.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx,apps/web/src/features/paper-discussion/discussion.ts,apps/web/src/features/paper-discussion/discussion.test.ts,apps/web/src/features/paper-discussion/post-card.tsx">
+    <title>After a reload or fresh sign-in, an appellant's hidden post shows "Appeal" again instead of the filed appeal's state</title>
+    <symptoms>
+      sam appeals the hiding of his post; after a reload, and after signing in afresh, /discussion (and the paper page's Discussion tab) shows "Your post was hidden: ... Appeal" again instead of "Appeal filed on 18 Nov 2026 - panel not yet formed"
+      The API is right: GET /v1/papers/{id}/threads with sam's token returns the post's appeal {status: "not_formed"}; with no token appeal is null
+      The page fetches threads on the server without a token (initial data), and DiscussionTab never asks again once the browser knows the viewer is signed in ("only a retry asks again"), so every per-viewer field of the thread (own hidden records, appeal state) is missing
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 step 7 (screenshots/07-flag-and-dispute/07m-after-reload-appeal-state-lost.png, 07n-fresh-sign-in-appeal-state-lost.png)
+    </reproduction_steps>
+    <expected>When the session resolves to a signed-in viewer (on mount, and whenever the viewer's DID changes, including sign-in and sign-out), the discussion tab re-reads the threads with the viewer's token and replaces the server-rendered anonymous data without flashing a spinner over content already shown; the hidden placeholder then shows "Appeal filed on {date} - {awaiting panel | panel not yet formed | decided: ...}" from the API on any device; tests cover an anonymous initial payload followed by a signed-in viewer whose payload carries an appeal</expected>
+    <actual>The appellant's filed appeal is invisible on the post after any reload</actual>
+  </bug>
+
+</bug_spec>

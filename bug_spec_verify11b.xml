@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 11b: findings of verify sweep 11 (2026-11-19, pinned worktree @ 658675c). 14/16 journeys pass; 07 and 11 fail.
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Both failures are the same shape: per-viewer state the API already returns is never shown after a reload.
+  Filed after the backends_llm "passes every suite" task merged (its footprint covers apps/api/src/app/**).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/appeals/router.py,apps/api/src/app/modules/appeals/tests/**,apps/web/src/features/mod-console/appeal-vote-form.tsx,apps/web/src/features/mod-console/appeal-vote-form.test.tsx,apps/web/src/features/mod-console/appeal-card.tsx,apps/web/src/features/mod-console/appeal-polish.test.tsx,apps/web/src/features/mod-console/appeals-viewer.test.ts,apps/api/src/app/modules/appeals/votes.py,apps/web/src/features/mod-console/appeals.ts,apps/web/src/features/mod-console/appeals.test.ts">
+    <title>A panel member's recorded vote disappears from the appeal card after a reload</title>
+    <symptoms>
+      okafor votes Uphold on an appeal panel and sees "You voted to uphold the decision on 18 Nov 2026"; after reloading /mod the card shows the blank vote form again ("Choose an outcome...", empty reasons, "Cast my vote") although the server holds the vote (his attention item is gone, his notice says he voted)
+      appeals.ts parses viewer_vote into viewerVote, but appeal-card.tsx does not pass it to AppealVoteForm, whose "recorded" state lives only in component state; the appeal detail returns no date for the viewer's vote
+    </symptoms>
+    <reproduction_steps>
+      Journey 11 step 9 (screenshots/11-moderation-hold-and-appeal/09c-after-reload-vote-not-shown.png)
+    </reproduction_steps>
+    <expected>The appeal detail returns the viewer's vote and when it was cast (viewer_vote, viewer_voted_at) to a seated member; the card passes them to the vote form, which opens in its recorded state "You voted to uphold/overturn the decision on {date}. {n} of 3 members have voted." with "Change my vote" while the panel is undecided (read-only once decided); a member who has not voted sees the blank form; tests cover a reload with an existing vote, no vote, and a decided panel</expected>
+    <actual>A member is invited to vote again with no sign of the vote already cast</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/appeals/service.py,apps/api/src/app/modules/recovery/notices.py,apps/api/src/app/modules/recovery/tests/**,apps/web/src/features/submit/authors.ts,apps/web/src/features/submit/authors.test.ts">
+    <title>Wording: no-panel notice miscounts; recovery notice drops "was" and uses a hyphen; submit footer names a co-author by DID</title>
+    <symptoms>
+      The panel-not-formed notice says "only 2 of the 3 eligible members are available"; it means 2 eligible members exist and a panel needs 3
+      mei's recovery notice reads "request ... approved - the new passkey takes over on 21 Nov 2026" (missing "was", hyphen instead of an em dash)
+      While a co-author has no CRediT role, the submit Authors footer reads "Choose at least one CRediT role for did:key:z6Mktt81...8CJBff." while the card above names him "Rafael Silva"
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 (screenshots/07-flag-and-dispute/11b-moderator-notified-no-panel.png, 11c-appellant-told-no-panel.png); journey 06 step 7 (screenshots/06-key-recovery/07i-mei-did-not-answer-notification.png); journey 10 step 4 (screenshots/10-publish/04d-footer-coauthor-roles-did.png)
+    </reproduction_steps>
+    <expected>"Only 2 eligible members are available; a panel needs 3."; "The recovery request from {name} was approved — the new passkey takes over on {date}."; the footer names a co-author by the display name shown on their card (DID only when no name is known)</expected>
+    <actual>As described</actual>
+  </bug>
+
+</bug_spec>
