@@ -9,11 +9,12 @@ Feature 65: the extracted text of a version's PDF is saved to the
     for p in checks.get_version_text(version_cid):
         p.position, p.paragraph_id, p.text
 
-Feature 66: the version's similarity to every listed paper, as the highest
-word 5-gram shingle Jaccard percentage, is saved to
+Feature 66: the version's similarity to every listed paper (excluding the
+paper's own other versions, which are revisions rather than overlaps), as
+the highest word 5-gram shingle Jaccard percentage, is saved to
 ``check_results.similarity_pct``::
 
-    checks.save_similarity_check(version_cid)   # corpus: other saved versions
+    checks.save_similarity_check(version_cid)   # corpus: other papers' versions
     checks.save_similarity_check(version_cid, papers=[other_cid, other_text])
     checks.get_check_result(version_cid).similarity_pct    # 0-100
     checks.similarity_pct(text_a, text_b)                  # the metric alone

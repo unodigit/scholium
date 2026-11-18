@@ -423,6 +423,55 @@ def test_a_whole_node_archive_verifies_every_paper(car_file, capsys):
     assert "Log chain intact" in out
 
 
+def test_a_whole_node_archive_summarises_every_paper_status(car_file, capsys):
+    """One retracted paper must not label the whole archive retracted.
+
+    The archive still verifies (a retraction is a warning, not a failure), but
+    the result line counts the papers instead of carrying a single paper's
+    status.
+    """
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    two.extra.append(notice("alice", "retraction", two.paper_id))
+    data = whole_node_archive(
+        [one.records(), two.records()], files=[*one.files.values(), *two.files.values()]
+    )
+
+    code, out, err = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert err == ""
+    assert "Result: VERIFIED - 2 papers (1 listed, 1 retracted)" in out
+    assert "Result: VERIFIED (status: retracted)" not in out
+
+
+def test_a_whole_node_archive_of_listed_papers_says_how_many(car_file, capsys):
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    data = whole_node_archive([one.records(), two.records()])
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert "Result: VERIFIED - 2 papers (2 listed)" in out
+
+
+def test_a_whole_node_archive_counts_each_notice_status(car_file, capsys):
+    one, two, three = (
+        make_paper(seed="one"),
+        make_paper(seed="two"),
+        make_paper(seed="three"),
+    )
+    two.extra.append(notice("alice", "correction", two.paper_id))
+    three.extra.append(notice("alice", "retraction", three.paper_id))
+    data = whole_node_archive([one.records(), two.records(), three.records()])
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert (
+        "Result: VERIFIED - 3 papers (1 listed, 1 corrected, 1 retracted)" in out
+    )
+
+
 def test_a_whole_node_archive_narrows_to_one_paper_with_paper(car_file, capsys):
     one, two = make_paper(seed="one"), make_paper(seed="two")
     data = whole_node_archive([one.records(), two.records()])

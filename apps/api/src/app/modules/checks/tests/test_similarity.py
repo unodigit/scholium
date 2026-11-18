@@ -84,6 +84,28 @@ def save_text(version_cid: str, items: list[str]) -> list[checks.Paragraph]:
     return checks.get_version_text(version_cid)
 
 
+def store_version(version_cid: str, paper_cid: str, n: int = 1) -> None:
+    """Record that ``version_cid`` is version ``n`` of ``paper_cid``."""
+    from app.modules.submissions.models import PaperVersion, ensure_tables
+
+    ensure_tables()
+    with db.SessionLocal() as session:
+        session.add(
+            PaperVersion(
+                version_cid=version_cid,
+                paper_cid=paper_cid,
+                n=n,
+                title="A paper",
+                abstract="An abstract.",
+                manifest_cid=new_version_cid(),
+                licence="CC-BY-4.0",
+                prev_cid=None,
+                state="moderation",
+            )
+        )
+        session.commit()
+
+
 # --- the metric ----------------------------------------------------------------------
 
 
@@ -269,6 +291,67 @@ def test_another_versions_cid_uses_its_saved_text():
 
     assert result.closest_cid == other
     assert result.similarity_pct == pytest.approx(pct_of(target_words, shared))
+
+
+# --- the default corpus leaves out the paper's own versions ---------------------------
+
+
+def test_similarity_ignores_earlier_versions_of_the_same_paper():
+    """v2 overlapping its own v1 is revision, not plagiarism.
+
+    The moderation queue reads this percentage as similarity to *another*
+    paper, so an earlier version of the same paper must not be in the corpus.
+    """
+    shared = words(15)
+    v1, v2, other = new_version_cid(), new_version_cid(), new_version_cid()
+    paper_cid = new_version_cid()
+    store_version(v1, paper_cid, n=1)
+    store_version(v2, paper_cid, n=2)
+    save_text(v1, shared)
+    save_text(v2, shared + words(3))
+    save_text(other, words(12))  # a different paper, no shared shingle
+
+    result = checks.save_similarity_check(v2)
+
+    # Against its own v1 this would be ~79%; the other paper shares nothing.
+    assert result.similarity_pct == 0.0
+    assert result.closest_cid is None
+    assert stored_row(v2)[1] == 0.0
+
+
+def test_similarity_ignores_later_versions_of_the_same_paper_too():
+    shared = words(15)
+    v1, v2 = new_version_cid(), new_version_cid()
+    paper_cid = new_version_cid()
+    store_version(v1, paper_cid, n=1)
+    store_version(v2, paper_cid, n=2)
+    save_text(v1, shared)
+    save_text(v2, shared)
+
+    result = checks.save_similarity_check(v1)
+
+    assert result.similarity_pct == 0.0
+    assert result.closest_cid is None
+
+
+def test_another_paper_is_still_compared_when_the_version_has_a_paper_row():
+    shared = words(15)
+    v2_words = shared + words(3)
+    other_words = shared + words(5)
+    v1, v2, other = new_version_cid(), new_version_cid(), new_version_cid()
+    paper_cid, other_paper_cid = new_version_cid(), new_version_cid()
+    store_version(v1, paper_cid, n=1)
+    store_version(v2, paper_cid, n=2)
+    store_version(other, other_paper_cid, n=1)
+    save_text(v1, shared)
+    save_text(v2, v2_words)
+    save_text(other, other_words)
+
+    result = checks.save_similarity_check(v2)
+
+    # Its own v1 would win (~79%); the other paper still has to be compared.
+    assert result.closest_cid == other
+    assert result.similarity_pct == pytest.approx(pct_of(v2_words, other_words))
 
 
 # --- explicit paper forms -------------------------------------------------------------

@@ -34,14 +34,18 @@ evidence of overlap is not evidence of identity.
 Which papers are compared
 -------------------------
 With no explicit list, the corpus is every *other* version whose text is saved
-in ``version_texts`` (feature 65).  This module has no dependency on a papers
-table; a version that has saved text is a paper the node knows, and the target
-version is always excluded from its own corpus.  A caller that knows the
-listing state -- the submission pipeline, or a moderation queue -- can pass
-``papers=`` explicitly (another version's cid, raw text, ``(cid, text)`` pairs,
-mappings or :class:`PaperText` objects), which both restricts and extends the
-corpus.  Comparing a version with no saved text, or against an empty corpus,
-saves 0.
+in ``version_texts`` (feature 65), except versions of the same paper.  A new
+version overlapping its own predecessor is a revision, not a similar paper;
+the moderation queue reads this percentage as similarity to *another* paper,
+so an earlier (or later) version of the same paper is never counted.  The
+paper relationship comes from ``paper_versions`` when this node has it; a
+version that has saved text but no ``paper_versions`` row is treated as its
+own paper, and the target version is always excluded from its own corpus.
+A caller that knows the listing state -- the submission pipeline, or a
+moderation queue -- can pass ``papers=`` explicitly (another version's cid,
+raw text, ``(cid, text)`` pairs, mappings or :class:`PaperText` objects),
+which both restricts and extends the corpus.  Comparing a version with no
+saved text, or against an empty corpus, saves 0.
 
 Writing
 -------
@@ -53,6 +57,7 @@ alone.  Running it again replaces the value.
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from collections.abc import Iterable, Iterator, Mapping
@@ -97,6 +102,8 @@ _CID_KEYS = ("version_cid", "cid", "paper_cid", "id")
 
 #: Sentinel for "the mapping has no text key".
 _MISSING = object()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -240,7 +247,8 @@ def save_similarity_check(
     Args:
         version_cid: the version's record cid (canonical base32).
         papers: the papers to compare against.  When ``None`` (the default),
-            every *other* version with text saved in ``version_texts``.  When
+            every *other* version of a *different* paper with text saved in
+            ``version_texts`` (see "Which papers are compared" above).  When
             given, an iterable (or mapping) whose items are any of:
             another version's cid string (its saved text is read), a raw text
             string, a ``Paragraph``, a ``(cid, text)`` pair, a mapping with a
@@ -298,23 +306,72 @@ def _saved_text(version_cid: str) -> str:
 def _candidates(papers: Optional[Any], *, exclude: str) -> list[PaperText]:
     """The papers to compare against, in a deterministic order."""
     if papers is None:
-        return _saved_papers(exclude)
+        return _saved_papers(exclude, also_exclude=_same_paper_versions(exclude))
     return [_paper_text(item) for item in _items(papers)]
 
 
-def _saved_papers(exclude: str) -> list[PaperText]:
-    """Every saved version's text, except ``exclude``, ordered by cid."""
+def _saved_papers(
+    exclude: str, *, also_exclude: frozenset[str] = frozenset()
+) -> list[PaperText]:
+    """Every saved version's text, except ``exclude`` and ``also_exclude``, by cid."""
     ensure_table()
     grouped: dict[str, list[str]] = {}
     with db.SessionLocal() as session:
+        statement = select(VersionText.version_cid, VersionText.text).where(
+            VersionText.version_cid != exclude
+        )
+        if also_exclude:
+            statement = statement.where(
+                VersionText.version_cid.notin_(sorted(also_exclude))
+            )
         rows = session.execute(
-            select(VersionText.version_cid, VersionText.text)
-            .where(VersionText.version_cid != exclude)
-            .order_by(VersionText.version_cid, VersionText.position)
+            statement.order_by(VersionText.version_cid, VersionText.position)
         )
         for cid, text in rows:
             grouped.setdefault(cid, []).append(text)
     return [PaperText(cid=cid, text=" ".join(parts)) for cid, parts in grouped.items()]
+
+
+def _same_paper_versions(version_cid: str) -> frozenset[str]:
+    """Every version cid of the paper ``version_cid`` belongs to.
+
+    A paper's own earlier (or later) version is a revision, not another
+    paper: counting its overlap as similarity would flag every updated
+    submission as plagiarising its predecessor.  The default corpus therefore
+    leaves them out.  An explicit ``papers=`` list is still the caller's
+    choice, so a caller that deliberately asks for one can get it.
+
+    Empty when this node has no ``paper_versions`` row for ``version_cid``
+    (text saved through this library alone): then only the target itself is
+    excluded.
+    """
+    paper_cid = _paper_cid(version_cid)
+    if paper_cid is None:
+        return frozenset()
+    from app.modules.submissions.models import PaperVersion
+
+    with db.SessionLocal() as session:
+        rows = session.execute(
+            select(PaperVersion.version_cid).where(
+                PaperVersion.paper_cid == paper_cid
+            )
+        )
+        return frozenset(row[0] for row in rows)
+
+
+def _paper_cid(version_cid: str) -> Optional[str]:
+    """The paper ``version_cid`` is a version of, when the node knows."""
+    try:
+        from app.modules import submissions
+
+        row = submissions.get_version(version_cid)
+    except Exception:  # pragma: no cover - a missing/damaged table is not a normal path
+        logger.warning(
+            "could not read the paper of version %r", version_cid, exc_info=True
+        )
+        return None
+    value = getattr(row, "paper_cid", None) if row is not None else None
+    return value if isinstance(value, str) and value else None
 
 
 def _items(papers: Any) -> Iterator[Any]:
