@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 10: findings of verify sweep 10 (2026-11-18, main @ 895dc62). 15/16 journeys pass; 07 fails.
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Decision (governance, recorded here): when fewer eligible members exist than a panel needs, the appeal is
+  marked "panel not yet formed" for appellant and moderators, moderators are notified, the draw retries whenever an
+  eligible member becomes available, and an appeal still unseated at its deadline is decided by a tier-4 moderator
+  not involved in the decision, recorded as "decided without a panel".
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/appeals/**,apps/api/src/app/modules/discussion/**,apps/api/src/app/modules/moderation/outcomes.py,apps/api/src/app/modules/moderation/tests/**,apps/web/src/features/paper-discussion/**,apps/web/src/features/mod-console/**">
+    <title>A filed post appeal is forgotten after reload (re-filing gives a wrong error); an appeal with too few eligible panellists waits forever unseen</title>
+    <symptoms>
+      After sam appeals the hiding of his post, a reload shows "Appeal" again (the filed state lives only in the browser tab: post-card.tsx "Posts this reader has appealed in this tab"); filing again shows "The server could not take the report just now. Try again in a moment." although the appeal exists
+      For an appeal on a decision about solheim's report, excluding the deciding moderator, the paper's authors, the appellant and the reporter leaves 2 eligible tier-3/4 members of the 3 needed: no panel is drawn, nobody is notified, the author sees "awaiting panel" and moderators "Waiting for the panel" while the 14-day deadline approaches silently
+      The vote card reads "You voted Overturn the decision on 18 Nov 2026" / "You voted Uphold the decision ..." (the notices correctly say "voted to overturn/uphold")
+      After reporting a post two confirmations show: "You reported this post as ..." and "Reported. A moderator will review it."
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 step 7 (screenshots/07-flag-and-dispute/07m-*.png, 07n-*.png) and step 8 (screenshots/07-flag-and-dispute/11-*.png); journeys 07, 11 vote card (screenshots/11-moderation-hold-and-appeal/09b-panel-vote-cast.png)
+    </reproduction_steps>
+    <expected>The thread API returns, for the signed-in author's own hidden records, the appeal state (filed date, panel status, outcome) so the placeholder shows "Appeal filed on {date} - {awaiting panel | panel not yet formed | decided: ...}" after reload and on any device; a duplicate appeal is refused with 409 and the UI maps it to "You already appealed this decision on {date}"; the panel draw marks an appeal "panel not yet formed" when eligible members are fewer than the panel size, notifies every tier-4 moderator (and the appellant) with the reason, retries the draw when an eligible member becomes available (e.g. a new tier-3 endorsement) and on a daily schedule, and at the deadline lets a tier-4 moderator not involved in the decision decide it, recorded and shown as "decided without a panel"; the vote card reads "You voted to uphold/overturn the decision on {date}"; reporting a post shows one confirmation</expected>
+    <actual>Lost state; silent stuck appeals; awkward wording</actual>
+    <constraints>
+      <constraint>Panel eligibility exclusions (decider, authors, appellant, reporters) stay as they are</constraint>
+    </constraints>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/notifications/**,apps/api/src/app/modules/recovery/**,apps/api/packages/cli/**,apps/web/src/features/submit/authors.ts,apps/web/src/features/submit/authors.test.ts">
+    <title>Small wording defects: reported-paper outcome omits the title; recovery "closed" during its safety window; export summary counts a held paper as listed; "CRediT role for You"</title>
+    <symptoms>
+      "The paper you reported as "Duplicated figures" was reviewed and kept listed." names no paper (post and review notices do)
+      A guardian who never answered is told the recovery request "closed" while it is still inside its 72-hour safety window
+      The whole-archive verify summary counts the held paper among "3 listed" while /network shows 4 listed papers, and uses "-" instead of an em dash
+      The submit Authors footer says "Choose at least one CRediT role for You." with a capital You
+    </symptoms>
+    <reproduction_steps>
+      Journeys 07 (screenshots/07-flag-and-dispute/07f-*.png), 06, 09 step 5 (screenshots/09-preserve-and-transparency/05b-*.png), 10 step 4 (screenshots/10-publish/04a-coauthor-added.png)
+    </reproduction_steps>
+    <expected>Paper outcome notices name the paper title; recovery notices distinguish "approved - the new passkey takes over on {date}" from "closed"; the CLI summary classifies each paper by its current moderation and notice state exactly as the node's /network counts do (held, listed, corrected, retracted, ...) and uses an em dash; the footer reads "Choose at least one CRediT role for yourself." when the author is the viewer</expected>
+    <actual>As described</actual>
+  </bug>
+
+</bug_spec>
