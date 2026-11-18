@@ -7,7 +7,9 @@ one does two things to the *bytes* and nothing to the *record*:
 * the cid is saved to the ``denylist`` table, with the decision that put it
   there.  The content plugin reads that table to answer ``451`` and to refuse
   to serve, run or export the bytes;
-* the bytes are deleted from the blob directory.
+* the bytes are deleted from the content store, through
+  :func:`~app.modules.content.delete_blob` -- the storage backend's own delete,
+  so a bucket and a directory are taken down the same way.
 
 The signed envelopes, the ``event_log`` entries (including the decision's own)
 and the ``blobs`` row are left exactly as they were.  The hash-chained log and
@@ -87,7 +89,7 @@ class Tombstone:
     cid: str
     #: The decision on record for this cid -- the first one to tombstone it.
     decision_cid: str
-    #: Whether bytes were on disk and have now been deleted.
+    #: Whether the bytes were in the content store and have now been deleted.
     bytes_deleted: bool
 
 
@@ -119,11 +121,15 @@ def get_denylist_entry(cid: object) -> Optional[Denylist]:
 
 
 def _delete_bytes(cid: str) -> bool:
-    """Remove the stored bytes of ``cid``; ``False`` when there were none."""
-    try:
-        content.blob_path(cid).unlink()
-    except FileNotFoundError:
+    """Remove the stored bytes of ``cid``; ``False`` when there were none.
+
+    The content store's own delete is used, so this is the same operation on
+    every storage backend; deleting bytes that are not there is a no-op, which
+    is why presence is checked first.
+    """
+    if not content.exists(cid):
         return False
+    content.delete_blob(cid)
     return True
 
 
@@ -141,6 +147,8 @@ def tombstone_cid(cid: str, decision_cid: str) -> Tombstone:
         ValueError: ``cid`` is not a canonical file id.  Nothing is changed.
         OSError: the bytes exist but could not be deleted.  The cid is
             already denylisted; repeat the call to retry the delete.
+        ContentError: the content store is not configured or could not delete
+            the bytes; the cid is denylisted either way, and a retry finishes.
     """
     parse_file_cid(cid)
     ensure_tables()

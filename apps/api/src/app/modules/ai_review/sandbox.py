@@ -103,7 +103,10 @@ from app.settings import settings
 from .bundle_files import (
     REASON_BUNDLE_REJECTED,
     REASON_BUNDLE_UNAVAILABLE,
-    extract_bundle,
+    # Kept on this module: the tests replace it to prove a run that cannot
+    # start never unpacks an untrusted archive.
+    extract_bundle,  # noqa: F401
+    extract_stored_bundle,
     find_entrypoint,
 )
 from .errors import BundleError
@@ -606,8 +609,12 @@ def _resolve_image(image: Optional[str]) -> str:
     return chosen
 
 
-def _locate_bundle(cid: str) -> Path:
-    """The stored bytes of a bundle the sanitizer has cleared.
+def _ensure_bundle(cid: str) -> None:
+    """Refuse a bundle the sanitizer has not cleared or moderation has removed.
+
+    The bytes themselves are read later through
+    :func:`~.bundle_files.extract_stored_bundle` (``content.local_copy``), so
+    this check is the same whether the store is the filesystem or a bucket.
 
     Raises:
         BundleError: ``bundle_unavailable`` if there is no such blob, it has
@@ -624,7 +631,6 @@ def _locate_bundle(cid: str) -> Path:
         raise BundleError(
             REASON_BUNDLE_UNAVAILABLE, "the code bundle has not been cleared by the file sanitizer"
         )
-    return content.blob_path(cid)
 
 
 def _warn(step: str, result: CommandResult, tool: str = "docker") -> None:
@@ -817,9 +823,13 @@ def _run_local_bundle(
         return _not_run(reason, detail, image=image, image_id=image_id, limits=limits)
 
     try:
-        archive = _locate_bundle(bundle_cid)
+        _ensure_bundle(bundle_cid)
         with tempfile.TemporaryDirectory(prefix="scholium-repro-") as workdir:
-            root = extract_bundle(archive, workdir, max_bytes=limits.max_bundle_bytes)
+            # The archive is read from a local copy of the stored bytes (any
+            # backend); unpack it into ``workdir`` and mount that tree.
+            root = extract_stored_bundle(
+                bundle_cid, workdir, max_bytes=limits.max_bundle_bytes
+            )
             if command is None:
                 entry = find_entrypoint(root)
                 if entry is None:

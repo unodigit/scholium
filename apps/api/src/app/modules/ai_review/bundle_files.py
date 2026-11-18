@@ -5,8 +5,14 @@ A code bundle is a zip or tar archive (``.tar``, ``.tar.gz``, ``.tar.bz2``,
 for traversal, links and absolute paths, and this module still refuses to
 trust that verdict, because it is the code that writes the files::
 
-    root = extract_bundle(content.blob_path(cid), workdir)   # a directory
+    root = extract_stored_bundle(cid, workdir)                # a directory
     find_entrypoint(root)                                     # "reproduce.sh"
+
+The stored bytes are reached through ``content.local_copy``, so the bundle is
+read the same way whatever ``STORAGE_BACKEND`` is -- a file under
+``CONTENT_DIR`` or an object in a bucket behind the S3 API -- and never
+through a filesystem path that only one backend has.  :func:`extract_bundle`
+still takes an archive file, for a caller that already has the bytes.
 
 Only regular files and directories are written.  A symlink, hard link, device,
 fifo, absolute path or ``..`` segment rejects the whole bundle; nothing is
@@ -46,6 +52,7 @@ __all__ = [
     "REASON_BUNDLE_REJECTED",
     "REASON_BUNDLE_UNAVAILABLE",
     "extract_bundle",
+    "extract_stored_bundle",
     "find_entrypoint",
 ]
 
@@ -252,6 +259,38 @@ def extract_bundle(
     if len(children) == 1 and children[0].is_dir():
         return children[0]
     return dest
+
+
+def extract_stored_bundle(
+    cid: str,
+    dest: Union[str, Path],
+    *,
+    max_files: int = MAX_FILES,
+    max_bytes: int = 256 * 1024 * 1024,
+) -> Path:
+    """Unpack the bundle stored at file id ``cid`` into the empty directory ``dest``.
+
+    The bytes come from the content store through
+    :func:`app.modules.content.local_copy`, which hands out a real file on
+    every storage backend; the copy is removed once the archive has been
+    unpacked.  Otherwise this is :func:`extract_bundle`, with the same limits
+    and the same guarantees.
+
+    Raises:
+        ValueError: ``cid`` is not a canonical file id.
+        BundleError: ``bundle_unavailable`` if the bytes are not stored;
+            otherwise exactly what :func:`extract_bundle` raises for an
+            unsafe or damaged archive.
+    """
+    from app.modules import content
+
+    try:
+        with content.local_copy(cid) as archive:
+            return extract_bundle(archive, dest, max_files=max_files, max_bytes=max_bytes)
+    except FileNotFoundError:
+        # The bytes went after the caller looked (a tombstone, say), or were
+        # never there: either way the bundle cannot be run.
+        raise _unavailable("the code bundle is not in the content store") from None
 
 
 def find_entrypoint(root: Union[str, Path]) -> Optional[str]:
