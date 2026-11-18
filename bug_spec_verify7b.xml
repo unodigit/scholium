@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 7b: new findings of verify sweep 7 (2026-11-18, main @ 2a3f59c).
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Held for after round 7a's notifications task merges: bell link landing on #notifications, reporter "kept" wording.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/packages/cli/**,apps/api/packages/record-core/src/scholium_record_core/verify.py,apps/api/packages/record-core/tests/**,apps/web/src/features/network-page/**">
+    <title>The node export fails the very check /network tells readers to run: "scholium verify archive.car" says NOT VERIFIED</title>
+    <symptoms>
+      /network says to check the public export with `scholium verify archive.car` and that it exits 0 when everything checks out; on the untouched download (193,798 B) it prints "The version history is broken: the records describe 5 papers; name one with --paper" and "Result: NOT VERIFIED (4 checks failed)", exit 1; `scholium rebuild` on the same file succeeds (REBUILT, exit 0)
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 5: download /v1/export/archive.car from the /network page, run the documented command (screenshots/09-preserve-and-transparency/05b-export-cli-verify-not-verified.png)
+    </reproduction_steps>
+    <expected>`scholium verify` recognises a whole-node archive (more than one paper) and verifies all of it: the event log's hash chain and signatures, every record's signature and content id, and each paper's version history separately, printing a per-paper summary and "Result: VERIFIED" with exit 0 for an untouched export (non-zero with the failing paper named when anything is wrong); `--paper` still narrows to one paper; a single-paper archive behaves as today; /network's instructions match the command's real behaviour; a test builds a multi-paper export through the API and verifies it with the CLI</expected>
+    <actual>The documented check fails on genuine data</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/verify-page/**">
+    <title>/verify keeps the previous file's verdict when a second file is dropped</title>
+    <symptoms>
+      Dropping the paper archive (.car) right after main.pdf leaves the drop box showing "main.pdf · 3.0 KB" and the green "This file matches ... main.pdf" card, with the archive hint added below; the on-screen verdict belongs to the wrong file (a fresh page gives only the hint)
+    </symptoms>
+    <reproduction_steps>
+      Journey 08 step 6 (screenshots/08-verify-and-download/06b-verify-archive-offline-hint.png vs 06c)
+    </reproduction_steps>
+    <expected>Each new file replaces the previous selection and clears its result before the new check starts; the drop box names the file being checked and only that file's verdict or hint is shown</expected>
+    <actual>Stale verdict next to a new file</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/components/nav/**,apps/web/src/lib/api/session.ts,apps/web/src/lib/api/session.test.ts,apps/web/src/lib/api/session-provider.tsx,apps/web/src/lib/api/session-provider.test.tsx">
+    <title>After sign-out the header keeps the previous account's unread-notification badge; the header's second row starts with "·"</title>
+    <symptoms>
+      Right after Sign out on /, the header still shows the previous account's bell badge ("Notifications, 1 unread") until a reload (reproduced twice, over 6 s)
+      The paper header's second meta row still begins with a stray "·" (sweep 6 finding, not fixed)
+    </symptoms>
+    <reproduction_steps>
+      Journey 03 step 7 (screenshots/03-new-member-onboarding/07a-signed-out.png); open any paper page (screenshots/01-read-feed-and-paper/)
+    </reproduction_steps>
+    <expected>Signing out clears every per-account client cache (unread count, notifications, my reviews, follows) in the same tick as the session, so the header shows the signed-out bell immediately; meta rows are joined so that no row starts or ends with a separator, at every width (a unit test renders the header with each optional part missing)</expected>
+    <actual>Stale badge; stray separator</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/ui-kit/format-date.ts,apps/web/src/features/ui-kit/format-date.test.ts,apps/web/src/features/review-form/review-form.tsx,apps/web/src/features/review-form/review-form.test.tsx,apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx">
+    <title>Dates from the API without a time zone are shown a day early in browsers east of UTC</title>
+    <symptoms>
+      A reviewer's own review page says "Revealed 17 Nov" for reviews revealed on 18 Nov (04:53 UTC); the API sends "revealed_at":"2026-11-18T04:53:41" with no zone, the browser reads it as local time and the formatter prints the UTC day
+      Search results show "17 Nov" while paper pages show "18 Nov" for the same instant
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 steps 0 and 13 in a GMT+11 browser (screenshots/13-new-version-and-review-update/13b-solheim-review-page-v2.png, 00b-solheim-review-page-v1.png); journey 02 results
+    </reproduction_steps>
+    <expected>The shared date helper parses an ISO timestamp without a zone designator as UTC (the API's convention) before formatting in the viewer's zone; the review page's reveal date and the search results use the shared helper, so the same instant shows the same calendar date on every page; tests cover zone-less, Z and offset inputs in a non-UTC test time zone</expected>
+    <actual>Off-by-one-day dates</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/profile-page.tsx,apps/web/src/features/dashboard/profile-page.test.tsx,apps/web/src/features/dashboard/profile.ts,apps/web/src/app/(paper-ai)/**,apps/web/src/features/mod-console/flags-section.tsx,apps/web/src/features/mod-console/flags.test.ts,apps/web/src/features/paper-page/paper-page-view.tsx,apps/web/src/features/paper-page/paper-page.css">
+    <title>Small UI leftovers: raw "Under_review" on profiles, /ai lacks the paper title, lone "·" on /mod flag cards, "Discussion (2)" tab wraps</title>
+    <symptoms>
+      The author profile lists papers with the raw status slug "Under_review"
+      The standalone /ai/{id} page is the only standalone paper page without the paper-title link
+      /mod flag cards print a lone "·" between the record type and the paper title
+      The "Discussion (2)" tab label wraps onto two lines at desktop width
+    </symptoms>
+    <reproduction_steps>
+      Journeys 01, 07, 14 (screenshots in 01-read-feed-and-paper/, 07-flag-and-dispute/, 14-endorse-newcomer/)
+    </reproduction_steps>
+    <expected>Profiles use the shared status chip/labels ("Under review"); /ai/{id} shows the paper title linking to the paper like /reviews, /proof, /meta, /discussion; flag cards join their parts without dangling separators; paper tab labels never wrap (nowrap with the count in a badge) at widths of 768px and up</expected>
+    <actual>As described</actual>
+  </bug>
+
+</bug_spec>
