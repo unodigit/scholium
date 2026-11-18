@@ -160,6 +160,34 @@ describe("describeConflictSummary", () => {
       "One check could not be completed",
     );
   });
+
+  it("reflects a review that was committed despite a declared conflict", () => {
+    // After a commit or a reveal the "the node decides whether it can be
+    // committed" wording is stale: the node already decided.
+    const report: ConflictReport = {
+      ...base,
+      clear: false,
+      checks: base.checks.map((check, index) =>
+        index === 2 ? { ...check, status: "fail", passed: false } : check,
+      ),
+    };
+
+    const summary = describeConflictSummary(report, true);
+    expect(summary).toContain("Committed despite a declared affiliation overlap");
+    expect(summary).not.toMatch(/decides whether it can be committed/);
+  });
+
+  it("reflects a committed review with more than one declared conflict", () => {
+    const report: ConflictReport = {
+      ...base,
+      clear: false,
+      checks: base.checks.map((check) => ({ ...check, status: "fail", passed: false })),
+    };
+
+    const summary = describeConflictSummary(report, true);
+    expect(summary).toContain("3 checks found a conflict");
+    expect(summary).not.toMatch(/decides whether it can be committed/);
+  });
 });
 
 describe("status words", () => {

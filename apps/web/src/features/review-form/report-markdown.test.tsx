@@ -33,6 +33,39 @@ describe("ReportMarkdown: the subset a report may use", () => {
     expect(paragraphs[1].textContent).toBe("Second paragraph.");
   });
 
+  it("renders ## to #### as headings below the page's own", () => {
+    const body = rendered("## Summary\n\nText.\n\n### Method\n\n#### Detail");
+
+    const summary = body.querySelector("h4");
+    expect(summary?.textContent).toBe("Summary");
+    expect(body.querySelector("h5")?.textContent).toBe("Method");
+    expect(body.querySelector("h6")?.textContent).toBe("Detail");
+    // The report sits below the page's heading levels: a report never emits
+    // the page's h1–h3 (docs/design.md §9).
+    expect(body.querySelector("h1, h2, h3")).toBeNull();
+    expect(body.textContent).not.toMatch(/#/);
+  });
+
+  it("reads a heading's inline Markdown, and lets one interrupt a paragraph", () => {
+    const body = rendered("Intro line\n## The *method* ##\n\nBody.");
+
+    expect(body.querySelector("p")?.textContent).toBe("Intro line");
+    const heading = body.querySelector("h4");
+    expect(heading?.textContent).toBe("The method");
+    expect(heading?.querySelector("em")?.textContent).toBe("method");
+  });
+
+  it("leaves a single # and hashes deeper than #### as text", () => {
+    const body = rendered("# Not a heading\n\n##### Also not a heading\n\n##real");
+
+    // Only `##`–`####` followed by a space are headings; anything else is the
+    // text the reviewer typed.
+    expect(body.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+    expect(body.textContent).toContain("# Not a heading");
+    expect(body.textContent).toContain("##### Also not a heading");
+    expect(body.textContent).toContain("##real");
+  });
+
   it("renders bulleted and numbered lists", () => {
     const body = rendered("Strengths:\n- clear\n- **fast**\n\nSteps:\n1. read\n2. run");
 
@@ -129,10 +162,25 @@ describe("ReportMarkdown: no raw HTML, no script, no scriptable links", () => {
 
   it("never emits an element outside the subset", () => {
     const body = rendered(
-      "# Heading\n\n> quote\n\n| a | b |\n\n![img](https://example.org/x.png)\n\n---\n\n**b** *i* `c` [l](https://e.org)\n\n- x\n\n1. y",
+      "# Heading\n\n## Heading\n\n### Heading\n\n#### Heading\n\n> quote\n\n| a | b |\n\n![img](https://example.org/x.png)\n\n---\n\n**b** *i* `c` [l](https://e.org)\n\n- x\n\n1. y",
     );
 
-    const allowed = new Set(["DIV", "P", "STRONG", "EM", "CODE", "PRE", "UL", "OL", "LI", "A", "BR"]);
+    const allowed = new Set([
+      "DIV",
+      "P",
+      "STRONG",
+      "EM",
+      "CODE",
+      "PRE",
+      "UL",
+      "OL",
+      "LI",
+      "A",
+      "BR",
+      "H4",
+      "H5",
+      "H6",
+    ]);
     for (const element of Array.from(body.querySelectorAll("*"))) {
       expect(allowed.has(element.tagName), element.tagName).toBe(true);
     }

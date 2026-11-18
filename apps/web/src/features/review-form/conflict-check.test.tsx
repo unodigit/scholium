@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConflictCheck, conflictSignInHref } from "./conflict-check";
 import { parseConflictReport } from "./conflict";
+import { ReviewSessionProvider, useReviewSession, type OwnReviewState } from "./review-session";
 
 afterEach(cleanup);
 
@@ -36,6 +38,41 @@ const REPORT = parseConflictReport({
 });
 
 describe("ConflictCheck", () => {
+  it("words a conflict as committed once the reviewer already has a review", () => {
+    const conflict = parseConflictReport({
+      paper: "sch:6sel-2dio-orm6",
+      clear: false,
+      checks: [
+        {
+          id: "not_author",
+          label: "Not an author of this paper",
+          status: "pass",
+          passed: true,
+          detail: "You are not an author of this paper.",
+        },
+        {
+          id: "different_institution",
+          label: "Different institution from all authors",
+          status: "fail",
+          passed: false,
+          detail: "Your affiliation matches an author of this paper.",
+        },
+      ],
+    });
+
+    render(
+      <ReviewSessionProvider>
+        <ConflictCheck paperId="sch:6sel-2dio-orm6" initial={conflict} />
+        <ReportsOwnReview state="sealed" />
+      </ReviewSessionProvider>,
+    );
+
+    expect(
+      screen.getByText(/Committed despite a declared affiliation overlap/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/decides whether it can be committed/)).toBeNull();
+  });
+
   it("shows the design's heading and every check with a word, not colour alone", () => {
     render(<ConflictCheck paperId="sch:6sel-2dio-orm6" initial={REPORT} />);
 
@@ -127,3 +164,15 @@ describe("ConflictCheck", () => {
     expect(load).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Stands in for the review form, which reports to the shared session that the
+ * reviewer already has a review (sealed or revealed).
+ */
+function ReportsOwnReview({ state }: { state: OwnReviewState }) {
+  const session = useReviewSession();
+  useEffect(() => {
+    session?.setOwnReviewState(state);
+  }, [session, state]);
+  return null;
+}

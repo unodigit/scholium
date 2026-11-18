@@ -7,15 +7,18 @@
  * renderer:
  *
  * - paragraphs (a blank line); a single line break inside one is kept
+ * - headings `##` to `####`, rendered two levels deeper (`h4`–`h6`) so a
+ *   report's headings sit below the page's own
  * - `*emphasis*` / `_emphasis_` and `**strong**` / `__strong__`
  * - `-`, `*`, `+` bulleted and `1.` numbered lists (one level)
  * - `[text](url)` links, for `http:`, `https:` and `mailto:` addresses only
  * - `` `inline code` `` and fenced code blocks
  *
- * Everything else — headings, quotes, tables, images, and above all raw HTML —
- * is not markup here and stays as the text the reviewer typed. The parser
- * returns a small tree of plain data; {@link ReportMarkdown} turns that into
- * React elements, so there is no point at which a string is parsed as HTML.
+ * Everything else — `#` and `#####` headings, quotes, tables, images, and
+ * above all raw HTML — is not markup here and stays as the text the reviewer
+ * typed. The parser returns a small tree of plain data; {@link ReportMarkdown}
+ * turns that into React elements, so there is no point at which a string is
+ * parsed as HTML.
  *
  * Pure functions, no React, never throws.
  */
@@ -29,9 +32,17 @@ export type MdInline =
   | { readonly type: "strong"; readonly children: readonly MdInline[] }
   | { readonly type: "link"; readonly href: string; readonly children: readonly MdInline[] };
 
+/** A heading's Markdown level: the number of `#` the reviewer typed. */
+export type MdHeadingLevel = 2 | 3 | 4;
+
 /** Block content. */
 export type MdBlock =
   | { readonly type: "paragraph"; readonly children: readonly MdInline[] }
+  | {
+      readonly type: "heading";
+      readonly level: MdHeadingLevel;
+      readonly children: readonly MdInline[];
+    }
   | { readonly type: "code"; readonly text: string }
   | {
       readonly type: "list";
@@ -179,6 +190,9 @@ export function parseInline(source: string): MdInline[] {
 const FENCE = /^ {0,3}(`{3,}|~{3,})[^`]*$/;
 const BULLET = /^ {0,3}([-*+])\s+(.*)$/;
 const NUMBERED = /^ {0,3}(\d{1,9})[.)]\s+(.*)$/;
+// An ATX heading of `##` to `####` needs a space after the hashes (or nothing
+// else on the line); the optional closing run (`## Summary ##`) is dropped.
+const HEADING = /^ {0,3}(#{2,4})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
 
 /** Parse a report into blocks. */
 export function parseMarkdown(source: string): MdBlock[] {
@@ -227,6 +241,20 @@ export function parseMarkdown(source: string): MdBlock[] {
     if (line.trim() === "") {
       endParagraph();
       endList();
+      continue;
+    }
+
+    const heading = HEADING.exec(line);
+    if (heading !== null) {
+      // A heading interrupts a paragraph and ends a list, as it does in
+      // Markdown proper.
+      endParagraph();
+      endList();
+      blocks.push({
+        type: "heading",
+        level: heading[1].length as MdHeadingLevel,
+        children: parseInline((heading[2] ?? "").trim()),
+      });
       continue;
     }
 

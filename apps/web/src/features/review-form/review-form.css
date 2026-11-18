@@ -591,11 +591,16 @@
 }
 
 .rf-commit-note {
-  flex: 1 1 16rem;
   margin: 0;
   color: var(--ink-2);
   font-size: var(--type-meta);
   line-height: var(--leading-meta);
+}
+
+/* Only in the commit row, where the growing basis is a width: the note takes
+   the space beside the button. */
+.rf-commit .rf-commit-note {
+  flex: 1 1 16rem;
 }
 
 .rf-commit .rf-button {
@@ -733,6 +738,29 @@
   margin: 0;
 }
 
+/* The report's `##`–`####` headings arrive as `h4`–`h6`; Tailwind's preflight
+   resets their size and weight, so draw them back below the card's own title. */
+.rf-updated__report-body :is(h4, h5, h6) {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.rf-updated__report-body :is(h4, h5, h6):not(:first-child) {
+  margin-block-start: calc(var(--space-unit) * 3);
+}
+
+.rf-updated__report-body h4 {
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.rf-updated__report-body h5,
+.rf-updated__report-body h6 {
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
 .rf-updated__report-body p + p,
 .rf-updated__report-body p + ul,
 .rf-updated__report-body p + ol,
@@ -798,6 +826,12 @@
 
 .rf-reveal .rf-button {
   margin-top: 0;
+}
+
+/* Plain text above the button: no growing basis, so the Reveal action sits
+   directly under its note instead of after a 16rem-tall block. */
+.rf-reveal .rf-commit-note {
+  flex: none;
 }
 
 /* Carrying the review key to another browser: the Download and Import

@@ -189,8 +189,11 @@ export async function loadConflictCheck(
  * One sentence summarising the three checks, for the panel's lede.
  *
  * @param reviewed The reviewer already has a review of this paper (sealed or
- *   revealed). The clear result must not invite another one, since the API
- *   takes one review from each reviewer (REV-3).
+ *   revealed). A conflict then describes something that already happened: the
+ *   review was committed with the conflict declared, so the panel notes it in
+ *   the past tense instead of saying the node still has to decide. A clear
+ *   result likewise must not invite another review, since the API takes one
+ *   review from each reviewer (REV-3).
  */
 export function describeConflictSummary(
   report: ConflictReport,
@@ -200,6 +203,11 @@ export function describeConflictSummary(
   const unknown = report.checks.filter((check) => check.status === "unknown");
 
   if (conflicts.length > 0) {
+    if (reviewed) {
+      return conflicts.length === 1
+        ? `One check found a conflict. Committed despite ${committedConflict(conflicts[0])}.`
+        : `${conflicts.length} checks found a conflict. The review was committed despite ${conflicts.length} declared conflicts.`;
+    }
     return conflicts.length === 1
       ? "One check found a conflict. A conflict is declared with the review; the node decides whether it can be committed."
       : `${conflicts.length} checks found a conflict. A conflict is declared with the review; the node decides whether it can be committed.`;
@@ -212,6 +220,23 @@ export function describeConflictSummary(
   return reviewed
     ? "No conflicts found. You already reviewed this paper."
     : "No conflicts found. You can review this paper.";
+}
+
+/**
+ * What one failed check is called in the past tense, once the review that
+ * declared it is committed. The words name the overlap, not the person.
+ */
+function committedConflict(check: ConflictCheck): string {
+  switch (check.id) {
+    case "different_institution":
+      return "a declared affiliation overlap";
+    case "no_recent_coauthorship":
+      return "a declared co-authorship";
+    default:
+      // The API refuses an author's commit, so that failure is not a state a
+      // committed review is in; anything else is named plainly.
+      return "a declared conflict";
+  }
 }
 
 /** Why the checks could not be loaded, in one sentence for the reviewer. */

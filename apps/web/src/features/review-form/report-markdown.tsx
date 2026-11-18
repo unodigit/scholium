@@ -49,6 +49,19 @@ function block(node: MdBlock, index: number): ReactNode {
   switch (node.type) {
     case "paragraph":
       return <p key={index}>{inline(node.children)}</p>;
+    case "heading": {
+      // Two levels deeper than the Markdown: `##` is `h4`, so a report's
+      // headings sit below the page's own `h1` and its `h2`/`h3` sections;
+      // `####` stops at `h6`.
+      switch (node.level) {
+        case 2:
+          return <h4 key={index}>{inline(node.children)}</h4>;
+        case 3:
+          return <h5 key={index}>{inline(node.children)}</h5>;
+        case 4:
+          return <h6 key={index}>{inline(node.children)}</h6>;
+      }
+    }
     case "code":
       return (
         <pre key={index}>

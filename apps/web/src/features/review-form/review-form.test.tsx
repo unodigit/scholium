@@ -450,6 +450,25 @@ describe("ReviewForm written report", () => {
 });
 
 describe("ReviewForm update", () => {
+  it("says an update is published immediately, not sealed until the reveal", () => {
+    render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        prev="bafyformal"
+        update={vi.fn<UpdateReview>(async () => updatedReview())}
+      />,
+    );
+
+    const note = screen.getByText(/published immediately/i);
+    expect(note.textContent).toMatch(/scores and recommendation/i);
+    expect(note.textContent).toMatch(/written report/i);
+    expect(note.textContent).toMatch(/2 reviews are committed/);
+    // The commit form's promise is not the update's: nothing is sealed here.
+    expect(screen.queryByText(/seals it until it is revealed/)).toBeNull();
+  });
+
   it("switches to a confirmed, read-only state showing the new review", async () => {
     const update = vi.fn<UpdateReview>(async () => updatedReview());
 

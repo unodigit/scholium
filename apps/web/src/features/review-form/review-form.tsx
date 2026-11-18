@@ -185,6 +185,16 @@ export const OWN_REVIEW_REPORT_SEALED_TEXT =
  */
 export const COMMIT_NOTE = COMMIT_NOTE_ANONYMOUS;
 
+/**
+ * Said under **Update review** instead. An update is not sealed: it is
+ * published when it is posted, so the commit form's "seals it until it is
+ * revealed" would be false. The scores and recommendation are public at once;
+ * the written report follows the target version's gate (REV-4), exactly as the
+ * confirmation says after the update is accepted.
+ */
+export const UPDATE_NOTE =
+  "An update is published immediately: your scores and recommendation are public at once. Your written report follows the version's gate, unsealing once 2 reviews are committed on this version, or 21 days after the first commit.";
+
 /** Signs and sends the review; replaceable in tests. */
 export type CommitReview = (input: ReviewCommitInput) => Promise<ReviewCommitResult>;
 
@@ -844,7 +854,11 @@ function ReviewFormBody({
 
       <div className="rf-commit">
         <p className="rf-commit-note">
-          {signed ? COMMIT_NOTE_SIGNED : COMMIT_NOTE}
+          {isUpdate
+            ? UPDATE_NOTE
+            : signed
+              ? COMMIT_NOTE_SIGNED
+              : COMMIT_NOTE}
         </p>
         <button
           type="submit"

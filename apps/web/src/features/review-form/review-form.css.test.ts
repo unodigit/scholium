@@ -125,6 +125,15 @@ describe("review-form.css", () => {
     expect(feature).toMatch(/\.rf-kicker\s*\{[^}]*overflow-wrap:\s*anywhere/);
     expect(feature).toMatch(/\.rf-paragraph\s*\{[^}]*overflow-wrap:\s*anywhere/);
   });
+
+  it("keeps the reveal note at its own height, so Reveal review follows it", () => {
+    // The commit row's growing basis (16rem) belongs to the row: in the column
+    // `.rf-reveal` it became a 16rem-tall empty block above the Reveal button.
+    const base = feature.match(/\n\.rf-commit-note\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(base).not.toMatch(/flex:/);
+    expect(feature).toMatch(/\.rf-commit \.rf-commit-note\s*\{[^}]*flex:\s*1 1 16rem/);
+    expect(feature).toMatch(/\.rf-reveal \.rf-commit-note\s*\{[^}]*flex:\s*none/);
+  });
 });
 
 describe("review-form-shell.css", () => {

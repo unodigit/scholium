@@ -544,6 +544,35 @@
   margin-block-start: calc(var(--space-unit) * 3);
 }
 
+/* A report's `##`–`####` headings arrive as `h4`–`h6` (report-markdown.tsx).
+   Tailwind's preflight resets their size and weight, so draw them back: a
+   heading reads as a heading, in the card's own voice, never larger than it. */
+.pr-report__body :is(h4, h5, h6),
+.pr-history__report-body :is(h4, h5, h6) {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pr-report__body :is(h4, h5, h6):not(:first-child),
+.pr-history__report-body :is(h4, h5, h6):not(:first-child) {
+  margin-block-start: calc(var(--space-unit) * 4);
+}
+
+.pr-report__body h4,
+.pr-history__report-body h4 {
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+.pr-report__body h5,
+.pr-report__body h6,
+.pr-history__report-body h5,
+.pr-history__report-body h6 {
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+}
+
 .pr-report__body ul,
 .pr-report__body ol,
 .pr-history__report-body ul,
