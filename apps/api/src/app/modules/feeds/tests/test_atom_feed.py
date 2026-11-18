@@ -18,6 +18,7 @@ import pytest
 from nacl.signing import SigningKey
 from scholium_record_core import derive_short_id, did_key_from_signing_key, sign_record
 
+from app import db
 from app.modules.feeds.atom import (
     ATOM_NAMESPACE,
     SCHOLIUM_NAMESPACE,
@@ -327,11 +328,17 @@ def test_reading_a_feed_needs_no_account(client, scene):
     assert scene.get(client).status_code == 200
 
 
+#: U+0000 where the database can keep it. PostgreSQL cannot store NUL in text
+#: (the ingest pipeline refuses it on every dialect), so there the stored title
+#: never has one; every other character XML cannot hold is still put through.
+STORABLE_NUL = "" if db.engine.dialect.name == "postgresql" else "\x00"
+
+
 def test_the_feed_survives_text_xml_cannot_hold(client, scene):
     paper = Paper(scene.category)
     paper.list_version(
         paper.add_version(
-            title='A <b>bold</b> & "quoted" title\x00 with a NUL\x0b and a VT',
+            title=f'A <b>bold</b> & "quoted" title{STORABLE_NUL} with a NUL\x0b and a VT',
             abstract="Abstract with ]]> and <script>alert(1)</script> and \x1b[0m",
         ),
         at=hours_ago(1),

@@ -96,6 +96,36 @@ def sqlite_steps():
 
 
 @contextmanager
+def fetched_rows():
+    """Count the rows every statement run on the engine hands back.
+
+    PostgreSQL has no per-request instruction counter a client can read, so
+    on it "how much of the database did the request read" is measured by the
+    rows its statements return: reading every manifest in the log, which is
+    the cost this index removed, makes that figure grow with the log. (The
+    index itself is pinned separately, by asking the planner for the plan.)
+    Yields a one-item list holding the running count.
+    """
+    rows = [0]
+
+    def on_executed(_conn, cursor, _statement, _params, _context, _many) -> None:
+        rows[0] += max(cursor.rowcount, 0)
+
+    event.listen(db.engine, "after_cursor_execute", on_executed)
+    try:
+        yield rows
+    finally:
+        event.remove(db.engine, "after_cursor_execute", on_executed)
+
+
+@contextmanager
+def database_work():
+    """The work the database does for the block, in whatever unit the dialect can count."""
+    with (sqlite_steps() if db.engine.dialect.name == "sqlite" else fetched_rows()) as work:
+        yield work
+
+
+@contextmanager
 def captured_sql():
     """Collect every statement the engine executes while the block runs."""
     statements: list[str] = []
@@ -111,13 +141,13 @@ def captured_sql():
 
 
 def _download_steps(client, paper: UnlistedPaper) -> int:
-    """SQLite instructions one authorised download of ``paper``'s file costs."""
+    """Database work (see :func:`database_work`) one authorised download of ``paper``'s file costs."""
     url = f"/v1/content/{paper.file_cid}"
     headers = _bearer(paper.did, 2)
     # One request first: whatever is built lazily (tables, an index catching
     # up with the log) is paid here, not inside the measurement.
     assert client.get(url, headers=headers).status_code == 200
-    with sqlite_steps() as steps:
+    with database_work() as steps:
         assert client.get(url, headers=headers).status_code == 200
     return steps[0]
 
@@ -139,7 +169,7 @@ def test_download_cost_does_not_grow_with_the_number_of_manifests(client):
 
     # A scan of the manifests would make the second figure several times the
     # first; an indexed lookup makes them equal to within a B-tree level.
-    assert many <= few * 1.25, f"{few} SQLite steps with 3 papers, {many} with 63"
+    assert many <= few * 1.25, f"{few} units of database work with 3 papers, {many} with 63"
 
 
 def test_a_download_does_not_read_the_ledgers_manifest_bodies(client):
@@ -358,16 +388,20 @@ def test_the_versions_a_manifest_names_are_looked_up_by_index():
     columns = [index["column_names"] for index in inspect(db.engine).get_indexes("paper_versions")]
     assert ["manifest_cid"] in columns
 
+    lookup = "SELECT version_cid, state FROM paper_versions WHERE manifest_cid IN ('a', 'b')"
+    if db.engine.dialect.name == "postgresql":
+        with db.engine.begin() as connection:
+            # On a table this small the planner rightly prefers to read it
+            # whole. With sequential scans switched off it uses an index
+            # whenever one can serve the lookup, and a scan means none can.
+            connection.execute(text("SET LOCAL enable_seqscan = off"))
+            plan = " ".join(row[0] for row in connection.execute(text(f"EXPLAIN {lookup}")))
+        assert "Index" in plan, plan
+        assert "Seq Scan" not in plan, plan
+        return
+
     with db.engine.connect() as connection:
-        plan = " ".join(
-            row[3]
-            for row in connection.execute(
-                text(
-                    "EXPLAIN QUERY PLAN SELECT version_cid, state FROM paper_versions "
-                    "WHERE manifest_cid IN ('a', 'b')"
-                )
-            )
-        )
+        plan = " ".join(row[3] for row in connection.execute(text(f"EXPLAIN QUERY PLAN {lookup}")))
     assert "USING INDEX" in plan or "USING COVERING INDEX" in plan, plan
     assert "SCAN" not in plan, plan
 

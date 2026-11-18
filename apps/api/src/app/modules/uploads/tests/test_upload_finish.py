@@ -507,6 +507,30 @@ def test_ensure_columns_is_idempotent(old_database):
     assert store.ensure_columns(old_database) == []
 
 
+def test_ensure_columns_restores_a_dropped_column_on_the_live_database(client):
+    """The ALTER must be valid for the database that is running, not only for SQLite."""
+    from app import db
+
+    # A pool of its own: SQLite checks an ALTER against the schema each
+    # *connection* has cached, and the shared pool's connections still hold the
+    # one from before the DROP below.
+    engine = db.build_engine(db.engine.url.render_as_string(hide_password=False))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE uploads DROP COLUMN completed_at"))
+        try:
+            assert store.ensure_columns(engine) == ["completed_at"]
+        finally:
+            store.ensure_columns(engine)
+
+        column = next(c for c in inspect(engine).get_columns("uploads") if c["name"] == "completed_at")
+        assert column["nullable"] is True
+        if engine.dialect.name == "postgresql":
+            assert column["type"].timezone is True  # the model's DateTime(timezone=True)
+    finally:
+        engine.dispose()
+
+
 def test_ensure_columns_leaves_a_missing_table_to_create_all(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
     try:

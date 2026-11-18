@@ -23,7 +23,7 @@ from app.modules.feeds.jsonfeed import (
     render_json_feed,
 )
 
-from .test_atom_feed import Paper, Scene, hours_ago
+from .test_atom_feed import STORABLE_NUL, Paper, Scene, hours_ago
 
 ATOM = f"{{{ATOM_NAMESPACE}}}"
 #: RFC 3339 as the feed writes it: ``2026-01-01T12:00:00Z``.
@@ -257,7 +257,7 @@ def test_reading_the_feed_needs_no_account(client, scene):
 
 
 def test_text_xml_cannot_hold_survives_intact(client, scene):
-    title = 'A <b>bold</b> & "quoted" title\x00 with a NUL\x0b and a VT'
+    title = f'A <b>bold</b> & "quoted" title{STORABLE_NUL} with a NUL\x0b and a VT'
     abstract = "Abstract with ]]> and <script>alert(1)</script> and \x1b[0m"
     paper = Paper(scene.category)
     paper.list_version(

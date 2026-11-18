@@ -132,14 +132,30 @@ def _normalise_envelope(envelope: Mapping[str, Any]) -> tuple[str, str, dict, st
     return record_type, author_did, dict(body), record_cid, raw, sig
 
 
-def _previous_hash(session: Any) -> bytes:
-    """The ``entry_hash`` of the current last row, or the genesis hash."""
-    previous = session.execute(
-        select(EventLog.entry_hash).order_by(EventLog.seq.desc()).limit(1)
-    ).scalar_one_or_none()
-    if previous is None:
-        return GENESIS_PREV_HASH
-    return bytes(previous)
+def _chain_head(session: Any) -> tuple[int, bytes]:
+    """``(seq, entry_hash)`` of the current last row; ``(0, genesis hash)`` when empty."""
+    head = session.execute(
+        select(EventLog.seq, EventLog.entry_hash).order_by(EventLog.seq.desc()).limit(1)
+    ).first()
+    if head is None:
+        return 0, GENESIS_PREV_HASH
+    return int(head.seq), bytes(head.entry_hash)
+
+
+def _assigns_seq_explicitly(session: Any) -> bool:
+    """Whether ``append`` must hand the database the ``seq`` it is to store.
+
+    The log's ``seq`` is consecutive: ``verify_log`` reads a hole as a removed
+    row, and ``GET /v1/sync/range`` serves the numbers as they are.  SQLite's
+    ``AUTOINCREMENT`` takes its next value inside the insert's own
+    transaction, so a failed or abandoned append leaves no trace.  A
+    PostgreSQL identity column does not: ``nextval`` is not transactional, so
+    an append that fails after drawing a value (a duplicate ``record_cid``, a
+    dropped connection) would leave a hole in the log for ever.  On PostgreSQL
+    the number is therefore the head plus one, read and written under the
+    append lock, so it is consumed only by the commit that stores it.
+    """
+    return session.get_bind().dialect.name == "postgresql"
 
 
 def _begin_write_transaction(session: Any) -> None:
@@ -198,8 +214,9 @@ def append(
         session.expire_on_commit = False
         try:
             _begin_write_transaction(session)
-            prev_hash = _previous_hash(session)
+            head_seq, prev_hash = _chain_head(session)
             entry = EventLog(
+                seq=head_seq + 1 if _assigns_seq_explicitly(session) else None,
                 record_cid=record_cid,
                 record_type=record_type,
                 author_did=author_did,
@@ -361,10 +378,13 @@ def entries(
     """
     ensure_table()
     statement = select(EventLog).order_by(EventLog.seq)
+    # ``seq`` is a 32-bit column on PostgreSQL: a bound the type cannot hold
+    # (the sync endpoint passes whatever integer the caller sent) selects the
+    # whole log or none of it, as it does on SQLite.
     if after is not None:
-        statement = statement.where(EventLog.seq > after)
+        statement = statement.where(EventLog.seq > db.clamp_int32(after))
     if through is not None:
-        statement = statement.where(EventLog.seq <= through)
+        statement = statement.where(EventLog.seq <= db.clamp_int32(through))
     if limit is not None:
         statement = statement.limit(limit)
     with db.SessionLocal() as session:

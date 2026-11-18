@@ -632,13 +632,15 @@ def test_postgresql_claims_lock_rows_and_sqlite_claims_do_not(handler, eager, mo
     _insert()
     seen = []
     real = jobs._candidate_select
+    on_postgres = jobs._is_postgres()  # the real engine, before either answer is forced below
 
     def spy(*args, **kwargs):
         seen.append(kwargs["lock_rows"])
-        return real(*args, **{**kwargs, "lock_rows": False})  # SQLite cannot run FOR UPDATE
+        # SQLite cannot run FOR UPDATE; on a real PostgreSQL the lock runs for real.
+        return real(*args, **{**kwargs, "lock_rows": kwargs["lock_rows"] and on_postgres})
 
     monkeypatch.setattr(jobs, "_candidate_select", spy)
-    assert jobs._is_postgres() is False
+    monkeypatch.setattr(jobs, "_is_postgres", lambda: False)
     assert jobs._claim_next(_utcnow()) is not None
     monkeypatch.setattr(jobs, "_is_postgres", lambda: True)
     _insert()

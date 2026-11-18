@@ -184,15 +184,107 @@ def test_create_all_on_sqlite_creates_every_registered_table():
     assert "papers" in tables
 
 
-def test_create_app_on_sqlite_uses_the_unchanged_engine_options():
-    """``create_app`` on the configured ``sqlite:///`` URL behaves as before."""
+def test_create_app_uses_the_engine_options_of_the_configured_dialect():
+    """``create_app`` builds on the configured URL's options: unchanged ones for SQLite.
+
+    ``npm test`` runs on SQLite and ``npm run test:pg`` on PostgreSQL; either
+    way the app comes up on the engine its URL asks for, with that dialect's
+    options and the full schema.
+    """
     app = main.create_app()
+    options = db._engine_options(str(db.engine.url))
 
     assert app is not None
-    assert db.engine.dialect.name == "sqlite"
-    assert db.engine.pool._pre_ping is False
-    assert db._engine_options(str(db.engine.url)) == {
-        "connect_args": {"check_same_thread": False},
-        "future": True,
-    }
+    if db.engine.dialect.name == "sqlite":
+        assert db.engine.pool._pre_ping is False
+        assert options == {"connect_args": {"check_same_thread": False}, "future": True}
+    else:
+        assert db.engine.dialect.name == "postgresql"
+        assert db.engine.pool._pre_ping is True
+        assert options["pool_pre_ping"] is True
     assert "papers" in inspect(db.engine).get_table_names()
+
+
+def test_postgres_engines_keep_the_rowcount_of_every_statement():
+    """SQLAlchemy memoises ``rowcount`` for UPDATE and DELETE only, unless asked."""
+    options = db._engine_options("postgresql://scholium:secret@db.example/scholium")
+
+    assert options["execution_options"] == {"preserve_rowcount": True}
+    assert "execution_options" not in db._engine_options("sqlite:///./scholium.db")
+
+
+def test_only_postgres_engines_pin_their_session_to_utc():
+    from sqlalchemy import event
+
+    postgres = build_engine("postgresql://scholium:secret@db.example/scholium")
+    sqlite = build_engine("sqlite://")
+
+    assert event.contains(postgres, "connect", db._pin_session_time_zone)
+    assert not event.contains(sqlite, "connect", db._pin_session_time_zone)
+
+
+def test_a_naive_utc_timestamp_survives_a_timestamptz_column_whatever_the_servers_zone(monkeypatch):
+    """The application writes naive UTC; the database must read it back as the same UTC moment.
+
+    On PostgreSQL ``PGTZ`` stands in for a server (or role) configured to a
+    local zone: libpq sends it with every connection, and it used to decide how
+    a naive value bound to a ``timestamptz`` column was read. SQLite stores
+    what it is given, so there the round trip is the plain one.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import Column, DateTime, Integer, MetaData, Table, insert, select
+
+    engine = db.engine
+    if engine.dialect.name == "postgresql":
+        monkeypatch.setenv("PGTZ", "Australia/Sydney")
+        engine = build_engine(db.engine.url.render_as_string(hide_password=False))
+    moment = datetime(2026, 1, 1, 12, 0, 0)
+    probe = Table(
+        "timezone_probe", MetaData(), Column("id", Integer, primary_key=True), Column("at", DateTime(timezone=True))
+    )
+    try:
+        probe.create(bind=engine, checkfirst=True)
+        with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                assert connection.exec_driver_sql("SHOW TimeZone").scalar() == "UTC"
+            connection.execute(insert(probe).values(id=1, at=moment))
+            stored = connection.execute(select(probe.c.at)).scalar_one()
+        if stored.tzinfo is None:  # SQLite hands back what it was given
+            stored = stored.replace(tzinfo=timezone.utc)
+        assert stored.astimezone(timezone.utc).replace(tzinfo=None) == moment
+    finally:
+        probe.drop(bind=engine, checkfirst=True)
+        if engine is not db.engine:
+            engine.dispose()
+
+
+def test_the_rowcount_of_an_insert_is_reported_on_whichever_dialect_runs():
+    """``INSERT ... SELECT`` and ``ON CONFLICT DO NOTHING`` say whether a row went in.
+
+    The upload quota's guarded insert and the claim helpers read this number to
+    decide whether they won; PostgreSQL reported -1 for both until the engine
+    asked for it.
+    """
+    from sqlalchemy import Column, Integer, MetaData, Table, false, insert, literal, select, true
+
+    probe = Table("rowcount_probe", MetaData(), Column("id", Integer, primary_key=True))
+    probe.create(bind=db.engine, checkfirst=True)
+    try:
+        with db.engine.begin() as connection:
+            def guarded(condition):
+                return connection.execute(
+                    insert(probe).from_select(["id"], select(literal(1)).where(condition))
+                ).rowcount
+
+            assert guarded(true()) == 1
+            assert guarded(false()) == 0
+            if db.engine.dialect.name == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            ignored = dialect_insert(probe).values(id=1).on_conflict_do_nothing()
+            assert connection.execute(ignored).rowcount == 0
+            assert connection.execute(dialect_insert(probe).values(id=2).on_conflict_do_nothing()).rowcount == 1
+    finally:
+        probe.drop(bind=db.engine, checkfirst=True)

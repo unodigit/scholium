@@ -517,7 +517,7 @@ def _moderation_outcomes(
             rows = (
                 session.query(ModerationDecision)
                 .filter(ModerationDecision.target_cid.in_(sorted(targets)))
-                .order_by(ModerationDecision.decided_at.desc())
+                .order_by(ModerationDecision.decided_at.desc(), ModerationDecision.decision_cid)
                 .all()
             )
             decisions = [

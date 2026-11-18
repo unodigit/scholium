@@ -359,6 +359,32 @@ def test_an_invalid_body_is_refused(client):
     assert stored(client, record["id"]) is None
 
 
+def test_a_nul_in_any_string_is_refused_and_no_handler_runs(client):
+    """PostgreSQL cannot store NUL in text; both dialects refuse it the same way."""
+    author = Author()
+    body = endorsement_body()
+    body["statement"] = "fine\x00not fine"
+    record = author.record("endorsement", body)
+    calls = []
+
+    with use_handler("endorsement", lambda *a, **k: calls.append(a)):
+        response = client.post(URL, json=record, headers=author.headers)
+
+    problem = assert_problem(response, 422)
+    assert problem["type"] == ingest.INVALID_RECORD
+    assert problem["errors"][0]["loc"] == ["body", "body", "statement"]
+    assert calls == []
+    assert stored(client, record["id"]) is None
+
+
+def test_a_nul_in_a_nested_list_or_a_key_is_found_too():
+    from app.modules.ingest import service
+
+    assert service._nul_path({"a": {"b": ["x", {"c": "y\x00"}]}}) == ["a", "b", 1, "c"]
+    assert service._nul_path({"a": {"k\x00": 1}}) == ["a", "k\x00"]
+    assert service._nul_path({"a": ["tab\there", "emoji \U0001f600"], "n": 3}) is None
+
+
 def test_a_malformed_envelope_is_refused(client):
     author = Author()
     record = author.record()

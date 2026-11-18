@@ -235,6 +235,8 @@ def _parse_version_cid(body: Mapping[str, Any]) -> str:
 
 def _parse_authors_from_body(body: Mapping[str, Any]) -> list[tuple[str, int, Optional[list]]]:
     """Best-effort parse of a paper.version body's ``authors`` list."""
+    from app.modules.submissions.models import MAX_AUTHOR_POSITION
+
     value = body.get("authors")
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or not value:
         return []
@@ -249,7 +251,8 @@ def _parse_authors_from_body(body: Mapping[str, Any]) -> list[tuple[str, int, Op
         elif isinstance(item, Mapping):
             did = item.get("did")
             raw_position = item.get("position")
-            position = raw_position if isinstance(raw_position, int) and not isinstance(raw_position, bool) and raw_position >= 1 else index + 1
+            usable = isinstance(raw_position, int) and not isinstance(raw_position, bool)
+            position = raw_position if usable and 1 <= raw_position <= MAX_AUTHOR_POSITION else index + 1
             roles = item.get("creditRoles", item.get("credit", item.get("credit_roles")))
         else:
             continue

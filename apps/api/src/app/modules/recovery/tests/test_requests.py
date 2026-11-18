@@ -243,6 +243,19 @@ def test_the_orcid_is_accepted_the_way_orcid_writes_it(client, five_guardians):
         assert stored(response.json()["request_id"]).did == did
 
 
+def test_a_credential_stored_with_a_lowercase_check_character_is_still_found():
+    """LIKE ignores case on SQLite and not on PostgreSQL; the lookup must not depend on it."""
+    did = new_did()
+    orcid = new_orcid()[:-1] + "X"
+    issue_orcid_credential(did, orcid)
+    with db.SessionLocal() as session:
+        row = session.query(Credential).filter(Credential.did == did).one()
+        row.vc = row.vc.replace(orcid, orcid.lower())
+        session.commit()
+
+    assert opening.find_account_by_orcid(orcid) == did
+
+
 def test_a_malformed_orcid_is_a_422_and_nothing_happens(client, account):
     _orcid, did, guardians = account
 

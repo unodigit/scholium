@@ -8,7 +8,7 @@ engine object, sessions and metadata here, so no application code has to know
 which database it is talking to.
 """
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -56,14 +56,45 @@ def _engine_options(database_url: str) -> dict:
             pool_pre_ping=True,
             pool_size=max(0, settings.DB_POOL_SIZE),
             max_overflow=max(0, settings.DB_MAX_OVERFLOW),
+            # SQLAlchemy only memoises ``CursorResult.rowcount`` for UPDATE and
+            # DELETE; for any other statement it reports -1 unless asked.
+            # SQLite's driver answers late and correctly, so code such as the
+            # quota-guarded ``INSERT ... SELECT`` and ``ON CONFLICT DO NOTHING``
+            # claims, which read ``rowcount`` to learn whether a row went in,
+            # worked there by accident. Preserving it makes the answer the
+            # same on both dialects.
+            execution_options={"preserve_rowcount": True},
         )
     return options
+
+
+def _pin_session_time_zone(dbapi_connection, _record) -> None:
+    """Make every new PostgreSQL connection read and write time as UTC.
+
+    Every timestamp the application writes is naive UTC, and SQLite keeps it as
+    written. PostgreSQL reads a naive value bound to a ``timestamptz`` column
+    (the uploads tables) in the *session's* time zone, and converts ``now()``
+    for a plain ``timestamp`` column the same way, so a server, role or
+    ``PGTZ`` set to anything but UTC would shift both. The ``options`` startup
+    parameter cannot be relied on for this (libpq applies ``PGTZ`` after it),
+    so the zone is set on the connection itself.
+    """
+    autocommit = dbapi_connection.autocommit
+    dbapi_connection.autocommit = True
+    try:
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute("SET TIME ZONE 'UTC'")
+    finally:
+        dbapi_connection.autocommit = autocommit
 
 
 def build_engine(database_url: str) -> Engine:
     """An engine for ``database_url``, normalised and configured for its dialect."""
     url = normalise_database_url(database_url)
-    return create_engine(url, **_engine_options(url))
+    engine = create_engine(url, **_engine_options(url))
+    if engine.dialect.name == "postgresql":
+        event.listen(engine, "connect", _pin_session_time_zone)
+    return engine
 
 
 _DATABASE_URL = normalise_database_url(settings.DATABASE_URL)
@@ -104,6 +135,54 @@ def _create_all_postgres() -> None:
                 # dropping the connection closes the session and frees the
                 # server-side lock.
                 connection.invalidate()
+
+
+#: The range of a 32-bit ``INTEGER`` column, which is what PostgreSQL gives
+#: ``Integer`` (SQLite's is 64-bit). SQLAlchemy casts a bound value to the
+#: column's type there, so a Python integer outside this range does not just
+#: match nothing: the statement fails with "integer out of range".
+INT32_MIN = -(2**31)
+INT32_MAX = 2**31 - 1
+
+
+def fits_int32(value: int) -> bool:
+    """Whether ``value`` can be compared for equality with an ``Integer`` column.
+
+    A caller-supplied number outside the range cannot equal any stored row, so
+    a lookup by it should answer "not found" (as SQLite does) rather than send
+    the database a value it refuses.
+    """
+    return INT32_MIN <= value <= INT32_MAX
+
+
+def clamp_int32(value: int) -> int:
+    """``value`` limited to the ``Integer`` range, for ``<``, ``<=``, ``>`` and ``>=``.
+
+    Against a column that cannot leave the range, a bound beyond it selects
+    every row or none exactly as the unclamped number would, so the clamped
+    comparison answers the same on SQLite and PostgreSQL. Do not use it for
+    equality: it would turn "no such number" into "the largest one".
+    """
+    return max(INT32_MIN, min(INT32_MAX, value))
+
+
+def lock_transaction(session, name: str) -> None:
+    """Make this transaction wait for any other holding the lock called ``name``.
+
+    For read-modify-write sequences whose steps cannot be one statement, such
+    as "delete a version's rows, insert the new ones".  SQLite has one writer
+    at a time, so two such sequences never overlap and nothing is needed.
+    PostgreSQL runs them concurrently under READ COMMITTED: each deletes what
+    it can see, then each inserts, and the second insert meets the first's
+    committed rows.  A transaction-level advisory lock keyed by ``name`` lines
+    them up instead; it is released by ``COMMIT`` or ``ROLLBACK``, so a failed
+    transaction cannot strand it.  Take it before the first read of the data
+    it protects.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:name, 0))"), {"name": name}
+        )
 
 
 def create_all() -> None:

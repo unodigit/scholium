@@ -266,6 +266,43 @@ def _check_shape(record: Mapping[str, Any]) -> None:
         )
 
 
+def _nul_path(node: Any) -> Optional[list[Any]]:
+    """The path to the first string in ``node`` (a key or a value) that holds U+0000, or ``None``."""
+    stack: list[tuple[Any, list[Any]]] = [(node, [])]
+    while stack:
+        value, path = stack.pop()
+        if isinstance(value, str):
+            if "\x00" in value:
+                return path
+        elif isinstance(value, Mapping):
+            for key, child in value.items():
+                if isinstance(key, str) and "\x00" in key:
+                    return [*path, key]
+                stack.append((child, [*path, key]))
+        elif isinstance(value, (list, tuple)):
+            stack.extend((child, [*path, index]) for index, child in enumerate(value))
+    return None
+
+
+def _check_text(record: Mapping[str, Any]) -> None:
+    """Refuse a record with a NUL (U+0000) in any string (422 problem details).
+
+    PostgreSQL cannot store NUL in text and SQLite can, so a record the node
+    accepted on one would be one a replica on the other could not hold (or
+    would turn into a server error when a handler writes it to a table).
+    Refusing it here gives every deployment the same answer, before any
+    handler runs or anything reaches the ledger.
+    """
+    path = _nul_path(record)
+    if path is None:
+        return
+    message = "Text must not contain NUL (U+0000) characters."
+    raise InvalidRecord(
+        [{"loc": ["body", *path], "msg": message, "type": "nul_character", "input": None}],
+        detail=message,
+    )
+
+
 def _check_body(record: Mapping[str, Any], registration: HandlerRegistration) -> None:
     """Validate the body against its Phase 1 schema when there is one (422)."""
     record_type = registration.record_type
@@ -414,6 +451,7 @@ def ingest(record: Mapping[str, Any]) -> IngestResult:
         )
 
     _check_shape(record)
+    _check_text(record)
     registration = lookup(record["type"])
     _check_body(record, registration)
     record_id = _recomputed_id(record)

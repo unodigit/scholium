@@ -11,6 +11,7 @@ import os
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app import db
 from app.main import app
@@ -36,12 +37,16 @@ def passed_blob(data: bytes, media_type: str | None = "text/plain"):
 def deny(cid: str, decision_cid: str = "test-decision") -> None:
     """Simulate the moderation plugin tombstoning ``cid``."""
     with db.engine.begin() as connection:
-        connection.exec_driver_sql(
-            "CREATE TABLE IF NOT EXISTS denylist (cid TEXT PRIMARY KEY, decision_cid TEXT NOT NULL)"
+        connection.execute(
+            text("CREATE TABLE IF NOT EXISTS denylist (cid TEXT PRIMARY KEY, decision_cid TEXT NOT NULL)")
         )
-        connection.exec_driver_sql(
-            "INSERT OR REPLACE INTO denylist (cid, decision_cid) VALUES (?, ?)",
-            (cid, decision_cid),
+        # ON CONFLICT ... DO UPDATE is the upsert both SQLite and PostgreSQL speak.
+        connection.execute(
+            text(
+                "INSERT INTO denylist (cid, decision_cid) VALUES (:cid, :decision_cid) "
+                "ON CONFLICT (cid) DO UPDATE SET decision_cid = excluded.decision_cid"
+            ),
+            {"cid": cid, "decision_cid": decision_cid},
         )
 
 

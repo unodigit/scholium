@@ -155,6 +155,10 @@ def _replace(version_cid: str, paragraphs: list[Paragraph]) -> None:
     for attempt in range(_ATTEMPTS):
         try:
             with db.SessionLocal() as session:
+                # Concurrent saves of one version replace each other in turn
+                # (PostgreSQL would otherwise let them all delete, then collide
+                # on the inserts).
+                db.lock_transaction(session, f"version_texts:{version_cid}")
                 session.execute(delete(VersionText).where(VersionText.version_cid == version_cid))
                 if values:
                     session.execute(insert(VersionText), values)

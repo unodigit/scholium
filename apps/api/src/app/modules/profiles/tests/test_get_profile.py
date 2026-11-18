@@ -23,7 +23,7 @@ from datetime import datetime
 import pytest
 from nacl.signing import SigningKey
 from scholium_record_core import did_key_from_signing_key
-from sqlalchemy import inspect, insert, text
+from sqlalchemy import JSON, cast, inspect, insert, text
 
 from app import db
 from app.modules import ledger
@@ -123,6 +123,18 @@ def _link_credential(
     return cred_id
 
 
+def _scores_cell(document: dict):
+    """The value to store in ``review.scores``.
+
+    The real column is JSON. SQLite keeps whatever text it is given; PostgreSQL
+    will not take JSON text bound as VARCHAR, so there it is cast to ``json``.
+    """
+    payload = json.dumps(document)
+    if db.engine.dialect.name == "postgresql":
+        return cast(payload, JSON)
+    return payload
+
+
 def _add_review(
     did: str | None,
     *,
@@ -144,7 +156,7 @@ def _add_review(
                 version_cid=version_cid,
                 review_key=f"rk-{uuid.uuid4().hex}",
                 nullifier=b"\x00" * 32,
-                scores=json.dumps(scores if scores is not None else {"soundness": 4, "evidence": 3}),
+                scores=_scores_cell(scores if scores is not None else {"soundness": 4, "evidence": 3}),
                 recommendation=recommendation,
                 confidence=confidence,
                 report_cid=f"sch:report:{uuid.uuid4().hex}",
@@ -581,7 +593,7 @@ def test_the_pseudonymity_material_never_leaves_the_table(client, did, review_ta
                 version_cid="sch:version:1",
                 review_key=secret_key,
                 nullifier=b"\x00" * 32,
-                scores=json.dumps({"soundness": 4}),
+                scores=_scores_cell({"soundness": 4}),
                 recommendation="minor-revision",
                 confidence=4,
                 report_cid="sch:report:x",
@@ -607,11 +619,24 @@ def test_the_pseudonymity_material_never_leaves_the_table(client, did, review_ta
         }
 
 
+def test_a_json_cell_the_driver_already_decoded_is_returned_as_it_is():
+    """PostgreSQL's driver hands a ``json`` column over as a dict or list, not as text."""
+    assert views._decode_json_cell({"soundness": 4}) == {"soundness": 4}
+    assert views._decode_json_cell([1, 2]) == [1, 2]
+    assert views._decode_json_cell('{"soundness": 4}') == {"soundness": 4}
+    assert views._decode_json_cell("{oops") is None
+
+
 def test_a_malformed_scores_cell_is_not_fatal(client, did, review_table):
     review_cid = _add_review(did)
+    # What a bad cell can look like depends on the column: SQLite keeps any text
+    # in a JSON column, while PostgreSQL's json type refuses text that is not
+    # JSON, so there the worst it can hold is a JSON value that is no score object.
+    malformed = "{oops" if db.engine.dialect.name == "sqlite" else '"oops"'
     with db.engine.begin() as conn:
         conn.execute(
-            text("UPDATE review SET scores = '{oops' WHERE review_cid = :cid"), {"cid": review_cid}
+            text("UPDATE review SET scores = :scores WHERE review_cid = :cid"),
+            {"scores": malformed, "cid": review_cid},
         )
 
     review = client.get(f"/v1/profiles/{did}").json()["reviews"][0]

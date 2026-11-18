@@ -852,7 +852,9 @@ def test_other_dialects_do_not_take_a_write_lock():
 
 
 class _EmptyResult:
-    def scalar_one_or_none(self):
+    """What the head read returns for an empty log."""
+
+    def first(self):
         return None
 
 
@@ -904,3 +906,74 @@ def test_postgres_append_locks_the_head_before_reading_it(monkeypatch):
     assert lock_at < head_at
     assert head_at < log.index("add") < log.index("commit")
     assert session.expire_on_commit is False
+
+
+class _HeadRow:
+    def __init__(self, seq, entry_hash):
+        self.seq = seq
+        self.entry_hash = entry_hash
+
+
+class _HeadResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+def _seq_handed_to_the_row(monkeypatch, dialect_name, head):
+    """Append through a fake session whose log ends in ``head``; return the ``seq`` the row was built with."""
+    handed: list[object] = []
+
+    class _Session(_AppendSession):
+        def execute(self, statement, parameters=None):
+            super().execute(statement, parameters)
+            if str(statement).startswith("SELECT") and "entry_hash" in str(statement):
+                return _HeadResult(head)
+            return self
+
+        def add(self, entry):
+            handed.append(entry.seq)  # before the fake stamps its own number
+            super().add(entry)
+
+    session = _Session(dialect_name, [])
+    monkeypatch.setattr(db, "SessionLocal", lambda: session)
+    monkeypatch.setattr(ledger_service, "ensure_table", lambda: None)
+    ledger.clear_subscribers()
+
+    ledger.append(make_envelope(), origin_node="did:key:node")
+
+    (seq,) = handed
+    return seq
+
+
+def test_postgres_append_numbers_the_entry_one_past_the_head_itself(monkeypatch):
+    """``seq`` comes from the head, under the lock, not from the identity sequence.
+
+    ``nextval`` is not rolled back, so an append that failed after drawing a
+    value (a duplicate CID, a dropped connection) would leave a hole in the
+    log, which ``verify_log`` reads as a removed row.
+    """
+    assert _seq_handed_to_the_row(monkeypatch, "postgresql", _HeadRow(41, b"\x11" * 32)) == 42
+
+
+def test_postgres_append_to_an_empty_log_starts_at_one(monkeypatch):
+    assert _seq_handed_to_the_row(monkeypatch, "postgresql", None) == 1
+
+
+def test_sqlite_append_leaves_the_number_to_autoincrement(monkeypatch):
+    assert _seq_handed_to_the_row(monkeypatch, "sqlite", _HeadRow(41, b"\x11" * 32)) is None
+
+
+def test_a_failed_append_leaves_no_hole_in_seq():
+    """Whatever the dialect: a rejected duplicate must not consume a ``seq``."""
+    first = make_envelope()
+    ledger.append(first)
+    before = ledger.latest().seq
+
+    with pytest.raises(IntegrityError):
+        ledger.append(first)
+    second = ledger.append(make_envelope())
+
+    assert second.seq == before + 1

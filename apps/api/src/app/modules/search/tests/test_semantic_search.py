@@ -28,7 +28,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from scholium_record_core import compute_record_id
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app import db
 from app.main import app
@@ -382,14 +382,16 @@ def test_ollama_embedder_reports_an_unreachable_server():
 def test_embeddings_table_has_the_spec_columns():
     embeddings_module.ensure_table()
 
-    with db.engine.connect() as connection:
-        columns = [
-            (row[1], row[2].upper(), bool(row[3]), bool(row[5]))
-            for row in connection.execute(text("PRAGMA table_info(embeddings)"))
-        ]
+    inspector = inspect(db.engine)
+    primary_key = set(inspector.get_pk_constraint("embeddings")["constrained_columns"])
+    columns = [
+        (column["name"], str(column["type"]).upper(), not column["nullable"], column["name"] in primary_key)
+        for column in inspector.get_columns("embeddings")
+    ]
 
-    # (name, type, not null, primary key)
-    assert columns == [("version_cid", "TEXT", True, True), ("vector", "BLOB", True, False)]
+    # (name, type, not null, primary key); the binary type is spelled per dialect.
+    binary = "BYTEA" if db.engine.dialect.name == "postgresql" else "BLOB"
+    assert columns == [("version_cid", "TEXT", True, True), ("vector", binary, True, False)]
 
 
 def test_a_vector_round_trips_through_its_blob():

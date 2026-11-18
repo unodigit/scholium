@@ -97,7 +97,7 @@ from app.security import Tier
 from .errors import UnknownPaper, VersionNotAuthorized, VersionOutOfSequence
 from .events import VersionStateChanged, emit_state_changed
 from .genesis import get_paper
-from .models import Authorship, PaperVersion, ensure_tables
+from .models import MAX_AUTHOR_POSITION, Authorship, PaperVersion, ensure_tables
 
 __all__ = [
     "AWAITING_CONSENT",
@@ -299,9 +299,12 @@ def _author_position(item: Mapping[str, Any], index: int) -> int:
     value = item.get("position")
     if value is None:
         return index + 1
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_AUTHOR_POSITION:
         raise _invalid_author(
-            index, "must have a position of at least 1", "invalid_author_position", value
+            index,
+            f"must have a position between 1 and {MAX_AUTHOR_POSITION}",
+            "invalid_author_position",
+            value,
         )
     return value
 

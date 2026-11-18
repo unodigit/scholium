@@ -180,6 +180,9 @@ def mark_read(did: str, notification_id: int) -> Optional[Notification]:
     """
     _require_did(did)
     ensure_table()
+    if not db.fits_int32(notification_id):
+        # No row can have this id; PostgreSQL would refuse the comparison.
+        return None
 
     session = db.SessionLocal()
     # Keep attribute values readable after commit/close; the router serialises

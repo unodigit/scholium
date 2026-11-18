@@ -181,6 +181,13 @@ class PaperVersion(db.Base):
         )
 
 
+#: The largest byline position ``authorship.position`` can hold: a 32-bit
+#: signed integer. SQLite would store any size; PostgreSQL refuses a larger
+#: one with "integer out of range", so the limit is enforced where a record's
+#: positions are read rather than left to whichever database happens to run.
+MAX_AUTHOR_POSITION = 2**31 - 1
+
+
 class Authorship(db.Base):
     """One author listed on one version, in byline order."""
 

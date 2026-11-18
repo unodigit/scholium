@@ -242,3 +242,27 @@ def test_the_public_endpoint_reports_draft_and_names_the_decliner(client):
     assert payload["state"] == DRAFT
     assert payload["declinedBy"] == bob
     assert payload["declined"] == 1
+
+
+def test_an_author_position_the_table_cannot_hold_falls_back_to_the_list_position():
+    """``authorship.position`` is a 32-bit integer; an older record may name more.
+
+    SQLite would store it, PostgreSQL would fail the insert, so the position is
+    treated like any other unusable one: the author's place in the list stands.
+    """
+    from app.modules.consents.service import _parse_authors_from_body
+    from app.modules.submissions.models import MAX_AUTHOR_POSITION
+
+    parsed = _parse_authors_from_body(
+        {
+            "authors": [
+                {"did": "did:key:z6MkA", "position": MAX_AUTHOR_POSITION + 1},
+                {"did": "did:key:z6MkB", "position": MAX_AUTHOR_POSITION},
+            ]
+        }
+    )
+
+    assert [(did, position) for did, position, _roles in parsed] == [
+        ("did:key:z6MkA", 1),
+        ("did:key:z6MkB", MAX_AUTHOR_POSITION),
+    ]

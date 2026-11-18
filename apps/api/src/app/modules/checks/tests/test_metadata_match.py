@@ -448,9 +448,11 @@ def test_table_has_the_specified_columns():
         columns[name]["nullable"]
         for name in ("similarity_pct", "references_total", "references_unresolved", "metadata_match")
     )
+    # SQLite reflects the declared name; PostgreSQL spells FLOAT out.
+    float_type = "DOUBLE PRECISION" if db.engine.dialect.name == "postgresql" else "FLOAT"
     assert {name: str(c["type"]) for name, c in columns.items()} == {
         "version_cid": "TEXT",
-        "similarity_pct": "FLOAT",
+        "similarity_pct": float_type,
         "references_total": "INTEGER",
         "references_unresolved": "INTEGER",
         "metadata_match": "BOOLEAN",

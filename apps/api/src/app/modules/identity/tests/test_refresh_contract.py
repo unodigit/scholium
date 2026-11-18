@@ -372,6 +372,33 @@ def test_subdomains_of_one_registrable_domain_are_same_site():
 # --------------------------------------------------------------------------- #
 
 
+def test_ensure_columns_restores_dropped_columns_on_the_live_database():
+    """The ALTER must be valid for the database that is running, not only for SQLite."""
+    from sqlalchemy import inspect, text
+
+    from app import db
+    from app.modules.identity.models import ensure_columns, ensure_refresh_tokens_table
+
+    ensure_refresh_tokens_table()
+    # A pool of its own: SQLite checks an ALTER against the schema each
+    # *connection* has cached, and the shared pool's connections still hold the
+    # one from before the DROP below.
+    engine = db.build_engine(db.engine.url.render_as_string(hide_password=False))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE refresh_tokens DROP COLUMN rotated_at"))
+            connection.execute(text("ALTER TABLE refresh_tokens DROP COLUMN successor_tier"))
+        try:
+            assert set(ensure_columns(engine)) == {"rotated_at", "successor_tier"}
+        finally:
+            ensure_columns(engine)
+
+        columns = {column["name"] for column in inspect(engine).get_columns("refresh_tokens")}
+        assert {"rotated_at", "successor_tier"} <= columns
+    finally:
+        engine.dispose()
+
+
 def test_existing_refresh_token_table_gains_the_grace_columns():
     """``create(checkfirst=True)`` skips an existing table; upgrades must ALTER."""
     from sqlalchemy import create_engine, inspect, text

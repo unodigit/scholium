@@ -99,12 +99,10 @@ class RefreshToken(db.Base):
         return f"<RefreshToken did={self.did!r} rotated={self.rotated}>"
 
 
-#: Columns added to ``refresh_tokens`` after it first shipped:
-#: ``name -> DDL type``.  Every one is nullable, since existing rows get NULL.
-_ADDED_COLUMNS = {
-    "rotated_at": "DATETIME",
-    "successor_tier": "INTEGER",
-}
+#: Columns added to ``refresh_tokens`` after it first shipped.  Every one is
+#: nullable, since existing rows get NULL.  Their DDL types come from the model
+#: for whichever dialect runs (SQLite's ``DATETIME`` is not a PostgreSQL type).
+_ADDED_COLUMNS = ("rotated_at", "successor_tier")
 
 #: Column an earlier release filled with the successor's raw access token so a
 #: grace-window replay could return it byte-for-byte.  Nothing writes it any
@@ -130,9 +128,10 @@ def ensure_columns(bind: Engine) -> list[str]:
         column["name"] for column in inspector.get_columns(RefreshToken.__tablename__)
     }
     added = []
-    for name, ddl_type in _ADDED_COLUMNS.items():
+    for name in _ADDED_COLUMNS:
         if name in present:
             continue
+        ddl_type = RefreshToken.__table__.c[name].type.compile(dialect=bind.dialect)
         try:
             with bind.begin() as connection:
                 connection.execute(

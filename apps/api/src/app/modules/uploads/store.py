@@ -226,9 +226,10 @@ class UploadLease(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
 
-#: Columns added to ``uploads`` after it first shipped: ``name -> DDL type``.
-#: Every one must be nullable, since existing rows get NULL.
-_ADDED_COLUMNS = {"cid": "VARCHAR(128)", "completed_at": "DATETIME"}
+#: Columns added to ``uploads`` after it first shipped. Every one must be
+#: nullable, since existing rows get NULL. Their DDL types come from the model
+#: for whichever dialect runs (SQLite's ``DATETIME`` is not a PostgreSQL type).
+_ADDED_COLUMNS = ("cid", "completed_at")
 
 
 def ensure_columns(bind: Engine) -> list[str]:
@@ -244,9 +245,10 @@ def ensure_columns(bind: Engine) -> list[str]:
         return []
     present = {column["name"] for column in inspector.get_columns(Upload.__tablename__)}
     added = []
-    for name, ddl_type in _ADDED_COLUMNS.items():
+    for name in _ADDED_COLUMNS:
         if name in present:
             continue
+        ddl_type = Upload.__table__.c[name].type.compile(dialect=bind.dialect)
         with bind.begin() as connection:
             connection.execute(text(f"ALTER TABLE {Upload.__tablename__} ADD COLUMN {name} {ddl_type}"))
         added.append(name)

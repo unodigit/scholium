@@ -762,6 +762,9 @@ def test_a_duplicate_author_is_a_422(paper):
         [{"did": "did:key:z6MkA", "creditRoles": [""]}],
         [{"did": "did:key:z6MkA", "position": 0}],
         [{"did": "did:key:z6MkA", "position": "1"}],
+        # Past what ``authorship.position`` (a 32-bit integer) can hold: SQLite
+        # would store it, PostgreSQL would fail the insert with a server error.
+        [{"did": "did:key:z6MkA", "position": 2**31}],
     ],
 )
 def test_an_unusable_author_entry_is_a_422(paper, authors):
@@ -770,6 +773,14 @@ def test_an_unusable_author_entry_is_a_422(paper, authors):
 
     assert caught.value.status_code == 422
     assert caught.value.errors[0]["loc"][:2] == ["body", "authors"]
+
+
+def test_the_largest_position_the_table_can_hold_is_accepted():
+    from app.modules.submissions.models import MAX_AUTHOR_POSITION
+
+    (author,) = version_authors({"authors": [{"did": "did:key:z6MkA", "position": MAX_AUTHOR_POSITION}]})
+
+    assert author.position == MAX_AUTHOR_POSITION == 2_147_483_647
 
 
 def test_a_licence_is_trimmed(paper):

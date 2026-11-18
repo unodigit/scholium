@@ -186,9 +186,13 @@ def find_account_by_orcid(orcid: str) -> Optional[str]:
         return None
 
     # The iD is digits, hyphens and maybe an X: nothing LIKE treats specially.
+    # LIKE ignores ASCII case on SQLite and not on PostgreSQL, so both sides are
+    # lowered: the check character is accepted as ``x`` or ``X`` below, and the
+    # candidates this narrows to must not depend on the dialect. The exact
+    # comparison is the one after the decode.
     query = select(_credentials.c.did, _credentials.c.vc, _credentials.c.status).where(
         func.lower(_credentials.c.kind).contains("orcid"),
-        _credentials.c.vc.contains(orcid),
+        func.lower(_credentials.c.vc).contains(orcid.lower()),
     )
     with db.engine.connect() as conn:
         rows = list(conn.execute(query))

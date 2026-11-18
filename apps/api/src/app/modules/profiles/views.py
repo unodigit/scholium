@@ -236,7 +236,12 @@ def _decode_json_cell(value: Any) -> Any:
     The cells reach here as text (or bytes) because the owning plugin's JSON
     encoding is mirrored as Text above; a cell that is empty or not valid JSON
     reads as ``None`` -- one bad cell must not fail the profile it appears on.
+    On PostgreSQL the owning table's column really is ``json``, and the driver
+    decodes it before this code sees it; an object or array that arrives
+    already decoded is the document itself and is returned as it is.
     """
+    if isinstance(value, (dict, list)):
+        return value
     if isinstance(value, (bytes, bytearray)):
         value = bytes(value).decode("utf-8", "replace")
     if value is None or not isinstance(value, str) or not value.strip():

@@ -118,7 +118,10 @@ def _build_queue() -> list[dict[str, Any]]:
             session.expunge(v)
 
     now = _now_naive()
-    result: list[dict[str, Any]] = []
+    # Oldest arrival first. The table has no timestamp and PostgreSQL returns
+    # unordered rows in heap order, which an UPDATE of any row changes, so the
+    # order is taken from the ledger entry each version was accepted as.
+    result: list[tuple[tuple[bool, int, str], dict[str, Any]]] = []
     for version in versions:
         paper = submissions.get_paper(version.paper_cid)
         categories = list(paper.categories) if paper is not None and paper.categories else []
@@ -164,9 +167,11 @@ def _build_queue() -> list[dict[str, Any]]:
             "new_account": new_account,
             "is_new_account": new_account,
         }
-        result.append(entry)
+        seq = getattr(ledger_entry, "seq", None)
+        result.append(((seq is None, seq or 0, version.version_cid), entry))
 
-    return result
+    result.sort(key=lambda pair: pair[0])
+    return [entry for _, entry in result]
 
 
 @router.get("/queue")
