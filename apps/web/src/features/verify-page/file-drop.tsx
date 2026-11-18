@@ -40,7 +40,7 @@ function collectDrop(transfer: DataTransfer): { files: File[]; folders: string[]
 }
 
 /** A `.car` archive is a whole paper, not a file a version's manifest can list. */
-const PAPER_ARCHIVE = /\.car$/i;
+export const PAPER_ARCHIVE = /\.car$/i;
 
 /** `my paper.car` → `'my paper.car'`, so the printed command runs as written. */
 function shellWord(value: string): string {
@@ -98,6 +98,8 @@ export function FileDrop({ current, privacyId, onFile }: FileDropProps) {
       // Do not fingerprint it: comparing a whole archive with a version's file
       // list can only ever say "does not match", which is the wrong question.
       setNotice(archiveNotice(first.name));
+      // Still replace the previous selection so its stale verdict/file is cleared.
+      onFile(first);
       return;
     }
     setNotice(

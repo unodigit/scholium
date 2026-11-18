@@ -38,6 +38,7 @@ import {
   type Verdict,
 } from "./verdict";
 import { parseVersionRef, type VersionRef } from "./version-ref";
+import { PAPER_ARCHIVE } from "./file-drop";
 
 export interface FileCheckOptions {
   /** The id to start with, e.g. from `/verify?id=…`. */
@@ -153,12 +154,21 @@ export function useFileCheck({
 
   const checkFile = useCallback((chosen: File) => {
     running.current?.abort();
-    const controller = new AbortController();
-    running.current = controller;
+    running.current = null;
 
     const { name, size } = chosen;
     // Choosing a file is moving on from the id field: say if it cannot be used.
     setSettledId(true);
+
+    // A paper archive is not fingerprinted or compared; replace any previous
+    // selection and clear its result so no stale verdict survives.
+    if (PAPER_ARCHIVE.test(name)) {
+      setFile({ status: "idle" });
+      return;
+    }
+
+    const controller = new AbortController();
+    running.current = controller;
     setFile({ status: "hashing", name, size, hashed: 0 });
 
     fingerprintBlob(chosen, {
