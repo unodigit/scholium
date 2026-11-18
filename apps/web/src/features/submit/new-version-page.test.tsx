@@ -464,9 +464,12 @@ describe("NewVersionPage — signing", () => {
 
     const tracker = await screen.findByRole("region", { name: "Status tracker" });
     expect(within(tracker).getAllByText(/Co-author consents/).length).toBeGreaterThan(0);
-    expect(harness.fetchConsents).toHaveBeenCalledWith(
-      { paper: SHORT_ID, version: 4 },
-      expect.anything(),
+    // The tracker renders before its effect asks the server: wait for the call.
+    await waitFor(() =>
+      expect(harness.fetchConsents).toHaveBeenCalledWith(
+        { paper: SHORT_ID, version: 4 },
+        expect.anything(),
+      ),
     );
   });
 
