@@ -173,6 +173,19 @@ export function GlobalNav({
       : loadNotifications;
 
   const [fetchedUnread, setFetchedUnread] = useState<number | null>(null);
+
+  // The fetched count belongs to the account that was signed in when it was
+  // read. When that session ends (Sign out, or a 401 the client could not
+  // refresh) forget it, so the next account on this document never sees it.
+  // The badge below is also derived from `effectiveSignedIn`, which is what
+  // makes the signed-out bell appear in the same render as the session ends
+  // rather than one effect later.
+  useEffect(() => {
+    if (!effectiveSignedIn) {
+      setFetchedUnread(null);
+    }
+  }, [effectiveSignedIn]);
+
   useEffect(() => {
     if (unreadCount !== undefined || !effectiveSignedIn || !load) {
       return;
@@ -195,7 +208,7 @@ export function GlobalNav({
   // The notifications card marks rows read; this is how the bell hears about
   // it. `detail.unread` is authoritative, so rapid marks do not race the badge.
   useEffect(() => {
-    if (unreadCount !== undefined) {
+    if (unreadCount !== undefined || !effectiveSignedIn) {
       return;
     }
     const onChanged = (event: Event): void => {
@@ -209,9 +222,11 @@ export function GlobalNav({
     return () => {
       window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
     };
-  }, [unreadCount]);
+  }, [unreadCount, effectiveSignedIn]);
 
-  const unread = unreadCount ?? fetchedUnread ?? 0;
+  // A pinned `unreadCount` is the shell's to decide. Otherwise only a signed-in
+  // visitor has a count; a signed-out one has no notifications to be told of.
+  const unread = unreadCount ?? (effectiveSignedIn ? (fetchedUnread ?? 0) : 0);
 
   return (
     <>

@@ -507,6 +507,105 @@ describe("GlobalNav unread loading", () => {
 });
 
 /* ---------------------------------------------------------------------------
+   The session ending takes the previous account's badge with it
+   ------------------------------------------------------------------------- */
+
+describe("GlobalNav after the session ends", () => {
+  const twoUnread = async () => [
+    { id: 1, read: false },
+    { id: 2, read: false },
+  ];
+
+  /** Sign in through the shared store, mount the nav, wait for the badge. */
+  async function mountSignedIn(load: () => Promise<unknown>) {
+    tokenStore.set({ accessToken: "access-a" });
+    render(<GlobalNav loadNotifications={load} />);
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("link", { name: "Notifications, 2 unread" }),
+      ).toHaveLength(1),
+    );
+  }
+
+  it("drops the badge in the same tick the token store is cleared", async () => {
+    await mountSignedIn(twoUnread);
+
+    // No waitFor: the signed-out bell must be there as soon as the session is.
+    act(() => {
+      tokenStore.clear();
+    });
+
+    expect(screen.queryByRole("link", { name: /unread/ })).toBeNull();
+    const bell = screen.getByRole("link", { name: "Notifications" });
+    expect(bell.getAttribute("href")).toBe("/signin");
+    expect(bell.querySelector(".gn-badge")).toBeNull();
+    // The Inbox tab of the mobile bar shows the same count.
+    expect(document.querySelectorAll(".gn-badge")).toHaveLength(0);
+  });
+
+  it("shows the signed-out bell after the Sign out button finishes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 204 })),
+    );
+    await mountSignedIn(twoUnread);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]!);
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+    expect(screen.queryByRole("link", { name: /unread/ })).toBeNull();
+    expect(document.querySelectorAll(".gn-badge")).toHaveLength(0);
+  });
+
+  it("does not show the previous account's count to the next account", async () => {
+    // The first account's read answers; the next account's read never does.
+    const load = vi
+      .fn<() => Promise<unknown>>()
+      .mockImplementationOnce(twoUnread)
+      .mockImplementation(() => new Promise(() => {}));
+    await mountSignedIn(load);
+    act(() => {
+      tokenStore.clear();
+    });
+
+    // The next account signs in on the same document.
+    act(() => {
+      tokenStore.set({ accessToken: "access-b" });
+    });
+
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("link", { name: /unread/ })).toBeNull();
+    expect(document.querySelectorAll(".gn-badge")).toHaveLength(0);
+  });
+
+  it("ignores a late notifications-changed event once signed out", async () => {
+    await mountSignedIn(twoUnread);
+    act(() => {
+      tokenStore.clear();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NOTIFICATIONS_CHANGED_EVENT, {
+          detail: { unread: 5 },
+        }),
+      );
+    });
+
+    expect(screen.queryByRole("link", { name: /unread/ })).toBeNull();
+    expect(document.querySelectorAll(".gn-badge")).toHaveLength(0);
+  });
+
+  it("keeps a pinned unreadCount as given", () => {
+    render(<GlobalNav signedIn={false} unreadCount={4} />);
+
+    expect(
+      screen.getByRole("link", { name: "Notifications, 4 unread" }),
+    ).toBeTruthy();
+  });
+});
+
+/* ---------------------------------------------------------------------------
    Spacer
    ------------------------------------------------------------------------- */
 
