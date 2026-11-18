@@ -4,12 +4,13 @@ The ``PATCH`` that delivers an upload's last byte stores the whole file in the
 content store and answers ``204`` with ``Upload-Cid``: the file's raw-codec
 CIDv1. Covered here: the CID is the right one (computed independently of the
 code under test); the bytes, the ``blobs`` row and the upload row all agree;
-earlier ``PATCH`` responses carry no CID; the staged copy is gone; and the
+earlier ``PATCH`` responses carry no CID; the staged parts are gone; and the
 recovery paths — a lost response, a failed move, a dropped connection — all end
 with the client able to repeat its final ``PATCH`` and get the CID.
 """
 
 import base64
+import io
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
@@ -23,6 +24,7 @@ from .test_upload_patch import (
     create,
     head,
     offset_of,
+    part_keys,
     patch,
     run_patch_over_asgi,
     staged_bytes,
@@ -44,7 +46,8 @@ def stored_bytes_at(cid: str) -> bytes:
 
 
 def staged_exists(upload_id) -> bool:
-    return store.staged_path(upload_id).exists()
+    """Whether any part of the upload is still staged in the object store."""
+    return bool(part_keys(upload_id))
 
 
 # --- the final PATCH answers with the CID ---------------------------------------
@@ -163,7 +166,7 @@ def test_the_upload_row_remembers_the_cid(client):
     assert upload.upload_offset == 3
 
 
-def test_the_staged_copy_is_gone_once_the_upload_is_moved(client):
+def test_the_staged_parts_are_gone_once_the_upload_is_moved(client):
     upload_id = create(client, length=6)
     patch(client, upload_id, 0, b"abc")
     assert staged_exists(upload_id)  # still in flight
@@ -173,10 +176,12 @@ def test_the_staged_copy_is_gone_once_the_upload_is_moved(client):
     assert not staged_exists(upload_id)
 
 
-def test_the_staging_directory_is_not_a_blob(client, content_root):
-    """Nothing but the finished file ends up beside the content store's own entries."""
-    upload_id = create(client, length=3)
-    cid = cid_of(patch(client, upload_id, 0, b"abc"))
+def test_nothing_but_the_blob_is_left_beside_the_content_stores_entries(client, content_root):
+    """The parts' own directories go with the parts: only the finished file stays."""
+    upload_id = create(client, length=6)
+    patch(client, upload_id, 0, b"abc")
+    assert (content_root / "uploads").is_dir()  # in flight: staged in the object store
+    cid = cid_of(patch(client, upload_id, 3, b"def"))
     assert sorted(p.name for p in content_root.iterdir() if not p.name.startswith(".")) == [cid]
 
 
@@ -323,12 +328,12 @@ def test_a_stored_upload_cannot_have_its_length_changed(client):
     assert not staged_exists(upload_id)
 
 
-def test_a_stored_upload_found_after_a_racing_move_is_answered_and_leaves_no_staged_file(client):
-    """A request that opened the staging file just after the move must clean up after itself."""
+def test_a_stored_upload_whose_move_died_before_deleting_its_parts_is_answered_and_cleaned(client):
+    """The move recorded the CID and died before deleting the parts: the repeat finishes the cleaning."""
     upload_id = create(client, length=3)
     cid = cid_of(patch(client, upload_id, 0, b"abc"))
-    store.staged_path(upload_id).parent.mkdir(parents=True, exist_ok=True)
-    store.staged_path(upload_id).write_bytes(b"")  # what open_staged leaves behind
+    store.write_part(upload_id, 0, io.BytesIO(b"abc"))  # what the move failed to delete
+    assert staged_exists(upload_id)
 
     again = patch(client, upload_id, 3, b"")
 
@@ -404,11 +409,11 @@ def test_bytes_stored_but_not_recorded_are_adopted_by_the_repeat(client, monkeyp
 def test_the_final_patch_waits_for_another_writer_to_let_go(client):
     upload_id = create(client, length=3)
     patch(client, upload_id, 0, b"ab")
-    held = store.open_staged(upload_id)
+    held = store.acquire_lock(upload_id)
     try:
         assert patch(client, upload_id, 2, b"c").status_code == 423
     finally:
-        held.close()
+        held.release()
 
     final = patch(client, upload_id, 2, b"c")
 

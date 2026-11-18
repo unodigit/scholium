@@ -2,7 +2,7 @@
 
 The bug: ``POST /v1/uploads`` + ``PATCH`` answered 201/204 and a CID to anyone,
 with no token; ``HEAD``/``PATCH`` never compared the upload's owner; and an
-upload nobody finished sat in ``CONTENT_DIR/.uploads`` forever.
+upload nobody finished kept its staged bytes for ever.
 
 Covered here:
 
@@ -12,12 +12,13 @@ Covered here:
   as for an id that does not exist, and an unowned legacy row belongs to nobody;
 * a per-DID quota caps the bytes an account may have in flight;
 * a periodic job deletes incomplete uploads older than a configurable TTL
-  (default 24 h), their staged bytes, and staged bytes with no upload at all.
+  (default 24 h), their staged parts, and staged bytes with no upload at all.
 
 Every test uses DIDs of its own: the test database outlives a test, and the
 quota counts what an account already has in flight.
 """
 
+import io
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,7 @@ from app.security import issue_access_token
 from app.settings import settings
 
 from .conftest import bearer
+from .test_upload_patch import part_keys, staged_bytes
 
 TUS = {"Tus-Resumable": "1.0.0"}
 OFFSET_TYPE = "application/offset+octet-stream"
@@ -128,7 +130,8 @@ def finish(client, who, data=b"hello") -> tuple[str, str]:
 
 
 def staged_exists(upload_id) -> bool:
-    return store.staged_path(upload_id).exists()
+    """Whether any part of the upload is staged in the object store."""
+    return bool(part_keys(upload_id))
 
 
 def utcnow() -> datetime:
@@ -186,6 +189,8 @@ def test_an_anonymous_caller_cannot_get_a_file_into_the_content_dir(anon_client,
 
     upload_id = "A" * 24  # even a guessed id gets nowhere
     assert patch(anon_client, upload_id, 0, b"hello").status_code == 401
+    # Nothing was staged: not as parts in the object store, and not where earlier releases staged.
+    assert not (content_root / "uploads").exists()
     assert not (content_root / store.STAGING_DIRNAME).exists()
 
 
@@ -262,14 +267,14 @@ def test_patch_to_another_callers_upload_is_404_and_writes_nothing(anon_client, 
     assert response.status_code == 404
     assert response.json()["detail"] == patch(anon_client, "no-such-upload", 5, b"WORLD", bob).json()["detail"]
     assert row(upload_id).upload_offset == 5
-    assert store.staged_path(upload_id).read_bytes() == b"hello"
+    assert staged_bytes(upload_id) == b"hello"
     # The owner carries on, unaffected.
     done = patch(anon_client, upload_id, 5, b"world", alice)
     assert done.status_code == 204
     assert done.headers["upload-cid"]
 
 
-def test_a_stranger_does_not_even_touch_the_staging_area_of_an_upload(anon_client, alice, bob):
+def test_a_stranger_does_not_even_touch_the_staged_parts_of_an_upload(anon_client, alice, bob):
     upload_id = new_upload(anon_client, alice)
 
     assert patch(anon_client, upload_id, 0, b"x", bob).status_code == 404
@@ -495,8 +500,7 @@ def test_a_finished_upload_is_not_reaped_before_the_orphan_ttl(anon_client, alic
 def test_a_complete_upload_that_was_never_moved_is_reaped(anon_client, reaper):
     owner = did("Stranded")
     upload_id = make_row(owner, length=3)
-    with store.open_staged(upload_id) as staged:
-        staged.write(b"abc")
+    store.write_part(upload_id, 0, io.BytesIO(b"abc"))
     session = SessionLocal()
     try:
         assert store.advance_offset(session, upload_id, expected_offset=0, new_offset=3)
@@ -514,12 +518,13 @@ def test_an_upload_being_written_right_now_is_left_alone(anon_client, alice, rea
     upload_id = started_upload(anon_client, alice)
     later = utcnow() + timedelta(hours=25)
 
-    held = store.open_staged(upload_id)  # a PATCH is appending to it
+    held = store.acquire_lock(upload_id)  # a PATCH is appending to it
     try:
         assert reaper.reap_abandoned_uploads(now=later).uploads == 0
         assert row(upload_id) is not None
+        assert staged_exists(upload_id)
     finally:
-        held.close()
+        held.release()
 
     assert reaper.reap_abandoned_uploads(now=later).uploads >= 1
     assert row(upload_id) is None
@@ -536,7 +541,7 @@ def test_reaping_frees_the_quota(anon_client, alice, reaper, monkeypatch):
     assert post(anon_client, 600, alice).status_code == 201
 
 
-def test_staged_bytes_with_no_upload_are_swept_once_stale(reaper, content_root):
+def test_files_an_earlier_release_staged_with_no_upload_are_swept_once_stale(reaper, content_root):
     staging = content_root / store.STAGING_DIRNAME
     staging.mkdir(parents=True)
     stale, fresh = staging / "orphan-stale", staging / "orphan-fresh"

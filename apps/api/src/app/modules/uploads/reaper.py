@@ -1,13 +1,16 @@
 """Garbage collection of abandoned and orphaned uploads (plugin: uploads).
 
 An upload that is created and never finished -- the browser tab closed, the
-client gave up -- would otherwise hold its staged bytes in ``CONTENT_DIR/.uploads``
-and its share of the owner's quota for ever. :func:`reap_abandoned_uploads`
-deletes, for every upload that has not reached the content store and is older
-than the TTL (:func:`.config.upload_ttl`, 24 hours by default), both the row and
-the staged bytes. It then sweeps staged files that no upload row accounts for
-(what a crash between the two steps, or a request that lost a race with the
-deletion, leaves behind) once they are older than the TTL too.
+client gave up -- would otherwise hold its staged parts in the object store
+(``uploads/{id}/``) and its share of the owner's quota for ever.
+:func:`reap_abandoned_uploads` deletes, for every upload that has not reached the
+content store and is older than the TTL (:func:`.config.upload_ttl`, 24 hours by
+default), every one of its parts and then its row. It then sweeps parts that no
+upload accounts for -- what a crash between those two steps, a request that lost a
+race with the deletion, or a final ``PATCH`` that died before deleting its parts
+leaves behind: the upload's row is gone, or already holds its bytes in the content
+store -- and the files an earlier release staged in ``CONTENT_DIR/.uploads`` that no
+upload row accounts for, once those are older than the TTL too.
 
 It also deletes *completed* uploads that their owner's records do not
 reference once they are older than :func:`.config.orphan_ttl` (7 days by
@@ -25,7 +28,7 @@ manifests that never become a paper. When the log cannot be read, the pass
 deletes nothing -- bytes are never removed on a guess.
 
 * An upload being appended to right now is skipped, not waited for: the reaper
-  asks for the upload's lock the way a ``PATCH`` does and moves on when it is
+  asks for the upload's lease the way a ``PATCH`` does and moves on when it is
   held. It is reaped on a later run if it is still abandoned.
 * A completed upload its owner's records name is finished work and is never
   touched. Identical bytes share one blob, so the blob goes only when the last
@@ -40,7 +43,7 @@ deletes nothing -- bytes are never removed on a guess.
 jobs run on the background worker. In eager mode (``JOBS_EAGER=1``, tests and
 local development) no worker ever picks up a deferred job, so nothing is queued;
 reap on demand with ``jobs.enqueue(JOB_KIND)`` or :func:`reap_abandoned_uploads`.
-This is blocking file and database I/O: call it from a worker thread.
+This is blocking object-store and database I/O: call it from a worker thread.
 """
 
 from __future__ import annotations
@@ -56,6 +59,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app import db, jobs
 from app.modules import content
+from app.storage import ObjectStoreError
 
 from . import config, references, store
 
@@ -71,9 +75,11 @@ INTERVAL = timedelta(hours=1)
 class Reaped:
     """What one pass deleted."""
 
-    #: Unfinished uploads removed (row and staged bytes).
+    #: Unfinished uploads removed (every staged part, and the row).
     uploads: int = 0
-    #: Staged files removed that no upload row accounted for.
+    #: Uploads' staged bytes removed that no unfinished upload row accounted for:
+    #: one for each upload whose parts were left in the object store, and one for
+    #: each stale file an earlier release staged that no row accounted for.
     orphans: int = 0
     #: Completed uploads removed because their owner's records did not name them.
     completed: int = 0
@@ -126,25 +132,32 @@ def reap_abandoned_uploads(
 
 
 def _reap_one(upload_id: str) -> int:
-    """Delete one upload's row and staged bytes unless a request holds it; ``1`` if it went."""
+    """Delete one upload's parts and row unless a request holds it; ``1`` if it went."""
     try:
-        staged = store.open_staged(upload_id)  # the lock a PATCH (and finishing an upload) takes
+        lock = store.acquire_lock(upload_id)  # the lease a PATCH (and finishing an upload) takes
     except store.UploadBusy:
         return 0
     try:
         session = db.SessionLocal()
         try:
-            # ``cid`` is re-checked: an upload finished since we listed it is not ours to delete.
+            # Read again now that nobody can finish it under us: an upload that
+            # reached the content store since we listed it is not ours to delete.
+            upload = session.get(store.Upload, upload_id)
+            if upload is None or upload.cid is not None:
+                return 0
+            # The parts go first, and a store that cannot delete them stops here
+            # (the pass logs it): the row, which is what finds them again, stays
+            # for the next pass instead of leaving bytes nothing accounts for.
+            store.discard_parts(upload_id, best_effort=False)
             deleted = session.execute(
                 delete(store.Upload).where(store.Upload.id == upload_id, store.Upload.cid.is_(None))
             ).rowcount
             session.commit()
         finally:
             session.close()
-        store.discard_staged(upload_id)
         return 1 if deleted == 1 else 0
     finally:
-        staged.close()
+        lock.release()
 
 
 def _reap_orphaned_uploads(now: datetime, ttl: timedelta) -> tuple[int, int]:
@@ -227,8 +240,8 @@ def _reap_completed(upload_id: str, cid: str, *, file_named: bool = False) -> tu
         session.close()
     if removed:
         try:
-            content.blob_path(cid).unlink()
-        except (OSError, ValueError, content.ContentError):
+            content.delete_blob(cid)
+        except (OSError, ValueError, content.ContentError, ObjectStoreError):
             # The row is gone, so the bytes can never be served or claimed
             # again; a failed unlink only wastes space until the next pass.
             logger.warning("could not delete the bytes of orphaned blob %s", cid, exc_info=True)
@@ -236,10 +249,65 @@ def _reap_completed(upload_id: str, cid: str, *, file_named: bool = False) -> tu
 
 
 def _sweep_orphans(cutoff: datetime) -> int:
-    """Delete staged files older than ``cutoff`` that belong to no upload; return how many."""
+    """Delete staged bytes no unfinished upload accounts for; return how many uploads' bytes went."""
+    return _sweep_orphan_parts() + _sweep_legacy_staged(cutoff)
+
+
+#: How many upload ids are looked up in the database at a time while sweeping.
+_SWEEP_BATCH = 500
+
+
+def _sweep_orphan_parts() -> int:
+    """Delete the parts of uploads that cannot use them; return how many uploads' parts went.
+
+    A part belongs to an unfinished upload, so one whose upload has no row (it
+    was reaped, or its row never survived) or whose row already holds its bytes
+    in the content store (the move died before deleting them) is garbage, and
+    goes at once: a row is created before any part is written, so there is no
+    young part of a row that does not exist yet to spare.
+    """
     try:
-        entries = list(os.scandir(store.staging_dir()))
-    except (OSError, RuntimeError):  # nothing staged yet, or no CONTENT_DIR configured
+        staged = store.staged_upload_ids()
+    except (ObjectStoreError, OSError):
+        logger.warning("could not list the staged upload parts", exc_info=True)
+        return 0
+
+    swept = 0
+    session = db.SessionLocal()
+    try:
+        for offset in range(0, len(staged), _SWEEP_BATCH):
+            batch = staged[offset : offset + _SWEEP_BATCH]
+            finished = {
+                upload_id: cid
+                for upload_id, cid in session.execute(
+                    select(store.Upload.id, store.Upload.cid).where(store.Upload.id.in_(batch))
+                )
+            }
+            for upload_id in batch:
+                if upload_id in finished and finished[upload_id] is None:
+                    continue  # unfinished: the parts are in use
+                try:
+                    swept += 1 if store.discard_parts(upload_id, best_effort=False) else 0
+                except (ObjectStoreError, OSError):
+                    logger.warning("could not delete the orphaned parts of upload %s", upload_id, exc_info=True)
+    finally:
+        session.close()
+    return swept
+
+
+def _sweep_legacy_staged(cutoff: datetime) -> int:
+    """Delete files an earlier release staged in ``CONTENT_DIR/.uploads`` that belong to no upload.
+
+    Only files older than ``cutoff`` go. Nothing writes there now, so what is
+    left is an upgrade's leftovers: uploads whose row exist are adopted into the
+    object store when next appended to, and the rest are found here.
+    """
+    directory = store.legacy_staging_dir()
+    if directory is None:  # no CONTENT_DIR configured
+        return 0
+    try:
+        entries = list(os.scandir(directory))
+    except OSError:  # nothing staged by an earlier release
         return 0
     cutoff_timestamp = cutoff.replace(tzinfo=timezone.utc).timestamp()
 
@@ -248,8 +316,10 @@ def _sweep_orphans(cutoff: datetime) -> int:
     try:
         for entry in entries:
             try:
-                path = store.staged_path(entry.name)  # ValueError: not a name we give staged files
-                if not entry.is_file(follow_symlinks=False) or entry.stat(follow_symlinks=False).st_mtime >= cutoff_timestamp:
+                path = store.legacy_staged_path(entry.name)  # ValueError: not a name we give staged files
+                if path is None or not entry.is_file(follow_symlinks=False):
+                    continue
+                if entry.stat(follow_symlinks=False).st_mtime >= cutoff_timestamp:
                     continue
                 if session.get(store.Upload, entry.name) is not None:
                     continue
@@ -310,7 +380,7 @@ def run_reaper_job(payload: Any = None) -> None:
     schedule_reaper()
     result = reap_abandoned_uploads()
     logger.info(
-        "upload reaper: %s abandoned upload(s), %s orphaned staged file(s), %s unreferenced completed upload(s) "
+        "upload reaper: %s abandoned upload(s), %s orphaned staged upload(s), %s unreferenced completed upload(s) "
         "and %s of their blob(s) deleted",
         result.uploads,
         result.orphans,

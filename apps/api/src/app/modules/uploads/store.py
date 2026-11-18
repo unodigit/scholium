@@ -11,15 +11,45 @@ runs, so the ``uploads`` table is created with the rest of the schema
 without touching any shared file. ``create_all`` never alters a table that
 already exists, so columns added after the table first shipped are added by
 :func:`ensure_columns`, which the module's ``on_startup`` hook runs.
+
+Where the bytes of an upload in flight live
+-------------------------------------------
+Not on a local disk of this process: they are staged in the app-wide
+:class:`~app.storage.base.ObjectStore` (:func:`app.storage.get_object_store`),
+so any API replica, and the worker that runs the reaper, sees the same
+bytes whichever ``STORAGE_BACKEND`` is in use. Every ``PATCH`` that delivers
+bytes persists them as one *part* object::
+
+    uploads/{id}/{start:019d}        <- the bytes from offset ``start`` to the end of that PATCH
+
+The key is the byte offset the part starts at, zero-padded so the store's
+ascending key order is the order of the bytes. A part is written *before* the
+database offset moves past it, so the recorded offset never runs ahead of what
+the store holds; a part the database never heard of (its request died first)
+sits at or beyond the recorded offset, was never acknowledged, and is
+replaced or deleted by the next request. Finishing the upload streams the
+parts in order into the content store (:mod:`.finalize`) and deletes them;
+discarding an upload (the reaper) deletes every key under ``uploads/{id}/``.
+
+Appending needs mutual exclusion, and without a file to ``flock`` it is a
+lease on the upload kept in the ``upload_leases`` table (:func:`acquire_lock`):
+one holder at a time across processes, released on completion and expiring on
+its own if its holder dies.
+
+Uploads staged by an earlier release live in ``CONTENT_DIR/.uploads/{id}``;
+they are still found and are moved into the object store the first time the
+upload is appended to or finished, so an install needs no migration step.
 """
 
 from __future__ import annotations
 
-import fcntl
+import logging
 import os
 import re
 import secrets
-from datetime import datetime, timezone
+import time
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import BinaryIO, Optional
 
@@ -31,6 +61,7 @@ from sqlalchemy import (
     String,
     Text,
     case,
+    delete,
     func,
     insert,
     inspect,
@@ -40,33 +71,75 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app import db
 from app.db import Base
 from app.settings import settings
+from app.storage import (
+    ObjectNotFoundError,
+    ObjectStore,
+    ObjectStoreError,
+    StoredObject,
+    SupportsRead,
+    get_object_store,
+)
+from app.storage.base import RawStream
 
 from . import limits
+
+logger = logging.getLogger(__name__)
 
 #: An upload that has been created but has not yet received all its bytes.
 STATE_PENDING = "pending"
 #: Every declared byte has been received (set when the upload completes).
 STATE_COMPLETED = "completed"
 
-#: Subdirectory of ``CONTENT_DIR`` holding the bytes of uploads in flight.
-#: No CID starts with a dot, so it can never collide with a stored blob, and
-#: sharing the volume lets a finished upload move into the content store
-#: without crossing filesystems.
+#: The key prefix every part of every upload in flight lives under (see the
+#: module docstring); ``uploads/{id}/`` is one upload's.
+PARTS_PREFIX = "uploads/"
+
+#: Subdirectory of ``CONTENT_DIR`` in which earlier releases staged the bytes of
+#: uploads in flight, one file per upload. Nothing writes there any more; what
+#: is found there is adopted into the object store (:func:`verify_parts`) and
+#: swept by the reaper once abandoned.
 STAGING_DIRNAME = ".uploads"
 
 #: What :func:`_new_upload_id` produces (``secrets.token_urlsafe``).
 _UPLOAD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
+#: A part's file name: its start offset, zero-padded to the 19 digits of the
+#: largest offset the ``upload_offset`` column holds (a signed 64-bit integer).
+_PART_NAME = re.compile(r"[0-9]{19}")
+
+#: How long a lease holds an upload without being renewed. A holder that dies
+#: leaves the upload unwritable for at most this long.
+LOCK_LEASE = timedelta(seconds=60)
+
+#: A holder renews its lease when this many seconds have passed since it last did.
+_RENEW_AFTER = 15.0
+
 
 class UploadBusy(Exception):
     """Another request is appending to this upload right now."""
+
+
+class LockLost(UploadBusy):
+    """The lease on this upload lapsed and another request holds it now.
+
+    A request that was stalled for longer than :data:`LOCK_LEASE` finds this
+    out when it next renews; whatever it was about to write is left unwritten.
+    """
+
+
+class UploadBytesMissing(Exception):
+    """The object store no longer holds the bytes this upload acknowledged.
+
+    A part is gone, or the parts do not add up to the recorded offset. The
+    upload cannot be finished or continued; the client starts a new one.
+    """
 
 
 #: The two independent per-DID allowances a creation can exhaust.
@@ -133,6 +206,24 @@ class Upload(Base):
     #: here. NULL on rows written before this column existed and on uploads
     #: that never completed; readers fall back to ``created_at``.
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class UploadLease(Base):
+    """The lease that lets one request at a time append to (or finish, or reap) an upload.
+
+    A table of its own rather than columns of ``uploads``: it is created whole
+    by ``create_all`` wherever it is missing, so no existing database needs
+    altering. A row exists only while someone holds the upload, or for at most
+    :data:`LOCK_LEASE` after a holder died.
+    """
+
+    __tablename__ = "upload_leases"
+
+    upload_id = Column(String(64), primary_key=True)
+    #: Whoever holds the lease knows this; renewing and releasing need it.
+    token = Column(String(64), nullable=False)
+    #: Naive UTC, like every timestamp in this module.
+    expires_at = Column(DateTime(timezone=True), nullable=False)
 
 
 #: Columns added to ``uploads`` after it first shipped: ``name -> DDL type``.
@@ -461,60 +552,406 @@ def record_cid(session: Session, upload_id: str, cid: str) -> bool:
     return result.rowcount == 1
 
 
-def staging_dir() -> Path:
-    """Where in-flight upload bytes live, from ``settings.CONTENT_DIR`` (read on every call)."""
-    configured = settings.CONTENT_DIR
-    if not configured or not configured.strip():
-        # ``Path("")`` is the current directory: refuse rather than scatter
-        # bytes wherever the process happens to have been started.
-        raise RuntimeError("CONTENT_DIR is not configured")
-    return Path(configured) / STAGING_DIRNAME
+# --------------------------------------------------------------------------- #
+# The lease
+# --------------------------------------------------------------------------- #
 
 
-def staged_path(upload_id: str) -> Path:
-    """Where the bytes received so far for ``upload_id`` live (whether or not any have arrived).
+class UploadLock:
+    """A held lease on one upload (see :func:`acquire_lock`); also a context manager.
+
+    Blocking database I/O: call it from a worker thread.
+    """
+
+    def __init__(self, upload_id: str, token: str) -> None:
+        self.upload_id = upload_id
+        self._token = token
+        self._renewed_at = time.monotonic()
+
+    def due(self) -> bool:
+        """Whether enough time has passed since the last renewal that :meth:`touch` would renew."""
+        return time.monotonic() - self._renewed_at >= _RENEW_AFTER
+
+    def renew(self) -> None:
+        """Extend the lease by :data:`LOCK_LEASE`.
+
+        Raises:
+            LockLost: another request took the upload over after the lease lapsed.
+        """
+        with db.SessionLocal() as session:
+            renewed = session.execute(
+                update(UploadLease)
+                .where(UploadLease.upload_id == self.upload_id, UploadLease.token == self._token)
+                .values(expires_at=_utcnow() + LOCK_LEASE)
+            ).rowcount
+            session.commit()
+        if renewed != 1:
+            raise LockLost(self.upload_id)
+        self._renewed_at = time.monotonic()
+
+    def touch(self) -> None:
+        """Renew the lease if it has been a while: cheap enough to call on every chunk."""
+        if self.due():
+            self.renew()
+
+    def release(self) -> None:
+        """Give the upload up; a no-op when the lease was lost, and it never takes anyone else's."""
+        with db.SessionLocal() as session:
+            session.execute(
+                delete(UploadLease).where(UploadLease.upload_id == self.upload_id, UploadLease.token == self._token)
+            )
+            session.commit()
+
+    def __enter__(self) -> "UploadLock":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.release()
+
+
+def acquire_lock(upload_id: str) -> UploadLock:
+    """Take the exclusive lease on ``upload_id``: what a ``PATCH``, the reaper and finishing an upload hold.
+
+    The lease is one row in ``upload_leases``, inserted or taken over from an
+    expired holder in a single statement each, so of any number of concurrent
+    callers (in any number of processes) exactly one gets it. It is not waited
+    for: a stalled client must not pin a worker thread. Holders keep it with
+    :meth:`UploadLock.touch` while they work and :meth:`UploadLock.release` it
+    when done.
+
+    Raises:
+        UploadBusy: someone holds the upload.
+        ValueError: ``upload_id`` is not one of our ids.
+    """
+    _check_upload_id(upload_id)
+    token = secrets.token_urlsafe(18)
+    now = _utcnow()
+    expires_at = now + LOCK_LEASE
+    with db.SessionLocal() as session:
+        took_over = session.execute(
+            update(UploadLease)
+            .where(UploadLease.upload_id == upload_id, UploadLease.expires_at < now)
+            .values(token=token, expires_at=expires_at)
+        ).rowcount
+        if not took_over:
+            session.add(UploadLease(upload_id=upload_id, token=token, expires_at=expires_at))
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise UploadBusy(upload_id) from None
+    return UploadLock(upload_id, token)
+
+
+# --------------------------------------------------------------------------- #
+# The parts
+# --------------------------------------------------------------------------- #
+
+
+def _object_store() -> ObjectStore:
+    """The object store ``settings.STORAGE_BACKEND`` selects (read on every call)."""
+    return get_object_store()
+
+
+def _check_upload_id(upload_id: str) -> None:
+    if not isinstance(upload_id, str) or not _UPLOAD_ID.fullmatch(upload_id):
+        raise ValueError(f"not an upload id: {upload_id!r}")
+
+
+def parts_prefix(upload_id: str) -> str:
+    """The key prefix of every part of ``upload_id``: ``uploads/{id}/``.
 
     Raises:
         ValueError: if ``upload_id`` is not one of our ids, which is what keeps
-            a client-supplied id from naming a path outside the staging directory.
+            a client-supplied id from naming a key outside the uploads' own.
     """
-    if not _UPLOAD_ID.fullmatch(upload_id):
-        raise ValueError(f"not an upload id: {upload_id!r}")
-    return staging_dir() / upload_id
+    _check_upload_id(upload_id)
+    return f"{PARTS_PREFIX}{upload_id}/"
 
 
-def open_staged(upload_id: str) -> BinaryIO:
-    """Open the staged bytes of ``upload_id`` for reading and writing, exclusively.
-
-    The file is created empty if no bytes have arrived yet. The caller holds an
-    exclusive lock on it until it closes the returned file, so two requests can
-    never interleave their writes into one upload.
+def part_key(upload_id: str, start: int) -> str:
+    """The key of the part of ``upload_id`` that starts at byte ``start``.
 
     Raises:
-        UploadBusy: if another request holds the upload (it is not waited for:
-            a stalled client must not pin a worker thread).
+        ValueError: if ``upload_id`` is not one of our ids or ``start`` is not a valid offset.
     """
-    path = staged_path(upload_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    if isinstance(start, bool) or not isinstance(start, int) or not 0 <= start < 10**19:
+        raise ValueError(f"not a byte offset: {start!r}")
+    return f"{parts_prefix(upload_id)}{start:019d}"
+
+
+def part_starts(upload_id: str) -> list[int]:
+    """The start offsets of the parts the object store holds for ``upload_id``, ascending.
+
+    Whether they were acknowledged is the database's to say (see :func:`verify_parts`).
+    """
+    prefix = parts_prefix(upload_id)
+    starts = []
+    for key in _object_store().list(prefix):
+        name = key[len(prefix):]
+        if _PART_NAME.fullmatch(name):
+            starts.append(int(name))
+    return sorted(starts)
+
+
+class _Keepalive:
+    """A reader that ticks ``tick`` before every read: how a long write keeps the lease alive."""
+
+    def __init__(self, source: SupportsRead, tick: Callable[[], None]) -> None:
+        self._source = source
+        self._tick = tick
+
+    def read(self, size: int = -1, /) -> bytes:
+        self._tick()
+        return self._source.read(size)
+
+
+def write_part(
+    upload_id: str,
+    start: int,
+    stream: SupportsRead,
+    *,
+    keepalive: Optional[Callable[[], None]] = None,
+) -> StoredObject:
+    """Persist everything ``stream`` yields as the part of ``upload_id`` starting at byte ``start``.
+
+    The part is stored whole or not at all, and replaces whatever part (an
+    unacknowledged one a dead request left) already starts there. Call it
+    *before* :func:`advance_offset`, never after, so the recorded offset never
+    runs ahead of the bytes. ``keepalive`` is called before each read of
+    ``stream``, so a slow store cannot let the caller's lease lapse.
+
+    Raises:
+        ObjectStoreError, OSError: the store could not take the bytes; nothing was stored.
+    """
+    source: SupportsRead = _Keepalive(stream, keepalive) if keepalive is not None else stream
+    return _object_store().put_stream(part_key(upload_id, start), source)
+
+
+def verify_parts(upload_id: str, offset: int) -> None:
+    """Make the parts in the object store agree with the recorded ``offset``, before appending at it.
+
+    Parts that start at or beyond ``offset`` hold bytes nobody acknowledged (the
+    request that wrote them died before recording them) and are deleted. What is
+    left must account for exactly ``offset`` bytes: it starts at byte 0 and the
+    last part ends at ``offset``. The caller holds the upload's lease.
+
+    An upload staged by an earlier release has no parts, only a file in
+    ``CONTENT_DIR/.uploads``; its first ``offset`` bytes are moved into the
+    object store as the first part here.
+
+    Raises:
+        UploadBytesMissing: acknowledged bytes are gone from the store.
+    """
+    objects = _object_store()
+    starts = part_starts(upload_id)
+    for start in starts:
+        if start >= offset:
+            objects.delete(part_key(upload_id, start))
+    kept = [start for start in starts if start < offset]
+    if offset == 0:
+        return
+    if not kept:
+        if _adopt_legacy_staged(upload_id, offset):
+            return
+        raise UploadBytesMissing(f"upload {upload_id} has no stored bytes but acknowledged {offset}")
+    last = kept[-1]
     try:
+        end = last + objects.size(part_key(upload_id, last))
+    except ObjectNotFoundError:
+        raise UploadBytesMissing(f"upload {upload_id} lost its part at {last}") from None
+    if kept[0] != 0 or end != offset:
+        raise UploadBytesMissing(
+            f"upload {upload_id} holds bytes {kept[0]}..{end} but acknowledged {offset}"
+        )
+
+
+class PartsReader:
+    """The parts of an upload, in order, as one binary stream of exactly ``size`` bytes.
+
+    What :mod:`.finalize` hands the content store, which hashes the bytes as it
+    stores them, so a file of any size passes through in constant memory. Each
+    part is opened as it is reached and closed once read. Parts that start at
+    or beyond ``size`` were never acknowledged and are skipped.
+
+    Reading raises :class:`UploadBytesMissing` the moment the parts stop adding
+    up -- a part missing, a gap or an overlap between parts, or fewer or more
+    than ``size`` bytes in all -- so a damaged upload is never stored under the
+    hash of what happened to be left. ``keepalive`` is called before each read.
+    Blocking I/O: call it from a worker thread.
+    """
+
+    def __init__(
+        self, upload_id: str, size: int, *, keepalive: Optional[Callable[[], None]] = None
+    ) -> None:
+        self._upload_id = upload_id
+        self._size = size
+        self._keepalive = keepalive
+        self._objects = _object_store()
+        self._starts = [start for start in part_starts(upload_id) if start < size]
+        self._next = 0
+        self._position = 0
+        self._current: Optional[BinaryIO] = None
+        self._complete = False
+
+    def read(self, size: int = -1, /) -> bytes:
+        """Up to ``size`` bytes (``b""`` only at the end); all that is left when ``size`` is negative."""
+        if size is None or size < 0:
+            chunks = []
+            while chunk := self.read(1024 * 1024):
+                chunks.append(chunk)
+            return b"".join(chunks)
+        while not self._complete:
+            if self._keepalive is not None:
+                self._keepalive()
+            if self._current is None and not self._open_next():
+                self._finish()
+                break
+            assert self._current is not None
+            data = self._current.read(size)
+            if data:
+                self._position += len(data)
+                return data
+            self._close_current()
+        return b""
+
+    def _open_next(self) -> bool:
+        if self._next >= len(self._starts):
+            return False
+        start = self._starts[self._next]
+        if start != self._position:
+            raise UploadBytesMissing(
+                f"upload {self._upload_id} has bytes up to {self._position} but its next part starts at {start}"
+            )
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise UploadBusy(upload_id) from None
-        return os.fdopen(fd, "r+b")
-    except BaseException:
-        os.close(fd)
-        raise
+            self._current = self._objects.open(part_key(self._upload_id, start))
+        except ObjectNotFoundError:
+            raise UploadBytesMissing(f"upload {self._upload_id} lost its part at {start}") from None
+        self._next += 1
+        return True
+
+    def _finish(self) -> None:
+        if self._position != self._size:
+            raise UploadBytesMissing(
+                f"upload {self._upload_id} holds {self._position} bytes but acknowledged {self._size}"
+            )
+        self._complete = True
+
+    def _close_current(self) -> None:
+        if self._current is not None:
+            self._current.close()
+            self._current = None
+
+    def close(self) -> None:
+        self._close_current()
+
+    def __enter__(self) -> "PartsReader":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
+def discard_parts(upload_id: str, *, best_effort: bool = True) -> int:
+    """Delete every part of ``upload_id`` (and any file an earlier release staged for it); how many went.
+
+    Every key under ``uploads/{id}/`` goes, whatever its name. Nothing there is
+    wanted once the bytes are safe in the content store or the upload is
+    abandoned, so by default a store that cannot delete them is logged, not
+    raised: failing to free the space must not fail the request. The reaper
+    asks for ``best_effort=False`` so it keeps the upload's row, and tries
+    again on its next pass, rather than lose track of bytes it did not delete.
+
+    Raises:
+        ObjectStoreError, OSError: the store could not delete them (only when not ``best_effort``).
+    """
+    removed = 0
+    try:
+        objects = _object_store()
+        for key in list(objects.list(parts_prefix(upload_id))):
+            objects.delete(key)
+            removed += 1
+        removed += _discard_legacy_staged(upload_id)
+    except (ObjectStoreError, OSError):
+        if not best_effort:
+            raise
+        logger.warning("could not delete the staged parts of upload %s", upload_id, exc_info=True)
+    return removed
 
 
 def discard_staged(upload_id: str) -> None:
-    """Delete the staged bytes of ``upload_id``; a no-op when there are none.
+    """Delete every staged part of ``upload_id``, best effort: the name earlier releases gave :func:`discard_parts`."""
+    discard_parts(upload_id)
 
-    Best effort: the bytes are either already safe in the content store or not
-    wanted, so failing to free the space must not fail the request.
+
+def staged_upload_ids() -> list[str]:
+    """The ids of every upload that has at least one part in the object store, in key order."""
+    seen: dict[str, None] = {}
+    for key in _object_store().list(PARTS_PREFIX):
+        _, _, rest = key.partition("/")
+        upload_id, slash, name = rest.partition("/")
+        if slash and name and _UPLOAD_ID.fullmatch(upload_id):
+            seen[upload_id] = None
+    return list(seen)
+
+
+# --------------------------------------------------------------------------- #
+# Uploads staged by an earlier release
+# --------------------------------------------------------------------------- #
+
+
+def legacy_staging_dir() -> Optional[Path]:
+    """``CONTENT_DIR/.uploads``, where earlier releases staged uploads in flight; ``None`` without a ``CONTENT_DIR``.
+
+    Read on every call. Nothing creates it any more.
     """
+    configured = settings.CONTENT_DIR
+    if not configured or not configured.strip():
+        return None
+    return Path(configured) / STAGING_DIRNAME
+
+
+def legacy_staged_path(upload_id: str) -> Optional[Path]:
+    """Where an earlier release staged ``upload_id``'s bytes, if it was staged under that release.
+
+    Raises:
+        ValueError: if ``upload_id`` is not one of our ids.
+    """
+    _check_upload_id(upload_id)
+    directory = legacy_staging_dir()
+    return directory / upload_id if directory is not None else None
+
+
+def _adopt_legacy_staged(upload_id: str, offset: int) -> bool:
+    """Move the first ``offset`` bytes of an earlier release's staged file into the object store as part 0.
+
+    Returns ``False`` when there is no such file or it holds fewer than
+    ``offset`` bytes (acknowledged bytes are gone). Bytes the file holds past
+    ``offset`` were never acknowledged and are dropped with it. The file goes
+    only once the part is stored, so a crash in between repeats the move.
+    """
+    path = legacy_staged_path(upload_id)
+    if path is None:
+        return False
     try:
-        staged_path(upload_id).unlink()
+        handle = open(path, "rb")
     except OSError:
-        pass
+        return False
+    with handle:
+        if os.fstat(handle.fileno()).st_size < offset:
+            return False
+        _object_store().put_stream(part_key(upload_id, 0), RawStream(handle, limit=offset))  # type: ignore[arg-type]
+    _discard_legacy_staged(upload_id)
+    return True
+
+
+def _discard_legacy_staged(upload_id: str) -> int:
+    """Delete the file an earlier release staged for ``upload_id``, if any; ``1`` if it went."""
+    path = legacy_staged_path(upload_id)
+    if path is None:
+        return 0
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return 0
+    return 1

@@ -1,26 +1,29 @@
 """Moving a completed upload into the content store (plugin: uploads).
 
-Once the last byte of an upload has arrived, its staged file is handed to the
-content plugin, which hashes it, files it under its raw-codec CIDv1 and records
-it in ``blobs`` (``scan_status`` ``scanning`` — the sanitizer decides later
-whether it may be served). The upload row then remembers the CID and the staged
-copy is deleted, so the bytes exist once, under their content address.
+Once the last byte of an upload has arrived, its staged parts (one object per
+``PATCH`` under ``uploads/{id}/``, see :mod:`.store`) are streamed, in order, into
+the content plugin, which hashes them as they pass, files the bytes under their
+raw-codec CIDv1 and records them in ``blobs`` (``scan_status`` ``scanning`` — the
+sanitizer decides later whether it may be served). The upload row then remembers
+the CID and every part is deleted, so the bytes exist once, under their content
+address.
 
 The steps are ordered so that a crash at any point can be repaired by running
 the move again, which is what a client does when it retries its final ``PATCH``:
 
 1. store the bytes (idempotent: the same bytes always give the same CID);
 2. record the CID on the upload (idempotent for the same CID);
-3. delete the staged file (best effort).
+3. delete the parts (best effort).
 
-Before step 2 the upload is complete but unfinished and still has its staged
-file; after it, the upload answers every ``PATCH`` with its CID and nothing
-else. This is blocking file and database I/O: call it from a worker thread.
+Before step 2 the upload is complete but unfinished and still has its parts;
+after it, the upload answers every ``PATCH`` with its CID and nothing else.
+This is blocking object-store and database I/O: call it from a worker thread.
 """
 
 from __future__ import annotations
 
-from typing import BinaryIO, Optional
+from collections.abc import Callable
+from typing import Optional
 
 from app.db import SessionLocal
 from app.modules import content
@@ -71,22 +74,36 @@ def declared_media_type(upload_metadata: str) -> Optional[str]:
     return None
 
 
-def move_into_content_store(upload_id: str, upload_metadata: str, staged: BinaryIO) -> str:
-    """Store the whole of ``staged`` in the content store and return its raw CID.
+def move_into_content_store(
+    upload_id: str,
+    upload_metadata: str,
+    size: int,
+    *,
+    keepalive: Optional[Callable[[], None]] = None,
+) -> str:
+    """Store the ``size`` bytes of the upload's parts in the content store and return their raw CID.
 
-    ``staged`` is the upload's staged file, positioned anywhere, holding exactly
-    the bytes the upload declared; the caller holds its lock. On return the CID
-    is recorded on the upload row and the staged file is gone.
+    The parts are read in order as one stream (:class:`.store.PartsReader`) and
+    the content store computes the CID from what passes; ``size`` is the number
+    of bytes the upload acknowledged, which the parts must add up to exactly.
+    The caller holds the upload's lease, and ``keepalive`` (called as the parts
+    are read) is how a long move keeps it. On return the CID is recorded on the
+    upload row and the parts are gone.
 
     Raises:
-        OSError: the content store (or the staged file) could not be read or
-            written; nothing was recorded and the upload can be finished again.
+        store.UploadBytesMissing: acknowledged bytes are gone from the object
+            store; nothing was stored and the upload can never be finished.
+        store.LockLost: the lease lapsed while the bytes were being read.
+        OSError, app.storage.ObjectStoreError: the object store (or the content
+            store) could not be read or written; nothing was recorded and the
+            upload can be finished again.
         sqlalchemy.exc.SQLAlchemyError: the database could not be updated; the
             bytes are stored but the upload does not know it yet.
         content.ContentError: the content store refused the bytes.
     """
-    staged.seek(0)
-    blob = content.store_stream(staged, media_type=declared_media_type(upload_metadata))
+    media_type = declared_media_type(upload_metadata)
+    with store.PartsReader(upload_id, size, keepalive=keepalive) as parts:
+        blob = content.store_stream(parts, media_type=media_type)
 
     session = SessionLocal()
     try:
@@ -96,5 +113,5 @@ def move_into_content_store(upload_id: str, upload_metadata: str, staged: Binary
     if not recorded:
         raise CidNotRecorded(f"upload {upload_id} could not be recorded as stored under {blob.cid}")
 
-    store.discard_staged(upload_id)
+    store.discard_parts(upload_id)
     return blob.cid

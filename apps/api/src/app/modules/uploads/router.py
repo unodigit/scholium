@@ -33,9 +33,17 @@ creation specs (https://tus.io/protocols/resumable-upload.html):
 * a ``PATCH`` that would take the upload past its length is a ``413``
   and changes nothing.
 
+Until then the bytes of an upload wait in the app-wide object store, not on this
+process's disk: every ``PATCH`` that delivers bytes persists them as one part object
+under ``uploads/{id}/`` (see :mod:`.store`) *before* ``Upload-Offset`` advances, so
+the offset a client is told is always one the store can back, on whichever
+``STORAGE_BACKEND`` is in use and from whichever API replica answers next.
+
 The ``PATCH`` that delivers the last byte also moves the upload into the content
-store (see :mod:`.finalize`) and answers ``204`` with ``Upload-Cid``: the raw-codec
-CIDv1 of the whole file, under which it is now stored and recorded in ``blobs``.
+store (see :mod:`.finalize`), which reads the parts in order and computes the CID as
+they pass, and answers ``204`` with ``Upload-Cid``: the raw-codec CIDv1 of the whole
+file, under which it is now stored and recorded in ``blobs``; the parts are then
+deleted.
 Earlier ``PATCH`` responses carry no ``Upload-Cid``. If that response is lost, or
 the move fails (``503``), the client repeats the ``PATCH`` with the same
 ``Upload-Offset`` and an empty body: a stored upload answers ``204`` with the same
@@ -44,8 +52,10 @@ the move fails (``503``), the client repeats the ``PATCH`` with the same
 Beyond the protocol: bytes that arrive before a connection drops are kept
 and counted, so the client resumes from where the server really is; two
 requests appending to one upload at once cannot both write (the second is
-answered ``423 Locked`` and should retry); and a failed ``PATCH`` never
-leaves an offset the file does not back.
+answered ``423 Locked`` and should retry: the upload is held by a lease in the
+database, so this holds across processes, and a holder that dies lets go on its
+own after a minute); and a failed ``PATCH`` never leaves an offset the store does
+not back. An object store that cannot be reached is a ``503``.
 
 Who may do what: creating, inspecting (``HEAD``) and appending to or completing
 (``PATCH``) an upload all need an access token of trust tier 1 (Member) or above
@@ -59,7 +69,7 @@ also has a daily allowance covering every byte it has in flight or completed in
 the last day, whether or not any record names them (2 GiB for accounts under
 90 days, 20 GiB otherwise), so a brand-new account cannot declare a 5 GiB
 upload; the 5 GiB bundle cap remains for accounts old enough to be allowed it.
-Uploads nobody finishes are deleted after a TTL by :mod:`.reaper`, as are
+Uploads nobody finishes are deleted, parts and all, after a TTL by :mod:`.reaper`, as are
 completed uploads their owner's records do not name after the longer orphan TTL.
 
 Every error leaves this module as an ``HTTPException``, which the
@@ -68,7 +78,8 @@ app-wide RFC 9457 handlers render as ``application/problem+json``.
 
 from __future__ import annotations
 
-import os
+import logging
+import tempfile
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -81,8 +92,11 @@ from starlette.requests import ClientDisconnect
 
 from app.db import SessionLocal
 from app.security import Principal, Tier, require_tier
+from app.storage import ObjectStoreError
 
 from . import config, finalize, limits, store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["uploads"])
 
@@ -100,6 +114,11 @@ OFFSET_CONTENT_TYPE = "application/offset+octet-stream"
 #: ``Upload-Offset``/``Upload-Length`` values longer than this are not sizes
 #: any upload can have (the column is a signed 64-bit integer).
 _MAX_INT_DIGITS = 19
+
+#: A ``PATCH`` body is held in memory while it arrives up to this many bytes and
+#: spills to a temporary file beyond that, so a body of any size is received in
+#: constant memory and is only stored as a part once it has arrived whole.
+_SPOOL_MAX_BYTES = 8 * 1024 * 1024
 
 
 def _tus_headers(extra: Optional[dict[str, str]] = None) -> dict[str, str]:
@@ -217,6 +236,26 @@ def _not_found() -> HTTPException:
     return _reject(404, "No such upload.", headers=_tus_headers())
 
 
+def _locked() -> HTTPException:
+    return _problem(
+        423,
+        "Another request is appending to this upload right now; retry shortly.",
+        type=UPLOAD_LOCKED_TYPE,
+    )
+
+
+def _bytes_missing() -> HTTPException:
+    return _reject(
+        410,
+        "The bytes received for this upload are missing from the server; start a new upload.",
+        headers=_tus_headers(),
+    )
+
+
+def _storage_unavailable() -> HTTPException:
+    return _reject(503, "Upload storage is unavailable; retry shortly.")
+
+
 def _header_int(request: Request, name: str, *, required: bool = False) -> Optional[int]:
     """A non-negative integer request header, ``None`` when absent and not ``required``."""
     raw = request.headers.get(name)
@@ -287,7 +326,8 @@ def _load_owned_upload(upload_id: str, principal: Principal) -> Optional[store.U
 
 
 def _commit_append(
-    staged: Any,
+    lock: store.UploadLock,
+    spool: Any,
     upload_id: str,
     *,
     start: int,
@@ -295,22 +335,26 @@ def _commit_append(
     upload_length: Optional[int],
     keep: bool,
 ) -> bool:
-    """Make the ``written`` bytes after ``start`` count, or roll them back.
+    """Make the ``written`` bytes in ``spool`` after ``start`` count, or drop them.
 
-    The bytes are flushed to disk *before* the database learns of them, so the
-    recorded offset never runs ahead of what the file holds. With ``keep``
-    false the file is cut back to ``start`` and nothing is recorded. Returns
-    ``False`` when the offset moved under us (which the file lock rules out,
-    so it means someone bypassed it): the file is then cut back too.
+    The bytes are persisted as a part object in the object store *before* the
+    database learns of them, so the recorded offset never runs ahead of what the
+    store holds. With ``keep`` false nothing is stored or recorded (the spool is
+    simply discarded). Returns ``False`` when the offset moved under us, which
+    the lease rules out, so it means the upload was deleted from under the
+    request or someone bypassed the lease; the part is then removed with the
+    rest of a deleted upload's.
+
+    Raises:
+        store.LockLost: the lease lapsed and the upload is someone else's now;
+            nothing was stored.
     """
-    if not keep:
-        staged.truncate(start)
-        staged.flush()
+    if not keep or (written == 0 and upload_length is None):
         return True
-    if written == 0 and upload_length is None:
-        return True
-    staged.flush()
-    os.fsync(staged.fileno())
+    if written:
+        lock.renew()  # still ours? Only the holder of the lease may write a part
+        spool.seek(0)
+        store.write_part(upload_id, start, spool, keepalive=lock.touch)
     session = SessionLocal()
     try:
         advanced = store.advance_offset(
@@ -320,34 +364,47 @@ def _commit_append(
             new_offset=start + written,
             upload_length=upload_length,
         )
+        if not advanced and store.get_upload(session, upload_id) is None:
+            store.discard_parts(upload_id)
     finally:
         session.close()
-    if not advanced:
-        staged.truncate(start)
-        staged.flush()
     return advanced
 
 
-async def _move_into_content_store(upload_id: str, upload: store.Upload, staged: Any) -> str:
-    """Move the completed upload's staged bytes into the content store; return the raw CID.
+async def _move_into_content_store(upload_id: str, upload: store.Upload, size: int, lock: store.UploadLock) -> str:
+    """Move the completed upload's parts into the content store; return the raw CID.
 
     Once started it runs to the end even if the request is cancelled, so the CID
-    is never left unrecorded with the staged file already deleted.
+    is never left unrecorded with the parts already deleted.
     """
     try:
         with anyio.CancelScope(shield=True):
             return await run_in_threadpool(
-                finalize.move_into_content_store, upload_id, upload.upload_metadata, staged
+                finalize.move_into_content_store,
+                upload_id,
+                upload.upload_metadata,
+                size,
+                keepalive=lock.touch,
             )
-    except OSError as exc:
-        # The upload is complete and its staged bytes are untouched: repeating
-        # the final PATCH redoes the move.
+    except store.UploadBytesMissing:
+        raise _bytes_missing() from None
+    except (OSError, ObjectStoreError) as exc:
+        # The upload is complete and its parts are untouched: repeating the
+        # final PATCH redoes the move.
         raise _reject(
             503,
             "The upload is complete but could not be moved into the content store; "
             "repeat the PATCH with the same Upload-Offset and an empty body.",
             headers=_tus_headers({"Retry-After": "1"}),
         ) from exc
+
+
+def _release(lock: store.UploadLock) -> None:
+    """Let go of the upload; a lease that cannot be released simply expires."""
+    try:
+        lock.release()
+    except SQLAlchemyError:  # pragma: no cover - defensive: the database is down
+        logger.warning("could not release the lease on upload %s", lock.upload_id, exc_info=True)
 
 
 async def _answer_stored_upload(request: Request, upload: store.Upload, too_large: HTTPException) -> Response:
@@ -467,53 +524,52 @@ async def patch_upload(
     assert offset is not None  # required=True
 
     try:
-        # Answer 404 before touching the filesystem: an unknown id, or one that is
-        # someone else's, gets no staged file and never takes the upload's lock.
+        # Answer 404 before touching the object store: an unknown id, or one that is
+        # someone else's, gets no parts and never takes the upload's lease.
         if await run_in_threadpool(_load_owned_upload, upload_id, principal) is None:
             raise _not_found()
         try:
-            staged = await run_in_threadpool(store.open_staged, upload_id)
+            lock = await run_in_threadpool(store.acquire_lock, upload_id)
         except store.UploadBusy:
-            raise _problem(
-                423,
-                "Another request is appending to this upload right now; retry shortly.",
-                type=UPLOAD_LOCKED_TYPE,
-            ) from None
+            raise _locked() from None
         try:
             return await _append_body(
                 request,
                 upload_id,
-                staged,
+                lock,
                 offset=offset,
                 declared_length=declared_length,
                 body_length=body_length,
             )
+        except store.UploadBusy:  # LockLost: the lease lapsed and the upload is someone else's now
+            raise _locked() from None
         finally:
-            staged.close()  # releases the lock
-    except SQLAlchemyError as exc:  # pragma: no cover - defensive: storage is down
-        raise _reject(503, "Upload storage is unavailable; retry shortly.") from exc
+            with anyio.CancelScope(shield=True):
+                await run_in_threadpool(_release, lock)
+    except (SQLAlchemyError, ObjectStoreError, OSError) as exc:  # pragma: no cover - defensive: storage is down
+        raise _storage_unavailable() from exc
 
 
 async def _append_body(
     request: Request,
     upload_id: str,
-    staged: Any,
+    lock: store.UploadLock,
     *,
     offset: int,
     declared_length: Optional[int],
     body_length: Optional[int],
 ) -> Response:
-    """Stream the body into ``staged`` after ``offset``; the caller holds the upload's lock."""
+    """Receive the body and persist it as the part after ``offset``; the caller holds the upload's lease."""
     # Read the offset only now that no one else can move it: a request that
-    # waited on the lock must be judged against what the winner left behind.
+    # arrived while another held the lease must be judged against what that one left behind.
     upload = await run_in_threadpool(_load_upload, upload_id)
     if upload is None:
         raise _not_found()
     if upload.cid is not None:
-        # Its bytes are in the content store and nothing is staged. Taking the
-        # lock just created an empty staging file, which must not outlive this
-        # request whatever the answer to it turns out to be.
-        await run_in_threadpool(store.discard_staged, upload_id)
+        # Its bytes are in the content store and no part is wanted. A move that
+        # died before deleting them leaves some behind, which must not outlive
+        # this request whatever the answer to it turns out to be.
+        await run_in_threadpool(store.discard_parts, upload_id)
     current = upload.upload_offset
     if offset != current:
         raise _problem(
@@ -588,51 +644,57 @@ async def _append_body(
     if body_length is not None and body_length > room:
         raise too_large
 
-    # Its bytes already moved into the content store, so there is no staged file
-    # to append to (or to find missing): all that is left is to say where they are.
+    # Its bytes already moved into the content store, so there are no parts to
+    # append to (or to find missing): all that is left is to say where they are.
     if upload.cid is not None:
         return await _answer_stored_upload(request, upload, too_large)
 
-    # The file may hold bytes past the offset the database recorded: an
-    # earlier request wrote them and then died before recording them. They
-    # were never acknowledged, so they are discarded. Fewer bytes than
-    # recorded means acknowledged bytes are gone and the upload can't resume.
-    if os.fstat(staged.fileno()).st_size < current:
-        raise _reject(
-            410,
-            "The bytes received for this upload are missing from the server; start a new upload.",
-            headers=_tus_headers(),
-        )
-    staged.seek(current)
-    staged.truncate(current)
+    # The store may hold parts past the offset the database recorded: an earlier
+    # request wrote them and then died before recording them. They were never
+    # acknowledged, so they are deleted. Parts that do not add up to the offset
+    # recorded mean acknowledged bytes are gone and the upload can't resume.
+    try:
+        await run_in_threadpool(store.verify_parts, upload_id, current)
+    except store.UploadBytesMissing:
+        raise _bytes_missing() from None
 
+    # The body is received into a scratch spool and stored as one part only once
+    # it has arrived (or the connection dropped), so a body that turns out too
+    # large never reaches the store and there is nothing to take back.
     written = 0
     overflow = interrupted = False
+    spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_MAX_BYTES)
     try:
         try:
-            async for chunk in request.stream():
-                if written + len(chunk) > room:
-                    overflow = True
-                    break
-                if chunk:
-                    await run_in_threadpool(staged.write, chunk)
-                    written += len(chunk)
-        except ClientDisconnect:
-            interrupted = True
+            try:
+                async for chunk in request.stream():
+                    if written + len(chunk) > room:
+                        overflow = True
+                        break
+                    if chunk:
+                        await run_in_threadpool(spool.write, chunk)
+                        written += len(chunk)
+                        if lock.due():
+                            await run_in_threadpool(lock.renew)
+            except ClientDisconnect:
+                interrupted = True
+        finally:
+            # Whatever ended the body (completion, a dropped connection, the
+            # request being cancelled) the bytes that did arrive must be stored
+            # and counted or dropped, so this runs shielded from cancellation.
+            with anyio.CancelScope(shield=True):
+                recorded = await run_in_threadpool(
+                    _commit_append,
+                    lock,
+                    spool,
+                    upload_id,
+                    start=current,
+                    written=written,
+                    upload_length=new_length,
+                    keep=not overflow,
+                )
     finally:
-        # Whatever ended the body (completion, a dropped connection, the
-        # request being cancelled) the bytes that did arrive must be counted
-        # or rolled back, so this runs shielded from cancellation.
-        with anyio.CancelScope(shield=True):
-            recorded = await run_in_threadpool(
-                _commit_append,
-                staged,
-                upload_id,
-                start=current,
-                written=written,
-                upload_length=new_length,
-                keep=not overflow,
-            )
+        spool.close()
 
     if overflow:
         raise too_large
@@ -648,7 +710,7 @@ async def _append_body(
     # client that never retries still leaves a stored upload, not a stranded one.
     cid: Optional[str] = None
     if length is not None and current + written == length:
-        cid = await _move_into_content_store(upload_id, upload, staged)
+        cid = await _move_into_content_store(upload_id, upload, length, lock)
 
     if interrupted:
         raise _reject(

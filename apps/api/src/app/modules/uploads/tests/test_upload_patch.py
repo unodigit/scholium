@@ -11,11 +11,13 @@ discarded, and two writers cannot interleave.
 
 import asyncio
 import hashlib
+import io
 
 import pytest
 
 from app.modules import content
 from app.modules.uploads import limits, store
+from app.storage import get_object_store
 
 from .conftest import bearer
 
@@ -53,8 +55,19 @@ def offset_of(response) -> int:
     return int(response.headers["upload-offset"])
 
 
+def part_keys(upload_id) -> list[str]:
+    """The keys of the parts staged for ``upload_id`` in the object store, in order."""
+    return list(get_object_store().list(store.parts_prefix(upload_id)))
+
+
 def staged_bytes(upload_id) -> bytes:
-    return store.staged_path(upload_id).read_bytes()
+    """The bytes staged so far: every part of the upload, in key order (nothing once it is finished)."""
+    objects = get_object_store()
+    staged = b""
+    for key in part_keys(upload_id):
+        with objects.open(key) as part:
+            staged += part.read()
+    return staged
 
 
 def stored_bytes(response) -> bytes:
@@ -220,7 +233,7 @@ def test_patch_to_an_unknown_upload_is_404_and_stages_nothing(client):
     response = patch(client, "no-such-upload", 0, b"abc")
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/problem+json")
-    assert not store.staged_path("no-such-upload").exists()
+    assert part_keys("no-such-upload") == []
 
 
 @pytest.mark.parametrize("version", [None, "0.2.2"])
@@ -229,7 +242,7 @@ def test_patch_without_tus_1_0_0_is_412(client, version):
     response = patch(client, upload_id, 0, b"abc", **{"Tus-Resumable": version})
     assert response.status_code == 412
     assert response.headers["tus-version"] == "1.0.0"
-    assert staged_bytes_or_empty(upload_id) == b""
+    assert staged_bytes(upload_id) == b""
 
 
 @pytest.mark.parametrize("content_type", [None, "application/octet-stream", "application/json", "text/plain"])
@@ -254,11 +267,6 @@ def test_patch_with_a_malformed_offset_is_400(client, offset):
     response = patch(client, upload_id, 0, b"abc", **{"Upload-Offset": offset})
     assert response.status_code == 400
     assert offset_of(head(client, upload_id)) == 0
-
-
-def staged_bytes_or_empty(upload_id) -> bytes:
-    path = store.staged_path(upload_id)
-    return path.read_bytes() if path.exists() else b""
 
 
 # --- declared length ----------------------------------------------------------
@@ -444,22 +452,42 @@ def test_a_unicode_digit_offset_is_400_not_a_crash(client):
     assert offset_of(head(client, upload_id)) == 0
 
 
+def leave_part(upload_id, start, data):
+    """Store a part the way a request that died before recording it would have left it."""
+    get_object_store().put_stream(store.part_key(upload_id, start), io.BytesIO(data))
+
+
 def test_bytes_a_crashed_request_left_past_the_offset_are_discarded(client):
-    """The file got bytes but the database never heard of them: they were never acknowledged."""
+    """The part was stored but the database never heard of it: it was never acknowledged."""
     upload_id = create(client)
     patch(client, upload_id, 0, b"abcdef")
-    with open(store.staged_path(upload_id), "ab") as leftover:
-        leftover.write(b"JUNK")
+    leave_part(upload_id, 6, b"JUNK")
 
     assert offset_of(head(client, upload_id)) == 6
     assert patch(client, upload_id, 6, b"ghi").status_code == 204
     assert staged_bytes(upload_id) == b"abcdefghi"
 
 
-def test_an_upload_whose_acknowledged_bytes_are_gone_is_410(client):
+def test_unacknowledged_parts_are_deleted_even_when_the_next_patch_brings_no_bytes(client):
     upload_id = create(client)
     patch(client, upload_id, 0, b"abcdef")
-    store.staged_path(upload_id).write_bytes(b"ab")
+    leave_part(upload_id, 6, b"JUNK")
+    leave_part(upload_id, 40, b"MORE JUNK")
+
+    assert patch(client, upload_id, 6, b"").status_code == 204
+
+    assert part_keys(upload_id) == [store.part_key(upload_id, 0)]
+    assert staged_bytes(upload_id) == b"abcdef"
+
+
+@pytest.mark.parametrize("damage", ["part deleted", "part truncated"])
+def test_an_upload_whose_acknowledged_bytes_are_gone_is_410(client, damage):
+    upload_id = create(client)
+    patch(client, upload_id, 0, b"abcdef")
+    if damage == "part deleted":
+        get_object_store().delete(store.part_key(upload_id, 0))
+    else:
+        leave_part(upload_id, 0, b"ab")
 
     response = patch(client, upload_id, 6, b"ghi")
 
@@ -469,13 +497,14 @@ def test_an_upload_whose_acknowledged_bytes_are_gone_is_410(client):
 
 def test_a_second_writer_is_told_to_retry_while_one_holds_the_upload(client):
     upload_id = create(client)
-    held = store.open_staged(upload_id)
+    held = store.acquire_lock(upload_id)
     try:
         response = patch(client, upload_id, 0, b"abc")
         assert response.status_code == 423
         assert response.json()["type"] == "urn:scholium:problem:upload-locked"
+        assert part_keys(upload_id) == []
     finally:
-        held.close()
+        held.release()
 
     assert patch(client, upload_id, 0, b"abc").status_code == 204
     assert staged_bytes(upload_id) == b"abc"
@@ -509,12 +538,30 @@ def test_advance_offset_ignores_an_unknown_upload(client):
 
 
 @pytest.mark.parametrize("upload_id", ["../escape", "a/b", "", "a" * 65, "x y", "..", "dot.ted"])
-def test_staged_path_refuses_ids_that_could_leave_the_staging_directory(upload_id):
+def test_part_keys_refuse_ids_that_could_name_another_uploads_parts(upload_id):
     with pytest.raises(ValueError):
-        store.staged_path(upload_id)
+        store.parts_prefix(upload_id)
+    with pytest.raises(ValueError):
+        store.part_key(upload_id, 0)
 
 
-def test_staged_bytes_live_under_the_content_dir(client, content_root):
+@pytest.mark.parametrize("start", [-1, 10**19, 1.5, "0", True])
+def test_part_keys_refuse_what_is_not_an_offset(start):
+    with pytest.raises(ValueError):
+        store.part_key("abc", start)
+
+
+def test_part_keys_sort_in_byte_order():
+    starts = [0, 9, 10, 99, 100, 5_368_709_120, 2**62]
+    keys = [store.part_key("abc", start) for start in starts]
+    assert keys == sorted(keys)
+    assert keys[0] == f"uploads/abc/{0:019d}"
+
+
+def test_staged_bytes_live_in_the_object_store_not_beside_it(client, content_root):
     upload_id = create(client)
     patch(client, upload_id, 0, b"abc")
-    assert store.staged_path(upload_id) == content_root / ".uploads" / upload_id
+    assert part_keys(upload_id) == [f"uploads/{upload_id}/{0:019d}"]
+    # With the filesystem backend the object store is CONTENT_DIR: this is where the part is.
+    assert (content_root / "uploads" / upload_id / f"{0:019d}").read_bytes() == b"abc"
+    assert not (content_root / ".uploads").exists()
