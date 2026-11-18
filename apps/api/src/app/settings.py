@@ -221,7 +221,13 @@ def _write_node_key_file(value: str) -> str:
 
 @dataclass
 class Settings:
+    # A SQLite path by default; ``postgres://`` and ``postgresql://`` URLs are
+    # served through the psycopg (v3) driver (see ``app.db``).
     DATABASE_URL: str = field(default_factory=lambda: _env("DATABASE_URL", "sqlite:///./scholium.db"))
+    # PostgreSQL connection pool (ignored for SQLite, which keeps SQLAlchemy's
+    # default engine options).  The defaults match SQLAlchemy's own.
+    DB_POOL_SIZE: int = field(default_factory=lambda: _int("DB_POOL_SIZE", 5))
+    DB_MAX_OVERFLOW: int = field(default_factory=lambda: _int("DB_MAX_OVERFLOW", 10))
     CONTENT_DIR: str = field(default_factory=lambda: _env("CONTENT_DIR", "./data/content"))
     # Where objects (content blobs, staged uploads) live: ``fs`` (the default)
     # writes under CONTENT_DIR; ``s3`` writes to S3_BUCKET through the S3 API,
