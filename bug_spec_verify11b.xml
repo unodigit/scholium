@@ -3,7 +3,7 @@
   Round 11b: findings of verify sweep 11 (2026-11-19, pinned worktree @ 658675c). 14/16 journeys pass; 07 and 11 fail.
   Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
   Both failures are the same shape: per-viewer state the API already returns is never shown after a reload.
-  Filed after the backends_llm "passes every suite" task merged (its footprint covers apps/api/src/app/**).
+  Filed after the backends_llm "passes every suite" task (footprint apps/api/src/app/**) reached a final state (failed, empty_branch), releasing its claim.
 -->
 <bug_spec>
 
