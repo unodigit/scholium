@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 12: findings of verify sweep 12 (2026-11-19, worktree @ 3590c51 = main). 16/16 journeys pass; these are the
+  remaining gaps the verifiers found beyond the written steps.
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Decision (recorded here): every calendar date a reader sees is in the reader's time zone through the shared ui-kit
+  formatter; only values explicitly labelled "UTC" (security log times, recovery time-lock instants, anchor proofs)
+  stay in UTC.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/appeals/votes.py,apps/api/src/app/modules/notifications/**,apps/api/src/app/modules/appeals/tests/**">
+    <title>The appellant is not notified when the panel upholds the decision they appealed</title>
+    <symptoms>
+      sam appeals the hold on his paper; the panel upholds it; panel members get "The panel upheld the decision on ..." but sam's notifications still show only "was put on hold" - the paper banner is the only place he can learn the outcome
+      An overturned appeal does tell the author, but only through the restoration path (notifications/restoration.py); the uphold path (appeals/votes.py after the appeal.decision is appended) notifies only the panel (notifications/panel.py)
+    </symptoms>
+    <reproduction_steps>
+      Journey 11 step 12 (screenshots/11-moderation-hold-and-appeal/12a-author-told-outcome.png, 12b-held-paper-after-appeal.png)
+    </reproduction_steps>
+    <expected>When an appeal.decision is recorded, the appellant receives exactly one notice naming the subject and the outcome, for every target kind (paper hold, hidden post, annotation, review) and every outcome: upheld ('The appeal panel upheld the decision to hold "{title}". {link to the decision}'), overturned (the existing restoration notice, not duplicated), and "decided without a panel" when a tier-4 moderator decided it; the notice links to the appeal's page or the paper; API tests cover upheld and overturned for a paper hold and a hidden post, asserting one appellant notice each</expected>
+    <actual>The appellant hears nothing when they lose</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/ui-kit/format-date.ts,apps/web/src/features/ui-kit/format-date.test.ts,apps/web/src/features/ui-kit/local-date.ts,apps/web/src/features/paper-discussion/discussion.ts,apps/web/src/features/paper-discussion/discussion.test.ts,apps/web/src/features/mod-console/wire.ts,apps/web/src/features/mod-console/appeals.test.ts,apps/web/src/features/feed/feed.ts,apps/web/src/features/feed/feed.test.ts,apps/web/src/features/dashboard/endorse.ts,apps/web/src/features/dashboard/endorse.test.ts,apps/web/src/features/paper-reviews/review.ts,apps/web/src/features/paper-reviews/review.test.ts,apps/web/src/features/review-form/commit.ts,apps/web/src/features/review-form/commit.test.ts,apps/web/src/features/search-page/search.ts,apps/web/src/features/search-page/search.test.ts,apps/web/src/features/paper-meta/meta.ts,apps/web/src/features/paper-meta/meta.test.ts,apps/web/src/features/network-page/network.ts,apps/web/src/features/network-page/network.test.ts,apps/web/src/features/paper-page/unlisted-paper.ts,apps/web/src/features/paper-page/unlisted-paper.test.ts,apps/web/src/features/submit/consent-version.ts,apps/web/src/features/submit/consent-version.test.ts,apps/web/src/features/paper-page/paper-access-view.tsx,apps/web/src/features/paper-page/appeal-dialog.tsx,apps/web/src/features/paper-page/appeal-dialog.test.tsx">
+    <title>The same instant shows different calendar dates on different pages (some formatters use UTC, others the reader's zone); appeal labels use a hyphen and say "awaiting panel" when no panel can form</title>
+    <symptoms>
+      In GMT+11 early morning (still 18 Nov UTC): sam's hidden post shows its own date "19 Nov 2026" but "Appeal filed on 18 Nov 2026" just below; /mod appeal cards say "Filed 18 Nov", "You voted ... on 18 Nov", "Decision upheld · 18 Nov" while sam's banner says 19 November; the review form says the report gate opens "on 10 Dec 2026" while the public reviews page says "9 Dec 2026"; an endorsement made on 19 Nov local shows "18 Nov 2026" on the profile; the author profile's paper row says 18 Nov while the Versions tab says 19 Nov
+      Separate formatters hard-code timeZone "UTC" or getUTC* (paper-discussion/discussion.ts, mod-console/wire.ts, feed/feed.ts, dashboard/endorse.ts, paper-reviews/review.ts reportGateDate, review-form/commit.ts, search-page/search.ts, paper-meta/meta.ts, network-page/network.ts, paper-page/unlisted-paper.ts, submit/consent-version.ts) instead of the shared ui-kit formatter whose rule is "one date format in the reader's time zone"
+      The discussion appeal label reads "Appeal filed on ... - panel not yet formed" with a hyphen (appeal-dialog.tsx and paper-access-view.tsx use an em dash), and right after filing it says "awaiting panel" although the filing response already knows no panel could form (a reload then says "panel not yet formed"); the paper-hold labels in paper-access-view.tsx and appeal-dialog.tsx only know "awaiting panel"
+    </symptoms>
+    <reproduction_steps>
+      Journeys 07 (screenshots/07-flag-and-dispute/07k-*.png, 07m-*.png), 11 (07a, 09c, 11c vs 05e, 12b), 12/13 (13: 09c vs 10a), 14 (screenshots/14-endorse-newcomer/05c-endorsed-tier2.png), in a browser east of UTC between 00:00 and 11:00 local
+    </reproduction_steps>
+    <expected>Every calendar date shown to a reader goes through the shared ui-kit date helpers and renders in the reader's time zone without a hydration mismatch (server renders a stable form, the client shows the local date, as LocalDate does); day arithmetic such as the report-gate date is done on the instant and formatted in the reader's zone, so the reviewer's form and the public page agree; only values explicitly labelled "UTC" stay UTC; tests run in a non-UTC test zone and assert the same instant gives the same date from every formatter; appeal labels use an em dash everywhere and show "panel not yet formed" from the filing response as well as after reload, for post and paper-hold appeals alike</expected>
+    <actual>Off-by-one-day dates between pages; inconsistent appeal labels</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/mod-console/appeal-vote-form.tsx,apps/web/src/features/mod-console/appeal-vote-form.test.tsx,apps/web/src/app/(ui-kit)/ui-kit/brand/page.tsx">
+    <title>"Change my vote" drops the recorded reasons and offers no way back; /ui-kit/brand 404 keeps its "Brand · UI kit" tab title</title>
+    <symptoms>
+      After a reload, "Change my vote" reopens the form with the earlier outcome pre-selected but the reasons box empty, and there is no Cancel/keep-my-vote control (only a reload returns to the recorded state)
+      In production /ui-kit/brand shows the 404 page body (by design) but the tab title stays "Brand · UI kit · Scholium"
+    </symptoms>
+    <reproduction_steps>
+      Journey 11 step 9 (screenshots/11-moderation-hold-and-appeal/09e-*.png); journey 16 (open /ui-kit/brand on the production build)
+    </reproduction_steps>
+    <expected>"Change my vote" pre-fills the member's recorded reasons (when the API returns them to that member; otherwise leaves the box empty with a hint that new reasons replace the old) and offers "Keep my vote", which returns to the recorded state without a request; in production /ui-kit/brand renders the not-found page with the not-found title ("Not found · Scholium")</expected>
+    <actual>As described</actual>
+  </bug>
+
+</bug_spec>
