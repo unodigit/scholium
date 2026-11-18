@@ -108,6 +108,10 @@ export interface NeedsAttention {
   readonly moderation_outcomes: readonly AttentionItem[];
   /** Open recovery requests that still need this guardian's answer. */
   readonly recovery_requests?: readonly AttentionItem[];
+  /** Appeal panels the caller was drawn to and has not voted on yet. */
+  readonly appeal_panels?: readonly AttentionItem[];
+  /** The caller's email address, until it has been confirmed. */
+  readonly email_verification?: readonly AttentionItem[];
   readonly items: readonly AttentionItem[];
 }
 
@@ -216,6 +220,10 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
     recovery_requests: Array.isArray(value.recovery_requests)
       ? value.recovery_requests
       : [],
+    appeal_panels: Array.isArray(value.appeal_panels) ? value.appeal_panels : [],
+    email_verification: Array.isArray(value.email_verification)
+      ? value.email_verification
+      : [],
   };
   const items = Array.isArray(value.items)
     ? value.items
@@ -224,6 +232,8 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
         ...groups.review_invitations,
         ...groups.author_replies,
         ...groups.moderation_outcomes,
+        ...groups.appeal_panels,
+        ...groups.email_verification,
         ...groups.recovery_requests,
       ];
   const count =
@@ -236,6 +246,8 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
     author_replies: groups.author_replies.map(parseAttentionItem),
     moderation_outcomes: groups.moderation_outcomes.map(parseAttentionItem),
     recovery_requests: groups.recovery_requests.map(parseAttentionItem),
+    appeal_panels: groups.appeal_panels.map(parseAttentionItem),
+    email_verification: groups.email_verification.map(parseAttentionItem),
     items: items.map(parseAttentionItem),
   };
 }
@@ -820,7 +832,10 @@ export function notificationKindLabel(kind: string): string {
   return NOTIFICATION_KIND_LABELS[kind] ?? sentenceCase(kind);
 }
 
-type NotificationLike = Pick<NotificationItem, "kind" | "payload">;
+type NotificationLike = Pick<NotificationItem, "kind" | "payload"> & {
+  /** `true` once the member has answered or opened the notification. */
+  readonly read?: boolean;
+};
 
 const MODERATION_ACTION_SUMMARIES: Readonly<Record<string, string>> = {
   hold: "A moderator put your paper on hold.",
@@ -830,8 +845,76 @@ const MODERATION_ACTION_SUMMARIES: Readonly<Record<string, string>> = {
   tombstone: "A moderator removed your paper.",
 };
 
+/** A co-author's name, or the title and version of the version they sign. */
+function consentSubject(payload: Readonly<Record<string, unknown>>): {
+  title: string | null;
+  version: number | null;
+} {
+  const version = readNumber(payload.n);
+  return {
+    title: readText(payload.title),
+    version: version === null ? null : Math.trunc(version),
+  };
+}
+
+/**
+ * The sentence for a notification the member has already answered.
+ *
+ * An answered notification is a record of what they did, not a call to do it
+ * again: it is worded in the past tense and carries no action link.
+ */
+function answeredSummary(
+  kind: string,
+  payload: Readonly<Record<string, unknown>>,
+): string | null {
+  switch (kind) {
+    case "consent.request": {
+      const { title, version } = consentSubject(payload);
+      const versionPart = version === null ? "" : ` (version ${version})`;
+      if (title) {
+        return `You signed your consent on "${title}"${versionPart}.`;
+      }
+      return `You signed your consent${versionPart}.`;
+    }
+    case "recovery.request": {
+      const requester =
+        readText(payload.account_name) ??
+        readText(payload.name) ??
+        readText(payload.accountName) ??
+        readText(payload.requester_name) ??
+        readText(payload.requesterName);
+      return requester
+        ? `You approved the recovery request from ${requester}.`
+        : "You approved the recovery request.";
+    }
+    case "email.verify":
+      return "You confirmed your email address.";
+    case "review.invitation":
+    case "review_invitation": {
+      const title = readText(payload.title);
+      return title
+        ? `You responded to the invitation to review "${title}".`
+        : "You responded to the invitation to review a paper.";
+    }
+    case "appeal.panel": {
+      const title = readText(payload.title);
+      return title
+        ? `You voted on the appeal for "${title}".`
+        : "You voted on an appeal panel.";
+    }
+    default:
+      return null;
+  }
+}
+
 /** One plain sentence for what happened, never the payload's keys. */
-export function notificationSummary({ kind, payload }: NotificationLike): string {
+export function notificationSummary({ kind, payload, read }: NotificationLike): string {
+  if (read === true) {
+    const answered = answeredSummary(kind, payload);
+    if (answered !== null) {
+      return answered;
+    }
+  }
   switch (kind) {
     case "consent.request": {
       const version = readNumber(payload.n);
@@ -866,7 +949,11 @@ export function notificationSummary({ kind, payload }: NotificationLike): string
       );
     }
     case "appeal.panel":
-      return "You were drawn for an appeal panel.";
+      return (
+        readText(payload.summary) ??
+        readText(payload.outcome) ??
+        "You were drawn for an appeal panel."
+      );
     case "flag.decided": {
       const summary = readText(payload.summary) ?? readText(payload.outcome);
       if (summary) {
@@ -927,7 +1014,11 @@ function safePayloadLink(payload: Readonly<Record<string, unknown>>): string | n
  * paper a moderator decided on. Anything else uses the link the sender
  * recorded, if it is safe; otherwise there is nothing to open.
  */
-export function notificationLink({ kind, payload }: NotificationLike): string | null {
+export function notificationLink({ kind, payload, read }: NotificationLike): string | null {
+  // An answered notification is history: it offers nothing to open.
+  if (read === true) {
+    return null;
+  }
   switch (kind) {
     case "consent.request": {
       const version = readText(payload.version_cid);

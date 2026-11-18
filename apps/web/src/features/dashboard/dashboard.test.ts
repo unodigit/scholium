@@ -498,6 +498,52 @@ describe("notification wording", () => {
     expect(notificationLink({ kind: "moderation.decision", payload: { target_cid: "bafy-v" } })).toBe("/p/bafy-v");
   });
 
+  it("rewords an answered notification in the past tense", () => {
+    expect(
+      notificationSummary({
+        kind: "consent.request",
+        read: true,
+        payload: { n: 2, title: "Sparse attention" },
+      }),
+    ).toBe('You signed your consent on "Sparse attention" (version 2).');
+    expect(
+      notificationSummary({
+        kind: "recovery.request",
+        read: true,
+        payload: { account_name: "Ana Costa" },
+      }),
+    ).toBe("You approved the recovery request from Ana Costa.");
+    expect(
+      notificationSummary({ kind: "email.verify", read: true, payload: {} }),
+    ).toBe("You confirmed your email address.");
+  });
+
+  it("keeps an unread notification's imperative wording", () => {
+    expect(
+      notificationSummary({ kind: "email.verify", payload: {} }),
+    ).toBe("Confirm your email address.");
+    expect(
+      notificationSummary({ kind: "consent.request", payload: { n: 2 } }),
+    ).toMatch(/waiting for your signature/i);
+  });
+
+  it("offers no action link on an answered notification", () => {
+    expect(
+      notificationLink({
+        kind: "consent.request",
+        read: true,
+        payload: { version_cid: "bafy-v" },
+      }),
+    ).toBeNull();
+    expect(
+      notificationLink({
+        kind: "email.verify",
+        read: true,
+        payload: { link: "/verify-email?did=x&token=y" },
+      }),
+    ).toBeNull();
+  });
+
   it("uses a payload link only when it is a web page or an absolute http(s) address", () => {
     expect(notificationLink({ kind: "x.y", payload: { link: "/review/sch:abcd-efgh-jklm" } })).toBe(
       "/review/sch:abcd-efgh-jklm",

@@ -58,12 +58,12 @@ The module loader mounts this router under ``/v1``, so this package serves:
           ]
         }
 
-    ``needs_attention`` groups the four categories the feature names
+    ``needs_attention`` groups every kind of open action
     (``consents_to_sign``, ``review_invitations``, ``author_replies``,
-    ``moderation_outcomes``) and also offers ``items``, the same entries as one
-    flat list, so a client may render either shape.  Every entry names the
-    paper and version it is about by the ``sch:`` short id, the genesis cid,
-    the version cid and the title.
+    ``moderation_outcomes``, ``appeal_panels``, ``email_verification``) and
+    also offers ``items``, the same entries as one flat list, so a client may
+    render either shape.  Every entry names the paper and version it is about
+    by the ``sch:`` short id, the genesis cid, the version cid and the title.
 
     ``my_papers`` lists the papers the caller signed or is a listed author of,
     with the stored lifecycle status, the latest version's state and the

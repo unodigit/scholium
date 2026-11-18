@@ -287,10 +287,25 @@ const ATTENTION_KIND_LABELS: Readonly<Record<string, string>> = {
   review_invitation: "Review invitation",
   author_reply: "Author reply",
   moderation_outcome: "Moderation outcome",
+  appeal_available: "Appeal",
+  appeal_panel: "Appeal panel",
+  email_verification: "Email verification",
+  recovery_request: "Recovery request",
 };
 
-function attentionKindLabel(kind: string): string {
-  return ATTENTION_KIND_LABELS[kind] ?? kind.replace(/_/g, " ");
+/**
+ * The chip's words for an attention kind.
+ *
+ * An unknown kind is spelled out in sentence case, so one list never mixes
+ * "Author reply" with "recovery request".
+ */
+export function attentionKindLabel(kind: string): string {
+  const known = ATTENTION_KIND_LABELS[kind];
+  if (known !== undefined) {
+    return known;
+  }
+  const words = kind.replace(/[._-]+/g, " ").trim();
+  return words === "" ? words : words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** `1 review`, `3 reviews`. */
@@ -337,7 +352,8 @@ function NeedsAttentionCard({
 
 function AttentionRow({ item }: { item: AttentionItem }) {
   const headline = item.summary ?? item.title ?? attentionKindLabel(item.kind);
-  const detail = item.reason ?? (item.summary ? item.title : null);
+  // The summary already names the paper; only a reason belongs beneath it.
+  const detail = item.reason ?? (item.summary === null ? item.title : null);
   return (
     <li className="db-item" data-kind={item.kind}>
       <span className="db-chip">{attentionKindLabel(item.kind)}</span>

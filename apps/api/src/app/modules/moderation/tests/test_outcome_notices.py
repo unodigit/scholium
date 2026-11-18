@@ -137,7 +137,8 @@ def test_a_paper_notice_names_the_paper_and_the_reason_in_words(client, moderato
 
     note = _reporter_note(reporter)
     assert note.payload["summary"] == (
-        f'The paper you reported, "{submission.title}", was reviewed and kept: Misleading or false.'
+        "The paper you reported (reason: Misleading or false) "
+        "was reviewed and kept listed."
     )
     assert note.payload["reason"] == "Misleading or false"
     assert note.payload["link"] == f"/p/{submission.short_id}"

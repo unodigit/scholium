@@ -9,9 +9,10 @@ decision can be appealed once: a second appeal of the same decision is a
 Saving an appeal also seats its panel: three tier-3 or tier-4 members, never the
 deciding moderator or an author of the paper, drawn deterministically from the
 appealed decision's cid and saved to ``appeal_panels`` (feature 75; see
-:mod:`app.modules.appeals.panel`).  Every seated member is notified -- with a
-link to ``GET /v1/appeals/{cid}``, the view that names the panel -- so a seat
-is not invisible; the endpoint shows the panel to its members and to tier 4.
+:mod:`app.modules.appeals.panel`).  Every seated member is notified -- naming
+the paper, the deadline and the panel vote form in ``/mod`` -- so a seat is not
+invisible; ``GET /v1/appeals/{cid}`` shows the panel to its members and to
+tier 4.
 
 The seated panel decides the appeal by voting: ``POST
 /v1/appeals/{cid}/votes`` records each member's vote, and once two of the three

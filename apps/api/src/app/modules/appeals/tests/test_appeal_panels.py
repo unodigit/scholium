@@ -270,6 +270,30 @@ def test_a_seated_member_who_drops_a_tier_keeps_the_seat(client, scene, standing
     assert _members(record["id"]) == drawn
 
 
+def test_a_seated_member_is_told_the_paper_the_deadline_and_where_to_vote(
+    client, scene, standing
+):
+    """A seat notice is worthless without the paper and a working vote link."""
+    from app.modules.notifications.service import list_notifications
+    from app.modules import submissions
+
+    record = _file(client, scene)
+    member = _members(record["id"])[0]
+    title = submissions.get_version(scene.version_cid).title
+
+    [note] = [
+        row
+        for row in list_notifications(member)
+        if row.kind == "appeal.panel" and row.payload.get("appeal_cid") == record["id"]
+    ]
+    assert note.payload["title"] == title
+    assert title in note.payload["summary"]
+    assert note.payload["summary"].startswith("Vote on the appeal for")
+    assert note.payload["link"] == f"/mod#appeal-{record['id']}-title"
+    assert note.payload["deadline"] is not None
+    assert note.payload["paper_cid"] == scene.paper_cid
+
+
 def test_each_appeal_has_its_own_panel(client, standing):
     first, second = Scene(client), Scene(client)
     one, two = _file(client, first), _file(client, second)

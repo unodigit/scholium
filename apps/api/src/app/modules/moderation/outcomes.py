@@ -10,7 +10,8 @@ things, written from the target rather than from the record type's internals:
 * the outcome in words, never a raw action or status code -- and, for the
   reporter, which item it was: the paper's title, the start of the flagged text
   and the reason they gave in words, not as a code
-  ('The post you reported on "Title" ("First words...") was hidden: Off topic.');
+  ('The post you reported on "Title" ("First words...") (reason: Off topic)
+  was hidden.');
 * where to open it: the paper page, the paper's Discussion tab (where a hidden
   post's placeholder is), or the reviews tab (where a review lives).
 
@@ -249,7 +250,9 @@ def _reporter_outcome(kind: str, action: Optional[str]) -> str:
     if action == "hide":
         return "was hidden"
     if action == "dismiss":
-        return "was reviewed and kept"
+        # A dismissed paper flag keeps the paper listed; the words say that
+        # rather than leaving "was reviewed and kept" to be read as a reason.
+        return "was reviewed and kept listed" if kind == "paper" else "was reviewed and kept"
     if kind == "paper":
         return {
             "list": "was kept listed",
@@ -271,27 +274,30 @@ def reporter_summary(
 ) -> str:
     """The reporter's outcome in words: what happened to what they reported.
 
-    With the flag's ``target`` the sentence says which item it was -- the
-    paper's title and, for a post or a review, the first
-    :data:`EXCERPT_LIMIT` characters of it -- and with the flag's ``reason``
-    why they reported it, in words::
+    With the flag's ``target`` the sentence says which item it was -- for a
+    post or a review, the paper's title and the first :data:`EXCERPT_LIMIT`
+    characters of it -- and with the flag's ``reason`` why they reported it, in
+    words.  For a paper the reason sits in parentheses
+    before the outcome, so it cannot be read as the reason for keeping it::
 
+        The paper you reported (reason: Duplicated figures) was reviewed and kept listed.
         The post you reported on "Title" ("First words...") was hidden: Off topic.
-        The paper you reported, "Title", was kept listed: Plagiarism.
 
     Whatever the node cannot read is left out, never replaced by a placeholder.
     """
     noun = _KIND_WORDS.get(kind, "record")
     title = paper_title(target) if target else None
     if kind == "paper":
-        subject = f'The paper you reported, "{title}",' if title else "The paper you reported"
-    else:
-        subject = f"The {noun} you reported"
-        if title:
-            subject += f' on "{title}"'
-        quote = excerpt(target) if target else None
-        if quote:
-            subject += f' ("{quote}")'
+        subject = "The paper you reported"
+        if isinstance(reason, str) and reason.strip():
+            subject += f" (reason: {reason_label(reason)})"
+        return f"{subject} {_reporter_outcome(kind, action)}."
+    subject = f"The {noun} you reported"
+    if title:
+        subject += f' on "{title}"'
+    quote = excerpt(target) if target else None
+    if quote:
+        subject += f' ("{quote}")'
     sentence = f"{subject} {_reporter_outcome(kind, action)}"
     if isinstance(reason, str) and reason.strip():
         return f"{sentence}: {reason_label(reason)}."

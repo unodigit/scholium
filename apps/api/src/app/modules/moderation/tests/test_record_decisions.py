@@ -471,7 +471,8 @@ def test_dismissing_a_paper_flag_tells_the_reporter_but_not_the_author(
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
     assert note.payload["summary"] == (
-        f'The paper you reported, "{submission.title}", was reviewed and kept: Spam or advertising.'
+        "The paper you reported (reason: Spam or advertising) "
+        "was reviewed and kept listed."
     )
     assert note.payload["link"] == f"/p/{submission.short_id}"
     # A dismiss makes no new listing decision, so the authors are not told
@@ -524,7 +525,7 @@ def test_a_list_decision_tells_the_reporter_the_paper_was_kept_listed(
         n for n in _notifications(reporter) if n.kind == flags.FLAG_DECIDED_KIND
     ]
     assert note.payload["summary"] == (
-        f'The paper you reported, "{submission.title}", was kept listed: Plagiarism.'
+        "The paper you reported (reason: Plagiarism) was kept listed."
     )
     assert note.payload["link"] == f"/p/{submission.short_id}"
 

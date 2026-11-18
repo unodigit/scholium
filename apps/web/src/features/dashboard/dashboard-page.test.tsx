@@ -226,6 +226,40 @@ describe("DashboardPage with server data", () => {
     expect(attention.getByText(/Sign your co-author consent/)).toBeTruthy();
   });
 
+  it("names an appeal-panel item in sentence case and links to the vote form", () => {
+    const panel: DashboardData = {
+      ...DATA,
+      needs_attention: {
+        ...DATA.needs_attention,
+        count: 1,
+        items: [
+          {
+            kind: "appeal_panel",
+            summary: 'Vote on the appeal for "A paper under appeal" by 2026-11-30.',
+            reason: null,
+            paper: "sch:k3f9-q2xz-7mwd",
+            shortId: "sch:k3f9-q2xz-7mwd",
+            paperCid: "bafy-genesis-1",
+            version: 1,
+            versionCid: "bafy-version-1",
+            version_cid: "bafy-version-1",
+            title: "A paper under appeal",
+            link: "/mod#appeal-bafy-appeal-title",
+            createdAt: null,
+          },
+        ],
+      },
+    };
+
+    render(<DashboardPage initialDashboard={panel} signedIn />);
+
+    const attention = within(card("Needs your attention"));
+    expect(attention.getByText("Appeal panel")).toBeTruthy();
+    expect(
+      attention.getByRole("link", { name: "Open" }).getAttribute("href"),
+    ).toBe("/mod#appeal-bafy-appeal-title");
+  });
+
   it("shows each paper's status as a word plus its review count", () => {
     render(<DashboardPage initialDashboard={DATA} signedIn />);
 

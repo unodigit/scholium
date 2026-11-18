@@ -61,9 +61,9 @@ in would let them vary a no-op field offline until the draw seated the panel the
 wanted.
 
 When a panel is drawn, every seated member is told (:func:`notify_panel_seated`):
-a notification of kind :data:`PANEL_SEATED_KIND` whose payload names the appeal
-and links to ``GET /v1/appeals/{appeal cid}``.  Without it a seat is invisible --
-nothing else names the panel -- and nobody knows to vote.  The notice is sent
+a notification of kind :data:`PANEL_SEATED_KIND` whose payload names the paper,
+the appeal, the deadline and the panel vote form (``/mod``).  Without it a seat
+is invisible -- nothing else names the panel -- and nobody knows to vote.  The notice is sent
 exactly once per seat: a panel that is already seated is returned untouched, so
 the ledger subscriber and the endpoint applying the same appeal do not notify
 twice.  A notification that cannot be stored is logged and never fails the
@@ -75,7 +75,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy.exc import IntegrityError
@@ -101,6 +101,7 @@ __all__ = [
     "APPEAL_MIN_TIER",
     "APPEAL_TYPE",
     "PANEL_SEATED_KIND",
+    "PANEL_VOTE_WINDOW",
     "PENDING",
     "AppealFields",
     "AppealedDecision",
@@ -127,6 +128,11 @@ APPEAL_MIN_TIER = 0
 
 #: Status of an appeal no panel has decided yet.
 PENDING = "pending"
+
+#: How long a drawn panel has to vote, counted from the appeal's ``filed_at``.
+#: The record schema fixes no deadline; the dashboard and the seat notice both
+#: state this one so a panellist knows when the vote is due.
+PANEL_VOTE_WINDOW = timedelta(days=14)
 
 #: Kind of the notification a seated panel member receives.  It names the seat,
 #: not the appeal's progress: the panel member is the audience.
@@ -429,12 +435,18 @@ def panel_exclusions(appeal: Appeal, decision: AppealedDecision) -> frozenset[st
     )
 
 
-def notify_panel_seated(appeal: Appeal, seats: list[AppealPanelMember]) -> int:
+def notify_panel_seated(
+    appeal: Appeal,
+    seats: list[AppealPanelMember],
+    decision: Optional[AppealedDecision] = None,
+) -> int:
     """Tell every member in ``seats`` they were drawn; return how many were told.
 
     The payload names the appeal (the cid a vote is cast on), the decision it
-    answers and a ``link`` to ``GET /v1/appeals/{appeal cid}``, the only view
-    that names the panel.  The notifications plugin is imported at call time so
+    answers, the paper and when the vote is due, and links to the panel vote
+    form in the moderation console (``/mod``).  A notice with no paper and no
+    working link leaves the member unable to act, so the title and deadline
+    travel with the seat.  The notifications plugin is imported at call time so
     this module stays loadable without it.  One member's notification failing
     must not stop the others or undo the panel: it is logged and skipped, like
     every other best-effort notification in the project.
@@ -445,6 +457,37 @@ def notify_panel_seated(appeal: Appeal, seats: list[AppealPanelMember]) -> int:
         logger.exception("notifications plugin unavailable; appeal panel not notified")
         return 0
 
+    if decision is None:
+        try:
+            decision = resolve_decision(str(appeal.decision_cid))
+        except Exception:  # pragma: no cover - a decision this node no longer holds
+            logger.debug("could not resolve appeal %s for its notice", appeal.appeal_cid)
+            decision = None
+
+    title: Optional[str] = None
+    short_id: Optional[str] = None
+    version_cid: Optional[str] = None
+    paper_cid: Optional[str] = None
+    if decision is not None:
+        version_cid = decision.version_cid
+        paper_cid = decision.paper_cid
+        version = submissions.get_version(decision.version_cid)
+        title = getattr(version, "title", None) if version is not None else None
+        paper = submissions.get_paper(decision.paper_cid)
+        short_id = getattr(paper, "short_id", None) if paper is not None else None
+
+    filed_at = appeal.filed_at
+    deadline = filed_at + PANEL_VOTE_WINDOW if isinstance(filed_at, datetime) else None
+    deadline_day = deadline.date().isoformat() if deadline is not None else None
+    link = f"/mod#appeal-{appeal.appeal_cid}-title"
+    if title:
+        summary = f'Vote on the appeal for "{title}"'
+    else:
+        summary = "Vote on an appeal panel"
+    if deadline_day:
+        summary += f" by {deadline_day}"
+    summary += "."
+
     payload = {
         "appeal_cid": str(appeal.appeal_cid),
         "appeal": str(appeal.appeal_cid),
@@ -452,7 +495,17 @@ def notify_panel_seated(appeal: Appeal, seats: list[AppealPanelMember]) -> int:
         "target": str(appeal.decision_cid),
         "appellant_did": str(appeal.appellant_did),
         "grounds": str(appeal.grounds),
-        "link": f"/v1/appeals/{appeal.appeal_cid}",
+        "title": title,
+        "paper": short_id,
+        "paper_cid": paper_cid,
+        "version_cid": version_cid,
+        "deadline": deadline.isoformat() if deadline is not None else None,
+        "due_at": deadline_day,
+        "summary": summary,
+        "outcome": summary,
+        # The web inbox must open the form a panellist votes from, not an API
+        # route (which the web origin answers with a 404).
+        "link": link,
     }
     notified = 0
     for seat in seats:
@@ -498,7 +551,7 @@ def seat_panel(
         excluded=panel_exclusions(appeal, decision),
         seed=panel_seed(str(appeal.appeal_cid)),
     )
-    notify_panel_seated(appeal, seats)
+    notify_panel_seated(appeal, seats, decision)
     return seats
 
 

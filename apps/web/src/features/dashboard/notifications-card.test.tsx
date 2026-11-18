@@ -77,12 +77,13 @@ describe("NotificationsCard: what it shows", () => {
     expect(within(third).getByText(/co-author consent/i)).toBeTruthy();
   });
 
-  it("links each notification to the screen that deals with it", async () => {
+  it("links each open notification to the screen that deals with it", async () => {
     render(<NotificationsCard signedIn loadNotifications={loaderOf(CONSENT, RECOVERY, MODERATION)} />);
     await screen.findAllByRole("listitem");
 
-    const [first, second, third] = items();
-    expect(within(first).getByRole("link", { name: /open/i }).getAttribute("href")).toBe("/p/bafy-version-1");
+    const [read, second, third] = items();
+    // An answered notification is history and offers nothing to open.
+    expect(within(read).queryByRole("link", { name: /open/i })).toBeNull();
     expect(within(second).getByRole("link", { name: /open/i }).getAttribute("href")).toBe("/me/recovery/rr-9");
     expect(within(third).getByRole("link", { name: /open/i }).getAttribute("href")).toBe("/consent/bafy-version-1");
   });
@@ -133,6 +134,27 @@ describe("NotificationsCard: what it shows", () => {
     const item = (await screen.findAllByRole("listitem"))[0];
     expect(within(item).getByText("Something new")).toBeTruthy();
     expect(within(item).getByText("Heads up")).toBeTruthy();
+  });
+
+  it("rewords an answered notification in the past tense and drops its Open link", async () => {
+    render(
+      <NotificationsCard
+        signedIn
+        loadNotifications={loaderOf(
+          row({
+            id: 6,
+            kind: "consent.request",
+            read: true,
+            payload: { version_cid: "bafy-version-1", n: 2, title: "Sparse attention" },
+          }),
+        )}
+      />,
+    );
+    const item = (await screen.findAllByRole("listitem"))[0];
+
+    expect(within(item).getByText(/You signed your consent/)).toBeTruthy();
+    expect(within(item).queryByText(/waiting for your signature/)).toBeNull();
+    expect(within(item).queryByRole("link", { name: /open/i })).toBeNull();
   });
 
   it("never turns a link it does not trust into an href", async () => {
@@ -232,16 +254,13 @@ describe("NotificationsCard: marking read", () => {
     await waitFor(() => expect(screen.queryByText("Unread")).toBeNull());
   });
 
-  it("does not call the API again for a notification that is already read", async () => {
+  it("offers nothing to do for a notification that is already read", async () => {
     const mark = vi.fn().mockResolvedValue(undefined);
     render(<NotificationsCard signedIn loadNotifications={loaderOf(MODERATION)} markNotificationRead={mark} />);
     await screen.findAllByRole("listitem");
 
-    const open = within(items()[0]).getByRole("link", { name: /open/i });
-    open.addEventListener("click", (event) => event.preventDefault());
-    fireEvent.click(open);
-
     expect(mark).not.toHaveBeenCalled();
+    expect(within(items()[0]).queryByRole("link", { name: /open/i })).toBeNull();
     expect(within(items()[0]).queryByRole("button", { name: /mark as read/i })).toBeNull();
   });
 

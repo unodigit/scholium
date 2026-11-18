@@ -8,7 +8,8 @@ owns no table of its own and never mutates anything.
 Needs attention
 ---------------
 
-The four categories the feature names, in the order the dashboard shows them:
+The categories, in the order the dashboard shows them.  Each holds only work
+that is *still open*: a notice about something finished is not an action.
 
 ``consents_to_sign``
     Every ``authorship`` row naming the caller whose ``coauthor.consent`` is
@@ -22,21 +23,32 @@ The four categories the feature names, in the order the dashboard shows them:
 
 ``author_replies``
     Every ``review.response`` the authors of a paper filed against one of the
-    caller's own reviews (feature 114).  "The caller's own reviews" are found
-    without a plaintext reviewer column: the escrow's ``uniqueness_token`` is
-    ``HMAC(reviewer_did || paper_cid)`` (feature 108), so recomputing it for
-    the caller and each paper identifies their review rows without the node
-    ever storing the DID-to-review mapping.  A review the reviewer signed with
-    their name (``review.signed_by``, feature 111) counts too.
+    caller's own reviews (feature 114), unless the reviewer has since updated
+    the review: the reply answered the earlier version and asks nothing more.
+    "The caller's own reviews" are found without a plaintext reviewer column:
+    the escrow's ``uniqueness_token`` is ``HMAC(reviewer_did || paper_cid)``
+    (feature 108), so recomputing it for the caller and each paper identifies
+    their review rows without the node ever storing the DID-to-review mapping.
+    A review the reviewer signed with their name (``review.signed_by``,
+    feature 111) counts too.
 
 ``moderation_outcomes``
-    Moderation decisions about the caller's papers -- derived from
-    ``moderation_decisions`` for targets that are one of the caller's papers or
-    versions -- merged with the caller's unread ``moderation.decision`` and
-    ``flag.decided`` notifications (features 71 and 58).  The merge is by
-    decision cid, so a decision that was both stored and notified appears
-    once.  Notifications the caller has read are omitted: a notice they have
-    already seen is not something that still needs attention.
+    The appeals still open to the caller: the standing ``moderation.decision``
+    about one of their papers or versions is a ``hold``, ``reject``,
+    ``delist`` or ``hide``, and no appeal has been filed yet.  Hidden posts and
+    reviews the caller wrote are found through the notice addressed to their
+    author.  A decision that changed nothing (``dismiss``, ``list``,
+    ``release``), and one already appealed, is Notifications only.  The
+    moderator's reason is a field of its own, never repeated in the sentence.
+
+``appeal_panels``
+    Every seat on ``appeal_panels`` the caller holds that is still unvoted on
+    an appeal no panel has decided (features 75-76).  The item asks them to
+    vote and links to the vote form.
+
+``email_verification``
+    The caller's stored email address until it has been verified (feature
+    178).
 
 Every item names the paper and version it is about by every identity the
 system gives them -- the ``sch:`` short id, the genesis cid, the version cid
@@ -75,7 +87,11 @@ from sqlalchemy import MetaData, Table, inspect
 
 from app import db
 from app.modules import ledger
-from app.modules.flags.service import FLAG_DECIDED_KIND
+from app.modules.appeals.models import (
+    Appeal,
+    AppealPanelMember,
+    ensure_tables as ensure_appeal_tables,
+)
 from app.modules.ledger.models import EventLog
 from app.modules.moderation.decisions import (
     MODERATION_DECISION_KIND,
@@ -115,13 +131,27 @@ logger = logging.getLogger(__name__)
 #: The status an invitation has until the reviewer acts on it (feature 105).
 INVITATION_PENDING = "pending"
 
-#: The four ``needs_attention`` groups, in dashboard order.
+#: The ``needs_attention`` groups, in dashboard order.
 ATTENTION_KINDS = (
     "consents_to_sign",
     "review_invitations",
     "author_replies",
     "moderation_outcomes",
+    "appeal_panels",
+    "email_verification",
 )
+
+#: Moderation actions an author may still appeal.  Every other action
+#: (``list``, ``dismiss``, ``release``, ``reclassify``) is informational: it
+#: belongs in Notifications, not in Needs your attention.
+APPEALABLE_ACTIONS = frozenset({"hold", "reject", "delist", "hide"})
+
+#: The words an appealable moderation action reads with.
+_APPEAL_VERBS = {
+    "hold": "hold on",
+    "reject": "rejection of",
+    "delist": "delisting of",
+}
 
 #: The record type whose signer created a paper, listed on its byline or not.
 PAPER_GENESIS_TYPE = "paper.genesis"
@@ -156,6 +186,7 @@ def _ensure_tables() -> None:
     ensure_review_tables()
     ensure_notification_table()
     ensure_moderation_tables()
+    ensure_appeal_tables()
 
 
 def _item(
@@ -380,9 +411,9 @@ def _consents_to_sign(
         short_id = getattr(paper, "short_id", None) or version.paper_cid
         title = getattr(version, "title", None)
         if title:
-            summary = f'Sign your co-author consent for "{title}" (version {version.n})'
+            summary = f'Sign your co-author consent for "{title}" (version {version.n}).'
         else:
-            summary = f"Sign your co-author consent for {short_id}"
+            summary = f"Sign your co-author consent for {short_id}."
         items.append(
             _item(
                 "consent_to_sign",
@@ -460,20 +491,35 @@ def _author_replies(
         if not isinstance(review_cid, str) or review_cid not in my_review_cids:
             continue
         review = reviews.get(review_cid)
-        version = version_by_cid.get(review.version_cid) if review is not None else None
+        if review is None:
+            # The escrow knows about a review whose row is missing; there is
+            # nothing to reply to.
+            continue
+        # The reviewer has updated the review: the author's reply answered the
+        # earlier version and no longer asks them for anything.
+        if _latest_review_version_cid(review, version_by_cid) != review.version_cid:
+            continue
+        version = version_by_cid.get(review.version_cid)
         paper = paper_by_cid.get(version.paper_cid) if version is not None else None
-        short_id = getattr(paper, "short_id", None) or review_cid
+        short_id = getattr(paper, "short_id", None)
+        title = getattr(version, "title", None) if version is not None else None
+        if title:
+            summary = f'The authors replied to your review of "{title}".'
+        elif short_id:
+            summary = f"The authors replied to your review of {short_id}."
+        else:
+            summary = "The authors replied to your review."
         items.append(
             _item(
                 "author_reply",
-                f"The authors replied to your review of {short_id}",
+                summary,
                 paper=paper,
                 version=version,
                 reviewCid=review_cid,
                 review_cid=review_cid,
                 responseCid=row.get("response_cid"),
                 responses=row.get("replies"),
-                link=f"/review/{short_id}",
+                link=f"/review/{short_id}" if short_id else None,
             )
         )
     items.sort(key=lambda item: (item.get("paper") or "", item.get("responseCid") or ""))
@@ -494,13 +540,152 @@ def _decision_reason(decision_cid: str) -> Optional[str]:
     return None
 
 
+def _safe_web_link(value: object) -> Optional[str]:
+    """A payload link that is safe to put in an ``href``.
+
+    A path on this site is accepted unless it is protocol-relative or an API
+    route (the web origin would answer either with a 404); an absolute
+    ``http(s)`` address is accepted.  Everything else is refused.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    link = value.strip()
+    if link.startswith("/"):
+        return None if link.startswith("//") or link.startswith("/v1/") else link
+    if link.startswith("http://") or link.startswith("https://"):
+        return link
+    return None
+
+
+def _appealed_decision_cids() -> set[str]:
+    """Every decision cid an appeal already answers."""
+    try:
+        with db.SessionLocal() as session:
+            rows = session.query(Appeal.decision_cid).all()
+        return {row[0] for row in rows if isinstance(row[0], str) and row[0]}
+    except Exception:  # pragma: no cover - appeals is a shipped plugin
+        logger.debug("could not read appeals", exc_info=True)
+        return set()
+
+
+def _latest_decisions(target_cids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    """The standing decision for each target, by target cid.
+
+    "Standing" is the last decision saved for the target: a later ``release``
+    puts a held paper back, so the older hold is no longer an open action.
+    """
+    targets = sorted({target for target in target_cids if isinstance(target, str) and target})
+    if not targets:
+        return {}
+    with db.SessionLocal() as session:
+        rows = (
+            session.query(ModerationDecision)
+            .filter(ModerationDecision.target_cid.in_(targets))
+            .order_by(ModerationDecision.decided_at.asc(), ModerationDecision.decision_cid.asc())
+            .all()
+        )
+        latest: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            latest[row.target_cid] = {
+                "decision_cid": row.decision_cid,
+                "target_cid": row.target_cid,
+                "action": row.action,
+                "clause": row.clause,
+                "decided_at": row.decided_at,
+            }
+        return latest
+
+
+def _appeal_available_item(
+    decision_cid: str,
+    target_cid: str,
+    action: str,
+    *,
+    paper: Optional[Paper] = None,
+    version: Optional[PaperVersion] = None,
+    title: Optional[str] = None,
+    reason: Optional[str] = None,
+    created_at: Any = None,
+    target_kind: Optional[str] = None,
+    link: Optional[str] = None,
+    clause: Optional[str] = None,
+    source: str = "decision",
+    notification_id: Optional[int] = None,
+    notified: bool = False,
+) -> dict[str, Any]:
+    """One open appeal action, naming the paper and linking to where it is filed."""
+    short_id = getattr(paper, "short_id", None)
+    if title is None and version is not None:
+        title = getattr(version, "title", None)
+    if title is None:
+        try:
+            from app.modules.moderation.outcomes import paper_title
+
+            title = paper_title(target_cid)
+        except Exception:  # pragma: no cover - outcomes is a shipped plugin
+            title = None
+
+    if action == "hide":
+        noun = {"post": "post", "annotation": "annotation", "review": "review"}.get(
+            target_kind or "", "post"
+        )
+        if title:
+            summary = f'Appeal the removal of your {noun} on "{title}".'
+        else:
+            summary = f"Appeal the removal of your {noun}."
+        if link is None:
+            try:
+                from app.modules.moderation.outcomes import item_link
+
+                link = item_link(target_cid, target_kind)
+            except Exception:  # pragma: no cover - outcomes is a shipped plugin
+                link = None
+    else:
+        verb = _APPEAL_VERBS.get(action, "decision on")
+        if title:
+            summary = f'Appeal the {verb} "{title}".'
+        elif short_id:
+            summary = f"Appeal the {verb} {short_id}."
+        else:
+            summary = f"Appeal the {verb} your paper."
+        if link is None and short_id:
+            link = f"/p/{short_id}"
+
+    item = _item(
+        "appeal_available",
+        summary,
+        paper=paper,
+        version=version,
+        reason=reason,
+        created_at=created_at,
+        link=link,
+        decisionCid=decision_cid,
+        decision_cid=decision_cid,
+        action=action,
+        clause=clause,
+        targetCid=target_cid,
+        target_cid=target_cid,
+        source=source,
+        notified=notified,
+        status="open",
+    )
+    if notification_id is not None:
+        item["notificationId"] = notification_id
+    return item
+
+
 def _moderation_outcomes(
     did: str,
     paper_by_cid: Mapping[str, Paper],
     version_by_cid: Mapping[str, PaperVersion],
     paper_cids: Iterable[str],
 ) -> list[dict[str, Any]]:
-    """Decisions about the caller's papers, merged with their unread notices."""
+    """The appeals still open to the caller: a hold or a hidden record.
+
+    A decision that changed nothing (``dismiss``, ``list``, ``release``) or
+    that has already been appealed is not something left to do, so it appears
+    in Notifications only.  The reason lives in its own field, exactly once.
+    """
     paper_cids = set(paper_cids)
     targets = set(paper_cids)
     targets |= {
@@ -508,135 +693,225 @@ def _moderation_outcomes(
         for version_cid, version in version_by_cid.items()
         if version.paper_cid in paper_cids
     }
-
+    appealed = _appealed_decision_cids()
     merged: dict[str, dict[str, Any]] = {}
 
-    # Decisions stored on this node about one of the caller's papers.
-    if targets:
-        with db.SessionLocal() as session:
-            rows = (
-                session.query(ModerationDecision)
-                .filter(ModerationDecision.target_cid.in_(sorted(targets)))
-                .order_by(ModerationDecision.decided_at.desc(), ModerationDecision.decision_cid)
-                .all()
-            )
-            decisions = [
-                {
-                    "decision_cid": row.decision_cid,
-                    "target_cid": row.target_cid,
-                    "action": row.action,
-                    "clause": row.clause,
-                    "decided_at": row.decided_at,
-                }
-                for row in rows
-            ]
-        for decision in decisions:
-            action = decision["action"]
-            if action not in {"hold", "reject", "delist", "tombstone", "hide"}:
-                continue
-            version = version_by_cid.get(decision["target_cid"])
-            paper = paper_by_cid.get(version.paper_cid) if version is not None else None
-            if paper is None:
-                paper = paper_by_cid.get(decision["target_cid"])
-            short_id = getattr(paper, "short_id", None) or decision["target_cid"]
-            title = getattr(version, "title", None) if version is not None else None
-            reason = _decision_reason(decision["decision_cid"])
-            if title and action in {"hold", "reject", "delist"}:
-                verb = {"hold": "put on hold", "reject": "rejected", "delist": "delisted"}[action]
-                summary = f'Your paper "{title}" was {verb}' + (f": {reason}." if reason else ".")
-            else:
-                summary = f"Moderation decision: {action} on {short_id}"
-            item = _item(
-                "moderation_outcome",
-                summary,
-                paper=paper,
-                version=version,
-                reason=reason,
-                created_at=decision["decided_at"],
-                decisionCid=decision["decision_cid"],
-                decision_cid=decision["decision_cid"],
-                action=decision["action"],
-                clause=decision["clause"],
-                targetCid=decision["target_cid"],
-                source="decision",
-                notified=False,
-            )
-            merged[f"decision:{decision['decision_cid']}"] = item
+    # The standing decision about each of the caller's papers or versions.
+    for target_cid, decision in _latest_decisions(targets).items():
+        action = decision["action"]
+        decision_cid = decision["decision_cid"]
+        if action not in APPEALABLE_ACTIONS or decision_cid in appealed:
+            continue
+        version = version_by_cid.get(target_cid)
+        paper = paper_by_cid.get(version.paper_cid) if version is not None else None
+        if paper is None:
+            paper = paper_by_cid.get(target_cid)
+        merged[decision_cid] = _appeal_available_item(
+            decision_cid,
+            target_cid,
+            action,
+            paper=paper,
+            version=version,
+            reason=_decision_reason(decision_cid),
+            created_at=decision["decided_at"],
+            clause=decision["clause"],
+            source="decision",
+        )
 
-    # Unread notices the moderation and flags plugins sent the caller.
+    # Hidden posts and reviews the caller wrote have no place in the paper
+    # catalog above; the notice addressed to their author is the link.  Read
+    # and unread alike: reading the notice is not filing the appeal.
     with db.SessionLocal() as session:
         rows = (
             session.query(Notification)
             .filter(
                 Notification.did == did,
-                Notification.read.is_(False),
-                Notification.kind.in_(
-                    [MODERATION_DECISION_KIND, RECORD_DECISION_KIND, FLAG_DECIDED_KIND]
-                ),
+                Notification.kind.in_([MODERATION_DECISION_KIND, RECORD_DECISION_KIND]),
             )
             .order_by(Notification.id.desc())
             .all()
         )
         notices = [(row.id, row.kind, row.payload) for row in rows]
 
-    for notification_id, kind, payload in notices:
+    notice_targets = [
+        payload.get("target_cid") or payload.get("targetCid")
+        for _id, _kind, payload in notices
+        if isinstance(payload, Mapping)
+    ]
+    latest_for_notice_target = _latest_decisions(notice_targets)
+
+    for notification_id, _kind, payload in notices:
         payload = payload if isinstance(payload, Mapping) else {}
+        action = payload.get("action")
+        if action not in APPEALABLE_ACTIONS:
+            continue
         decision_cid = payload.get("decision_cid") or payload.get("decisionCid")
         target_cid = payload.get("target_cid") or payload.get("targetCid")
-        version = version_by_cid.get(target_cid) if isinstance(target_cid, str) else None
-        paper = paper_by_cid.get(version.paper_cid) if version is not None else None
-        if paper is None and isinstance(target_cid, str):
-            paper = paper_by_cid.get(target_cid)
-
-        # Informational outcomes (dismissals, listings, flag outcomes for reporters)
-        # go to Notifications only, not Needs your attention.
-        if kind == FLAG_DECIDED_KIND:
+        if not isinstance(decision_cid, str) or not decision_cid:
             continue
-        action = payload.get("action")
-        if action not in {"hold", "reject", "delist", "tombstone", "hide"}:
+        if decision_cid in appealed:
+            continue
+        if not isinstance(target_cid, str) or not target_cid:
+            continue
+        standing = latest_for_notice_target.get(target_cid)
+        if standing is not None and standing["decision_cid"] != decision_cid:
+            # A later decision (a release, another hold) superseded this one.
             continue
 
-        key = (
-            f"decision:{decision_cid}"
-            if isinstance(decision_cid, str) and decision_cid
-            else f"notification:{notification_id}"
-        )
-        existing = merged.get(key)
+        existing = merged.get(decision_cid)
         if existing is not None:
             # The stored decision is the richer view; note that it was notified.
             existing["notificationId"] = notification_id
             existing["notified"] = True
             continue
 
-        title = None
-        if version is not None:
-            title = getattr(version, "title", None)
+        version = version_by_cid.get(target_cid)
+        paper = paper_by_cid.get(version.paper_cid) if version is not None else None
+        if paper is None:
+            paper = paper_by_cid.get(target_cid)
+        target_kind = payload.get("target_kind") or payload.get("item_kind")
         reason = payload.get("reason")
-        if title and action in {"hold", "reject", "delist"}:
-            verb = {"hold": "put on hold", "reject": "rejected", "delist": "delisted"}[action]
-            summary = payload.get("summary") or (f'Your paper "{title}" was {verb}' + (f": {reason}." if reason else "."))
-        else:
-            summary = payload.get("summary") or (
-                f"Moderation decision: {action}" if action else "Moderation decision"
-            )
-
-        item = _item(
-            "moderation_outcome",
-            summary,
+        merged[decision_cid] = _appeal_available_item(
+            decision_cid,
+            target_cid,
+            action,
             paper=paper,
             version=version,
-            reason=reason,
-            decisionCid=decision_cid,
-            decision_cid=decision_cid,
-            action=action,
-            clause=payload.get("clause"),
-            targetCid=target_cid,
+            reason=reason if isinstance(reason, str) and reason.strip() else None,
+            target_kind=target_kind if isinstance(target_kind, str) else None,
+            link=_safe_web_link(payload.get("link")),
+            clause=payload.get("clause") if isinstance(payload.get("clause"), str) else None,
             source="notification",
-            notificationId=notification_id,
+            notification_id=notification_id,
+            notified=True,
         )
-        merged[key] = item
 
     return list(merged.values())
+
+
+def _appeal_panels(
+    did: str,
+    paper_by_cid: Mapping[str, Paper],
+    version_by_cid: Mapping[str, PaperVersion],
+) -> list[dict[str, Any]]:
+    """Open seats the caller holds, each asking for their vote.
+
+    A seat is open while its ``appeal_panels.vote`` is NULL and the appeal is
+    still ``pending``; voting or a panel decision drops it.  The link opens the
+    vote form in the moderation console.
+    """
+    try:
+        with db.SessionLocal() as session:
+            rows = (
+                session.query(AppealPanelMember, Appeal)
+                .join(Appeal, Appeal.appeal_cid == AppealPanelMember.appeal_cid)
+                .filter(
+                    AppealPanelMember.member_did == did,
+                    AppealPanelMember.vote.is_(None),
+                    Appeal.status == "pending",
+                )
+                .order_by(Appeal.filed_at)
+                .all()
+            )
+            seats = [
+                {
+                    "appeal_cid": str(appeal.appeal_cid),
+                    "decision_cid": str(appeal.decision_cid),
+                    "filed_at": appeal.filed_at,
+                }
+                for _seat, appeal in rows
+            ]
+    except Exception:  # pragma: no cover - appeals is a shipped plugin
+        logger.debug("could not read the caller's appeal seats", exc_info=True)
+        return []
+
+    if not seats:
+        return []
+
+    from app.modules.appeals.service import PANEL_VOTE_WINDOW, resolve_decision
+
+    items: list[dict[str, Any]] = []
+    for seat in seats:
+        paper = None
+        version = None
+        try:
+            decision = resolve_decision(seat["decision_cid"])
+            version = version_by_cid.get(decision.version_cid)
+            paper = paper_by_cid.get(decision.paper_cid)
+            if paper is None and version is not None:
+                paper = paper_by_cid.get(version.paper_cid)
+        except Exception:  # pragma: no cover - a decision this node no longer holds
+            logger.debug("could not resolve appeal %s", seat["appeal_cid"], exc_info=True)
+
+        title = getattr(version, "title", None) if version is not None else None
+        filed_at = seat["filed_at"]
+        deadline = filed_at + PANEL_VOTE_WINDOW if isinstance(filed_at, datetime) else None
+        deadline_day = deadline.date().isoformat() if deadline is not None else None
+        if title:
+            summary = f'Vote on the appeal for "{title}"'
+        else:
+            summary = "Vote on an appeal panel"
+        if deadline_day:
+            summary += f" by {deadline_day}"
+        summary += "."
+
+        items.append(
+            _item(
+                "appeal_panel",
+                summary,
+                paper=paper,
+                version=version,
+                created_at=filed_at,
+                link=f"/mod#appeal-{seat['appeal_cid']}-title",
+                appealCid=seat["appeal_cid"],
+                appeal_cid=seat["appeal_cid"],
+                decisionCid=seat["decision_cid"],
+                deadline=deadline.isoformat() if deadline is not None else None,
+                dueAt=deadline_day,
+                status="waiting",
+            )
+        )
+    return items
+
+
+def _email_verification(did: str) -> list[dict[str, Any]]:
+    """Ask the caller to confirm their email address until they have."""
+    try:
+        from app.modules.profiles import email_verified, read_profile
+    except Exception:  # pragma: no cover - profiles is a shipped plugin
+        return []
+    try:
+        profile = read_profile(did)
+        if profile is None or not getattr(profile, "email", None):
+            return []
+        if email_verified(did):
+            return []
+    except Exception:  # pragma: no cover - a damaged profile must not break the dashboard
+        logger.debug("could not read %s's profile verification state", did, exc_info=True)
+        return []
+
+    link = "/verify-email"
+    try:
+        with db.SessionLocal() as session:
+            row = (
+                session.query(Notification)
+                .filter(Notification.did == did, Notification.kind == "email.verify")
+                .order_by(Notification.id.desc())
+                .first()
+            )
+            payload = row.payload if row is not None and isinstance(row.payload, Mapping) else {}
+        link = _safe_web_link(payload.get("link")) or link
+    except Exception:  # pragma: no cover - the notification is best-effort
+        logger.debug("could not read %s's verification notice", did, exc_info=True)
+
+    return [
+        _item(
+            "email_verification",
+            "Confirm your email address.",
+            link=link,
+            status="waiting",
+        )
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -831,12 +1106,16 @@ def build_dashboard(did: str) -> dict[str, Any]:
     invitations = _review_invitations(did, paper_by_cid, version_by_cid)
     replies = _author_replies(my_review_cids, reviews, paper_by_cid, version_by_cid)
     outcomes = _moderation_outcomes(did, paper_by_cid, version_by_cid, paper_cids)
+    panels = _appeal_panels(did, paper_by_cid, version_by_cid)
+    verification = _email_verification(did)
 
     groups = {
         "consents_to_sign": consents,
         "review_invitations": invitations,
         "author_replies": replies,
         "moderation_outcomes": outcomes,
+        "appeal_panels": panels,
+        "email_verification": verification,
     }
     flat = [item for kind in ATTENTION_KINDS for item in groups[kind]]
 
