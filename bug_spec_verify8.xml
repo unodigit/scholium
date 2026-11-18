@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 8: findings of verify sweep 8 (2026-11-18, main @ 2b8d196). 14/16 journeys pass; 05 and 07 fail.
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Fixed directly, not filed: the paper header's leading "·" (d398c82).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/appeals/**,apps/api/src/app/modules/moderation/hides.py,apps/api/src/app/modules/moderation/tests/**,apps/web/src/features/paper-discussion/**,apps/web/src/features/mod-console/**">
+    <title>Authors are told to appeal a hidden post but there is no way to; panel members land on a moderators-only /mod page and see no record of their vote</title>
+    <symptoms>
+      After a moderator hides sam's post, his Needs your attention says 'Appeal the removal of your post on "{title}"'; its Open link shows only "Hidden by moderation: ..." in the thread - there is no Appeal control anywhere (the web's only appeal dialog is the paper-hold one)
+      A drawn panel member following the notice lands at the top of /mod, which first says "Moderators only - your account is tier 3"; the #appeal-... anchor is not scrolled to after client-side navigation (a full reload does scroll)
+      After voting, the vote form shows a blank form again with no "You voted" state; the panel deadline prints as "2026-12-02" while other dates use "18 Nov 2026"
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 step 7 (screenshots/07-flag-and-dispute/07g-author-attention-post-hidden.png, 07h-author-appeal-link-opens-discussion-no-appeal-control.png)
+      Journeys 05 and 11 step 8-9 (screenshots/05-follow-search-notify/06c-okafor-mod-appeal-form.png, screenshots/11-moderation-hold-and-appeal/08c-open-lands-at-top-of-mod.png, 08d-panel-member-vote-form.png)
+    </reproduction_steps>
+    <expected>The author of a hidden post (or annotation, or review) sees, on the hidden placeholder in the thread, "Your post was hidden: {reason}. Appeal" which opens an appeal form (statement, signed appeal record whose target is that moderation decision - the appeals API accepts decisions on any record type it already lets moderators decide, with the same one-appeal rule and panel draw); after filing, the placeholder shows "Appeal filed on {date} - awaiting panel" and the attention item disappears; a panel member visiting /mod sees "You're on the appeal panel for {paper title}" first (the moderators-only notice applies only to the moderator queue sections), the page scrolls to and focuses the #appeal-{id} target after client navigation as well as on load, the vote form shows "You voted {choice} on {date}" with an option to change the vote until the panel decides (if the API allows; otherwise read-only), and deadlines use the shared date formatter</expected>
+    <actual>Dead-end appeal call to action; confusing panel experience</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/notifications/**,apps/api/src/app/modules/me/**,apps/api/src/app/modules/recovery/**,apps/web/src/features/dashboard/notifications-card.tsx,apps/web/src/features/dashboard/notifications-card.test.tsx,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/guardian-approval.tsx,apps/web/src/features/dashboard/guardian-approval.test.tsx">
+    <title>Answered-state wording follows "read", not what the person did; voted panel notices still ask for a vote</title>
+    <symptoms>
+      mei, a guardian who never answered, sees "You approved the recovery request from Hanna Varga." once the request closed - the past-tense wording is derived from read state, not from the guardian's own approval
+      okafor voted on the appeal panel (appeal_panels.vote = upheld, POST 200) and the attention item left, but his notification stays Unread and still says 'Vote on the appeal for "..." by 2026-12-02.' with Open
+      Reporter notices repeat the reporter's category on a line under the sentence; after "You approved" on a recovery request the bell keeps the old count until the next page
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 step 7 (screenshots/06-key-recovery/07i-mei-did-not-answer-notification-says-you-approved.png); journey 05 step 6 (screenshots/05-follow-search-notify/06b-okafor-voted-panel-notice-still-asks-to-vote.png); journey 11 step 9 (screenshots/11-moderation-hold-and-appeal/09c-panel-notification-after-vote.png)
+    </reproduction_steps>
+    <expected>A notification's displayed outcome comes from the recorded fact, not from read state: a recovery notice reads "You approved/declined the recovery request from {name} on {date}" only for that guardian's own answer, otherwise "The recovery request from {name} closed ({n} of {m} guardians approved)" or "... was cancelled"; a panel notice becomes "You voted {choice} on the appeal for '{title}'" (marked read) once the member's vote is recorded, or "The panel decided: {outcome}" once decided; an answer resolves its notification server-side at the moment of the action; the notifications card does not repeat a field already in the sentence; any answer made from the dashboard updates the bell count immediately (shared unread state)</expected>
+    <actual>Misleading past tense; stale vote request; duplicated line; stale bell</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/feeds/**">
+    <title>Atom/JSON feeds list authors as raw did:key strings and link entries to API JSON</title>
+    <symptoms>
+      The category Atom feed lists each entry's authors as raw did:key strings, and the entry link points at the API's JSON instead of the paper page
+    </symptoms>
+    <reproduction_steps>
+      Journey 02: open /c/cs.AI, follow the Atom link (screenshots/02-search-and-discover/05d-atom-feed.png)
+    </reproduction_steps>
+    <expected>Atom and JSON feed entries name authors by profile display name (DID only when no name exists, never after erasure leaks a name), link rel="alternate" to the web paper page (from the configured public web URL), and keep a link to the API record as rel="related"; feed validity tests still pass</expected>
+    <actual>DIDs and API links in feeds</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/review-form/**,apps/web/src/features/paper-reviews/**">
+    <title>Review form and report leftovers: Markdown headings render raw; conflict copy and footer text do not fit the state; empty gap above Reveal</title>
+    <symptoms>
+      The form says "Markdown is allowed" but "## Summary" in a report renders as literal "## Summary" (the safe subset has no headings)
+      For a reviewer with an affiliation conflict, the conflict-check copy after commit or reveal still says "the node decides whether it can be committed"
+      An empty gap of about 200px sits above "Reveal review" on the sealed card; the update form footer says it "seals it until it is revealed" although updates are public immediately
+    </symptoms>
+    <reproduction_steps>
+      Journey 12 (screenshots/12-review-commit-reveal/06a-anon-reports-reviewer-a.png, and the sealed-card step); journey 13 update form
+    </reproduction_steps>
+    <expected>Reports render Markdown headings (## to ####, mapped below the page's heading level) in the safe subset; the conflict panel's copy reflects the committed/revealed state ("Committed despite a declared affiliation overlap" as a neutral note); the sealed card has no empty gap; the update form's footer states that the update is published immediately (scores and recommendation public, written report per the version's gate)</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/appeal-dialog.tsx,apps/web/src/features/paper-page/appeal-dialog.test.tsx,apps/web/src/features/paper-page/notice-dialog.tsx,apps/web/src/features/paper-page/notice-dialog.test.tsx,apps/web/src/features/paper-page/compare.ts,apps/web/src/features/paper-page/compare.test.ts,apps/web/src/features/paper-page/compare-view.tsx,apps/web/src/features/paper-page/paper-page.css,apps/web/src/features/paper-page/paper-page.css.test.ts,apps/web/src/app/(paper-ai)/**">
+    <title>Paper page leftovers: confirmations print raw CIDs, compare shows "types ." with a space, sidebar overflows by 4px, /ai tab title uses the id</title>
+    <symptoms>
+      The appeal-filed and notice-issued confirmations print the raw record CID
+      The compare view's text diff shows "five shift types ." with a space before the period (tokens re-joined with spaces around punctuation)
+      The paper sidebar (aside.ppg-margin) is 4px wider than its column, so a horizontal scrollbar appears under the review cards
+      The standalone /ai/{id} page's document title uses the sch: id instead of the paper title
+    </symptoms>
+    <reproduction_steps>
+      Journeys 11, 13, 15 (screenshots/11-moderation-hold-and-appeal/05b-appeal-filed.png, 13-new-version-and-review-update/05b-anon-compare.png, 15-correction-notice/05b-retraction-confirm.png); open /ai/{id}
+    </reproduction_steps>
+    <expected>Confirmations say what happened in words with a link to the record's page (no bare CID; the id may appear in a details disclosure); the word diff preserves the original spacing so punctuation stays attached; the margin column never overflows its track (box-sizing and width fixed, verified by a CSS test); /ai/{id} is titled "AI pre-review · {paper title} · Scholium" like the other standalone pages</expected>
+    <actual>As described</actual>
+  </bug>
+
+</bug_spec>
