@@ -58,12 +58,16 @@ export interface PostActions {
   readonly voted: ReadonlySet<string>;
   /** Posts this reader has reported in this tab, with the reason given. */
   readonly reported: ReadonlyMap<string, ReportReason>;
+  /** Posts this reader has appealed in this tab, with the date filed. */
+  readonly appealed?: ReadonlyMap<string, string>;
   /** Sign and submit a reply. Resolves when it is in; rejects to show why not. */
   reply(parent: DiscussionPost, text: string): Promise<void>;
   /** Mark helpful. Resolves when counted; rejects to show why not. */
   helpful(post: DiscussionPost): Promise<void>;
   /** File a report. Resolves when filed; rejects to show why not. */
   report(post: DiscussionPost, reason: ReportReason): Promise<void>;
+  /** File an appeal of a hidden post. Resolves when filed; rejects to show why not. */
+  appeal?(post: DiscussionPost, grounds: string): Promise<void>;
 }
 
 export interface PostCardProps {
@@ -88,6 +92,10 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
   const [panel, setPanel] = useState<Panel | null>(null);
   const [helpfulBusy, setHelpfulBusy] = useState(false);
   const [helpfulFailure, setHelpfulFailure] = useState<ActionFailure | null>(null);
+  const [appealOpen, setAppealOpen] = useState(false);
+  const [appealGrounds, setAppealGrounds] = useState("");
+  const [appealBusy, setAppealBusy] = useState(false);
+  const [appealError, setAppealError] = useState<string | null>(null);
 
   const postRef = useRef<HTMLDivElement>(null);
   const replyButton = useRef<HTMLButtonElement>(null);
@@ -183,11 +191,74 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
         ) : null}
 
         {post.hidden === true ? (
-          <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
-            {post.hiddenReason !== null && post.hiddenReason !== undefined && post.hiddenReason.trim() !== ""
-              ? `Hidden by moderation: ${post.hiddenReason.trim()}`
-              : "Hidden by moderation."}
-          </p>
+          isOwn && actions.appealed?.has(post.cid) ? (
+            <p className="pd-post__text pd-post__text--hidden" data-hidden="true" data-appeal-filed="true">
+              Appeal filed on <LocalDate value={actions.appealed.get(post.cid) ?? null} /> - awaiting panel
+            </p>
+          ) : isOwn ? (
+            <>
+              <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
+                {post.hiddenReason !== null && post.hiddenReason !== undefined && post.hiddenReason.trim() !== ""
+                  ? `Your post was hidden: ${post.hiddenReason.trim()}.`
+                  : "Your post was hidden."}{" "}
+                {actions.appeal !== undefined ? (
+                  <button
+                    type="button"
+                    className="pd-action"
+                    data-action="appeal"
+                    onClick={() => setAppealOpen((current) => !current)}
+                  >
+                    Appeal
+                  </button>
+                ) : (
+                  <a className="pd-action" href={actions.signInHref}>
+                    Appeal
+                  </a>
+                )}
+              </p>
+              {appealOpen && actions.appeal !== undefined ? (
+                <form
+                  className="pd-appeal-form"
+                  onSubmit={async (event) => {
+                    event.preventDefault();
+                    setAppealBusy(true);
+                    setAppealError(null);
+                    try {
+                      await actions.appeal!(post, appealGrounds);
+                      setAppealOpen(false);
+                      setAppealGrounds("");
+                    } catch (error) {
+                      const failure = describeActionError(error, "appeal");
+                      setAppealError(failure.message);
+                    } finally {
+                      setAppealBusy(false);
+                    }
+                  }}
+                >
+                  <textarea
+                    className="pd-textarea"
+                    value={appealGrounds}
+                    onChange={(event) => setAppealGrounds(event.target.value)}
+                    placeholder="Why should the decision be reconsidered?"
+                  />
+                  {appealError !== null ? (
+                    <p className="pd-error" role="alert">
+                      {appealError}
+                    </p>
+                  ) : null}
+                  <button type="submit" className="pd-button" disabled={appealBusy}>
+                    {appealBusy ? "Filing…" : "Sign and file appeal"}
+                  </button>
+                </form>
+              ) : null}
+            </>
+          ) : (
+            <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
+              {post.hiddenReason !== null && post.hiddenReason !== undefined && post.hiddenReason.trim() !== ""
+                ? `Hidden by moderation: ${post.hiddenReason.trim()}`
+                : "Hidden by moderation."}
+            </p>
+          )
         ) : post.text !== null ? (
           <p className="pd-post__text">{post.text}</p>
         ) : (

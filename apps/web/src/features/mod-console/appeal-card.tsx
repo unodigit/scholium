@@ -56,6 +56,9 @@ export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
       <header className="mc-case-header">
         <div className="mc-case-heading">
           <p className="mc-section-kicker">Appeal</p>
+          <p className="mc-case-panel">
+            You&apos;re on the appeal panel for {appeal.paper?.title ?? "a moderation decision"}
+          </p>
           <h3 id={headingId} className="mc-case-title">
             {appeal.paper?.title ?? "Appeal of a moderation decision"}
           </h3>

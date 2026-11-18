@@ -92,7 +92,11 @@ def post_appeal(
     short_id: Optional[str] = None
     decision = resolve_decision(appeal.decision_cid)
     paper = submissions.get_paper(decision.paper_cid)
-    version = submissions.get_version(decision.version_cid)
+    version = None
+    if decision.version_cid is not None:
+        version = submissions.get_version(decision.version_cid)
+    elif paper is not None and getattr(paper, "latest_version_cid", None):
+        version = submissions.get_version(paper.latest_version_cid)
     if paper is not None and version is not None:
         short_id = f"{paper.short_id}/v{int(version.n)}"
 
@@ -243,6 +247,8 @@ class VoteAccepted(BaseModel):
     decision: Optional[str] = None
     #: The outcome the panel agreed on, when the appeal has been decided.
     outcome: Optional[str] = None
+    #: When this vote was recorded (UTC).
+    votedAt: Optional[datetime] = None
 
 
 @router.post(
@@ -277,6 +283,8 @@ def post_vote(
     """
     outcome, reasons = vote_fields(body)
     result = cast_vote(cid, principal.did, outcome, reasons)
+    from datetime import datetime, timezone
+
     return VoteAccepted(
         appeal=result.appeal_cid,
         vote=result.outcome,
@@ -284,4 +292,5 @@ def post_vote(
         votes=result.votes_cast,
         decision=result.decision_cid,
         outcome=result.decided_outcome,
+        votedAt=datetime.now(timezone.utc),
     )

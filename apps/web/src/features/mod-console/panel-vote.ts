@@ -156,6 +156,8 @@ export interface VoteAccepted {
   readonly decisionCid: string | null;
   /** The outcome the panel agreed on, once it has decided. */
   readonly decidedOutcome: string | null;
+  /** When this vote was recorded (ISO 8601), when the API said. */
+  readonly votedAt?: string | null;
 }
 
 /**
@@ -176,6 +178,7 @@ export function parseVoteAccepted(
     votes: readCount(item.votes),
     decisionCid: readText(item.decision),
     decidedOutcome: readText(item.outcome),
+    votedAt: readText(item.votedAt) ?? readText(item.voted_at) ?? readText(item.created),
   };
 }
 

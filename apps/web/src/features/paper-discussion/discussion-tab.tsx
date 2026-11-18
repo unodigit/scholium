@@ -43,6 +43,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "../ui-kit";
+import { api } from "../../lib/api";
+import { signRecord as signRecordFallback } from "../web-auth/sign-record";
 import { useViewer } from "../review-form/use-viewer";
 import type { Viewer } from "../review-form/viewer";
 import { ComposeForm } from "./compose-form";
@@ -169,6 +171,7 @@ export function DiscussionTab({
   const [attempt, setAttempt] = useState(0);
   const [voted, setVoted] = useState<ReadonlySet<string>>(() => new Set());
   const [reported, setReported] = useState<ReadonlyMap<string, ReportReason>>(() => new Map());
+  const [appealed, setAppealed] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [announcement, setAnnouncement] = useState("");
   const [starting, setStarting] = useState(false);
   // A host may swap `paperId` (an SPA navigating between papers) without
@@ -274,15 +277,34 @@ export function DiscussionTab({
     setAnnouncement("Reported. A moderator will review it.");
   };
 
+  const appeal = async (target: DiscussionPost, grounds: string): Promise<void> => {
+    const sign = actions?.sign ?? signRecordFallback;
+    const decisionCid = target.decisionCid;
+    if (typeof decisionCid !== "string" || decisionCid === "") {
+      throw new Error("This post has no moderation decision to appeal.");
+    }
+    const paperCid = data?.paperCid ?? null;
+    const record = await sign("appeal", {
+      target: decisionCid,
+      grounds: grounds.trim(),
+      paper: paperCid,
+    }, null);
+    await api.post("/appeals", record);
+    setAppealed((current) => new Map(current).set(target.cid, new Date().toISOString()));
+    setAnnouncement("Appeal filed.");
+  };
+
   const postActions: PostActions = {
     signedIn,
     signInHref,
     viewerDid,
     voted,
     reported,
+    appealed,
     reply: post,
     helpful: markHelpful,
     report,
+    appeal,
   };
 
   return (

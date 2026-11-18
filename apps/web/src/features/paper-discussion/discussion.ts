@@ -80,6 +80,8 @@ export interface DiscussionPost {
   readonly hiddenReason?: string | null;
   /** When the hide decision was signed (ISO 8601), when the node serves it. */
   readonly hiddenAt?: string | null;
+  /** cid of the moderation decision that hid the post, when the node serves one. */
+  readonly decisionCid?: string | null;
   readonly replies: readonly DiscussionPost[];
 }
 
@@ -184,6 +186,7 @@ function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPos
     hidden: raw.hidden === true || pickTimestamp(raw, "hidden_at", "hiddenAt") !== null,
     hiddenReason: pickText(raw, "hidden_reason", "hiddenReason", "reason"),
     hiddenAt: pickTimestamp(raw, "hidden_at", "hiddenAt"),
+    decisionCid: pickText(raw, "decision_cid", "decisionCid"),
     replies,
   };
 }
@@ -604,7 +607,7 @@ export async function reportPostFlag(
 /* Failures, in words                                                          */
 /* -------------------------------------------------------------------------- */
 
-export type DiscussionAction = "post" | "helpful" | "report";
+export type DiscussionAction = "post" | "helpful" | "report" | "appeal";
 
 /** What went wrong with an action, in words, and what the reader can do about it. */
 export interface ActionFailure {

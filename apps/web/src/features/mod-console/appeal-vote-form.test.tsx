@@ -174,7 +174,7 @@ describe("AppealVoteForm casting", () => {
     submit();
 
     const status = await screen.findByText(/You voted/);
-    expect(status.textContent).toContain("You voted: Overturn the decision.");
+    expect(status.textContent).toContain("You voted Overturn the decision");
     expect(status.textContent).toContain("2 of 3 members have voted");
     expect(status.textContent).toContain("2 matching votes decide the appeal");
     expect(screen.getByText(PANEL_RECORD_NOTICE)).toBeTruthy();

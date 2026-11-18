@@ -569,9 +569,69 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
     if key is None:
         raise VoteNodeKeyUnavailable(appeal_cid)
 
-    prior = _prior_version_state(decision.version_cid, str(appeal.decision_cid))
     appealed_body = _appealed_decision_body(str(appeal.decision_cid))
     appealed_action = appealed_body.get("action") if isinstance(appealed_body, Mapping) else None
+
+    # A decision on a hidden record (post, annotation or review): restoration
+    # is an unhide, not a version-state change.
+    if decision.version_cid is None:
+        if appealed_action != "hide":
+            return None
+        from app.modules.moderation.hides import get_hidden_entry
+
+        if get_hidden_entry(decision.target_cid) is None:
+            return None
+
+        clause = appealed_body.get("clause") if isinstance(appealed_body, Mapping) else None
+        if not isinstance(clause, str) or not clause:
+            clause = "MOD-01"
+
+        body = {
+            "target": decision.target_cid,
+            "action": RELEASE_ACTION,
+            "state": submissions.LISTED,
+            "clause": clause,
+            "reason": (
+                f"Appeal {appeal_cid} was {outcome} by the panel; "
+                "this decision restores the hidden record."
+            ),
+            "paper": decision.paper_cid,
+            "appeal": appeal_cid,
+            "appeal_restoration": appeal_cid,
+        }
+        errors = validate_body(MODERATION_DECISION_TYPE, body)
+        if errors:  # pragma: no cover - the body is built from the record's own schema
+            raise _invalid(["body"], errors[0], "invalid_restoration")
+
+        appealed_entry = ledger.entry_by_cid(str(appeal.decision_cid))
+        appealed_created = (
+            ledger.stored_envelope(appealed_entry).created if appealed_entry is not None else None
+        )
+        record = sign_record(
+            {
+                "v": 1,
+                "type": MODERATION_DECISION_TYPE,
+                "author": did_key_from_signing_key(key),
+                "created": _created_after(appealed_created),
+                "prev": None,
+                "body": body,
+                "proofs": [],
+            },
+            key,
+        )
+        ledger.append(record)
+
+        _store_restoration_cid(appeal_cid, str(record["id"]))
+
+        try:
+            from app.modules import moderation as _moderation
+
+            _moderation.apply_decision(record)
+        except Exception:  # pragma: no cover - a projection, not the decision
+            logger.exception("could not apply the restoration of appeal %s", appeal_cid)
+        return str(record["id"])
+
+    prior = _prior_version_state(decision.version_cid, str(appeal.decision_cid))
     appealed_set_state = MODERATION_ACTION_STATES.get(appealed_action) if isinstance(appealed_action, str) else None
 
     # Guard: restoration only if the appealed decision is still the newest

@@ -85,6 +85,30 @@ export function AppealsSection({
     };
   }, [attempt, loadAppeals]);
 
+  // Scroll to (and focus) the appeal named by the URL hash, both on load and
+  // after client-side navigation.
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const scrollToHash = () => {
+      const hash = typeof window !== "undefined" ? window.location.hash : "";
+      if (hash === "") return;
+      const id = hash.replace(/^#/, "");
+      const element = document.getElementById(id);
+      if (element !== null) {
+        if (typeof element.scrollIntoView === "function") {
+          element.scrollIntoView({ block: "start" });
+        }
+        if (typeof (element as HTMLElement).focus === "function") {
+          (element as HTMLElement).focus();
+        }
+      }
+    };
+    scrollToHash();
+    const onHashChange = () => scrollToHash();
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [state.status, state.status === "ready" ? state.load : null]);
+
   return (
     <section className="mc-section" aria-labelledby={headingId}>
       <h2 id={headingId} className="mc-section-title">

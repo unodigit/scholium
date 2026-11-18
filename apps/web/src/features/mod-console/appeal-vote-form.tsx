@@ -40,6 +40,7 @@ import {
   type VoteValidation,
 } from "./panel-vote";
 import { SIGNIN_HREF } from "./queue";
+import { formatDate } from "./wire";
 import "./mod-console.css";
 
 /** Props for {@link AppealVoteForm}. */
@@ -281,6 +282,7 @@ function VoteRecorded({
   const voted =
     VOTE_CHOICES.find((choice) => choice.value === accepted.outcome)?.label ??
     outcomeLabel(accepted.outcome);
+  const votedOn = formatDate(accepted.votedAt ?? null);
 
   return (
     <section className="mc-vote mc-vote--recorded" aria-labelledby={headingId}>
@@ -299,7 +301,7 @@ function VoteRecorded({
         </p>
       ) : (
         <p className="mc-vote-lede" role="status">
-          You voted: <strong>{voted}</strong>.{" "}
+          You voted {voted}{votedOn === null ? "" : ` on ${votedOn}`}.{" "}
           {accepted.votes === null
             ? ""
             : `${accepted.votes} of ${PANEL_SIZE} members have voted. `}

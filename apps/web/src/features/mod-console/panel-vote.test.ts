@@ -124,6 +124,7 @@ describe("parseVoteAccepted", () => {
       votes: 2,
       decisionCid: "bafy-decision",
       decidedOutcome: "overturned",
+      votedAt: null,
     });
   });
 
@@ -142,6 +143,7 @@ describe("parseVoteAccepted", () => {
       votes: null,
       decisionCid: null,
       decidedOutcome: null,
+      votedAt: null,
     });
     expect(parseVoteAccepted("ok", fallback).outcome).toBe("upheld");
   });

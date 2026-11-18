@@ -285,8 +285,10 @@ class AppealedDecision:
 
     decision_cid: str
     moderator_did: str
-    #: cid of the paper version the decision was about.
-    version_cid: str
+    #: cid of the record the decision was about (a version, post, annotation or review).
+    target_cid: str
+    #: cid of the paper version the decision was about, when it was a version.
+    version_cid: Optional[str]
     #: cid of that version's paper (its genesis).
     paper_cid: str
 
@@ -304,25 +306,49 @@ def resolve_decision(target: str) -> AppealedDecision:
     """
     decision = get_decision(target)
     if decision is not None:
-        version_cid: object = decision.target_cid
+        target_cid: object = decision.target_cid
         moderator_did: object = decision.moderator_did
     else:
         entry = ledger.entry_by_cid(target)
         if entry is None or entry.record_type != DECISION_TYPE or not isinstance(entry.body, Mapping):
             raise UnknownAppealTarget(target)
-        version_cid = entry.body.get("target")
+        target_cid = entry.body.get("target")
         moderator_did = entry.author_did
 
-    version = submissions.get_version(version_cid)
-    if version is None:
-        # A decision about a version this node does not hold has no paper whose
-        # authors could appeal it.
+    if not isinstance(target_cid, str) or not target_cid:
         raise UnknownAppealTarget(target)
+
+    from app.modules import moderation as _moderation
+    from app.modules.moderation import outcomes as _outcomes
+
+    resolved = _moderation.resolve_decision_target(str(target_cid))
+    version_cid: Optional[str] = None
+    paper_cid: Optional[str] = None
+    if resolved is None:
+        if submissions.get_paper(str(target_cid)) is not None:
+            paper_cid = str(target_cid)
+        else:
+            raise UnknownAppealTarget(target)
+    else:
+        kind, record = resolved
+        if kind == _moderation.VERSION_TARGET:
+            version = record
+            version_cid = str(version.version_cid)
+            paper_cid = str(version.paper_cid)
+        elif kind == _moderation.POST_TARGET:
+            paper_cid = _outcomes._paper_cid(str(target_cid))
+        elif kind == _moderation.REVIEW_TARGET:
+            paper_cid = _outcomes._paper_cid(str(target_cid))
+
+    if not isinstance(paper_cid, str) or not paper_cid:
+        raise UnknownAppealTarget(target)
+
     return AppealedDecision(
         decision_cid=target,
         moderator_did=str(moderator_did),
-        version_cid=str(version.version_cid),
-        paper_cid=str(version.paper_cid),
+        target_cid=str(target_cid),
+        version_cid=version_cid,
+        paper_cid=paper_cid,
     )
 
 
@@ -340,8 +366,27 @@ def require_appellant(author: object, decision: AppealedDecision) -> None:
     Raises:
         AppealNotAuthorized: ``403``.
     """
-    if isinstance(author, str) and author in submissions.paper_authors(decision.paper_cid):
-        return
+    if not isinstance(author, str):
+        raise AppealNotAuthorized(author, decision.decision_cid, decision.paper_cid)
+
+    if decision.version_cid is not None:
+        if author in submissions.paper_authors(decision.paper_cid):
+            return
+    else:
+        # A decision on a post, annotation or review may be appealed by the
+        # member who signed that record (and, for a paper-level dismiss, by
+        # any author of the paper).
+        try:
+            from app.modules.moderation.decisions import _submitting_author_dids
+        except Exception:  # pragma: no cover - moderation is a shipped plugin
+            _submitting_author_dids = None
+        allowed: set[str] = set()
+        if _submitting_author_dids is not None:
+            allowed.update(_submitting_author_dids(decision.target_cid))
+        allowed.update(submissions.paper_authors(decision.paper_cid))
+        if author in allowed:
+            return
+
     raise AppealNotAuthorized(author, decision.decision_cid, decision.paper_cid)
 
 
@@ -471,14 +516,22 @@ def notify_panel_seated(
     if decision is not None:
         version_cid = decision.version_cid
         paper_cid = decision.paper_cid
-        version = submissions.get_version(decision.version_cid)
-        title = getattr(version, "title", None) if version is not None else None
+        if version_cid is not None:
+            version = submissions.get_version(version_cid)
+            title = getattr(version, "title", None) if version is not None else None
+        else:
+            try:
+                from app.modules.moderation import outcomes as _outcomes
+
+                title = _outcomes.paper_title(decision.target_cid)
+            except Exception:  # pragma: no cover - outcomes is a shipped plugin
+                title = None
         paper = submissions.get_paper(decision.paper_cid)
         short_id = getattr(paper, "short_id", None) if paper is not None else None
 
     filed_at = appeal.filed_at
     deadline = filed_at + PANEL_VOTE_WINDOW if isinstance(filed_at, datetime) else None
-    deadline_day = deadline.date().isoformat() if deadline is not None else None
+    deadline_day = deadline.strftime("%-d %b %Y") if deadline is not None else None
     link = f"/mod#appeal-{appeal.appeal_cid}-title"
     if title:
         summary = f'Vote on the appeal for "{title}"'
@@ -500,7 +553,7 @@ def notify_panel_seated(
         "paper_cid": paper_cid,
         "version_cid": version_cid,
         "deadline": deadline.isoformat() if deadline is not None else None,
-        "due_at": deadline_day,
+        "due_at": deadline.date().isoformat() if deadline is not None else None,
         "summary": summary,
         "outcome": summary,
         # The web inbox must open the form a panellist votes from, not an API
