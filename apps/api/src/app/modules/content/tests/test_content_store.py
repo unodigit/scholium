@@ -1,9 +1,17 @@
 """Tests for the content store (feature 43).
 
-Covers: bytes stored under their raw-codec CIDv1 in ``CONTENT_DIR``, the
+Covers: bytes stored under their raw-codec CIDv1 in the object store, the
 ``blobs`` row (cid, size, media_type, scan_status), idempotent re-stores,
-streaming, media-type validation, the cid-to-path mapping's safety, and the
-write guarantees (no partial files, no row without bytes).
+streaming, media-type validation, the cid-keying's safety, and the write
+guarantees (no partial objects, no row without bytes).  The blob API
+(``write_bytes``/``write_stream``/``open_blob``/``exists`` plus
+``delete_blob``/``blob_size``/``local_copy``) is exercised against the
+default filesystem backend -- including data written by the layout the
+previous, path-based store used -- and against the S3 driver served by moto
+in-process, so the same guarantees hold on both.  The download route's
+streaming and its ``Range`` answers are here too: ``206`` with the
+headers an unranged ``GET`` carries, ``416`` past the end, everything else
+served in full.
 
 Isolation note: xdist workers get their own database file but tests in a worker
 share the ``blobs`` table, so every test stores unique random bytes and asserts
@@ -18,8 +26,11 @@ import os
 import threading
 from pathlib import Path
 
+import boto3
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from moto import mock_aws
 from scholium_record_core import compute_file_id, compute_record_id
 from scholium_record_core import manifest as record_manifest
 from sqlalchemy import inspect, text
@@ -28,6 +39,7 @@ from sqlalchemy.orm import Session
 from app import db, module_loader
 from app.modules import content
 from app.modules.content import service, store
+from app.storage.s3 import S3ObjectStore
 
 
 AUTHOR = "did:key:z6MkhaKgMu9Ub4SpT3V9RbtCib6aRumXZY1JdHMzCCZK7pBb"
@@ -586,3 +598,467 @@ def test_create_app_creates_the_blobs_table():
     create_app()
 
     assert inspect(db.engine).has_table("blobs")
+
+
+# --------------------------------------------------------------------------- #
+# the object-store surface: delete_blob, blob_size, open_range, local_copy
+# --------------------------------------------------------------------------- #
+
+
+def test_blob_size_reports_the_stored_size():
+    data = unique_bytes(1000)
+    blob = content.store_bytes(data)
+
+    assert content.blob_size(blob.cid) == 1000
+
+
+def test_blob_size_of_missing_bytes():
+    with pytest.raises(FileNotFoundError):
+        content.blob_size(compute_file_id(unique_bytes()))
+
+
+@pytest.mark.parametrize("bad", ["", "../etc/passwd", "sub/dir", RECORD_ID, None, 42])
+def test_blob_size_and_delete_blob_reject_non_canonical_ids(bad):
+    with pytest.raises(ValueError):
+        content.blob_size(bad)
+    with pytest.raises(ValueError):
+        content.delete_blob(bad)
+
+
+def test_delete_blob_removes_the_bytes_and_leaves_the_row_alone(content_root):
+    data = unique_bytes()
+    blob = content.store_bytes(data, media_type="application/pdf")
+
+    content.delete_blob(blob.cid)
+
+    assert not content.exists(blob.cid)
+    assert blob_files(content_root) == []
+    with pytest.raises(FileNotFoundError):
+        content.open_blob(blob.cid)
+    with pytest.raises(FileNotFoundError):
+        content.blob_size(blob.cid)
+    # The row is the caller's business (moderation's, in practice).
+    assert blob_rows(blob.cid) == [(blob.cid, len(data), "application/pdf", "scanning")]
+
+
+def test_delete_blob_of_bytes_that_are_not_there_is_a_no_op():
+    content.delete_blob(compute_file_id(unique_bytes()))
+
+
+def test_delete_blob_then_store_again_recreates_the_bytes(content_root):
+    data = unique_bytes()
+    blob = content.store_bytes(data)
+
+    content.delete_blob(blob.cid)
+    again = store.write_bytes(data)
+
+    assert again.created is True
+    assert (content_root / blob.cid).read_bytes() == data
+
+
+def test_open_range_reads_a_slice_a_suffix_and_a_tail():
+    data = unique_bytes(100)
+    blob = content.store_bytes(data)
+
+    with content.open_range(blob.cid, offset=10, length=5) as handle:
+        assert handle.read() == data[10:15]
+    with content.open_range(blob.cid, offset=90) as handle:
+        assert handle.read() == data[90:]
+    with content.open_range(blob.cid) as handle:  # the defaults are open_blob
+        assert handle.read() == data
+
+
+def test_open_range_of_missing_bytes():
+    with pytest.raises(FileNotFoundError):
+        content.open_range(compute_file_id(unique_bytes()), offset=0, length=1)
+
+
+def test_local_copy_hands_out_a_real_file_then_removes_it():
+    data = unique_bytes(500)
+    blob = content.store_bytes(data)
+
+    seen = []
+    with content.local_copy(blob.cid) as path:
+        assert isinstance(path, Path)
+        assert path.read_bytes() == data
+        # A real file, not a handle: openable by name, seekable.
+        with open(path, "rb") as handle:
+            handle.seek(5)
+            assert handle.read(3) == data[5:8]
+        seen.append(path)
+
+    assert not seen[0].exists()
+
+
+def test_local_copy_is_a_snapshot_the_stored_bytes_live_on():
+    data = unique_bytes()
+    blob = content.store_bytes(data)
+
+    with content.local_copy(blob.cid) as path:
+        path.write_bytes(b"scribbled on the copy")
+
+    with content.open_blob(blob.cid) as handle:
+        assert handle.read() == data
+
+
+def test_local_copy_of_missing_bytes():
+    with pytest.raises(FileNotFoundError):
+        with content.local_copy(compute_file_id(unique_bytes())):
+            raise AssertionError("the copy should not have been made")
+
+
+def test_local_copy_rejects_a_non_canonical_id():
+    with pytest.raises(ValueError):
+        with content.local_copy("../etc/passwd"):
+            raise AssertionError("not a file id")
+
+
+# --------------------------------------------------------------------------- #
+# STORAGE_BACKEND=fs: the previous layout's data is read as it stands
+# --------------------------------------------------------------------------- #
+
+
+def test_bytes_written_by_the_path_based_store_are_read_byte_for_byte(content_root):
+    """An existing CONTENT_DIR keeps working: no migration, no rewrite."""
+    data = unique_bytes(300)
+    cid = compute_file_id(data)
+    content_root.mkdir(parents=True)  # the old layout: plain files, no .tmp
+    (content_root / cid).write_bytes(data)
+
+    assert content.exists(cid)
+    assert content.blob_size(cid) == len(data)
+    assert content.blob_path(cid) == content_root / cid
+    with content.open_blob(cid) as handle:
+        assert handle.read() == data
+    with content.local_copy(cid) as path:
+        assert path.read_bytes() == data
+    # Re-storing them changes nothing: they are already there.
+    assert store.write_bytes(data).created is False
+    assert (content_root / cid).read_bytes() == data
+
+
+# --------------------------------------------------------------------------- #
+# the same store behind the S3 driver (moto, in process)
+# --------------------------------------------------------------------------- #
+
+S3_BUCKET = "scholium-content-test"
+
+
+@pytest.fixture
+def s3_backend(monkeypatch):
+    """Serve the content store from moto's S3: a real S3 driver, no network."""
+    with mock_aws():
+        client = boto3.client(
+            "s3",
+            region_name="us-east-1",
+            aws_access_key_id="test-access-key-id",
+            aws_secret_access_key="test-SECRET-access-key",
+        )
+        client.create_bucket(Bucket=S3_BUCKET)
+        remote = S3ObjectStore(
+            S3_BUCKET,
+            region="us-east-1",
+            access_key_id="test-access-key-id",
+            secret_access_key="test-SECRET-access-key",
+        )
+        monkeypatch.setattr(store, "get_object_store", lambda: remote)
+        yield remote
+
+
+def test_the_blob_api_works_the_same_on_the_s3_backend(s3_backend, content_root):
+    data = unique_bytes(400)
+    blob = content.store_bytes(data, media_type="application/pdf")
+
+    # The bytes are in the bucket, keyed by their cid...
+    assert s3_backend.exists(blob.cid)
+    assert s3_backend.size(blob.cid) == 400
+    # ...and nowhere on the local filesystem.
+    assert not content_root.exists()
+
+    assert content.exists(blob.cid)
+    assert content.blob_size(blob.cid) == 400
+    with content.open_blob(blob.cid) as handle:
+        assert handle.read() == data
+    with content.open_range(blob.cid, offset=390, length=5) as handle:
+        assert handle.read() == data[390:395]
+    with content.local_copy(blob.cid) as path:
+        assert path.read_bytes() == data
+    # Idempotence holds there too: the same bytes again change nothing.
+    assert store.write_bytes(data).created is False
+
+    content.delete_blob(blob.cid)
+    assert not content.exists(blob.cid)
+    assert not s3_backend.exists(blob.cid)
+
+
+def test_blob_path_has_no_answer_on_the_s3_backend(s3_backend):
+    blob = content.store_bytes(unique_bytes())
+
+    with pytest.raises(content.ContentError, match="local_copy"):
+        content.blob_path(blob.cid)
+
+
+def test_the_download_route_streams_and_ranges_the_s3_backend(s3_backend, content_root):
+    from app.main import app
+
+    data = unique_bytes(600)
+    blob = content.store_bytes(data, media_type="text/plain")
+    content.set_scan_status(blob.cid, content.SCAN_PASSED)
+    with TestClient(app) as client:
+        full = client.get(f"/v1/content/{blob.cid}")
+
+        assert full.status_code == 200
+        assert full.content == data
+        assert full.headers["content-length"] == "600"
+
+        part = client.get(f"/v1/content/{blob.cid}", headers={"Range": "bytes=100-109"})
+
+        assert part.status_code == 206
+        assert part.content == data[100:110]
+        assert part.headers["content-range"] == "bytes 100-109/600"
+
+    assert not content_root.exists()  # nothing was staged on disk
+
+
+# --------------------------------------------------------------------------- #
+# the download route: streaming and Range
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def client():
+    from app.main import app
+
+    with TestClient(app) as c:
+        yield c
+
+
+def served(data: bytes, media_type: str = "application/octet-stream"):
+    """A blob whose row exists, bytes are stored and scan has passed."""
+    blob = content.store_bytes(data, media_type=media_type)
+    content.set_scan_status(blob.cid, content.SCAN_PASSED)
+    return blob
+
+
+def test_a_served_file_carries_length_range_and_etag_headers(client):
+    data = unique_bytes(1000)
+    blob = served(data, "text/plain")
+
+    response = client.get(f"/v1/content/{blob.cid}")
+
+    assert response.status_code == 200
+    assert response.content == data
+    assert response.headers["content-length"] == "1000"
+    assert response.headers["accept-ranges"] == "bytes"
+    # Content addressing: the file id *is* the entity tag.
+    assert response.headers["etag"] == f'"{blob.cid}"'
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.headers["content-security-policy"] == "sandbox"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("bytes=0-9", (0, 10)),
+        ("bytes=10-19", (10, 20)),
+        ("bytes=990-", (990, 1000)),
+        ("bytes=-7", (993, 1000)),
+        ("bytes=-5000", (0, 1000)),  # more than there is: all of it
+        ("bytes=0-5000", (0, 1000)),  # the end is clamped to the last byte
+        ("bytes=999-999", (999, 1000)),
+    ],
+)
+def test_a_single_range_is_answered_206_with_unchanged_headers(client, header, expected):
+    data = unique_bytes(1000)
+    blob = served(data, "text/plain")
+    start, end = expected
+
+    response = client.get(f"/v1/content/{blob.cid}", headers={"Range": header})
+
+    assert response.status_code == 206
+    assert response.content == data[start:end]
+    assert response.headers["content-range"] == f"bytes {start}-{end - 1}/1000"
+    assert response.headers["content-length"] == str(end - start)
+    # Everything an unranged GET carries is unchanged.
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.headers["content-security-policy"] == "sandbox"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["accept-ranges"] == "bytes"
+    assert response.headers["etag"] == f'"{blob.cid}"'
+
+
+def test_a_ranged_manifest_download_keeps_the_manifest_headers(client):
+    from .test_content_download import Paper
+
+    paper = Paper()
+    paper.list()
+    content.set_scan_status(paper.blob.cid, content.SCAN_PASSED)
+
+    response = client.get(f"/v1/content/{paper.blob.cid}", headers={"Range": "bytes=0-3"})
+
+    assert response.status_code == 206
+    assert response.content == paper.data[:4]
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.headers["content-disposition"] == 'inline; filename="main.pdf"'
+    assert response.headers["content-security-policy"] == "sandbox"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "bytes=1000-",  # the first byte asked for is past the end
+        "bytes=1000-1001",
+        "bytes=999999-",
+        "bytes=-0",  # the last zero bytes: nothing can be sent
+    ],
+)
+def test_a_range_past_the_end_is_a_416_naming_the_size(client, header):
+    blob = served(unique_bytes(1000))
+
+    response = client.get(f"/v1/content/{blob.cid}", headers={"Range": header})
+
+    assert response.status_code == 416
+    assert response.headers["content-range"] == "bytes */1000"
+
+
+def test_a_range_of_an_empty_file_is_a_416(client):
+    blob = served(b"")
+
+    response = client.get(f"/v1/content/{blob.cid}", headers={"Range": "bytes=0-0"})
+
+    assert response.status_code == 416
+    assert response.headers["content-range"] == "bytes */0"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "bytes=5-2",  # end before start: names no bytes
+        "bytes=0-4,10-14",  # several ranges: the whole object is never a wrong byte
+        "items=0-9",  # another unit
+        "bytes=a-b",
+        "bytes=-",
+        "bytes=",
+        "not a range at all",
+    ],
+)
+def test_a_range_we_do_not_serve_is_ignored_and_answered_in_full(client, header):
+    data = unique_bytes(100)
+    blob = served(data)
+
+    response = client.get(f"/v1/content/{blob.cid}", headers={"Range": header})
+
+    assert response.status_code == 200
+    assert response.content == data
+    assert response.headers["content-length"] == "100"
+    assert "content-range" not in response.headers
+
+
+def test_if_range_with_the_current_etag_still_gets_the_range(client):
+    data = unique_bytes(100)
+    blob = served(data)
+
+    response = client.get(
+        f"/v1/content/{blob.cid}",
+        headers={"Range": "bytes=10-19", "If-Range": f'"{blob.cid}"'},
+    )
+
+    assert response.status_code == 206
+    assert response.content == data[10:20]
+    assert response.headers["content-range"] == "bytes 10-19/100"
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [
+        '"0123456789abcdef0123456789abcdef"',  # a stale tag: the old mtime-derived kind
+        "Wed, 21 Oct 2015 07:28:00 GMT",  # a date: this route sends no Last-Modified
+    ],
+)
+def test_if_range_that_does_not_match_gets_the_whole_object(client, validator):
+    """RFC 9110 13.1.5: the client's partial copy may not line up, so send it all."""
+    data = unique_bytes(100)
+    blob = served(data)
+
+    response = client.get(
+        f"/v1/content/{blob.cid}",
+        headers={"Range": "bytes=10-19", "If-Range": validator},
+    )
+
+    assert response.status_code == 200
+    assert response.content == data
+    assert response.headers["content-length"] == "100"
+    assert "content-range" not in response.headers
+
+
+def test_if_range_with_a_weak_tag_never_matches(client):
+    blob = served(unique_bytes(100))
+
+    response = client.get(
+        f"/v1/content/{blob.cid}",
+        headers={"Range": "bytes=10-19", "If-Range": f'W/"{blob.cid}"'},
+    )
+
+    assert response.status_code == 200
+    assert "content-range" not in response.headers
+
+
+def test_bytes_removed_after_the_size_check_are_a_451_not_a_broken_200(client, monkeypatch):
+    """A takedown racing a download answers cleanly, before any 200 has gone out."""
+    import importlib
+
+    # ``content.router`` is the exported APIRouter, which shadows the submodule.
+    content_router = importlib.import_module("app.modules.content.router")
+
+    blob = served(unique_bytes(100))
+    real_size = content_router.blob_size
+
+    def size_then_takedown(cid):
+        size = real_size(cid)
+        content.delete_blob(cid)  # moderation removes the bytes right after we looked
+        return size
+
+    monkeypatch.setattr(content_router, "blob_size", size_then_takedown)
+
+    response = client.get(f"/v1/content/{blob.cid}")
+
+    assert response.status_code == 451
+    assert "removed" in response.json()["detail"]
+
+
+def test_head_is_not_served_by_the_byte_route(client):
+    """The route answers GET only, as it always has (a HEAD is a 405)."""
+    blob = served(unique_bytes(50))
+
+    response = client.head(f"/v1/content/{blob.cid}")
+
+    assert response.status_code == 405
+
+
+def test_bytes_that_predate_the_object_store_are_served_byte_for_byte(client, content_root):
+    """A passed blob whose file was written by the old path-based store serves."""
+    data = unique_bytes(200)
+    cid = compute_file_id(data)
+    content_root.mkdir(parents=True)
+    (content_root / cid).write_bytes(data)
+    content.ensure_table()
+    with db.SessionLocal() as session:
+        session.execute(
+            text(
+                "INSERT INTO blobs (cid, size, media_type, scan_status) "
+                "VALUES (:cid, :size, NULL, 'passed')"
+            ),
+            {"cid": cid, "size": len(data)},
+        )
+        session.commit()
+
+    whole = client.get(f"/v1/content/{cid}")
+    part = client.get(f"/v1/content/{cid}", headers={"Range": "bytes=10-19"})
+
+    assert whole.status_code == 200
+    assert whole.content == data
+    assert part.status_code == 206
+    assert part.content == data[10:20]
+    assert part.headers["content-range"] == f"bytes 10-19/{len(data)}"

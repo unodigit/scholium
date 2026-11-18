@@ -4,6 +4,18 @@ The module loader mounts this router under ``/v1``, so the single route
 below serves ``GET /v1/content/{cid}`` -- the bytes of a file already in
 the content store.
 
+The bytes are streamed from the app-wide ObjectStore
+(:func:`app.modules.content.store.open_range`), never from a path, so the
+route serves every storage backend the same way.  A single-range
+``Range`` request is answered with ``206 Partial Content`` and a
+``Content-Range``; the headers an unranged ``GET`` carries -- the
+security headers below, the manifest's ``Content-Type`` and
+``Content-Disposition`` -- are the same on a ``206``.  A range that starts
+past the last byte answers ``416`` with ``Content-Range: bytes */size``;
+any other ``Range`` a browser never sends (several ranges, another unit, a
+malformed span) is ignored and answered with the whole object, which RFC
+9110 permits and is never a wrong byte.
+
 Serving is deliberately strict, because these are untrusted uploads:
 
 * a blob a ``paper.version`` references through its manifest is public only
@@ -41,20 +53,22 @@ installed.
 
 from __future__ import annotations
 
-import os
-from typing import Optional
+import re
+from collections.abc import Iterator
+from typing import BinaryIO, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
-from starlette.responses import FileResponse
+from scholium_record_core import parse_file_cid
+from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
 from app.security import InvalidAccessToken, Principal, decode_access_token
 
 from . import references, service
 from .models import SCAN_PASSED, SCAN_SCANNING
-from .store import blob_path
+from .store import CHUNK_SIZE, blob_size, open_range
 from .visibility import may_read
 
 __all__ = [
@@ -224,7 +238,7 @@ def get_content_versions(
     content.  A well-formed cid no manifest names answers an empty list.
     """
     try:
-        blob_path(cid)
+        parse_file_cid(cid)
     except ValueError:
         raise _not_found(cid) from None
     if (
@@ -254,6 +268,83 @@ def get_content_versions(
     )
 
 
+#: One ``bytes`` range: ``bytes=0-99``, ``bytes=100-`` (to the end) or
+#: ``bytes=-100`` (the last 100).  Anything else -- several ranges, another
+#: unit, a malformed span -- is not a range we serve and is ignored.
+_RANGE_SPAN = re.compile(r"\Abytes=(\d*)-(\d*)\Z")
+
+
+class _RangeNotSatisfiable(Exception):
+    """The range starts at or past the end of the stored bytes (RFC 9110 416)."""
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+
+
+def _range_span(header: str, size: int) -> "Optional[tuple[int, int]]":
+    """The ``(start, end)`` span -- ``end`` exclusive -- ``header`` asks for.
+
+    ``None`` when the header does not name a single byte span this route
+    serves; then the whole object is the answer, exactly as without a
+    ``Range`` (RFC 9110 lets a server ignore the header, and the full object
+    is never a wrong byte).
+
+    Raises:
+        _RangeNotSatisfiable: the span is real but starts past the last byte.
+    """
+    match = _RANGE_SPAN.fullmatch(header.strip())
+    if match is None:
+        return None
+    first, last = match.group(1), match.group(2)
+    if first == "" and last == "":
+        return None  # "bytes=-": no span at all
+    if first == "":
+        # A suffix: the final N bytes, or all of them when N exceeds the size.
+        length = int(last)
+        if size == 0 or length == 0:
+            raise _RangeNotSatisfiable(size)
+        start = size - min(length, size)
+        return start, size
+    start = int(first)
+    if start >= size:
+        raise _RangeNotSatisfiable(size)
+    if last == "":
+        return start, size
+    end = min(int(last), size - 1)  # inclusive, clamped to the last byte
+    if end < start:
+        return None  # "bytes=5-2" names no bytes; ignore it
+    return start, end + 1
+
+
+def _stream_bytes(source: BinaryIO, length: int) -> Iterator[bytes]:
+    """Yield up to ``length`` bytes from the already-open ``source``, then close it.
+
+    The caller opens the object *before* the response starts, so a blob that
+    has vanished is answered with a clean status rather than discovered
+    after a ``200`` has gone out.
+    """
+    with source:
+        remaining = length
+        while remaining > 0:
+            chunk = source.read(min(CHUNK_SIZE, remaining))
+            if not chunk:
+                break  # the bytes shrank mid-response; stop there
+            remaining -= len(chunk)
+            yield chunk
+
+
+def _range_applies(if_range: Optional[str], etag: str) -> bool:
+    """Whether a ``Range`` request may be honoured given its ``If-Range`` (RFC 9110 13.1.5).
+
+    Without ``If-Range`` the range always applies.  With it, the range applies
+    only if the validator is exactly our (strong) ``ETag``: a stale tag -- an
+    old copy of the file -- or an HTTP-date (this route sends no
+    ``Last-Modified``, so a date can never match) means the client's partial
+    copy may not line up with these bytes, so it gets the whole object.
+    """
+    return if_range is None or if_range.strip() == etag
+
+
 @router.get("/{cid}")
 def get_content(
     cid: str,
@@ -261,8 +352,10 @@ def get_content(
         default=False,
         description="save as an attachment named by the version manifest, not inline",
     ),
+    range_header: Optional[str] = Header(default=None, alias="Range"),
+    if_range: Optional[str] = Header(default=None, alias="If-Range"),
     principal: Optional[Principal] = Depends(_optional_principal),
-) -> FileResponse:
+) -> Response:
     """Return the stored bytes for ``cid`` when (and only when) they are safe.
 
     The signed manifest names the file: its ``path`` supplies the download
@@ -270,12 +363,19 @@ def get_content(
     what makes the response carry a ``Content-Disposition`` at all (``inline``
     by default, ``attachment`` with ``?download=1``).  A blob no manifest
     names still serves, typed by the uploader's hint or ``octet-stream``.
+
+    The body is streamed from the object store, so it never sits in memory
+    and no storage backend is special-cased.  A single-range ``Range``
+    request gets ``206`` and a ``Content-Range`` with all other headers
+    unchanged; every response says ``Accept-Ranges: bytes`` and carries the
+    cid as its ``ETag`` (the bytes are content-addressed, so the id *is* the
+    tag).
     """
     try:
-        path = blob_path(cid)
+        parse_file_cid(cid)
     except ValueError:
         # Not a canonical raw-codec file id: nothing can be stored under it,
-        # and treating it as "not found" avoids reflecting it in a path.
+        # and treating it as "not found" avoids reflecting it anywhere.
         raise _not_found(cid) from None
 
     if service.is_tombstoned(cid):
@@ -309,7 +409,7 @@ def get_content(
         )
 
     try:
-        stat_result = os.stat(path)
+        size = blob_size(cid)
     except FileNotFoundError:
         # A passed row whose bytes are gone is a takedown (or corruption);
         # either way the content is not available.
@@ -327,14 +427,46 @@ def get_content(
         or DEFAULT_MEDIA_TYPE
     )
     headers = dict(SECURITY_HEADERS)
+    headers["Accept-Ranges"] = "bytes"
+    headers["ETag"] = f'"{cid}"'
     if reference is not None:
         headers["Content-Disposition"] = content_disposition(
             reference.file_name, attachment=download
         )
 
-    return FileResponse(
-        path,
+    status_code = 200
+    start, end = 0, size
+    if range_header is not None and _range_applies(if_range, headers["ETag"]):
+        try:
+            span = _range_span(range_header, size)
+        except _RangeNotSatisfiable as unsatisfiable:
+            return PlainTextResponse(
+                "requested range not satisfiable",
+                status_code=416,
+                headers={
+                    **SECURITY_HEADERS,
+                    "Content-Range": f"bytes */{unsatisfiable.size}",
+                },
+            )
+        if span is not None:
+            start, end = span
+            status_code = 206
+            headers["Content-Range"] = f"bytes {start}-{end - 1}/{size}"
+
+    try:
+        source = open_range(cid, offset=start, length=end - start)
+    except FileNotFoundError:
+        # Taken down between the size check above and now.
+        raise _problem(
+            451,
+            f"Content {cid!r} is unavailable: its bytes have been removed.",
+        ) from None
+
+    # The length is known exactly, so say it: a download can show progress.
+    headers["Content-Length"] = str(end - start)
+    return StreamingResponse(
+        _stream_bytes(source, end - start),
+        status_code=status_code,
         media_type=media_type,
         headers=headers,
-        stat_result=stat_result,
     )
