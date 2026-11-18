@@ -199,7 +199,9 @@ describe("SavedSearchesCard: Delete", () => {
     first.focus();
     fireEvent.click(first);
     await waitFor(() => expect(screen.queryByText("pulsar timing")).toBeNull());
-    expect(document.activeElement).toBe(deleteButton("cs.AI"));
+    // Focus moves in a passive effect that React 19.3 may run a render after the
+    // row leaves the DOM, so wait for it rather than asserting at once.
+    await waitFor(() => expect(document.activeElement).toBe(deleteButton("cs.AI")));
   });
 
   it("moves focus to the previous row when the last row is deleted", async () => {
@@ -215,7 +217,7 @@ describe("SavedSearchesCard: Delete", () => {
     last.focus();
     fireEvent.click(last);
     await waitFor(() => expect(screen.queryByText("graph neural networks")).toBeNull());
-    expect(document.activeElement).toBe(deleteButton("pulsar timing"));
+    await waitFor(() => expect(document.activeElement).toBe(deleteButton("pulsar timing")));
   });
 
   it("moves focus into the card when the list empties, so it is not lost", async () => {
@@ -231,7 +233,7 @@ describe("SavedSearchesCard: Delete", () => {
     only.focus();
     fireEvent.click(only);
     await screen.findByText("You have no saved searches yet.");
-    expect(document.activeElement).toBe(container.querySelector(".db-saved-body"));
+    await waitFor(() => expect(document.activeElement).toBe(container.querySelector(".db-saved-body")));
   });
 });
 
