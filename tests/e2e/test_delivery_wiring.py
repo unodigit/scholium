@@ -110,6 +110,26 @@ def test_images_do_not_run_as_root():
         assert users[-1] not in {"root", "0"}, f"{containerfile.name} ends as {users[-1]}"
 
 
+def test_api_image_copies_repository_files_readable_by_its_non_root_user():
+    """A checkout built under umask 007 leaves files mode 660, owned by a uid the
+    container's user (10001) is not; --chmod=a+rX makes the COPY result readable."""
+    containerfile = REPO_ROOT / "deploy" / "containers" / "api.Containerfile"
+    copies = [
+        line.strip()
+        for line in _logical_lines(containerfile.read_text())
+        if re.match(r"^COPY\b", line.strip(), re.IGNORECASE) and "--from=" not in line
+    ]
+    assert copies, "api.Containerfile copies no repository files"
+    missing = [line for line in copies if not re.search(r"--chmod=a\+rX\b", line)]
+    assert not missing, (
+        "these COPY instructions can land mode 660 for the image's non-root user "
+        f"(umask 007 checkout): {missing}"
+    )
+    copied = " ".join(copies)
+    for source in ("apps/api/pyproject.toml", "apps/api/uv.lock", "apps/api/packages", "apps/api/src"):
+        assert source in copied, f"api.Containerfile no longer copies {source}"
+
+
 # --- the root package.json -----------------------------------------------------------
 
 
