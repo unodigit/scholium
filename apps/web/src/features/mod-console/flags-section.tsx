@@ -317,17 +317,16 @@ export function FlagCard({
             <dt>What was flagged</dt>
             <dd>
               <span className="mc-flag-target-type">{summary.typeLabel}</span>
+              {/* The facts stack in a column; a separator between the type
+                  and the title would hang alone on its own line. */}
               {summary.paperTitle !== null ? (
-                <>
-                  {" · "}
-                  {summary.paperHref === null ? (
-                    summary.paperTitle
-                  ) : (
-                    <a className="mc-link" href={summary.paperHref}>
-                      {summary.paperTitle}
-                    </a>
-                  )}
-                </>
+                summary.paperHref === null ? (
+                  summary.paperTitle
+                ) : (
+                  <a className="mc-link" href={summary.paperHref}>
+                    {summary.paperTitle}
+                  </a>
+                )
               ) : null}
               {summary.excerpt !== null ? (
                 <span className="mc-flag-excerpt">{`“${summary.excerpt}”`}</span>

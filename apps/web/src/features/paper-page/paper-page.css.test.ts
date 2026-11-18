@@ -204,6 +204,17 @@ describe("the layout (docs/design.md §5.2)", () => {
     expect(canvas).toMatch(/display:\s*block/);
   });
 
+  it("keeps tab labels on one line from 768 px, with the count in a badge", () => {
+    // At a desktop width the margin panel is 360 px, so a label like
+    // "Discussion (2)" must not break between its words and its count.
+    expect(declarationsIn(page, "(min-width: 48rem)", ".ppg-tab")).toMatch(
+      /white-space:\s*nowrap/,
+    );
+    const badge = declarations(page, ".ppg-tab-count");
+    expect(badge).toMatch(/border-radius:\s*var\(--corner-pill\)/);
+    expect(badge).toMatch(/background-color:/);
+  });
+
   it("sets the abstract in the reading serif at the reading size", () => {
     const abstract = declarations(page, ".ppg-abstract-body");
     expect(abstract).toMatch(/font-family:\s*var\(--family-serif\)/);

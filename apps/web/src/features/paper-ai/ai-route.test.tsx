@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AiPage, { generateMetadata } from "../../app/(paper-ai)/ai/[...ref]/page";
 import { ADVISORY_BANNER } from "./ai-report";
@@ -18,6 +18,24 @@ const PAPER = "6sel-2dio-orm6"; // a real id from the shared vectors
 const render = async (ref: string[]) =>
   renderToStaticMarkup(await AiPage({ params: Promise.resolve({ ref }) }));
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+/** The catalog's answer for one paper, the shape `loadPaper` reads. */
+function stubPaper(title: string): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ title }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    ),
+  );
+}
+
 describe("/ai route (server render)", () => {
   it("renders the page header and the advisory banner, still loading", async () => {
     const html = await render([PAPER, "v2"]);
@@ -29,6 +47,15 @@ describe("/ai route (server render)", () => {
     expect(html).toContain("Loading the AI pre-review…");
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain("never decides anything about the paper");
+  });
+
+  it("shows the paper's title, linked to the paper, like the other standalone tabs", async () => {
+    stubPaper("Sparse attention without the quadratic cost");
+
+    const html = await render([PAPER, "v2"]);
+
+    expect(html).toContain("Sparse attention without the quadratic cost");
+    expect(html).toContain(`href="/p/${PAPER}"`);
   });
 
   it("never claims a finding before the browser has fetched the report", async () => {

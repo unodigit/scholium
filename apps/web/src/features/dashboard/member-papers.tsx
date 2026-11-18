@@ -18,6 +18,7 @@
 import { useEffect, useState } from "react";
 
 import { formatDate, paperHref, parseInstant, type FeedItem } from "../feed/feed";
+import { StatusChip, isPaperStatus } from "../ui-kit";
 
 import { loadMemberPapers, type MemberPapers } from "./profile";
 
@@ -112,7 +113,8 @@ function PaperRow({ paper }: { readonly paper: FeedItem }) {
             {category}
           </span>
         ))}
-        {paper.status ? <span className="pp-paper-status">{paper.status}</span> : null}
+        {/* The shared chip's word ("Under review"), never the wire slug. */}
+        {isPaperStatus(paper.status) ? <StatusChip status={paper.status} /> : null}
         {listed !== null && paper.listedAt !== null ? (
           <time dateTime={paper.listedAt}>{formatDate(listed)}</time>
         ) : null}

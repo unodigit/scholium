@@ -368,10 +368,6 @@ a.pp-chip:focus-visible {
   line-height: var(--leading-meta);
 }
 
-.pp-paper-status {
-  text-transform: capitalize;
-}
-
 .pp-papers-note {
   margin-block-start: calc(var(--space-unit) * 3);
   font-size: var(--type-meta);

@@ -52,6 +52,16 @@ describe("FlagCard", () => {
     expect(within(card).getByText(FLAG.targetCid)).toBeTruthy();
   });
 
+  it("joins the record type, paper and excerpt without a dangling separator", async () => {
+    render(<FlagCard flag={FLAG} loadTarget={async () => SUMMARY} />);
+
+    const card = await screen.findByRole("article");
+    await within(card).findByText("Discussion post");
+    // The facts stack in a column, so an inline "·" would sit alone on a line
+    // between the type and the title.
+    expect(card.textContent).not.toContain("·");
+  });
+
   it("keeps the card readable when the record cannot be read", async () => {
     render(
       <FlagCard

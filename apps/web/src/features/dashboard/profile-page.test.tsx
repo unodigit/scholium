@@ -203,6 +203,27 @@ describe("ProfilePage: cards for papers and signed reviews", () => {
     expect(within(card).getByText("cs.AI")).toBeTruthy();
   });
 
+  it("shows a paper's standing with the shared status chip, never the raw slug", async () => {
+    render(
+      <ProfilePage
+        did={DID}
+        initialProfile={PROFILE}
+        signedIn={false}
+        loadPapers={async () => ({
+          papers: [{ ...PAPER, status: "under_review" }],
+          truncated: false,
+        })}
+      />,
+    );
+
+    const heading = await screen.findByRole("heading", { name: "Papers" });
+    const card = heading.closest("section") as HTMLElement;
+    // The shared chip's word, not the wire value "under_review".
+    expect(await within(card).findByText("Under review")).toBeTruthy();
+    expect(within(card).queryByText("under_review")).toBeNull();
+    expect(within(card).queryByText(/Under_review/)).toBeNull();
+  });
+
   it("says there are no papers rather than showing an empty card", async () => {
     render(<ProfilePage did={DID} initialProfile={PROFILE} signedIn={false} loadPapers={noPapers} />);
 
