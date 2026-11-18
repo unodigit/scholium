@@ -25,7 +25,7 @@
   </layout>
   <technology_stack>
     <frontend>
-      <framework>Next.js 15 App Router (each feature owns a route group apps/web/src/app/(feature)/ plus apps/web/src/features/feature/)</framework>
+      <framework>Next.js 16 App Router (each feature owns a route group apps/web/src/app/(feature)/ plus apps/web/src/features/feature/)</framework>
       <language>TypeScript</language>
       <styling>Tailwind CSS with design.md tokens as CSS variables</styling>
       <crypto>WebCrypto Ed25519 + WebAuthn passkeys, @noble/ed25519, @ipld/dag-cbor, multiformats</crypto>

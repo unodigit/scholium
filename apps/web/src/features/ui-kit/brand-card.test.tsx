@@ -719,10 +719,25 @@ describe("drawableCard", () => {
 describe("renderBrandCard", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
+  /** The URL a `fetch` call asked for, whatever form its first argument took. */
+  const requestedUrl = (input: unknown): string =>
+    input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
+
+  /** Fetches that would have left the process: anything but an inline `data:` URL. */
+  const networkFetches = () =>
+    fetchSpy.mock.calls.map(([input]) => requestedUrl(input)).filter((url) => !url.startsWith("data:"));
+
   beforeEach(() => {
     // `next/og` would fetch a font or emoji from a third party for any glyph
-    // the bundled fonts lack. Nothing here may reach the network.
-    fetchSpy = vi.fn(() => Promise.reject(new Error("no network in card tests")));
+    // the bundled fonts lack. Nothing here may reach the network. Its layout
+    // engine loads the WebAssembly bundled inside it from a `data:` URL; that
+    // never leaves the process, so it goes to the real fetch.
+    const realFetch = globalThis.fetch;
+    fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      requestedUrl(input).startsWith("data:")
+        ? realFetch(input, init)
+        : Promise.reject(new Error("no network in card tests")),
+    );
     vi.stubGlobal("fetch", fetchSpy);
   });
 
@@ -735,7 +750,7 @@ describe("renderBrandCard", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(pngSize(await bytesOf(response))).toEqual({ width: 1200, height: 630 });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(networkFetches()).toEqual([]);
   }, 30_000);
 
   it("serves a paper card as a 1200 × 630 image/png that differs from the site card", async () => {
@@ -743,7 +758,7 @@ describe("renderBrandCard", () => {
     const site = await bytesOf(await renderBrandCard(SITE_CARD));
     expect(pngSize(paper)).toEqual({ width: 1200, height: 630 });
     expect(paper.equals(site)).toBe(false);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(networkFetches()).toEqual([]);
   }, 30_000);
 
   it("lets the caller replace next/og's one-year immutable cache header", async () => {
@@ -764,7 +779,7 @@ describe("renderBrandCard", () => {
       const bytes = await bytesOf(await renderBrandCard(card));
       expect(pngSize(bytes)).toEqual({ width: 1200, height: 630 });
     }
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(networkFetches()).toEqual([]);
   }, 60_000);
 
   it("renders the site card, byte for byte, for any paper it cannot draw", async () => {
@@ -773,7 +788,7 @@ describe("renderBrandCard", () => {
       const bytes = await bytesOf(await renderBrandCard({ ...PAPER, title }));
       expect(bytes.equals(site), title).toBe(true);
     }
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(networkFetches()).toEqual([]);
   }, 60_000);
 
   it("reads its fonts from disk once and remembers them", async () => {

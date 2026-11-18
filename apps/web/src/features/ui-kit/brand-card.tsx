@@ -688,27 +688,28 @@ const FONT_FILES = [
   { name: BRAND_CARD_FONTS.mono, file: "jetbrains-mono-medium.woff", weight: 500 },
 ] as const;
 
-/** Where `og-fonts/` can be: from the app's working directory (what `next dev`/`start` use), else beside this file. */
-function fontDirectories(): string[] {
-  const directories = [join(process.cwd(), "src", "features", "ui-kit", "og-fonts")];
-  try {
-    directories.push(join(dirname(fileURLToPath(import.meta.url)), "og-fonts"));
-  } catch {
-    // `import.meta.url` is not a file URL in this bundle; the first candidate stands.
-  }
-  return directories;
-}
-
+/**
+ * Reads `og-fonts/<file>` from the app's working directory (what `next dev`/`start` use), else
+ * from beside this file.
+ *
+ * The first path is one static `join(process.cwd(), …)` so the server build traces `og-fonts/`
+ * and nothing else: a computed directory makes Turbopack trace the whole project into the
+ * standalone output. The fallback only matters unbundled (tests started from another
+ * directory), so it is excluded from tracing.
+ */
 async function readFontFile(file: string): Promise<Buffer> {
-  let failure: unknown;
-  for (const directory of fontDirectories()) {
+  try {
+    return await readFile(join(process.cwd(), "src", "features", "ui-kit", "og-fonts", file));
+  } catch (error) {
+    let besideModule: string;
     try {
-      return await readFile(join(directory, file));
-    } catch (error) {
-      failure = error;
+      besideModule = join(/*turbopackIgnore: true*/ dirname(fileURLToPath(import.meta.url)), "og-fonts", file);
+    } catch {
+      // `import.meta.url` is not a file URL in this bundle; the first candidate stands.
+      throw error;
     }
+    return await readFile(/*turbopackIgnore: true*/ besideModule);
   }
-  throw failure;
 }
 
 let fontsOnce: Promise<SatoriFont[]> | undefined;

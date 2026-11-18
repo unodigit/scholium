@@ -7,7 +7,7 @@
 ## Stack
 - API: Python 3.12, FastAPI, SQLAlchemy 2.0, SQLite by default or PostgreSQL 16 (`DATABASE_URL`) — `apps/api` (uv workspace; packages in `apps/api/packages/*`)
 - Backends, chosen by environment variables and all defaulting to the no-container setup: database (SQLite | PostgreSQL), objects (`STORAGE_BACKEND=fs` | `s3`), jobs (`JOBS_MODE=eager` | `thread` | `external`), sandbox (`SANDBOX_BACKEND=docker` | `podman` | `remote` | `none`)
-- Web: Next.js 15 App Router, TypeScript, Tailwind — `apps/web`
+- Web: Next.js 16 App Router, TypeScript, Tailwind — `apps/web`
 - Delivery: `compose.yaml` and `deploy/` (Containerfiles, compose test file), `infra/` (OpenTofu); no cloud-provider code outside `infra/`
 - Spec: `app_spec.xml`; product docs in `docs/` (`docs/design.md` is the UI authority; `docs/deploy.md` is the operations guide)
 

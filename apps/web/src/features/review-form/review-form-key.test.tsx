@@ -502,8 +502,10 @@ describe("a revealed review by this reviewer that this browser does not hold", (
     );
 
     await screen.findByRole("heading", { name: "You already reviewed this paper" });
+    // The form tells the session about the review from an effect, so the
+    // conflict check rewords itself a render after the heading appears.
     expect(
-      screen.getByText("No conflicts found. You already reviewed this paper."),
+      await screen.findByText("No conflicts found. You already reviewed this paper."),
     ).toBeTruthy();
     expect(screen.queryByText(/You can review this paper/)).toBeNull();
   });

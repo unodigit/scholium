@@ -46,7 +46,7 @@ describe("the root layout metadata", () => {
 
     const { metadata } = await loadLayout();
 
-    expect(metadata.metadataBase?.href).toBe("https://scholium.example/");
+    expect(metadata.metadataBase?.toString()).toBe("https://scholium.example/");
   });
 
   it.each([
@@ -57,7 +57,7 @@ describe("the root layout metadata", () => {
 
     const { metadata } = await loadLayout();
 
-    expect(metadata.metadataBase?.href).toBe("http://localhost:3000/");
+    expect(metadata.metadataBase?.toString()).toBe("http://localhost:3000/");
   });
 
   it("uses a configured loopback URL outside production as given", async () => {
@@ -67,7 +67,7 @@ describe("the root layout metadata", () => {
 
     const { metadata } = await loadLayout();
 
-    expect(metadata.metadataBase?.href).toBe("http://localhost:3200/");
+    expect(metadata.metadataBase?.toString()).toBe("http://localhost:3200/");
   });
 
   it("still refuses a loopback URL in a production build", async () => {

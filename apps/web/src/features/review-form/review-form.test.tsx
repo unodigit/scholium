@@ -548,7 +548,9 @@ describe("ReviewForm update", () => {
     fireEvent.click(screen.getByRole("button", { name: UPDATE_LABEL }));
     await screen.findByRole("heading", { name: "Your review is updated" });
 
-    expect(screen.getByText(/Your written report is public now/)).toBeTruthy();
+    // The confirmation reads the gate in an effect after it first renders, so
+    // the wording settles a render after the heading appears.
+    expect(await screen.findByText(/Your written report is public now/)).toBeTruthy();
     expect(screen.queryByText(/unseals once 2 reviews/)).toBeNull();
     expect(loadGate).toHaveBeenCalledWith("sch:6sel-2dio-orm6");
   });
