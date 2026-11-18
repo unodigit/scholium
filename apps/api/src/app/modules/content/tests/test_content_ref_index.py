@@ -15,14 +15,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 import threading
+import types
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 from nacl.signing import SigningKey
 from scholium_record_core import did_key_from_signing_key
-from sqlalchemy import delete, event, inspect, select, text, update
+from sqlalchemy import create_engine, delete, event, func, inspect, select, text, update
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from app import db
 from app.main import app
@@ -538,3 +540,133 @@ def test_concurrent_catch_up_indexes_each_manifest_exactly_once(without_subscrib
     assert _progress() == _newest_manifest_seq()
     for paper in papers:
         assert _indexed(paper.file_cid) == {paper.manifest_cid}
+
+
+# --------------------------------------------------------------------------- #
+# One upsert, in each dialect's own INSERT ... ON CONFLICT
+# --------------------------------------------------------------------------- #
+
+#: An engine URL per dialect.  ``create_engine`` does not connect, which is all
+#: that is needed to build (and compile) the statement a session would run.
+_DIALECT_URLS = {
+    "postgresql": "postgresql+psycopg://scholium@db.invalid/scholium",
+    "sqlite": "sqlite://",
+}
+
+_ON_CONFLICT = (
+    "ON CONFLICT (content_cid, manifest_cid) DO UPDATE SET "
+    "path = excluded.path, media_type = excluded.media_type, role = excluded.role"
+)
+
+
+def _upsert_for(dialect: str):
+    """The statement :func:`refs._insert_references` builds for a ``dialect`` session."""
+    session = Session(bind=create_engine(_DIALECT_URLS[dialect]))
+    statement = refs._insert_references(session)
+    return statement, statement.compile(dialect=session.get_bind().dialect)
+
+
+@pytest.mark.parametrize("dialect", sorted(_DIALECT_URLS))
+def test_each_dialect_upserts_with_its_own_insert_on_conflict(dialect):
+    statement, compiled = _upsert_for(dialect)
+
+    # The dialect's own construct: SQLAlchemy's generic insert has no ON CONFLICT.
+    assert type(statement).__module__ == f"sqlalchemy.dialects.{dialect}.dml"
+    sql = str(compiled)
+    assert sql.startswith("INSERT INTO content_refs (content_cid, manifest_cid, path, media_type, role)")
+    assert sql.rstrip().endswith(_ON_CONFLICT), sql
+
+
+def test_both_dialects_take_the_same_rows_and_conflict_on_the_same_key():
+    _, postgres = _upsert_for("postgresql")
+    _, sqlite = _upsert_for("sqlite")
+
+    # What differs between the two is only the placeholder syntax: one list of
+    # rows feeds either statement, and both resolve a clash on the primary key
+    # by refreshing the same three columns -- so the same rows, and the same
+    # counts, come out.
+    assert sorted(postgres.params) == sorted(sqlite.params)
+    assert _ON_CONFLICT in str(postgres) and _ON_CONFLICT in str(sqlite)
+
+
+def test_a_dialect_with_no_upsert_here_gets_a_plain_insert():
+    unknown = types.SimpleNamespace(
+        get_bind=lambda: types.SimpleNamespace(dialect=types.SimpleNamespace(name="mssql"))
+    )
+
+    statement = refs._insert_references(unknown)
+
+    assert type(statement).__module__ == "sqlalchemy.sql.dml"
+    assert "ON CONFLICT" not in str(statement)
+
+
+def _reference_count() -> int:
+    with db.SessionLocal() as session:
+        return session.execute(select(func.count()).select_from(ContentRef)).scalar_one()
+
+
+def _rows_of(*papers: UnlistedPaper) -> set[tuple]:
+    """``(file, manifest, path, media type, role)`` for each paper's index row."""
+    with db.SessionLocal() as session:
+        return set(
+            session.execute(
+                select(
+                    ContentRef.content_cid,
+                    ContentRef.manifest_cid,
+                    ContentRef.path,
+                    ContentRef.media_type,
+                    ContentRef.role,
+                ).where(ContentRef.content_cid.in_([paper.file_cid for paper in papers]))
+            ).all()
+        )
+
+
+def _reset_manifest_mark(seq: int) -> None:
+    with db.SessionLocal() as session:
+        session.execute(update(ContentRefProgress).values(last_seq=seq))
+        session.commit()
+
+
+def test_indexing_again_over_existing_rows_counts_and_stores_what_the_first_pass_did(
+    without_subscriber,
+):
+    before = _progress()
+    papers = [UnlistedPaper(state="moderation") for _ in range(3)]
+    rows_before = _reference_count()
+
+    first = refs.sync()
+    rows_after_insert = _reference_count()
+    stored = _rows_of(*papers)
+
+    # Put the mark back so the same manifests are read again over rows that
+    # are already there: the path an INSERT alone cannot take.
+    _reset_manifest_mark(before)
+    second = refs.sync()
+
+    assert first == second == 3
+    assert rows_after_insert - rows_before == 3  # one file per paper
+    assert _reference_count() == rows_after_insert  # no duplicates, no losses
+    assert _rows_of(*papers) == stored
+    assert _progress() == _newest_manifest_seq()
+
+
+def test_the_upsert_fills_in_the_metadata_of_rows_that_predate_it(without_subscriber):
+    before = _progress()
+    paper = UnlistedPaper(state="moderation")
+    assert refs.sync() == 1
+    # A row as the first build of the index left it: the file and manifest, no metadata.
+    with db.SessionLocal() as session:
+        session.execute(
+            update(ContentRef)
+            .where(ContentRef.content_cid == paper.file_cid)
+            .values(path=None, media_type=None, role=None)
+        )
+        session.commit()
+    assert _rows_of(paper) == {(paper.file_cid, paper.manifest_cid, None, None, None)}
+
+    _reset_manifest_mark(before)
+    assert refs.sync() == 1
+
+    assert _rows_of(paper) == {
+        (paper.file_cid, paper.manifest_cid, "main.pdf", "application/pdf", "manuscript")
+    }

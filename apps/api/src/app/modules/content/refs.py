@@ -60,6 +60,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Optional, cast
 
 from sqlalchemy import Column, Integer, Text, inspect, select, text, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult, Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -515,27 +516,38 @@ def _sync_inline_versions() -> int:
             indexed += sum(1 for row in page if file_cids(row.body))
 
 
+#: The columns an upsert refreshes when the row is already there: everything but
+#: the primary key.
+_REF_METADATA_COLUMNS = ("path", "media_type", "role")
+
+#: Each supported dialect's own ``insert``: SQLAlchemy only offers
+#: ``on_conflict_do_update`` on the dialect-specific construct, and the two
+#: constructs spell the same ``INSERT ... ON CONFLICT (...) DO UPDATE`` clause
+#: the same way.
+_UPSERT_INSERTS = {"postgresql": postgresql_insert, "sqlite": sqlite_insert}
+
+
 def _insert_references(session: Any) -> Any:
-    """An INSERT into ``content_refs`` that fills in an existing row's metadata.
+    """An upserting INSERT into ``content_refs``, in the session's own dialect.
 
     Rows can pre-exist when someone reset the progress row without emptying
     the table, and the ``path``/``media_type``/``role`` columns arrived after
     the first rows did; upserting is what lets a rebuild complete and fill
-    those in instead of failing or leaving them missing.  SQLite is the
-    project's database (see :mod:`app.modules.ledger.triggers`); elsewhere a
-    plain INSERT is used.
+    those in instead of failing or leaving them missing.  PostgreSQL and SQLite
+    both get ``INSERT ... ON CONFLICT (content_cid, manifest_cid) DO UPDATE``,
+    built with that dialect's own ``insert``, so a page of manifests leaves the
+    same rows -- and :func:`sync` reports the same counts -- whichever database
+    holds the index.  A dialect with no upsert here gets a plain INSERT.
     """
-    if session.get_bind().dialect.name == "sqlite":
-        statement = sqlite_insert(ContentRef.__table__)
-        return statement.on_conflict_do_update(
-            index_elements=[ContentRef.content_cid, ContentRef.manifest_cid],
-            set_={
-                "path": statement.excluded.path,
-                "media_type": statement.excluded.media_type,
-                "role": statement.excluded.role,
-            },
-        )
-    return ContentRef.__table__.insert()
+    table = ContentRef.__table__
+    dialect_insert = _UPSERT_INSERTS.get(session.get_bind().dialect.name)
+    if dialect_insert is None:
+        return table.insert()
+    statement = dialect_insert(table)
+    return statement.on_conflict_do_update(
+        index_elements=[table.c.content_cid, table.c.manifest_cid],
+        set_={name: statement.excluded[name] for name in _REF_METADATA_COLUMNS},
+    )
 
 
 def backfill() -> int:
