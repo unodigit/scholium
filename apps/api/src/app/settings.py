@@ -51,6 +51,12 @@ _JOBS_MODES = ("eager", "thread", "external")
 #: ``CONTENT_DIR``, ``s3`` keeps them in an S3-API bucket (see ``app.storage``).
 _STORAGE_BACKENDS = ("fs", "s3")
 
+#: URL schemes production accepts for ``DATABASE_URL``.  ``postgres://`` is the
+#: Heroku spelling and ``postgresql+psycopg://`` names the driver explicitly;
+#: both are served by psycopg (v3).  Every other scheme -- SQLite above all --
+#: is refused in production (see :meth:`Settings.validate_for_environment`).
+_POSTGRES_SCHEMES = ("postgres", "postgresql", "postgresql+psycopg")
+
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
@@ -429,6 +435,13 @@ class Settings:
                 )
             return
         problems = []
+        scheme = urlparse((self.DATABASE_URL or "").strip()).scheme.lower()
+        if scheme not in _POSTGRES_SCHEMES:
+            problems.append(
+                "DATABASE_URL must be a PostgreSQL URL in production (SQLite is deprecated)"
+            )
+        if (self.STORAGE_BACKEND or "").strip().lower() != "s3":
+            problems.append("STORAGE_BACKEND must be s3 in production")
         if self.JWT_SECRET in ("", _DEFAULT_JWT_SECRET) or len(self.JWT_SECRET) < 32:
             problems.append("JWT_SECRET must be set to a random value of at least 32 characters")
         review_key = (self.REVIEW_UNIQUENESS_KEY or "").strip()

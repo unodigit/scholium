@@ -9,6 +9,7 @@ production, written out in full, must actually boot.
 
 from __future__ import annotations
 
+import os
 import secrets
 import sys
 import time
@@ -73,10 +74,12 @@ def test_production_with_development_defaults_is_refused_with_every_reason(plain
 # --- a complete production configuration ------------------------------------------
 
 
-def production_env(smtp_url: str, **extra) -> dict:
-    """The environment of ``docs/deploy.md`` for production on SQLite + filesystem, placeholders only."""
+def production_env(smtp_url: str, database_url: "str | None", **extra) -> dict:
+    """The environment of ``docs/deploy.md`` for production on PostgreSQL + S3, placeholders only."""
     return dict(
         SCHOLIUM_ENV="production",
+        DATABASE_URL=database_url,
+        STORAGE_BACKEND="s3",
         JWT_SECRET=secrets.token_hex(32),
         REVIEW_UNIQUENESS_KEY=secrets.token_hex(32),
         COMMITTEE_PUBLIC_KEY=secrets.token_hex(32),
@@ -95,10 +98,18 @@ def production_env(smtp_url: str, **extra) -> dict:
     )
 
 
+#: Production refuses SQLite; the boot test needs a real PostgreSQL server.
+needs_postgres = pytest.mark.skipif(
+    not (os.environ.get("TEST_DATABASE_URL") or "").strip(),
+    reason="needs TEST_DATABASE_URL (PostgreSQL)",
+)
+
+
+@needs_postgres
 def test_a_complete_production_configuration_boots(nodes):
-    node = nodes.make("production", storage="fs")
+    node = nodes.make("production", storage="s3", s3=nodes.s3())
     node.init_key()
-    node.env.update(production_env(node.smtp.url))
+    node.env.update(production_env(node.smtp.url, os.environ["TEST_DATABASE_URL"].strip()))
     node.start_api()
     with node.client() as http:
         assert http.get("/readyz").json()["status"] == "ok"
@@ -132,9 +143,10 @@ def test_a_complete_production_configuration_boots(nodes):
          "s3-without-bucket", "remote-sandbox-without-url"],
 )
 def test_one_unsafe_setting_is_enough_to_refuse_production(nodes, defect, reason):
-    node = nodes.make("unsafe")
+    node = nodes.make("unsafe", storage="s3", s3=nodes.s3())
     node.init_key()
-    code, log = run_to_exit(node, **{**production_env(node.smtp.url), **defect})
+    database_url = (os.environ.get("TEST_DATABASE_URL") or "").strip() or None
+    code, log = run_to_exit(node, **{**production_env(node.smtp.url, database_url), **defect})
     assert code != 0, log
     assert reason in log, log
 

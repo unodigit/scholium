@@ -80,6 +80,11 @@ def _production(monkeypatch, tmp_path, **overrides) -> Settings:
     prod.ORCID_CLIENT_SECRET = "client-secret"
     prod.REVIEW_UNIQUENESS_KEY = "r" * 48
     prod.RATE_LIMIT_ENABLED = 1
+    prod.DATABASE_URL = "postgresql+psycopg://scholium:scholium@db.example.org:5432/scholium"
+    prod.STORAGE_BACKEND = "s3"
+    prod.S3_BUCKET = "scholium-production"
+    prod.S3_ACCESS_KEY_ID = "AKIAPLACEHOLDERPROD"
+    prod.S3_SECRET_ACCESS_KEY = "production-placeholder-secret"
     prod.NODE_KEY_PATH = str(tmp_path / "absent.key")
     for name, value in overrides.items():
         setattr(prod, name, value)

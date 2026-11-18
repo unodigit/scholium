@@ -602,10 +602,12 @@ def test_production_does_not_need_an_endpoint_or_region_for_s3(tmp_path, monkeyp
     production(tmp_path, monkeypatch, S3_ENDPOINT_URL="", S3_REGION="").validate_for_environment()
 
 
-def test_production_accepts_the_default_filesystem_backend_without_any_s3_setting(tmp_path, monkeypatch):
+def test_production_refuses_the_default_filesystem_backend(tmp_path, monkeypatch):
+    """``fs`` is a development backend: production keeps objects in an S3-API bucket."""
     prod = production(tmp_path, monkeypatch, STORAGE_BACKEND="fs", S3_BUCKET="", S3_ACCESS_KEY_ID="", S3_SECRET_ACCESS_KEY="")
 
-    prod.validate_for_environment()
+    with pytest.raises(RuntimeError, match="STORAGE_BACKEND must be s3 in production"):
+        prod.validate_for_environment()
 
 
 @pytest.mark.parametrize("bucket", ["", "   "])

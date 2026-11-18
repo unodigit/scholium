@@ -72,6 +72,13 @@ def _safe_production_settings(tmp_path, monkeypatch) -> Settings:
     safe.NODE_KEY_PATH = str(node_key)
     safe.REVIEW_UNIQUENESS_KEY = "r" * 48
     safe.RATE_LIMIT_ENABLED = 1
+    # Production refuses SQLite and filesystem storage: PostgreSQL and an
+    # S3-API bucket are the only accepted production backends.
+    safe.DATABASE_URL = "postgresql+psycopg://scholium:scholium@db.example.org:5432/scholium"
+    safe.STORAGE_BACKEND = "s3"
+    safe.S3_BUCKET = "scholium-production"
+    safe.S3_ACCESS_KEY_ID = "AKIAPLACEHOLDERPROD"
+    safe.S3_SECRET_ACCESS_KEY = "production-placeholder-secret"
     return safe
 
 
