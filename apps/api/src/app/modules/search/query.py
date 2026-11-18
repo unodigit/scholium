@@ -52,7 +52,7 @@ from sqlalchemy import text
 
 from app import db
 from app.modules import ledger
-from app.modules.submissions import LISTED, Authorship, authorship_for, ensure_tables
+from app.modules.submissions import LISTED, Authorship, authorship_for, ensure_tables, versions_for_paper
 
 from .index import TABLE_NAME, ensure_table
 
@@ -90,6 +90,8 @@ class SearchHit:
     score: float
     #: The version's authors, in byline order (Authorship rows).
     authors: list[Authorship] = field(default_factory=list)
+    #: How many listed versions the paper has (for "v{n} of {total}").
+    total_versions: int = 0
 
 
 @dataclass(frozen=True)
@@ -171,8 +173,8 @@ def version_has_code(manifest_cid: Optional[str]) -> bool:
 
 
 #: FTS5 BM25 column weights, in column order:
-#: ``version_cid`` (UNINDEXED), ``title``, ``abstract``, ``body``.
-_BM25_WEIGHTS = "0.0, 10.0, 5.0, 1.0"
+#: ``version_cid`` (UNINDEXED), ``title``, ``authors``, ``abstract``, ``body``.
+_BM25_WEIGHTS = "0.0, 10.0, 5.0, 5.0, 1.0"
 
 #: ``ts_rank_cd`` weight array for PostgreSQL, in the order PostgreSQL names
 #: them: ``{D, C, B, A}`` -- body 0.1, abstract 0.5, authors 0.5, title 1.0.
@@ -385,26 +387,29 @@ def _priority_rows(short_id: str) -> list[Any]:
     paper = submissions.get_paper_by_short_id(short_id)
     if paper is None:
         return []
-    rows: list[Any] = []
-    for version in submissions.versions_for_paper(paper.paper_cid):
-        if getattr(version, "state", None) != LISTED:
-            continue
-        rows.append(
-            SimpleNamespace(
-                version_cid=version.version_cid,
-                paper_cid=version.paper_cid,
-                n=version.n,
-                title=version.title,
-                abstract=version.abstract,
-                listed_at=version.listed_at,
-                manifest_cid=version.manifest_cid,
-                short_id=paper.short_id,
-                categories=paper.categories,
-                status=paper.status,
-                rank=-1000.0,
-            )
+    listed = [
+        version
+        for version in submissions.versions_for_paper(paper.paper_cid)
+        if getattr(version, "state", None) == LISTED
+    ]
+    if not listed:
+        return []
+    version = max(listed, key=lambda v: (int(v.n),))
+    return [
+        SimpleNamespace(
+            version_cid=version.version_cid,
+            paper_cid=version.paper_cid,
+            n=version.n,
+            title=version.title,
+            abstract=version.abstract,
+            listed_at=version.listed_at,
+            manifest_cid=version.manifest_cid,
+            short_id=paper.short_id,
+            categories=paper.categories,
+            status=paper.status,
+            rank=-1000.0,
         )
-    return rows
+    ]
 
 
 def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult:
@@ -437,12 +442,39 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
     matched_priority = [row for row in priority if _passes(row, criteria, code_cache)]
     matched_rest = [row for row in rest if _passes(row, criteria, code_cache)]
     matched = matched_priority + matched_rest
+
+    # One hit per paper: keep its latest listed version among the matched
+    # versions, so a multi-version paper is not listed once per version.
+    by_paper: dict[str, list[Any]] = {}
+    for row in matched:
+        by_paper.setdefault(row.paper_cid, []).append(row)
+    paper_min_index: dict[str, int] = {}
+    for paper_cid, rows in by_paper.items():
+        paper_min_index[paper_cid] = min(matched.index(row) for row in rows)
+    representatives: list[Any] = []
+    for paper_cid, rows in by_paper.items():
+        # prefer highest n, then smallest version_cid
+        candidates = sorted(rows, key=lambda r: (-int(getattr(r, "n", 0)), str(getattr(r, "version_cid", ""))))
+        rep = candidates[0]
+        representatives.append(rep)
+    representatives.sort(
+        key=lambda r: (paper_min_index[r.paper_cid], str(getattr(r, "version_cid", "")))
+    )
+    matched = representatives
     facets = _facets(matched)
 
     hits: list[SearchHit] = []
     for row in matched[: max(limit, 0)]:
         if row.version_cid not in code_cache:
             code_cache[row.version_cid] = version_has_code(row.manifest_cid)
+        try:
+            total_versions = len(
+                [v for v in versions_for_paper(row.paper_cid) if getattr(v, "state", None) == LISTED]
+            )
+        except Exception:
+            total_versions = int(getattr(row, "n", 0) or 0)
+        if total_versions < int(getattr(row, "n", 0) or 0):
+            total_versions = int(getattr(row, "n", 0) or 0)
         hits.append(
             SearchHit(
                 version_cid=row.version_cid,
@@ -457,6 +489,7 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
                 has_code=code_cache[row.version_cid],
                 score=round(-float(getattr(row, "rank", 0.0)), 6),
                 authors=authorship_for(row.version_cid),
+                total_versions=total_versions,
             )
         )
     return SearchResult(query=query, total=len(matched), hits=hits, facets=facets)

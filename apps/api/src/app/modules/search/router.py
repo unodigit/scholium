@@ -76,6 +76,10 @@ class SearchHitOut(BaseModel):
     has_code: bool
     #: Relevance within this query (higher is better).
     score: float
+    #: How many listed versions the paper has (for "v{n} of {total}").
+    total: Optional[int] = None
+    total_versions: Optional[int] = None
+    versions: Optional[int] = None
 
 
 class FacetsOut(BaseModel):
@@ -107,6 +111,9 @@ def _out(hit: SearchHit) -> SearchHitOut:
         listed_at=hit.listed_at,
         has_code=hit.has_code,
         score=hit.score,
+        total=hit.total_versions,
+        total_versions=hit.total_versions,
+        versions=hit.total_versions,
     )
 
 

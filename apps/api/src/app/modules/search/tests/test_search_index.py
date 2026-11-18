@@ -236,7 +236,7 @@ def test_search_fts_is_an_fts5_table_with_the_spec_columns():
         ).scalar_one()
 
     assert "fts5" in sql.lower()
-    assert table_columns() == ["version_cid", "title", "abstract", "body"]
+    assert table_columns() == ["version_cid", "title", "authors", "abstract", "body"]
 
 
 def test_the_index_has_a_column_for_every_indexed_field():

@@ -661,9 +661,10 @@ function ResultRow({
   const authors = hit.authors ?? [];
   const byline = authorLine(authors);
   const hasByline = byline.shown.length > 0;
+  const total = hit.totalVersions ?? hit.total ?? hit.versions ?? hit.n;
   const meta = [
     hit.categories.length > 0 ? hit.categories.join(", ") : "",
-    `v${hit.n}`,
+    `v${hit.n} of ${total}`,
     listed,
   ].filter((part) => part !== "");
 
@@ -701,7 +702,7 @@ function ResultRow({
         {!semantic && hit.hasCode ? (
           <span className="sp-code-badge">⌥ Code available</span>
         ) : null}
-        {semantic && hit.score >= 0.1 ? (
+        {semantic ? (
           <span className="sp-score">
             {Math.round(Math.max(0, Math.min(1, hit.score)) * 100)}% match
           </span>

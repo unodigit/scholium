@@ -64,6 +64,10 @@ class SemanticResultOut(BaseModel):
     listed_at: Optional[datetime] = None
     #: Cosine similarity with the query, -1..1 (higher is closer).
     score: float
+    #: How many listed versions the paper has (for "v{n} of {total}").
+    total: Optional[int] = None
+    total_versions: Optional[int] = None
+    versions: Optional[int] = None
 
 
 class SemanticSearchOut(BaseModel):
@@ -86,6 +90,9 @@ def _out(hit: SemanticHit) -> SemanticResultOut:
         status=hit.status,
         listed_at=hit.listed_at,
         score=round(hit.score, 6),
+        total=hit.total_versions,
+        total_versions=hit.total_versions,
+        versions=hit.total_versions,
     )
 
 

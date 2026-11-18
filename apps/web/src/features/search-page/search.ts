@@ -75,6 +75,10 @@ export interface SearchResultItem {
   readonly paperCid: string;
   readonly shortId: string | null;
   readonly n: number;
+  /** How many listed versions the paper has (for "v{n} of {total}"). */
+  readonly total?: number;
+  readonly totalVersions?: number;
+  readonly versions?: number;
   readonly title: string;
   readonly abstract: string;
   /**
@@ -498,11 +502,28 @@ function parseHit(value: unknown): SearchResultItem | null {
     return null;
   }
   const authors = parseAuthors(value.authors);
+  const n = readInteger(value.n) ?? 1;
+  const total =
+    readInteger(
+      value.total ??
+        value.total_versions ??
+        value.totalVersions ??
+        value.versions ??
+        value.version_total ??
+        value.versionTotal ??
+        value.version_count ??
+        value.versions_count ??
+        value.versionCount ??
+        value.versionsCount,
+    ) ?? n;
   return {
     versionCid: readText(value.version_cid) ?? "",
     paperCid: readText(value.paper_cid) ?? "",
     shortId: readText(value.short_id),
-    n: readInteger(value.n) ?? 1,
+    n,
+    total,
+    totalVersions: total,
+    versions: total,
     title,
     abstract: typeof value.abstract === "string" ? value.abstract : "",
     // Older payloads carry no author list at all; keep them shape-compatible

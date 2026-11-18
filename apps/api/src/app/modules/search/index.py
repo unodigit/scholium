@@ -92,6 +92,7 @@ _CREATE_SQLITE_TABLE = f"""
     CREATE VIRTUAL TABLE IF NOT EXISTS {TABLE_NAME} USING fts5(
         version_cid UNINDEXED,
         title,
+        authors,
         abstract,
         body
     )
@@ -251,7 +252,12 @@ _write_lock = threading.RLock()
 
 
 def _upsert_sqlite(
-    connection: Connection, version_cid: str, title: str, abstract: str, body: str
+    connection: Connection,
+    version_cid: str,
+    title: str,
+    abstract: str,
+    body: str,
+    authors: str = "",
 ) -> None:
     """Delete-then-insert one FTS5 row, holding SQLite's write lock."""
     # pysqlite opens no transaction for the DELETE's scan, so take the write
@@ -265,10 +271,16 @@ def _upsert_sqlite(
         )
         connection.execute(
             text(
-                f"INSERT INTO {TABLE_NAME} (version_cid, title, abstract, body) "
-                "VALUES (:cid, :title, :abstract, :body)"
+                f"INSERT INTO {TABLE_NAME} (version_cid, title, authors, abstract, body) "
+                "VALUES (:cid, :title, :authors, :abstract, :body)"
             ),
-            {"cid": version_cid, "title": title, "abstract": abstract, "body": body},
+            {
+                "cid": version_cid,
+                "title": title,
+                "authors": authors,
+                "abstract": abstract,
+                "body": body,
+            },
         )
         connection.commit()
     except Exception:
@@ -324,7 +336,7 @@ def upsert_entry(
                 )
         else:
             with db.engine.connect() as connection:
-                _upsert_sqlite(connection, version_cid, title, abstract, body)
+                _upsert_sqlite(connection, version_cid, title, abstract, body, authors)
 
 
 def remove_entry(version_cid: str) -> bool:
@@ -344,13 +356,34 @@ def _body_of(version_cid: str) -> str:
 
 
 def _authors_of(version_cid: str) -> str:
-    """The version's byline as plain text: its authors' DIDs in byline order.
+    """The version's byline as plain text.
 
-    Only PostgreSQL indexes it.  The authorship table holds the author DIDs
-    (and credit roles); it is the only authorship the node knows, so that is
-    what the authors column contains.
+    Includes each author's DID, their current public display name (read from
+    their profile, so a renamed profile is reflected the next time the version
+    is synced) and their ORCID iD.  After erasure (ID-7) the profile's name and
+    ORCID read as ``None`` and are omitted, leaving only the pseudonymous DID.
     """
-    return " ".join(row.author_did for row in authorship_for(version_cid))
+    parts: list[str] = []
+    try:
+        from app.modules import profiles
+    except Exception:  # pragma: no cover - profiles always available
+        profiles = None
+    for row in authorship_for(version_cid):
+        did = row.author_did
+        parts.append(did)
+        if profiles is not None:
+            try:
+                view = profiles.public_profile(did)
+            except Exception:
+                view = None
+            if view is not None and not getattr(view, "erased", False):
+                name = getattr(view, "name", None)
+                if isinstance(name, str) and name.strip():
+                    parts.append(name.strip())
+                orcid = getattr(view, "orcid", None)
+                if isinstance(orcid, str) and orcid.strip():
+                    parts.append(orcid.strip())
+    return " ".join(parts)
 
 
 def sync_version(version_cid: str) -> bool:
@@ -381,7 +414,7 @@ def sync_version(version_cid: str) -> bool:
             version.title,
             version.abstract,
             _body_of(version_cid),
-            authors=_authors_of(version_cid) if _is_postgres() else "",
+            authors=_authors_of(version_cid),
         )
         return True
 

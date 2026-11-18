@@ -47,6 +47,7 @@ from app.modules.submissions import (
     PaperVersion,
     authorship_for,
     ensure_tables,
+    versions_for_paper,
 )
 
 from .embedder import cosine_similarity, get_embedder
@@ -71,6 +72,8 @@ class SemanticHit:
     score: float
     #: The version's authors, in byline order (Authorship rows).
     authors: list[Authorship] = field(default_factory=list)
+    #: How many listed versions the paper has (for "v{n} of {total}").
+    total_versions: int = 0
 
 
 @dataclass(frozen=True)
@@ -156,8 +159,17 @@ def _describe(ranked: list[tuple[float, str]]) -> list[SemanticHit]:
             .outerjoin(Paper, Paper.paper_cid == PaperVersion.paper_cid)
             .where(PaperVersion.version_cid.in_(scores), PaperVersion.state == LISTED)
         ).all()
-    described = {
-        version.version_cid: SemanticHit(
+    described = {}
+    for version, paper in rows:
+        try:
+            total_versions = len(
+                [v for v in versions_for_paper(version.paper_cid) if getattr(v, "state", None) == LISTED]
+            )
+        except Exception:
+            total_versions = int(version.n or 0)
+        if total_versions < int(version.n or 0):
+            total_versions = int(version.n or 0)
+        described[version.version_cid] = SemanticHit(
             version_cid=version.version_cid,
             paper_cid=version.paper_cid,
             short_id=paper.short_id if paper is not None else None,
@@ -169,7 +181,6 @@ def _describe(ranked: list[tuple[float, str]]) -> list[SemanticHit]:
             listed_at=version.listed_at,
             score=scores[version.version_cid],
             authors=authorship_for(version.version_cid),
+            total_versions=total_versions,
         )
-        for version, paper in rows
-    }
     return [described[cid] for _, cid in ranked if cid in described]
