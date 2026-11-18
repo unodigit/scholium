@@ -677,14 +677,17 @@ describe("DiscussionTab: helpful marks", () => {
     renderTab({ actions });
     fireEvent.click(within(card("middle")).getByRole("button", { name: /^Mark helpful/ }));
 
-    const note = await within(card("middle")).findByRole("status");
-    expect(note.textContent).toMatch(/already marked/);
+    // The note, the button and the focus settle over more than one render once
+    // the 409 lands; wait for all of them.
+    await waitFor(() => {
+      expect(within(card("middle")).getByRole("status").textContent).toMatch(/already marked/);
+      const done = within(card("middle")).getByRole("button", { name: /^Marked helpful/ });
+      expect((done as HTMLButtonElement).disabled).toBe(true);
+      expect(document.activeElement).toBe(card("middle"));
+    });
     expect(within(card("middle")).queryByRole("alert")).toBeNull();
-    const done = within(card("middle")).getByRole("button", { name: /^Marked helpful/ });
-    expect((done as HTMLButtonElement).disabled).toBe(true);
     // The count is not invented: the server did not count it.
     expect(within(card("middle")).getByText("1 member found this helpful")).toBeTruthy();
-    expect(document.activeElement).toBe(card("middle"));
   });
 
   it("explains a refusal and leaves the button to try again", async () => {
