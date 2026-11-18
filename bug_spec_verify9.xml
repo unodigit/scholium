@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 9: findings of verify sweep 9 (2026-11-18, main @ 3dc34bf). 15/16 journeys pass; 11 fails.
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png (fresh set, local, gitignored).
+  Decisions: reporters are excluded from the appeal panel for decisions on their own report (impartiality, like the
+  deciding moderator); similarity checks ignore earlier versions of the same paper.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/appeals/**,apps/api/src/app/modules/notifications/**,apps/api/src/app/modules/me/**,apps/web/src/features/mod-console/**,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/notifications-card.tsx,apps/web/src/features/dashboard/notifications-card.test.tsx">
+    <title>Appeal polish: every /mod viewer is told they are on the panel; overturn notice shows a raw CID; post appeals never say what was hidden; raw dates and outcome words</title>
+    <symptoms>
+      Every appeal card on /mod says "You're on the appeal panel for ..." to whoever views it, including the moderator who made the decision (apps/web/src/features/mod-console/appeal-card.tsx prints it unconditionally)
+      After the panel overturns a hide, the author's notice reads "A moderator made a decision on your post. Appeal bafyreihbxuez5x3q... was overturned by the panel; this decision restores the hidden record." - raw CID overflowing the card, credits a moderator, names no paper
+      An appeal against a hidden post: the card says "You're on the appeal panel for a moderation decision" / "Appeal of a moderation decision" / "hide under policy MOD-09" with no post excerpt or paper title, and offers "Read the paper"; the attention item says only "Vote on an appeal panel by 2026-12-02."; a non-voting member gets "The panel decided: overturned." naming nothing
+      Notices say "You voted upheld/overturned" (raw outcome words; the card says "Uphold the decision"); attention items print deadlines as "2026-12-02"
+      Opening a panel notice scrolls the appeal's heading under the sticky header (the first visible line is "DECISION APPEALED"); the card repeats the paper title in the panel line and the heading
+      A member who reported the post was drawn onto the panel hearing the appeal against the decision on that report
+    </symptoms>
+    <reproduction_steps>
+      Journeys 05, 07 steps 8-10, 11 steps 7-10 (screenshots/07-flag-and-dispute/08h-author-appeal-outcome-notice-raw-cid.png, 10-moderator-not-on-panel-told-on-panel.png, 08c-appeal-card-top-scrolled-up.png, 08b-panel-member-opens-notice-lands-on-appeal.png; screenshots/05-follow-search-notify/06a-solheim-attention-two-appeal-panels.png, 06b-okafor-attention-unnamed-post-appeal.png; screenshots/11-moderation-hold-and-appeal/07a-priya-appeals.png, 08a-panel-member-attention.png, 08c-open-lands-on-appeal.png, 10b-panel-notification-after-vote.png)
+    </reproduction_steps>
+    <expected>The appeals API returns, per appeal, whether the viewer is a panel member (and their vote), and describes the appealed decision's target (record type, paper title, post/review excerpt); the card shows "You're on the appeal panel" only to panel members, names what was decided ("Hidden post on '{title}': '{excerpt}'", with "Read the post" linking to it in its thread, or "Read the paper" for versions), and states the title once; the target heading has scroll-margin-top clearing the sticky header so the panel line is visible after navigation; panel draws exclude the decision's moderator, the record's author and every reporter whose flag the decision settled; outcome notices read in words with the subject named and no CID ('The appeal panel overturned the decision to hide your post on "{title}"; it is visible again.', 'The panel upheld the decision on "{title}".', 'You voted to uphold the decision on the appeal for "{title}".'); every attention item and notice formats dates with the shared formatter ("2 Dec 2026") and names its subject</expected>
+    <actual>Misleading panel claim; raw ids, words and dates; unnamed subjects</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-discussion/**">
+    <title>Hidden-post appeal UI: double period, unlabelled grounds field, post count ignores what is shown</title>
+    <symptoms>
+      The hidden-post line ends "...clarified.. Appeal" (double period); the appeal grounds box is a small unlabelled field squeezed next to the button
+      The thread count says "1 post" while two posts show (a hidden placeholder and a visible post)
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 step 7-8 as sam (screenshots/07-flag-and-dispute/07i-author-appeal-form.png)
+    </reproduction_steps>
+    <expected>The reason sentence is joined without doubled punctuation; Appeal opens a labelled form (label "Why should this decision be reconsidered?", textarea at full width, character guidance, submit and cancel) in the same style as the paper-hold appeal dialog; the count wording matches what is listed ("1 post, 1 hidden")</expected>
+    <actual>As described</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/**,apps/api/src/app/modules/checks/similarity.py,apps/api/src/app/modules/checks/tests/**">
+    <title>Whole-archive verify ends "VERIFIED (status: retracted)"; a new version is flagged 45% similar to its own v1</title>
+    <symptoms>
+      `scholium verify archive.car` on a node export ends "Result: VERIFIED (status: retracted)", carrying one paper's status so the whole archive reads as retracted
+      In the moderation queue a paper's v2 shows 45.2% similarity, measured against the same paper's v1, which a moderator could read as plagiarism
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 5 (offline check output); journey 13 step 4 (queue text before screenshots/13-new-version-and-review-update/04e-priya-lists-v2.png)
+    </reproduction_steps>
+    <expected>For a multi-paper archive the result line reads "Result: VERIFIED - {n} papers ({k} listed, {r} retracted, ...)" while single-paper output keeps its status; similarity checks exclude earlier versions of the same paper (they may report "differs from v{n-1} by X%" as a separate, labelled fact)</expected>
+    <actual>Misleading summary and similarity</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/paper-page.css,apps/web/src/features/paper-page/paper-page.css.test.ts,apps/web/src/features/review-form/review-form.tsx,apps/web/src/features/review-form/review-form.test.tsx,apps/web/src/features/web-auth/recover-form.tsx,apps/web/src/features/web-auth/recover-messages.ts,apps/web/src/features/web-auth/recover-messages.test.ts">
+    <title>Sidebar content still 4px wider than the sidebar; update form report hint outdated; recovery page labels the account by ORCID iD</title>
+    <symptoms>
+      aside.ppg-margin content is 347px inside a 343px sidebar; it no longer scrolls but is clipped, so the right edge of the "Verified · 2 author signatures across 2 versions" pill and the "Anchor pending" line are cut at the edge
+      The update form's report hint still says "Your report is published with the rubric when the review is revealed" (the footer is correct)
+      The person recovering their account sees it labelled by ORCID iD rather than by their profile name
+    </symptoms>
+    <reproduction_steps>
+      Journey 15 step 6 (screenshots/15-correction-notice/06a-anon-retracted-v2.png); journey 13 step 8 (screenshots/13-new-version-and-review-update/08b-okafor-update-form-prefilled-footer.png); journey 06
+    </reproduction_steps>
+    <expected>The margin column's children fit its content box at every width from 1024px (min-width: 0 / max-width: 100% / box-sizing on the pill and rows; a CSS test asserts no fixed widths exceed the track); the update form's report hint matches the footer (published now for scores/recommendation, the written report per the version's gate); the recovery page names the account by profile name when one exists (ORCID iD secondary)</expected>
+    <actual>As described</actual>
+  </bug>
+
+</bug_spec>
