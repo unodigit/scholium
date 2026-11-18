@@ -315,7 +315,11 @@ class TestRefusals:
             "../../etc/passwd",
             "nope",
             "",
-            cid_of(BUNDLE).upper(),
+            # A fixed input, not ``BUNDLE``: a zip embeds the current time in
+            # its header, and pytest builds this test id from the value, so
+            # ``cid_of(BUNDLE)`` differs between xdist workers and collection
+            # fails with "different tests were collected".
+            cid_of(b"a bundle that is not a file id").upper(),
             "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
         ],
     )

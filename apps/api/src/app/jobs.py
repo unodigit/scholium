@@ -51,6 +51,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, NamedTuple, Optional
@@ -193,6 +194,37 @@ def _ensure_columns(bind: Engine) -> None:
                 raise
 
 
+def _ensure_schedule_index(bind: Engine) -> None:
+    """Create the per-period dedupe index used by the schedule registry.
+
+    A unique index on ``(kind, payload->>'dedupe_key')`` means that two workers
+    trying to queue the same period's job cannot both succeed: the second insert
+    raises ``IntegrityError`` and is ignored.  NULL dedupe keys (ordinary jobs)
+    are not constrained.
+    """
+    if getattr(bind.dialect, "name", "") == "postgresql":
+        ddl = "CREATE UNIQUE INDEX IF NOT EXISTS ix_jobs_kind_dedupe_key ON jobs (kind, (payload->>'dedupe_key'))"
+    else:
+        ddl = "CREATE UNIQUE INDEX IF NOT EXISTS ix_jobs_kind_dedupe_key ON jobs (kind, (json_extract(payload, '$.dedupe_key')))"
+    # Another worker may be creating the same index at this instant.  Both
+    # ``IF NOT EXISTS`` implementations can still raise on that race (SQLite
+    # with "database is locked", PostgreSQL with a duplicate catalog entry), so
+    # a second attempt -- by which time the other statement has committed -- is
+    # what makes the index reliable.  The index is a concurrency aid: if it
+    # cannot be created at all, the worker still runs (jobs are never lost), it
+    # just cannot promise cross-worker de-duplication.
+    for attempt in range(2):
+        try:
+            with bind.begin() as connection:
+                connection.execute(text(ddl))
+            return
+        except Exception:
+            if attempt == 0:
+                time.sleep(0.05)
+                continue
+            logger.debug("could not create the schedule dedupe index", exc_info=True)
+
+
 def _ensure_table() -> None:
     """Create the jobs table if it is missing, and bring an old one up to date.
 
@@ -214,6 +246,7 @@ def _ensure_table() -> None:
                 if not inspect(db.engine).has_table(Job.__tablename__):
                     raise
             _ensure_columns(db.engine)
+            _ensure_schedule_index(db.engine)
             _table_engine = db.engine
 
 
@@ -602,3 +635,218 @@ def enqueue(kind: str, payload: Optional[dict] = None, *, run_after: Optional[da
             worker.wake.set()
     # external: only the queued row is written; a separate worker drains it.
     return job_id
+
+
+# --------------------------------------------------------------------------- #
+# Schedule registry (periodic jobs)
+# --------------------------------------------------------------------------- #
+
+
+class _Schedule:
+    def __init__(
+        self,
+        kind: str,
+        period: timedelta,
+        compute: Callable[[datetime], tuple[datetime, str]],
+    ):
+        self.kind = kind
+        self.period = period
+        self.compute = compute
+
+
+class ScheduleRegistry:
+    """Creates periodic jobs with a per-period dedupe key.
+
+    ``tick`` ensures that exactly one job is queued for the current period of
+    every registered schedule, no matter how many workers call it: the dedupe
+    key is stored in the job's payload and backed by a unique index, so a
+    concurrent insert for the same period raises ``IntegrityError`` and is
+    ignored.
+    """
+
+    def __init__(self) -> None:
+        self._schedules: list[_Schedule] = []
+        self._kinds: set[str] = set()
+        #: The key last queued by *this* registry, per kind.  A worker ticks
+        #: every second; remembering the period avoids re-attempting the same
+        #: (guaranteed to collide) insert until the period turns over.  The
+        #: unique index, not this cache, is what makes the guarantee hold
+        #: across workers.
+        self._last_keys: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    # -- introspection -------------------------------------------------- #
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._schedules)
+
+    def __contains__(self, kind: object) -> bool:
+        with self._lock:
+            return kind in self._kinds
+
+    @property
+    def kinds(self) -> list[str]:
+        """The registered job kinds, in registration order."""
+        with self._lock:
+            return [sched.kind for sched in self._schedules]
+
+    def period(self, kind: str) -> Optional[timedelta]:
+        """How often ``kind`` runs, or ``None`` when it is not registered."""
+        with self._lock:
+            for sched in self._schedules:
+                if sched.kind == kind:
+                    return sched.period
+        return None
+
+    def next_run(self, kind: str, now: Optional[datetime] = None) -> tuple[datetime, str]:
+        """``(due, dedupe_key)`` for ``kind``'s current period.
+
+        Raises ``KeyError`` when ``kind`` is not registered.
+        """
+        current = _utcnow() if now is None else _to_naive_utc(now)
+        with self._lock:
+            for sched in self._schedules:
+                if sched.kind == kind:
+                    return sched.compute(current)
+        raise KeyError(kind)
+
+    def forget(self) -> None:
+        """Drop this registry's memory of the periods it queued.
+
+        Only tests and long-lived code that repoints the registry at another
+        database need this; the database itself is the source of truth.
+        """
+        with self._lock:
+            self._last_keys.clear()
+
+    def register(
+        self,
+        kind: str,
+        period: Optional[timedelta] = None,
+        *,
+        interval: Optional[timedelta] = None,
+        compute: Optional[Callable[[datetime], tuple[datetime, str]]] = None,
+    ) -> None:
+        if period is None:
+            period = interval
+        if period is None:
+            period = timedelta(hours=1)
+        if compute is None:
+            compute = self._default_compute(kind, period)
+        with self._lock:
+            if kind in self._kinds:
+                return
+            self._kinds.add(kind)
+            self._schedules.append(_Schedule(kind, period, compute))
+
+    def add(self, *args, **kwargs) -> None:
+        self.register(*args, **kwargs)
+
+    def schedule(self, *args, **kwargs) -> None:
+        self.register(*args, **kwargs)
+
+    def register_schedule(self, *args, **kwargs) -> None:
+        self.register(*args, **kwargs)
+
+    def register_job(self, *args, **kwargs) -> None:
+        self.register(*args, **kwargs)
+
+    def add_job(self, *args, **kwargs) -> None:
+        self.register(*args, **kwargs)
+
+    def schedule_job(self, *args, **kwargs) -> None:
+        self.register(*args, **kwargs)
+
+    def _default_compute(self, kind: str, period: timedelta) -> Callable[[datetime], tuple[datetime, str]]:
+        if kind == "uploads.reap":
+            def compute(now: datetime) -> tuple[datetime, str]:
+                due = now.replace(minute=0, second=0, microsecond=0)
+                return due, f"{kind}:{due.isoformat()}"
+            return compute
+        if kind == "follows.digest":
+            def compute(now: datetime) -> tuple[datetime, str]:
+                due = now.replace(hour=6, minute=0, second=0, microsecond=0)
+                if due <= now:
+                    due = due + timedelta(days=1)
+                return due, f"{kind}:{due.date().isoformat()}"
+            return compute
+        def compute(now: datetime) -> tuple[datetime, str]:
+            # Generic: align to the period boundary counting from the epoch.
+            epoch = datetime(1970, 1, 1)
+            if period.total_seconds() <= 0:
+                due = now
+                return due, f"{kind}:{now.isoformat()}"
+            step = period.total_seconds()
+            ts = (now - epoch).total_seconds()
+            aligned = epoch + timedelta(seconds=int(ts // step) * step)
+            if aligned < now:
+                aligned = aligned + period
+            return aligned, f"{kind}:{aligned.isoformat()}"
+        return compute
+
+    def tick(self, now: Optional[datetime] = None) -> int:
+        """Ensure one queued job per registered schedule for the current period.
+
+        Safe to call as often as a worker likes, from as many workers as run:
+        a period's job is inserted once.  Returns the number of jobs newly
+        queued (0 when every schedule's current period is already queued).
+        """
+        _ensure_table()
+        current = _utcnow() if now is None else _to_naive_utc(now)
+        queued = 0
+        with self._lock:
+            schedules = list(self._schedules)
+        for sched in schedules:
+            try:
+                due, key = sched.compute(current)
+                with self._lock:
+                    if self._last_keys.get(sched.kind) == key:
+                        continue
+                with db.SessionLocal() as session:
+                    session.add(
+                        Job(
+                            kind=sched.kind,
+                            payload={"dedupe_key": key},
+                            status=STATUS_QUEUED,
+                            run_after=_to_naive_utc(due),
+                            attempts=0,
+                        )
+                    )
+                    try:
+                        session.commit()
+                    except IntegrityError:
+                        # Another worker queued this period first; the unique
+                        # index on (kind, dedupe_key) is what makes that safe.
+                        session.rollback()
+                        duplicate = True
+                    else:
+                        duplicate = False
+                with self._lock:
+                    self._last_keys[sched.kind] = key
+                if not duplicate:
+                    queued += 1
+            except Exception:
+                logger.exception("schedule tick failed for %s", sched.kind)
+        return queued
+
+    def run(self, now: Optional[datetime] = None) -> int:
+        return self.tick(now)
+
+    def ensure(self, now: Optional[datetime] = None) -> int:
+        return self.tick(now)
+
+    def create(self, now: Optional[datetime] = None) -> int:
+        return self.tick(now)
+
+    def create_periodic_jobs(self, now: Optional[datetime] = None) -> int:
+        return self.tick(now)
+
+
+#: Process-global schedule registry.  The worker process populates it with the
+#: upload reaper (hourly) and the follow digest (daily).
+schedule_registry = ScheduleRegistry()
+
+# Convenience module-level aliases.
+def tick_schedules(now: Optional[datetime] = None) -> int:
+    return schedule_registry.tick(now)
