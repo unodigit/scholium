@@ -86,7 +86,7 @@ def test_voting_resolves_the_seat_notice_to_what_the_member_voted(client, scene,
 
     row = _seat_notice(client, member, record["id"])
     assert row["read"] is True
-    assert row["payload"]["summary"] == f'You voted upheld on the appeal for "{title}".'
+    assert row["payload"]["summary"] == f'You voted to uphold the decision on the appeal for "{title}".'
     assert row["payload"]["outcome"] == row["payload"]["summary"]
     assert "Vote on" not in row["payload"]["summary"]
     assert row["payload"]["answer"] == "upheld"
@@ -101,7 +101,7 @@ def test_a_changed_vote_is_what_the_notice_says(client, scene, standing):
     assert _vote(client, member, record["id"], "overturned").status_code == 200
 
     row = _seat_notice(client, member, record["id"])
-    assert row["payload"]["summary"] == f'You voted overturned on the appeal for "{title}".'
+    assert row["payload"]["summary"] == f'You voted to overturn the decision on the appeal for "{title}".'
 
 
 def test_a_vote_leaves_the_other_seats_notices_asking(client, scene, standing):
@@ -125,16 +125,16 @@ def test_a_member_who_never_voted_is_told_what_the_panel_decided(client, scene, 
     assert response.json()["outcome"] == "overturned"
     assert get_appeal(record["id"]).status == "overturned"
 
+    title = submissions.get_version(scene.version_cid).title
     unvoted = _seat_notice(client, bystander, record["id"])
-    assert unvoted["payload"]["summary"] == "The panel decided: overturned."
+    assert unvoted["payload"]["summary"] == f'The panel overturned the decision on "{title}".'
     assert "Vote on" not in unvoted["payload"]["outcome"]
     assert unvoted["payload"].get("answer") is None
 
     # The members who voted keep their own record of it.
-    title = submissions.get_version(scene.version_cid).title
     voted = _seat_notice(client, first, record["id"])
     assert voted["read"] is True
-    assert voted["payload"]["summary"] == f'You voted overturned on the appeal for "{title}".'
+    assert voted["payload"]["summary"] == f'You voted to overturn the decision on the appeal for "{title}".'
 
 
 def test_listing_in_the_service_settles_the_notice_too(client, scene, standing):
@@ -150,4 +150,4 @@ def test_listing_in_the_service_settles_the_notice_too(client, scene, standing):
         if row.kind == "appeal.panel" and row.payload.get("appeal_cid") == record["id"]
     ]
     assert row.read is True
-    assert row.payload["summary"].startswith("You voted upheld on the appeal for")
+    assert row.payload["summary"].startswith("You voted to uphold the decision on the appeal for")

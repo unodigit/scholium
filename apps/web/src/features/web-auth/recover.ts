@@ -379,6 +379,8 @@ export interface RecoveryStatusUpdate {
   guardiansNotified?: number | null;
   contestUntil?: string | null;
   newPublicKey?: string | null;
+  /** `did:key` of the account being recovered, when the reply names it. */
+  accountDid?: string | null;
 }
 
 /**
@@ -457,6 +459,12 @@ export function parseRecoveryStatusUpdate(payload: unknown): RecoveryStatusUpdat
   if (newPublicKey) {
     update.newPublicKey = newPublicKey;
   }
+  // The account's DID is public here: it names what is being recovered and is
+  // how the page reads the profile name the person recognises.
+  const accountDid = readString(payload, ["did", "account_did", "accountDid"]);
+  if (accountDid !== null) {
+    update.accountDid = accountDid;
+  }
   return update;
 }
 
@@ -472,6 +480,12 @@ export interface RecoverySnapshot extends OpenedRecovery {
   newPublicKey: string;
   /** When the request was opened from this browser, ISO 8601 UTC. */
   openedAt: string;
+  /**
+   * `did:key` of the account being recovered, once a status read names it.
+   * The page reads the public profile name with it; the ORCID iD alone does
+   * not identify a profile.
+   */
+  accountDid?: string;
 }
 
 /** Options for {@link openRecoveryRequest}. */
@@ -551,6 +565,50 @@ export async function fetchRecoveryStatus(
   return parseRecoveryStatusUpdate(payload);
 }
 
+/** The slice of the API client a public profile read uses. */
+export type RecoveryProfileClient = Pick<ApiClient, "get">;
+
+/**
+ * The public profile name of the account being recovered, or `null`.
+ *
+ * The progress page knows the account's DID (the status route names it) but a
+ * person recognises their own account by the name they chose, not by an ORCID
+ * iD. The profile read is public and best-effort: a profile that cannot be
+ * read, or one with no name, leaves the page showing the ORCID iD.
+ */
+export async function loadRecoveryAccountName(
+  accountDid: string,
+  client: RecoveryProfileClient = apiClient,
+): Promise<string | null> {
+  const did = accountDid.trim();
+  if (did === "") {
+    return null;
+  }
+  let payload: unknown;
+  try {
+    payload = await client.get<unknown>(`/profiles/${encodeURIComponent(did)}`, {
+      auth: false,
+      cache: "no-store",
+    });
+  } catch {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  if (record.erased === true) {
+    return null;
+  }
+  for (const key of ["name", "display_name", "displayName"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
 /** Merge a status read into the snapshot, keeping anything it did not mention. */
 export function mergeRecoveryStatus(
   current: RecoverySnapshot,
@@ -574,6 +632,7 @@ export function mergeRecoveryStatus(
     guardiansNotified: update.guardiansNotified ?? current.guardiansNotified,
     contestUntil,
     newPublicKey: update.newPublicKey ?? current.newPublicKey,
+    accountDid: update.accountDid ?? current.accountDid,
   };
 }
 
@@ -782,6 +841,8 @@ export function loadPersistedRecovery(
     contestUntil: parseRecoveryInstant(parsed.contestUntil),
     openedAt:
       parseRecoveryInstant(parsed.openedAt) ?? new Date(0).toISOString(),
+    accountDid:
+      readString(parsed, ["accountDid", "account_did", "did"]) ?? undefined,
   };
 }
 

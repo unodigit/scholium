@@ -1,16 +1,18 @@
 """An appeal-panel seat's notification follows what the member did.
 
-A seat is announced with ``Vote on the appeal for "..." by 2026-12-02.`` and a
-link to the vote form.  The vote itself is recorded in ``appeal_panels.vote``
+A seat is announced with ``Vote on the appeal for "..." by 2 Dec 2026.`` (or
+``Vote on the appeal of a hidden post on "..." by 2 Dec 2026.``) and a link to
+the vote form.  The vote itself is recorded in ``appeal_panels.vote``
 by the appeals module, which does not know about notifications, so the notice
 is settled against that record whenever the inbox is read:
 
 * the member's vote is recorded -- the notice becomes
-  ``You voted {choice} on the appeal for "{title}".`` and is read, because it
-  no longer asks for anything;
+  ``You voted to uphold the decision on the appeal for "{title}".`` (the vote
+  as a verb, never the raw outcome word) and is read, because it no longer asks
+  for anything;
 * the panel decided and the member never voted -- it says
-  ``The panel decided: {outcome}.`` (still unread: it is news to them, and
-  there is nothing left to vote on);
+  ``The panel upheld the decision on "{title}".`` (still unread: it is news to
+  them, and there is nothing left to vote on);
 * otherwise it is untouched and still asks for the vote.
 
 Both ``summary`` and ``outcome`` are rewritten (the seat notice set them to the
@@ -38,14 +40,31 @@ PANEL_SEATED_KIND = "appeal.panel"
 _UNDECIDED = "pending"
 
 
+_VOTE_VERBS: dict[str, str] = {
+    "upheld": "uphold",
+    "overturned": "overturn",
+    "modified": "modify",
+    "remanded": "remand",
+    "granted": "grant",
+    "grant": "grant",
+    "denied": "deny",
+    "deny": "deny",
+    "allowed": "allow",
+    "dismissed": "dismiss",
+}
+
+
 def _sentence(title: Optional[str], vote: Optional[str], decided: Optional[str]) -> Optional[str]:
     """The notice's sentence for the recorded facts, or ``None`` when nothing changed."""
     if vote:
+        verb = _VOTE_VERBS.get(vote, vote)
         if title:
-            return f'You voted {vote} on the appeal for "{title}".'
-        return f"You voted {vote} on an appeal panel."
+            return f'You voted to {verb} the decision on the appeal for "{title}".'
+        return f"You voted to {verb} the decision on an appeal panel."
     if decided:
-        return f"The panel decided: {decided}."
+        if title:
+            return f"The panel {decided} the decision on \"{title}\"."
+        return f"The panel {decided} the decision."
     return None
 
 

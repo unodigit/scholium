@@ -14,6 +14,7 @@ import {
   addPost,
   authorLabel,
   comparePosts,
+  countHiddenPosts,
   countPosts,
   describeActionError,
   describeLoadError,
@@ -31,6 +32,7 @@ import {
   parseThreads,
   postAuthorLabel,
   postBody,
+  hiddenOwnNotice,
   postCountLabel,
   postTextProblem,
   profilePath,
@@ -303,6 +305,20 @@ describe("the tree", () => {
   it("counts every post, replies included", () => {
     expect(countPosts(tree().threads)).toBe(4);
     expect(countPosts([])).toBe(0);
+  });
+
+  it("counts hidden placeholders apart from the posts, at any depth", () => {
+    const hidden = (cid: string, replies: DiscussionPost[] = []) =>
+      post(cid, { hidden: true, text: null, replies });
+    const threads = [
+      hidden("h1", [post("under-h1"), hidden("h2")]),
+      post("visible", { replies: [hidden("h3")] }),
+    ];
+    expect(countHiddenPosts(threads)).toBe(3);
+    // A placeholder is still not a post.
+    expect(countPosts(threads)).toBe(2);
+    expect(countHiddenPosts([])).toBe(0);
+    expect(countHiddenPosts(tree().threads)).toBe(0);
   });
 
   it("finds a post at any depth", () => {
@@ -789,6 +805,30 @@ describe("words and formats", () => {
     expect(helpfulLabel(3)).toBe("3 members found this helpful");
     expect(postCountLabel(1)).toBe("1 post");
     expect(postCountLabel(3)).toBe("3 posts");
+  });
+
+  it("says how many hidden placeholders are listed alongside the posts", () => {
+    expect(postCountLabel(1, 1)).toBe("1 post, 1 hidden");
+    expect(postCountLabel(3, 2)).toBe("3 posts, 2 hidden");
+    expect(postCountLabel(0, 1)).toBe("0 posts, 1 hidden");
+    // Nothing hidden: the plain wording, unchanged.
+    expect(postCountLabel(2, 0)).toBe("2 posts");
+  });
+
+  it("ends the author's hidden notice with exactly one full stop", () => {
+    expect(hiddenOwnNotice("Needs the claim clarified")).toBe(
+      "Your post was hidden: Needs the claim clarified.",
+    );
+    // A moderator's own sentence already ends in punctuation: no doubling.
+    expect(hiddenOwnNotice("Needs the claim clarified.")).toBe(
+      "Your post was hidden: Needs the claim clarified.",
+    );
+    expect(hiddenOwnNotice("Is this on topic?")).toBe("Your post was hidden: Is this on topic?");
+    expect(hiddenOwnNotice("  Off topic!  ")).toBe("Your post was hidden: Off topic!");
+    expect(hiddenOwnNotice("Quoted “as is.”")).toBe("Your post was hidden: Quoted “as is.”");
+    expect(hiddenOwnNotice(null)).toBe("Your post was hidden.");
+    expect(hiddenOwnNotice("   ")).toBe("Your post was hidden.");
+    expect(hiddenOwnNotice(undefined)).toBe("Your post was hidden.");
   });
 
   it("builds page paths without the sch: prefix", () => {

@@ -50,6 +50,7 @@ import type { Viewer } from "../review-form/viewer";
 import { ComposeForm } from "./compose-form";
 import {
   addPost,
+  countHiddenPosts,
   countPosts,
   describeActionError,
   describeLoadError,
@@ -228,6 +229,8 @@ export function DiscussionTab({
   const data = view.kind === "ready" ? view.data : null;
   const ordered = useMemo(() => (data === null ? [] : orderThreads(data.threads)), [data]);
   const total = data === null ? 0 : countPosts(data.threads);
+  // A hidden placeholder is listed but is not a post; the summary says both.
+  const hiddenTotal = data === null ? 0 : countHiddenPosts(data.threads);
 
   /* ---- What a card may do --------------------------------------------- */
 
@@ -332,10 +335,10 @@ export function DiscussionTab({
 
       {view.kind === "ready" ? (
         <>
-          {total === 0 ? (
+          {total === 0 && hiddenTotal === 0 ? (
             <p className="pd-empty">No discussion yet. Start a thread to say something about this paper.</p>
           ) : (
-            <p className="pd-summary">{`${postCountLabel(total)} · most helpful first`}</p>
+            <p className="pd-summary">{`${postCountLabel(total, hiddenTotal)} · most helpful first`}</p>
           )}
 
           <div className="pd-start">

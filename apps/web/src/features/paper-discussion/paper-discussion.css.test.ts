@@ -115,6 +115,13 @@ describe("paper-discussion.css", () => {
     expect(ring).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
   });
 
+  it("gives the grounds field of an appeal the reply form's full-width textarea", () => {
+    // The appeal form reuses the compose classes, so its field fills the card
+    // instead of sitting squeezed beside the button.
+    expect(rule(".pd-compose__text")).toMatch(/inline-size:\s*100%/);
+    expect(rule(".pd-compose")).toMatch(/flex-direction:\s*column/);
+  });
+
   it("lets long ids, quotes and posts wrap, and keeps a reader's line breaks", () => {
     expect(rule(".pd-post__author")).toMatch(/overflow-wrap:\s*anywhere/);
     expect(rule(".pd-post__author")).toMatch(/font-family:\s*var\(--family-mono\)/);

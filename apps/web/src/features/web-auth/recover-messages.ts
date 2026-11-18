@@ -119,6 +119,27 @@ export const RECOVER_REQUEST_ID_LABEL = "Recovery request";
 /** Label of the ORCID iD shown as a fact. */
 export const RECOVER_ACCOUNT_LABEL = "Account";
 
+/**
+ * How the progress page names the account being recovered.
+ *
+ * A person recognises their own account by the profile name they chose; the
+ * ORCID iD is how the API identified it, so it follows the name rather than
+ * standing in for it. When no public profile name can be read (an erased
+ * profile, or a status reply that named no DID), the iD is all there is, and
+ * without either the page says what the visitor did instead of inventing one.
+ */
+export function recoveryAccountLabel(
+  accountName: string | null | undefined,
+  orcid: string | null | undefined,
+): string {
+  const name = (accountName ?? "").trim();
+  const id = (orcid ?? "").trim();
+  if (name !== "") {
+    return id !== "" ? `${name} (${id})` : name;
+  }
+  return id !== "" ? id : "the account you identified";
+}
+
 /** Action that forgets this browser's request and shows the form again. */
 export const RECOVER_RESET_ACTION = "Recover a different account";
 

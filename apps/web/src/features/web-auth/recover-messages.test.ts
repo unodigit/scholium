@@ -22,6 +22,7 @@ import {
   RECOVER_WRONG_DEVICE_MESSAGE,
   describeRecoveryError,
   formatRecoveryDeadlineLocal,
+  recoveryAccountLabel,
   recoveryProgressLine,
   recoveryProgressNote,
   recoveryStatusLabel,
@@ -48,6 +49,27 @@ describe("the page's copy", () => {
     expect(recoveryStatusLabel("contest")).toBe("Safety window open");
     expect(recoveryStatusLabel("finalized")).toBe("Recovery complete");
     expect(recoveryStatusLabel("cancelled")).toBe("Cancelled");
+  });
+});
+
+describe("the account being recovered", () => {
+  it("names it by profile name, with the ORCID iD secondary", () => {
+    // The person knows their own name; the iD is how the API identified the
+    // account, so it follows the name rather than standing in for it.
+    expect(recoveryAccountLabel("Mei Okafor", ORCID)).toBe(
+      `Mei Okafor (${ORCID})`,
+    );
+  });
+
+  it("falls back to the ORCID iD when no profile name can be read", () => {
+    expect(recoveryAccountLabel(null, ORCID)).toBe(ORCID);
+    expect(recoveryAccountLabel("", ORCID)).toBe(ORCID);
+    expect(recoveryAccountLabel("   ", ORCID)).toBe(ORCID);
+  });
+
+  it("uses whichever identifier exists", () => {
+    expect(recoveryAccountLabel("Mei Okafor", "")).toBe("Mei Okafor");
+    expect(recoveryAccountLabel(null, "")).toBe("the account you identified");
   });
 });
 

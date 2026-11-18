@@ -834,18 +834,42 @@
 }
 
 .ppg-proofbar {
+  box-sizing: border-box;
   display: grid;
   gap: calc(var(--space-unit) * 2);
+  min-inline-size: 0;
+  max-inline-size: 100%;
   padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
   border-block-end: 1px solid var(--rule);
 }
 
 .ppg-proofbar-row {
+  box-sizing: border-box;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  /* A flex item will not shrink below its min-content width unless it is told
+     to; the row itself must fit the panel's content box. */
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+/* The proof pill (ui-kit's verify badge) and the Details link are flex items
+   here. The badge's own rule keeps its label on one line so its min-content
+   width can exceed the 360 px column; told to shrink, it takes at most the
+   column and lets the words wrap instead of poking past the panel's edge. */
+.ppg-proofbar-row > *,
+.ppg-proofbar-row .sch-verify,
+.ppg-proofbar-row .sch-verify__link {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.ppg-proofbar-row .sch-verify__link {
+  white-space: normal;
 }
 
 .ppg-details {
@@ -865,13 +889,23 @@
 }
 
 .ppg-anchor {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: calc(var(--space-unit) * 2);
   margin: 0;
+  min-inline-size: 0;
+  max-inline-size: 100%;
   color: var(--ink-2);
   font-size: var(--type-meta);
   line-height: var(--leading-meta);
+}
+
+/* The icon keeps its size; the words take the rest of the row and wrap rather
+   than pushing the line past the panel's content box. */
+.ppg-anchor > span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .ppg-anchor-icon {

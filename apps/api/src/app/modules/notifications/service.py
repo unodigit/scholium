@@ -27,6 +27,7 @@ from app.settings import settings
 from .emailer import build_email, log_to_outbox, send_email
 from .models import Notification, ensure_table
 from .panel import settle_panel_notices
+from .restoration import settle_restoration_notices
 
 __all__ = [
     "list_notifications",
@@ -168,11 +169,14 @@ def list_notifications(did: str) -> list[Notification]:
     A panel seat's notice is settled against the seat first (see
     :func:`~app.modules.notifications.panel.settle_panel_notices`): the vote
     handler lives in another module, so the recorded vote is what tells the
-    inbox the member has answered.
+    inbox the member has answered.  An author's notice that a panel restored
+    their hidden record is settled the same way (see
+    :func:`~app.modules.notifications.restoration.settle_restoration_notices`).
     """
     _require_did(did)
     ensure_table()
     settle_panel_notices(did)
+    settle_restoration_notices(did)
 
     with db.SessionLocal() as session:
         return (

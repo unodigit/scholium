@@ -20,9 +20,11 @@
  * | `paper.version` | the paper's title and `sch:` id |
  *
  * An appeal with no `appeal.decision` is **open**: the panel has not decided.
- * Only the log is read, so what the log cannot say is not guessed — which
- * members hold the seats, and how many have voted, are not in it (the vote
- * endpoint is the only thing that knows).
+ * What the log cannot say is not guessed — which members hold the seats, and
+ * how many have voted, are not in it. {@link enrichAppealCases} asks the API
+ * (`GET /v1/appeals/{cid}`) whether the signed-in viewer holds a seat and what
+ * the decision was about; a hidden post is withdrawn from public reads, so the
+ * log cannot describe it either.
  *
  * Pure data and functions apart from {@link loadAppealCases}, no React.
  */
@@ -80,6 +82,26 @@ export interface AppealedDecision {
   readonly versionCid: string | null;
 }
 
+/**
+ * What the appealed decision was about, as `GET /v1/appeals/{cid}` describes
+ * it. A hidden post is withdrawn from public reads, so the log cannot say what
+ * it was; the API reads it.
+ */
+export interface AppealSubject {
+  /** `paper`, `post`, `annotation`, `review` or `item`. */
+  readonly kind: string;
+  /** The signed record type (`discussion.post`, `paper.version`, …). */
+  readonly recordType: string | null;
+  /** The title of the paper the record is, or belongs to. */
+  readonly title: string | null;
+  /** The first words of a post or review; a paper has none. */
+  readonly excerpt: string | null;
+  /** Where to read it: the paper, or the thread a post is in. */
+  readonly link: string | null;
+  /** What the decision did to it: `hide`, `reject`, … */
+  readonly action: string | null;
+}
+
 /** The paper behind an appealed decision. */
 export interface AppealPaper {
   readonly title: string;
@@ -119,6 +141,17 @@ export interface AppealCase {
   readonly original: AppealedDecision | null;
   /** The paper, or `null` when its version record is not in this log. */
   readonly paper: AppealPaper | null;
+  /**
+   * Whether the signed-in viewer holds a seat on this appeal's panel. Only the
+   * API knows (a seat is not public), so it is absent until
+   * {@link enrichAppealCases} has asked; absent means "not known", and the card
+   * then makes no claim either way.
+   */
+  readonly viewerOnPanel?: boolean;
+  /** The viewer's own vote, when they hold a seat and have voted. */
+  readonly viewerVote?: string | null;
+  /** What the appealed decision was about, once the API has described it. */
+  readonly subject?: AppealSubject | null;
   /** The panel's decision, or `null` while the appeal is open. */
   readonly verdict: AppealVerdict | null;
 }
@@ -360,6 +393,86 @@ export async function loadAppealCases(
   }
 
   return { cases: buildAppealCases(kept), truncated };
+}
+
+/** Appeals asked about at once; the page is waiting on all of them. */
+const DETAIL_CONCURRENCY = 6;
+
+/** `viewer_on_panel`, the viewer's vote and the target's description, or `null` for any other answer. */
+function readViewerDetail(
+  body: unknown,
+): Pick<AppealCase, "viewerOnPanel" | "viewerVote" | "subject"> | null {
+  if (!isRecord(body) || typeof body.viewer_on_panel !== "boolean") {
+    return null;
+  }
+  const kind = readText(body.target_kind);
+  return {
+    viewerOnPanel: body.viewer_on_panel,
+    viewerVote: readText(body.viewer_vote),
+    subject:
+      kind === null
+        ? null
+        : {
+            kind,
+            recordType: readText(body.record_type),
+            title: readText(body.paper_title),
+            excerpt: readText(body.excerpt),
+            link: readText(body.target_link),
+            action: readText(body.decision_action),
+          },
+  };
+}
+
+async function enrichAppealCase(
+  appeal: AppealCase,
+  client: AppealsClient,
+): Promise<AppealCase> {
+  try {
+    // Sent with the viewer's own token: the answer is about them.
+    const body = await client.get<unknown>(
+      `/appeals/${encodeURIComponent(appeal.appealCid)}`,
+      { cache: "no-store" },
+    );
+    const detail = readViewerDetail(body);
+    return detail === null ? appeal : { ...appeal, ...detail };
+  } catch {
+    // The log already says everything it can; a detail this viewer cannot read
+    // leaves the card without a claim about their seat rather than hiding it.
+    return appeal;
+  }
+}
+
+/**
+ * Ask the appeals API what the log cannot say: whether the signed-in viewer
+ * holds a seat on each panel (and how they voted), and what the appealed
+ * decision was about. A case whose detail cannot be read is returned as the
+ * log gave it.
+ */
+export async function enrichAppealCases(
+  cases: readonly AppealCase[],
+  client: AppealsClient = api,
+): Promise<AppealCase[]> {
+  const enriched = [...cases];
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < cases.length) {
+      const index = next;
+      next += 1;
+      enriched[index] = await enrichAppealCase(cases[index] as AppealCase, client);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(DETAIL_CONCURRENCY, cases.length) }, worker),
+  );
+  return enriched;
+}
+
+/** The console's appeals: the public log, then what the API says about this viewer. */
+export async function loadAppealsForViewer(
+  client: AppealsClient = api,
+): Promise<AppealsLoad> {
+  const load = await loadAppealCases(client);
+  return { ...load, cases: await enrichAppealCases(load.cases, client) };
 }
 
 /** What the panel's outcome means, in the words a moderator reads. */

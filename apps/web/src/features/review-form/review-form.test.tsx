@@ -450,6 +450,47 @@ describe("ReviewForm written report", () => {
 });
 
 describe("ReviewForm update", () => {
+  /** The hint the Written report box points at with `aria-describedby`. */
+  function reportHint(): HTMLElement {
+    const box = screen.getByRole("textbox", { name: /Written report/ });
+    const id = box.getAttribute("aria-describedby");
+    expect(id).toBeTruthy();
+    const hint = document.getElementById(id as string);
+    expect(hint).not.toBeNull();
+    return hint as HTMLElement;
+  }
+
+  it("tells the update form the same thing about the report as its footer", () => {
+    render(
+      <ReviewForm
+        initialDraft={completeDraft()}
+        paperId="sch:6sel-2dio-orm6"
+        versionCid="bafyversion"
+        prev="bafyformal"
+        update={vi.fn<UpdateReview>(async () => updatedReview())}
+      />,
+    );
+
+    const hint = reportHint().textContent ?? "";
+    // An update is published when posted, so the commit form's "when the
+    // review is revealed" promise is false here. The hint must match the
+    // note under the button: scores and recommendation now, report per gate.
+    expect(hint).not.toMatch(/published with the rubric when the review is revealed/i);
+    expect(hint).toMatch(/scores and recommendation/i);
+    expect(hint).toMatch(/published immediately/i);
+    expect(hint).toMatch(/written report/i);
+    expect(hint).toMatch(/2 reviews are committed/);
+    expect(hint).toMatch(/21 days after the first commit/);
+  });
+
+  it("keeps the commit form's hint about the reveal, where it is true", () => {
+    render(<ReviewForm />);
+
+    const hint = reportHint().textContent ?? "";
+    expect(hint).toMatch(/published with the rubric when the review is revealed/i);
+    expect(hint).not.toMatch(/published immediately/i);
+  });
+
   it("says an update is published immediately, not sealed until the reveal", () => {
     render(
       <ReviewForm
@@ -461,7 +502,11 @@ describe("ReviewForm update", () => {
       />,
     );
 
-    const note = screen.getByText(/published immediately/i);
+    // The hint under the report box now says the same thing, so scope this to
+    // the note under the button, which is what the test is about.
+    const note = screen.getByText(/published immediately/i, {
+      selector: ".rf-commit-note",
+    });
     expect(note.textContent).toMatch(/scores and recommendation/i);
     expect(note.textContent).toMatch(/written report/i);
     expect(note.textContent).toMatch(/2 reviews are committed/);

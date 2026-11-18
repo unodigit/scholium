@@ -22,6 +22,7 @@ from app.security import Principal, Tier, get_current_principal, require_tier
 from .errors import AppealNotFound
 from .panel import get_panel
 from .service import APPEAL_TYPE, apply_appeal, get_appeal, resolve_decision
+from .subject import describe_subject
 from .votes import cast_vote, decision_for_appeal, vote_fields
 
 __all__ = ["AppealAccepted", "AppealDetailOut", "PanelSeatOut", "VoteAccepted", "router"]
@@ -155,6 +156,22 @@ class AppealDetailOut(BaseModel):
     resolution: Optional[str] = None
     #: Whether the caller holds a seat on this appeal's panel.
     viewer_on_panel: bool = False
+    #: The caller's vote on this appeal, when they hold a seat and have voted.
+    viewer_vote: Optional[str] = None
+    #: cid of the record the appealed decision was about.
+    target_cid: Optional[str] = None
+    #: What kind of record it was: ``paper``, ``post``, ``annotation`` or ``review``.
+    target_kind: Optional[str] = None
+    #: The signed record type of the target (``discussion.post``, ``paper.version``, ...).
+    record_type: Optional[str] = None
+    #: The title of the paper the target is, or belongs to.
+    paper_title: Optional[str] = None
+    #: The first words of a hidden post or review; a paper has none.
+    excerpt: Optional[str] = None
+    #: Where the target can be read: the paper, or the thread a post is in.
+    target_link: Optional[str] = None
+    #: What the appealed decision did to it: ``hide``, ``dismiss``, ``reject``, ...
+    decision_action: Optional[str] = None
     #: Who sits on the panel; empty unless the caller is seated or tier 4.
     panel: list[PanelSeatOut] = []
 
@@ -197,6 +214,12 @@ def get_appeal_detail(
     on_panel = caller is not None and caller.did in {str(seat.member_did) for seat in seats}
     may_see_panel = on_panel or (caller is not None and caller.tier >= int(Tier.MODERATOR))
 
+    viewer_vote: Optional[str] = None
+    if on_panel and caller is not None:
+        for seat in seats:
+            if str(seat.member_did) == caller.did and isinstance(seat.vote, str):
+                viewer_vote = str(seat.vote)
+
     decision = decision_for_appeal(cid)
     outcome: Optional[str] = None
     resolution: Optional[str] = None
@@ -205,6 +228,13 @@ def get_appeal_detail(
         body = decision.body if isinstance(decision.body, Mapping) else {}
         if isinstance(body.get("outcome"), str):
             outcome = body["outcome"]
+
+    target_cid: Optional[str] = None
+    try:
+        target_cid = resolve_decision(str(appeal.decision_cid)).target_cid
+    except Exception:  # a decision this node no longer holds describes nothing
+        target_cid = None
+    subject = describe_subject(target_cid, str(appeal.decision_cid)) if target_cid else None
 
     return AppealDetailOut(
         id=str(appeal.appeal_cid),
@@ -219,6 +249,14 @@ def get_appeal_detail(
         outcome=outcome,
         resolution=resolution,
         viewer_on_panel=on_panel,
+        viewer_vote=viewer_vote,
+        target_cid=target_cid,
+        target_kind=subject.kind if subject is not None else None,
+        record_type=subject.record_type if subject is not None else None,
+        paper_title=subject.title if subject is not None else None,
+        excerpt=subject.excerpt if subject is not None else None,
+        target_link=subject.link if subject is not None else None,
+        decision_action=subject.action if subject is not None else None,
         panel=[
             PanelSeatOut(
                 did=str(seat.member_did),

@@ -829,11 +829,13 @@ def _appeal_panels(
         return []
 
     from app.modules.appeals.service import PANEL_VOTE_WINDOW, resolve_decision
+    from app.modules.appeals.subject import describe_subject, seat_summary
 
     items: list[dict[str, Any]] = []
     for seat in seats:
         paper = None
         version = None
+        decision = None
         try:
             decision = resolve_decision(seat["decision_cid"])
             version = version_by_cid.get(decision.version_cid)
@@ -843,17 +845,11 @@ def _appeal_panels(
         except Exception:  # pragma: no cover - a decision this node no longer holds
             logger.debug("could not resolve appeal %s", seat["appeal_cid"], exc_info=True)
 
-        title = getattr(version, "title", None) if version is not None else None
         filed_at = seat["filed_at"]
         deadline = filed_at + PANEL_VOTE_WINDOW if isinstance(filed_at, datetime) else None
-        deadline_day = deadline.date().isoformat() if deadline is not None else None
-        if title:
-            summary = f'Vote on the appeal for "{title}"'
-        else:
-            summary = "Vote on an appeal panel"
-        if deadline_day:
-            summary += f" by {deadline_day}"
-        summary += "."
+        due_day = deadline.date().isoformat() if deadline is not None else None
+        subject = describe_subject(decision.target_cid, decision.decision_cid) if decision is not None else None
+        summary = seat_summary(subject, deadline)
 
         items.append(
             _item(
@@ -867,7 +863,7 @@ def _appeal_panels(
                 appeal_cid=seat["appeal_cid"],
                 decisionCid=seat["decision_cid"],
                 deadline=deadline.isoformat() if deadline is not None else None,
-                dueAt=deadline_day,
+                dueAt=due_day,
                 status="waiting",
             )
         )

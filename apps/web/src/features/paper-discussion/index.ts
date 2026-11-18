@@ -37,6 +37,7 @@ export {
   addPost,
   authorLabel,
   comparePosts,
+  countHiddenPosts,
   countPosts,
   describeActionError,
   describeLoadError,

@@ -532,9 +532,35 @@ def _result_line(verdict: Verdict | ArchiveVerdict) -> str:
     if not verdict.ok:
         count = len(verdict.failures)
         return f"Result: NOT VERIFIED ({count} check{'s' if count != 1 else ''} failed)"
+    if isinstance(verdict, ArchiveVerdict):
+        return _whole_node_result_line(verdict)
     if verdict.status == "verified":
         return "Result: VERIFIED"
     return f"Result: VERIFIED (status: {verdict.status})"
+
+
+def _whole_node_result_line(verdict: ArchiveVerdict) -> str:
+    """The result of a whole-node archive: how many papers, and in what state.
+
+    A single paper's status is its own; an archive's is not.  Summing the
+    papers is the honest summary -- carrying one retracted paper's status
+    would make every other paper in the export read as retracted too.
+    """
+    counts = {status: 0 for status in _STATUS_SEVERITY if status != "invalid"}
+    listed = 0
+    for paper in verdict.papers:
+        if paper.status == "verified":
+            listed += 1
+        else:
+            counts[paper.status] = counts.get(paper.status, 0) + 1
+    parts = [f"{listed} listed"]
+    for status in ("corrected", "retracted", "tombstoned"):
+        if counts.get(status):
+            parts.append(f"{counts[status]} {status}")
+    return (
+        f"Result: VERIFIED - {_plural(len(verdict.papers), 'paper')} "
+        f"({', '.join(parts)})"
+    )
 
 
 def _fetch_sync_range(base: str, cursor: int = 0) -> list[dict[str, Any]]:
