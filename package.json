@@ -3,10 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "test": "cd apps/api && uv run --all-packages pytest && cd ../.. && npm run test --workspace apps/web",
+    "test": "cd apps/api && uv run --all-packages pytest -n 4 && cd ../.. && npm run test --workspace apps/web",
     "test:e2e": "npm run test:e2e --workspace apps/web",
     "test:system": "uv run --project apps/api --all-packages pytest -c tests/e2e/pytest.ini tests/e2e",
     "test:slow": "cd apps/api && uv run --all-packages pytest -m slow",
+    "test:llm-live": "cd apps/api && uv run --all-packages pytest -p no:xdist -m live_llm tests/test_llm_live.py",
     "test:pg": "bash scripts/test-pg.sh",
     "stack:up": "scripts/stack-compose.sh up -d --build --remove-orphans",
     "stack:down": "scripts/stack-compose.sh down --remove-orphans",

@@ -27,10 +27,14 @@ dependencies = [
 members = ["packages/*"]
 
 [tool.pytest.ini_options]
-# 4 workers keeps the default suite well under the agents' 2-minute command
-# limit; exhaustive property sweeps are marked slow and run via `npm run test:slow`.
-addopts = "-n 4 -m 'not slow'"
-markers = ["slow: exhaustive sweeps excluded from the default run (npm run test:slow)"]
+# Exhaustive property sweeps are marked slow (`npm run test:slow`) and the
+# live checks are marked live_llm (`npm run test:llm-live`, which runs with
+# -p no:xdist); neither runs in the default suite.
+addopts = "-m 'not slow and not live_llm'"
+markers = [
+  "slow: exhaustive sweeps excluded from the default run (npm run test:slow)",
+  "live_llm: opt-in checks against a real LLM endpoint (npm run test:llm-live)",
+]
 testpaths = ["src", "packages", "tests"]
 pythonpath = ["src", "packages", "tests"]
 
