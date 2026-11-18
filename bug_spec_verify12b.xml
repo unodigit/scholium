@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 12b: follow-up to round 12 bug 1 (merged as ca0963b with gate SKIPPED:gate_timeout, so unverified by the gate).
+  ca0963b added _notify_appellant in apps/api/src/app/modules/appeals/votes.py (+69 lines) but no tests; the helper
+  swallows every exception, so a defect would silently send nothing.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/appeals/votes.py,apps/api/src/app/modules/appeals/tests/**,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts">
+    <title>The appellant's appeal-outcome notice (ca0963b) has no tests and fails silently; its kind has no on-screen label</title>
+    <symptoms>
+      ca0963b sends an "appeal.decision" notice to the appellant when an appeal is decided without restoring the target, but no test covers it: round 12's spec asked for API tests of upheld and overturned outcomes for a paper hold and a hidden post, each asserting exactly one appellant notice
+      _notify_appellant catches every exception and only logs it, so a wrong lookup (subject, title, appellant) would leave the appellant uninformed with no failing test
+      The web dashboard has no label for the "appeal.decision" kind (NOTIFICATION_KIND_LABELS in dashboard.ts), so it falls back to a generated label
+    </symptoms>
+    <reproduction_steps>
+      git show ca0963b --stat (only votes.py changed); journey 11 step 12 (author told the outcome after the panel upholds a hold)
+    </reproduction_steps>
+    <expected>API tests drive a full appeal through the panel vote endpoints and assert, by reading the appellant's notifications: (a) paper hold upheld - exactly one "appeal.decision" notice to the appellant naming the paper title and linking to it; (b) paper hold overturned - exactly one notice to the appellant (the restoration notice), no "appeal.decision" duplicate; (c) hidden post upheld - exactly one notice naming the post's paper; (d) hidden post overturned - exactly one restoration notice; plus (e) "decided without a panel" by a tier-4 moderator yields one notice saying so; no panel member receives the appellant notice; a test makes the subject lookup raise and asserts the error is logged and the appeal decision still stands. Fix any defect these tests expose in votes.py. The dashboard labels the kind "Appeal outcome"</expected>
+    <actual>Unverified, untested, silent on failure</actual>
+  </bug>
+
+</bug_spec>
