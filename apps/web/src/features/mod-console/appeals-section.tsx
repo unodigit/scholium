@@ -5,8 +5,9 @@
  * the panel vote form while the panel has not decided.
  *
  * The appeals come from the public log (see `appeals.ts`), which needs no
- * session; casting a vote does, and the API alone decides whether the signed-in
- * account holds a seat. The section therefore does not depend on the queue's
+ * session; the API then says, per appeal, whether the signed-in account holds a
+ * seat and what the decision was about. Casting a vote needs the session too,
+ * and the API alone decides whether the account holds a seat. The section therefore does not depend on the queue's
  * tier-4 answer: a panel is drawn from tier 3 as well as tier 4, and a
  * reviewer who is not a moderator must still be able to reach their vote.
  */
@@ -19,7 +20,7 @@ import type { LoadPersonName } from "./person";
 import {
   describeAppealsError,
   isAppealOpen,
-  loadAppealCases,
+  loadAppealsForViewer,
   type AppealsLoad,
 } from "./appeals";
 import type { VoteCaster } from "./panel-vote";
@@ -66,7 +67,7 @@ export function AppealsSection({
         : { status: "loading" },
     );
 
-    const load = loadAppeals ?? loadAppealCases;
+    const load = loadAppeals ?? loadAppealsForViewer;
     load().then(
       (result) => {
         if (!cancelled) {

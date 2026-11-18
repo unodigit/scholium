@@ -1,0 +1,109 @@
+"""An author's notice that an appeal brought their hidden record back says so.
+
+When a panel overturns the hiding of a post, annotation or review, the appeals
+module signs a ``release`` and the moderation module notifies the record's
+author of it.  The moderation module words that notice for a decision a
+moderator made -- "A moderator made a decision on your post." -- and appends
+the decision's own reason, which for a restoration is the node's boilerplate.
+The author is then told a moderator did something, with no hint that the panel
+sided with them, no paper and a sentence of machinery after it.
+
+The release names the appeal it answers (``appeal`` in its body), which is what
+tells a restoration from a release a moderator signed on their own.  So, like a
+panel seat's notice (:mod:`~app.modules.notifications.panel`), the notice is
+settled against the record whenever the inbox is read:
+
+* a release that answers an appeal reads
+  ``The appeal panel overturned the decision to hide your post on "Title"; it is
+  visible again.`` and carries no separate reason line (the sentence is the
+  reason);
+* a release a moderator signed on their own keeps the moderation module's words
+  and its reason: no panel decided it, so none is credited.
+
+Both ``summary`` and ``outcome`` are rewritten, as the moderation notice sets
+both.  Settling is idempotent.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Mapping, Optional
+
+from app import db
+
+from .models import Notification, ensure_table
+
+__all__ = ["settle_restoration_notices"]
+
+logger = logging.getLogger(__name__)
+
+#: What the notice calls each kind of record a release can bring back.
+_NOUNS = {"post": "post", "annotation": "annotation", "review": "review"}
+
+
+def settle_restoration_notices(did: str) -> None:
+    """Reword ``did``'s notices of appeal restorations; never raises.
+
+    A notice that cannot be settled is shown as it was sent, and the inbox
+    still loads.
+    """
+    try:
+        _settle(did)
+    except Exception:  # pragma: no cover - the inbox must load whatever the ledger holds
+        logger.debug("could not settle the restoration notices of %s", did, exc_info=True)
+
+
+def _answers_an_appeal(decision_cid: object) -> bool:
+    """Whether the decision is the release an overturned appeal made."""
+    from app.modules import ledger
+
+    if not isinstance(decision_cid, str) or not decision_cid:
+        return False
+    entry = ledger.entry_by_cid(decision_cid)
+    body = getattr(entry, "body", None)
+    if not isinstance(body, Mapping):
+        return False
+    appeal = body.get("appeal") or body.get("appeal_restoration")
+    return isinstance(appeal, str) and bool(appeal)
+
+
+def _sentence(payload: Mapping[str, Any]) -> str:
+    from app.modules.moderation import outcomes
+
+    noun = _NOUNS.get(str(payload.get("target_kind") or ""), "record")
+    target = payload.get("target_cid")
+    title: Optional[str] = outcomes.paper_title(target) if isinstance(target, str) and target else None
+    subject = f'your {noun} on "{title}"' if title else f"your {noun}"
+    return f"The appeal panel overturned the decision to hide {subject}; it is visible again."
+
+
+def _settle(did: str) -> None:
+    ensure_table()
+    from app.modules.moderation.decisions import RECORD_DECISION_KIND
+
+    session = db.SessionLocal()
+    try:
+        rows = (
+            session.query(Notification)
+            .filter(Notification.did == did, Notification.kind == RECORD_DECISION_KIND)
+            .order_by(Notification.id)
+            .all()
+        )
+        changed = False
+        for row in rows:
+            payload = row.payload
+            if not isinstance(payload, Mapping) or payload.get("action") != "release":
+                continue
+            if not _answers_an_appeal(payload.get("decision_cid")):
+                continue
+            sentence = _sentence(payload)
+            settled = {key: value for key, value in payload.items() if key != "reason"}
+            settled["summary"] = sentence
+            settled["outcome"] = sentence
+            if settled != dict(payload):
+                row.payload = settled
+                changed = True
+        if changed:
+            session.commit()
+    finally:
+        session.close()

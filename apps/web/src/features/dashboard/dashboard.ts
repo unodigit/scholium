@@ -181,6 +181,24 @@ export type MeData = DashboardData;
 /** Alias for callers that name the data after the endpoint. */
 export type MeDashboardData = DashboardData;
 
+/** `… by 2026-12-02.` or `… by 2 Dec 2026.` at the end of a sentence. */
+const TRAILING_DUE_DAY = / by (?:\d{4}-\d{2}-\d{2}|\d{1,2} [A-Za-z]{3,9} \d{4})(?=\.?$)/;
+
+/**
+ * A sentence asking for something "by" a day, with the day written by the
+ * shared formatter in the reader's own zone from the instant it was sent with.
+ *
+ * The API writes the sentence once, in UTC, and sends the deadline as an
+ * instant beside it; a reader east or west of UTC would otherwise be given a
+ * day their calendar does not show (and an older notice says `2026-12-02`).
+ * Without a readable deadline, or without a due day in the sentence, it is
+ * left as it was sent.
+ */
+export function withLocalDueDay(summary: string, deadline: unknown): string {
+  const day = formatDate(readText(deadline));
+  return day === null ? summary : summary.replace(TRAILING_DUE_DAY, ` by ${day}`);
+}
+
 function parseAttentionItem(value: unknown, index: number): AttentionItem {
   if (!isRecord(value)) {
     throw new DashboardError(`Attention item ${index + 1} is not an object.`);
@@ -188,7 +206,11 @@ function parseAttentionItem(value: unknown, index: number): AttentionItem {
   const item: Record<string, unknown> = { ...value };
   const kind = readText(item.kind) ?? "attention";
   item.kind = kind;
-  item.summary = readText(item.summary);
+  const summary = readText(item.summary);
+  item.summary =
+    summary !== null && kind === "appeal_panel"
+      ? withLocalDueDay(summary, item.deadline)
+      : summary;
   item.reason = readText(item.reason);
   item.paper = readText(item.paper);
   item.shortId = readText(item.shortId) ?? readText(item.short_id);
@@ -1016,12 +1038,12 @@ export function notificationSummary({ kind, payload, read }: NotificationLike): 
         "A moderator made a decision on your paper."
       );
     }
-    case "appeal.panel":
-      return (
-        readText(payload.summary) ??
-        readText(payload.outcome) ??
-        "You were drawn for an appeal panel."
-      );
+    case "appeal.panel": {
+      const sentence = readText(payload.summary) ?? readText(payload.outcome);
+      return sentence === null
+        ? "You were drawn for an appeal panel."
+        : withLocalDueDay(sentence, payload.deadline);
+    }
     case "flag.decided": {
       const summary = readText(payload.summary) ?? readText(payload.outcome);
       if (summary) {

@@ -107,6 +107,19 @@ describe("mod-console.css", () => {
   });
 });
 
+describe("mod-console.css appeal cards", () => {
+  it("scrolls an appeal's heading clear of the sticky header and of the lines above it", () => {
+    // Opening a panel notice lands on the heading (`#appeal-…-title`). The 64px
+    // header covers the top of the page, and the kicker and the panel line sit
+    // above the heading, so the margin must clear all three or the first line
+    // read is "Decision appealed".
+    const rule = /\.mc-case-title\s*\{([^}]*)\}/.exec(feature)?.[1] ?? "";
+    expect(rule).toMatch(/scroll-margin-top:\s*calc\(64px \+ 8px \+ var\(--space-unit\) \* (\d+)\)/);
+    const rooms = /var\(--space-unit\) \* (\d+)\)/.exec(rule);
+    expect(Number(rooms?.[1])).toBeGreaterThanOrEqual(12);
+  });
+});
+
 describe("mod-console.css detail view", () => {
   it("puts the paper and the decision form side by side, stacking on a narrow screen", () => {
     expect(feature).toMatch(/\.mc-detail-grid\s*\{[^}]*display:\s*grid/);

@@ -473,6 +473,33 @@ describe("loadNotifications / markNotificationRead", () => {
   });
 });
 
+describe("an appeal panel's attention item", () => {
+  it("writes the due day with the shared formatter, from the deadline it carries", () => {
+    const data = parseDashboard({
+      did: "did:key:z6MkMember",
+      needs_attention: {
+        count: 1,
+        appeal_panels: [
+          {
+            kind: "appeal_panel",
+            summary: 'Vote on the appeal for "A paper under appeal" by 2026-12-02.',
+            deadline: "2026-12-02T12:00:00+00:00",
+          },
+        ],
+      },
+      my_papers: [],
+      my_reviews: [],
+    });
+
+    expect(data.needs_attention.appeal_panels?.[0]?.summary).toBe(
+      'Vote on the appeal for "A paper under appeal" by 2 Dec 2026.',
+    );
+    expect(data.needs_attention.items[0]?.summary).toBe(
+      'Vote on the appeal for "A paper under appeal" by 2 Dec 2026.',
+    );
+  });
+});
+
 describe("notification wording", () => {
   it("names each kind", () => {
     expect(notificationKindLabel("consent.request")).toBe("Consent request");
@@ -605,7 +632,7 @@ describe("notification wording", () => {
   });
 
   it("shows a panel notice's own sentence, whether or not it was read", () => {
-    const voted = 'You voted upheld on the appeal for "A paper under appeal".';
+    const voted = 'You voted to uphold the decision on the appeal for "A paper under appeal".';
     expect(
       notificationSummary({
         kind: "appeal.panel",
@@ -613,7 +640,7 @@ describe("notification wording", () => {
         payload: { title: "A paper under appeal", summary: voted, outcome: voted },
       }),
     ).toBe(voted);
-    const decided = "The panel decided: overturned.";
+    const decided = "The panel overturned the decision on \"A paper under appeal\".";
     expect(
       notificationSummary({
         kind: "appeal.panel",
@@ -628,10 +655,32 @@ describe("notification wording", () => {
         read: true,
         payload: {
           title: "A paper under appeal",
-          summary: 'Vote on the appeal for "A paper under appeal" by 2026-12-02.',
+          summary: 'Vote on the appeal for "A paper under appeal" by 2 Dec 2026.',
         },
       }),
     ).not.toMatch(/You voted/);
+  });
+
+  it("writes a seat notice's due day with the shared formatter, from the deadline it carries", () => {
+    const seat = {
+      kind: "appeal.panel",
+      read: false,
+      payload: {
+        title: "A paper under appeal",
+        deadline: "2026-12-02T12:00:00+00:00",
+        summary: 'Vote on the appeal for "A paper under appeal" by 2026-12-02.',
+      },
+    };
+    expect(notificationSummary(seat)).toBe(
+      'Vote on the appeal for "A paper under appeal" by 2 Dec 2026.',
+    );
+    // Already in words, it is left as it is.
+    expect(
+      notificationSummary({
+        ...seat,
+        payload: { ...seat.payload, summary: 'Vote on the appeal of a hidden post on "A paper under appeal" by 2 Dec 2026.' },
+      }),
+    ).toBe('Vote on the appeal of a hidden post on "A paper under appeal" by 2 Dec 2026.');
   });
 
   it("does not repeat a reason the sentence already carries", () => {

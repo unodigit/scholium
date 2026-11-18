@@ -20,6 +20,7 @@ import {
   isAppealOpen,
   outcomeLabel,
   type AppealCase,
+  type AppealSubject,
 } from "./appeals";
 import { PersonName, type LoadPersonName } from "./person";
 import type { VoteCaster } from "./panel-vote";
@@ -50,17 +51,18 @@ export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
   const open = isAppealOpen(appeal) && !decidedNow;
   const filed = formatDate(appeal.filedAt);
   const headingId = `appeal-${appeal.appealCid}-title`;
+  const record = recordSubject(appeal);
 
   return (
     <article className="mc-case" aria-labelledby={headingId}>
       <header className="mc-case-header">
         <div className="mc-case-heading">
           <p className="mc-section-kicker">Appeal</p>
-          <p className="mc-case-panel">
-            You&apos;re on the appeal panel for {appeal.paper?.title ?? "a moderation decision"}
-          </p>
+          {appeal.viewerOnPanel === true ? (
+            <p className="mc-case-panel">You&apos;re on the appeal panel</p>
+          ) : null}
           <h3 id={headingId} className="mc-case-title">
-            {appeal.paper?.title ?? "Appeal of a moderation decision"}
+            {appealHeading(appeal)}
           </h3>
           <p className="mc-case-meta">
             {appeal.paper?.versionId ? (
@@ -105,7 +107,13 @@ export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
           title="Signed moderation decision"
           className="mc-button mc-button--quiet"
         />
-        {appeal.original?.versionCid != null ? (
+        {record !== null ? (
+          record.link !== null ? (
+            <a className="mc-button mc-button--quiet" href={record.link}>
+              Read the {recordNoun(record)}
+            </a>
+          ) : null
+        ) : appeal.original?.versionCid != null ? (
           <a
             className="mc-button mc-button--quiet"
             href={modDetailHref(appeal.original.versionCid)}
@@ -128,6 +136,45 @@ export function AppealCard({ appeal, castVote, loadPerson }: AppealCardProps) {
   );
 }
 
+/** The subject, when the appealed decision was about a post, annotation or review. */
+function recordSubject(appeal: AppealCase): AppealSubject | null {
+  const { subject } = appeal;
+  return subject != null && subject.kind !== "paper" ? subject : null;
+}
+
+/** `post`, `annotation` or `review`; anything else is "record". */
+function recordNoun(subject: AppealSubject): string {
+  return subject.kind === "item" ? "record" : subject.kind;
+}
+
+/** `a post`, `an annotation`. */
+function withArticle(noun: string): string {
+  return /^[aeiou]/.test(noun) ? `an ${noun}` : `a ${noun}`;
+}
+
+/** Whether the appealed decision hid its target. */
+function wasHidden(appeal: AppealCase): boolean {
+  return appeal.original?.action === "hide" || appeal.subject?.action === "hide";
+}
+
+/**
+ * The card's heading: the paper's title, once. An appeal about a post or review
+ * is headed by what it is about instead, because the decision line below names
+ * the paper the post is on and the title would otherwise be said twice.
+ */
+function appealHeading(appeal: AppealCase): string {
+  const record = recordSubject(appeal);
+  if (record !== null) {
+    const noun = recordNoun(record);
+    return wasHidden(appeal)
+      ? `Appeal of a hidden ${noun}`
+      : `Appeal of a decision on ${withArticle(noun)}`;
+  }
+  return (
+    appeal.paper?.title ?? appeal.subject?.title ?? "Appeal of a moderation decision"
+  );
+}
+
 /** What was decided, citing which clause and why. */
 function DecisionSummary({ appeal }: { appeal: AppealCase }) {
   const { original } = appeal;
@@ -140,7 +187,7 @@ function DecisionSummary({ appeal }: { appeal: AppealCase }) {
   }
   return (
     <>
-      <span className="mc-case-strong">{actionLabel(original.action)}</span>
+      <span className="mc-case-strong">{decisionHeadline(appeal, original.action)}</span>
       {original.clause !== null ? (
         <>
           {" "}
@@ -155,6 +202,27 @@ function DecisionSummary({ appeal }: { appeal: AppealCase }) {
       ) : null}
     </>
   );
+}
+
+/**
+ * What the decision did, to what: `Reject the paper`, or for a record
+ * `Hidden post on 'Title': 'The post's first words'`. What the node could not
+ * read is left out, never replaced by a placeholder.
+ */
+function decisionHeadline(appeal: AppealCase, action: string): string {
+  const record = recordSubject(appeal);
+  if (record === null) {
+    return action === "hide" ? "Hidden record" : actionLabel(action);
+  }
+  const noun = recordNoun(record);
+  let headline = wasHidden(appeal) ? `Hidden ${noun}` : `Decision on ${withArticle(noun)}`;
+  if (record.title !== null) {
+    headline += ` on '${record.title}'`;
+  }
+  if (record.excerpt !== null) {
+    headline += `: '${record.excerpt}'`;
+  }
+  return headline;
 }
 
 /** The panel's published decision. */

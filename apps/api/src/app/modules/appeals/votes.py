@@ -592,7 +592,7 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
             "state": submissions.LISTED,
             "clause": clause,
             "reason": (
-                f"Appeal {appeal_cid} was {outcome} by the panel; "
+                "The appeal panel overturned the decision; "
                 "this decision restores the hidden record."
             ),
             "paper": decision.paper_cid,
@@ -696,7 +696,7 @@ def restore_target(appeal_cid: str, outcome: str, key: Any = None) -> Optional[s
         "state": prior,
         "clause": clause,
         "reason": (
-            f"Appeal {appeal_cid} was {outcome} by the panel; "
+            "The appeal panel overturned the decision; "
             "this decision restores the version's state."
         ),
         "paper": decision.paper_cid,

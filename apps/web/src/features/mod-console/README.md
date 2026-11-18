@@ -206,7 +206,7 @@ Written against the API as it is, not as the spec imagines it:
 | List flags | `GET /v1/flags` | **Exists**; tier 4 only, open flags by default (`?state=`, `?target=`). An older server answers `404`/`405` and the console degrades honestly (below) |
 | Count flags | `GET /v1/moderation/flag-counts` | **Exists**; tier 4 only. `{open, decided_last_7_days, window_days}`. The list holds only open flags, so the Flags section's "N flags waiting · M decided in the last 7 days" line reads this; without it the line shows only what is waiting |
 | State of a decided record | `GET /v1/moderation/targets/{cid}` | **Exists**; tier 4 only. `{cid, kind, state}` — `kind` is `version`, `paper` or `record`; `state` is the version's state (`null` for a record) |
-| Which members hold a seat | none | **Missing.** The vote's `403` is the only signal (below) |
+| Does the viewer hold a seat, and what was decided | `GET /v1/appeals/{cid}` | **Exists.** `viewer_on_panel`, `viewer_vote`, and the target's `target_kind`, `record_type`, `paper_title`, `excerpt`, `target_link`, `decision_action`. Read per appeal with the viewer's token (`enrichAppealCases`); a seat is not public, so the log cannot say |
 
 `GET /v1/moderation/queue` lists versions, not flags: flags reach moderators
 through `GET /v1/flags`. A moderation decision on a flagged target settles that
@@ -233,6 +233,18 @@ An appeal with no `appeal.decision` is **open**. Open ones come first (oldest
 first), then decided ones (latest first). An appeal whose decision or paper is
 not in this server's log is still shown, with that part marked as missing: a
 gap in the log is never a reason to hide something a panel must decide.
+
+The log cannot say two things, so each appeal is then asked of
+`GET /v1/appeals/{cid}` (`loadAppealsForViewer`, six at a time): whether the
+signed-in viewer holds a seat — only then does the card say "You're on the
+appeal panel", so the moderator who made the decision is not told they are on
+it — and what the decision was about. A hidden post is withdrawn from public
+reads, so its paper title and excerpt come from the API: the card reads
+"Hidden post on 'Title': 'The post's first words'", links "Read the post" to
+its thread (or "Read the review"), and offers "Read the paper" only for a
+version. The title is said once: an appeal about a record is headed "Appeal of
+a hidden post" and the decision line carries the paper. An appeal whose detail
+cannot be read keeps the log's card and makes no claim about the viewer's seat.
 
 The replay stops after 200 pages (200 000 entries) and says so (`truncated`)
 rather than silently dropping later appeals. A full page whose `seq` does not

@@ -886,8 +886,24 @@
   min-width: 0;
 }
 
+/* "You're on the appeal panel": a line of its own between the kicker and the heading. */
+.mc-case-panel {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+}
+
+/*
+ * Opening a panel notice lands on this heading (`#appeal-…-title`). The 64px
+ * sticky header covers the top of the page and the kicker and the panel line sit
+ * above the heading, so the margin clears the header, a gap, and those two
+ * lines; otherwise the first line read is "Decision appealed".
+ */
 .mc-case-title {
   margin: 0;
+  scroll-margin-top: calc(64px + 8px + var(--space-unit) * 14);
   font-family: var(--family-serif);
   font-size: var(--type-reading);
   line-height: var(--leading-reading);

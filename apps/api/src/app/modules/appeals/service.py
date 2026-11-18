@@ -94,6 +94,7 @@ from .errors import (
 )
 from .models import Appeal, AppealPanelMember, ensure_tables
 from .panel import derive_panel_seed, draw_panel, get_panel, panel_seed
+from .subject import AppealSubject, describe_subject, seat_summary
 
 logger = logging.getLogger(__name__)
 
@@ -472,12 +473,33 @@ def panel_exclusions(appeal: Appeal, decision: AppealedDecision) -> frozenset[st
     """DIDs that may not sit on this appeal's panel.
 
     The deciding moderator, every author of the paper the decision was about,
-    and the appellant (an author already, but the saved appeal is the authority
-    on who filed it).
+    the appellant (an author already, but the saved appeal is the authority on
+    who filed it), the author of the record the decision was about (a post,
+    annotation or review is not always authored by a paper author), and every
+    reporter whose flag the decision settled.
     """
-    return frozenset(
-        {decision.moderator_did, str(appeal.appellant_did)} | set(submissions.all_paper_authors(decision.paper_cid))
-    )
+    excluded: set[str] = {decision.moderator_did, str(appeal.appellant_did)}
+    excluded |= set(submissions.all_paper_authors(decision.paper_cid))
+    try:
+        from app.modules.moderation.decisions import _submitting_author_dids
+
+        excluded |= set(_submitting_author_dids(decision.target_cid))
+    except Exception:  # pragma: no cover - moderation is a shipped plugin
+        pass
+    try:
+        from app.modules.flags.models import Flag, ensure_table as ensure_flag_table
+
+        ensure_flag_table()
+        with db.SessionLocal() as session:
+            rows = (
+                session.query(Flag.reporter_did)
+                .filter(Flag.decision_cid == decision.decision_cid)
+                .all()
+            )
+            excluded |= {str(row[0]) for row in rows if row and row[0]}
+    except Exception:  # pragma: no cover - flags is a shipped plugin
+        pass
+    return frozenset(excluded)
 
 
 def notify_panel_seated(
@@ -513,33 +535,19 @@ def notify_panel_seated(
     short_id: Optional[str] = None
     version_cid: Optional[str] = None
     paper_cid: Optional[str] = None
+    subject: Optional[AppealSubject] = None
     if decision is not None:
         version_cid = decision.version_cid
         paper_cid = decision.paper_cid
-        if version_cid is not None:
-            version = submissions.get_version(version_cid)
-            title = getattr(version, "title", None) if version is not None else None
-        else:
-            try:
-                from app.modules.moderation import outcomes as _outcomes
-
-                title = _outcomes.paper_title(decision.target_cid)
-            except Exception:  # pragma: no cover - outcomes is a shipped plugin
-                title = None
+        subject = describe_subject(decision.target_cid, decision.decision_cid)
+        title = subject.title
         paper = submissions.get_paper(decision.paper_cid)
         short_id = getattr(paper, "short_id", None) if paper is not None else None
 
     filed_at = appeal.filed_at
     deadline = filed_at + PANEL_VOTE_WINDOW if isinstance(filed_at, datetime) else None
-    deadline_day = deadline.strftime("%-d %b %Y") if deadline is not None else None
     link = f"/mod#appeal-{appeal.appeal_cid}-title"
-    if title:
-        summary = f'Vote on the appeal for "{title}"'
-    else:
-        summary = "Vote on an appeal panel"
-    if deadline_day:
-        summary += f" by {deadline_day}"
-    summary += "."
+    summary = seat_summary(subject, deadline)
 
     payload = {
         "appeal_cid": str(appeal.appeal_cid),
@@ -552,6 +560,8 @@ def notify_panel_seated(
         "paper": short_id,
         "paper_cid": paper_cid,
         "version_cid": version_cid,
+        "target_cid": subject.target_cid if subject is not None else None,
+        "target_kind": subject.kind if subject is not None else None,
         "deadline": deadline.isoformat() if deadline is not None else None,
         "due_at": deadline.date().isoformat() if deadline is not None else None,
         "summary": summary,
