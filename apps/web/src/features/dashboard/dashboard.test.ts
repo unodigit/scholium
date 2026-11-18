@@ -510,6 +510,41 @@ describe("notification wording", () => {
     expect(notificationKindLabel("something.brand_new")).toBe("Something brand new");
   });
 
+  it("labels the appellant's appeal-outcome notice, not with a label generated from the kind", () => {
+    // The API sends the appellant `appeal.decision` when a panel (or a tier-4
+    // moderator, without one) decides an appeal without restoring the target.
+    // Left unlisted it would read "Appeal decision", the kind's own words.
+    expect(notificationKindLabel("appeal.decision")).toBe("Appeal outcome");
+    // The panel seat's notice keeps its own label: the two are different notices.
+    expect(notificationKindLabel("appeal.panel")).toBe("Appeal panel");
+  });
+
+  it("shows the appeal-outcome sentence the API wrote and links to what it names", () => {
+    const upheld = 'The appeal panel upheld the decision to hold "A paper under appeal".';
+    const payload = {
+      appeal_cid: "bafy-appeal-1",
+      title: "A paper under appeal",
+      summary: upheld,
+      outcome: upheld,
+      link: "/p/sch:k3f9-q2xz-7mwd",
+    };
+    expect(notificationSummary({ kind: "appeal.decision", payload })).toBe(upheld);
+    expect(notificationLink({ kind: "appeal.decision", payload })).toBe("/p/sch:k3f9-q2xz-7mwd");
+
+    // A decision made without a panel says so in the same place.
+    const without = 'Decided without a panel: upheld the decision to hide your post on "A paper under appeal".';
+    expect(
+      notificationSummary({
+        kind: "appeal.decision",
+        payload: { ...payload, summary: without, outcome: without, decided_without_panel: true },
+      }),
+    ).toBe(without);
+
+    // Read, it is history: the wording stays and the link goes.
+    expect(notificationSummary({ kind: "appeal.decision", read: true, payload })).toBe(upheld);
+    expect(notificationLink({ kind: "appeal.decision", read: true, payload })).toBeNull();
+  });
+
   it("summarises in plain words, not payload keys", () => {
     expect(notificationSummary({ kind: "consent.request", payload: { n: 2 } })).toMatch(/co-author consent.*version 2/i);
     expect(notificationSummary({ kind: "moderation.decision", payload: { action: "hold" } })).toMatch(/paper on hold/i);

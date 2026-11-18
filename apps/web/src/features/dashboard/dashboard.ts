@@ -879,6 +879,7 @@ const NOTIFICATION_KIND_LABELS: Readonly<Record<string, string>> = {
   "recovery.guardians_changed": "Guardians changed",
   "moderation.decision": "Moderation outcome",
   "appeal.panel": "Appeal panel",
+  "appeal.decision": "Appeal outcome",
   "flag.decided": "Flag decision",
   "review.invitation": "Review invitation",
   review_invitation: "Review invitation",
