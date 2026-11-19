@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { formatAllowedAt, type EligibilityFacts } from "./eligibility";
 import { SubmitWizard } from "./submit-wizard";
+import { MemorySubmitDraftStorage } from "./submit-draft-storage";
 import { WizardRail } from "./wizard-rail";
 import { WIZARD_STEPS, nextStep, stepIndex } from "./wizard-steps";
 import type { ManagerDeps } from "./upload-manager";
@@ -529,5 +530,135 @@ describe("SubmitWizard — after signing", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Submitted – version 1" })).toBeTruthy();
     expect(screen.queryByText("Draft saved")).toBeNull();
     expect(screen.queryByText(/You are signing version 1/)).toBeNull();
+  });
+});
+
+describe("SubmitWizard — the stored draft once the paper is signed", () => {
+  const TITLE = "Sparse Probing of Reward Models";
+
+  const signRecord = () =>
+    vi.fn().mockImplementation((type: string) =>
+      Promise.resolve({
+        v: 1,
+        type,
+        id: `bafyrei-${type}`,
+        author: ME,
+        created: "2026-11-16T12:00:00Z",
+        prev: null,
+        body: {},
+        proofs: [],
+        sig: "sig",
+      }),
+    );
+
+  const fetchConsents = () =>
+    vi.fn().mockResolvedValue({
+      paper: "sch:abcd-efgh-ijkl",
+      version: 1,
+      versionCid: "bafyreiversion",
+      state: "awaiting_consent",
+      declinedBy: null,
+      count: 1,
+      waiting: 1,
+      signed: 0,
+      declined: 0,
+      authors: [{ did: ME, position: 1, status: "waiting" }],
+    });
+
+  /** Accepts every record, like a node that is up. */
+  const acceptAll = () =>
+    vi.fn().mockImplementation((record: { id: string }) =>
+      Promise.resolve({ id: record.id, shortId: "sch:abcd-efgh-ijkl" }),
+    );
+
+  /** Accepts paper.genesis and the manifest, then refuses paper.version. */
+  const refuseLastRecord = () => {
+    const accepted = acceptAll();
+    return vi.fn().mockImplementation((record: { id: string; type?: string }) =>
+      record.type === "paper.version" ? Promise.reject(new Error("node unavailable")) : accepted(record),
+    );
+  };
+
+  /** Fill the wizard through to the Sign step, with the draft saved on the way. */
+  async function openSign(props: Partial<React.ComponentProps<typeof SubmitWizard>>): Promise<void> {
+    await openDetails({ submitterDid: ME, fetchConsents: fetchConsents(), ...props });
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Authors" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "CRediT roles for You" })).getByRole("button", {
+        name: /^Conceptualization/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Sign" }));
+    await screen.findByText("Draft saved");
+  }
+
+  /** Open /submit again over the same store and let the restore finish. */
+  async function reopen(storage: MemorySubmitDraftStorage): Promise<void> {
+    cleanup();
+    const get = vi.spyOn(storage, "get");
+    render(<SubmitWizard signedIn submitterDid={ME} draftStorage={storage} />);
+    await vi.waitFor(() => expect(get).toHaveBeenCalled());
+    await act(async () => {
+      await get.mock.results[0].value;
+    });
+  }
+
+  it("clears the stored draft once the version is signed, so /submit starts empty", async () => {
+    const storage = new MemorySubmitDraftStorage();
+    await openSign({ draftStorage: storage, signRecord: signRecord(), submitRecord: acceptAll() });
+    // The paper is a draft until it is signed.
+    expect(await storage.get()).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+    await screen.findByText("Status", { selector: ".sw-status-tracker__title" });
+
+    await vi.waitFor(async () => expect(await storage.get()).toBeNull());
+
+    // Opening /submit again shows an empty wizard, not the paper just submitted.
+    await reopen(storage);
+    expect(screen.getByRole("heading", { level: 1, name: "Submit a paper" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Files" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "Sign" })).toBeNull();
+    expect(screen.queryByText(TITLE)).toBeNull();
+    expect(screen.queryByText("paper.pdf", { selector: ".sw-file__name" })).toBeNull();
+  });
+
+  it("does not save the submitted paper again after clearing it", async () => {
+    const storage = new MemorySubmitDraftStorage();
+    const put = vi.spyOn(storage, "put");
+    await openSign({ draftStorage: storage, signRecord: signRecord(), submitRecord: acceptAll() });
+    const savesBeforeSigning = put.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+    await screen.findByText("Status", { selector: ".sw-status-tracker__title" });
+    await vi.waitFor(async () => expect(await storage.get()).toBeNull());
+
+    // Let any pending effect run: nothing may write the draft back.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(put).toHaveBeenCalledTimes(savesBeforeSigning);
+    expect(await storage.get()).toBeNull();
+  });
+
+  it("keeps the draft when the last record is refused, so the author can try again", async () => {
+    const storage = new MemorySubmitDraftStorage();
+    await openSign({ draftStorage: storage, signRecord: signRecord(), submitRecord: refuseLastRecord() });
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign and submit" }));
+    // The wizard stays on Sign and says what went wrong.
+    await screen.findByRole("alert");
+    expect(screen.getByRole("heading", { level: 1, name: "Submit a paper" })).toBeTruthy();
+
+    const kept = await storage.get();
+    expect(kept).not.toBeNull();
+    expect(kept?.details.title).toBe(TITLE);
+
+    // Opening /submit again brings the draft back, on the step it was left.
+    await reopen(storage);
+    expect(await screen.findByRole("heading", { level: 2, name: "Sign" })).toBeTruthy();
+    expect(screen.getByText(TITLE)).toBeTruthy();
   });
 });

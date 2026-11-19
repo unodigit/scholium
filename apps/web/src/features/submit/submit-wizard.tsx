@@ -264,6 +264,17 @@ export function SubmitWizard({
     };
   }, [step, details, authors, files, draftStore]);
 
+  // The last signed record has been accepted: the paper is no longer a draft.
+  // Drop the stored copy so opening /submit again starts empty instead of
+  // restoring a paper that already exists. Only reached on success; a refused
+  // record leaves `onSigned` uncalled and the draft where the author left it.
+  const handleSigned = (): void => {
+    setSubmitted(true);
+    void draftStore.delete().catch(() => {
+      // Storage may be blocked; there was nothing saved to lose.
+    });
+  };
+
   // Coming back to Files leaves focus on a button that no longer exists; move
   // it to the Files heading instead of dropping it on the document.
   const previousStep = useRef<WizardStepId>("files");
@@ -374,7 +385,7 @@ export function SubmitWizard({
               fetchChecks={fetchChecks}
               checksPollMs={checksPollMs}
               onBack={() => setStep("checks")}
-              onSigned={() => setSubmitted(true)}
+              onSigned={handleSigned}
             />
           ) : null}
         </>
