@@ -10,9 +10,10 @@
  * of it.
  *
  * The check is advisory: a conflict never refuses the commit by itself. The
- * commit endpoint decides who may review (an author gets `403`), and the
- * conflict is declared with the review. {@link describeConflictSummary} says
- * that plainly rather than pretending a red row is a locked door.
+ * commit endpoint refuses only an author of the paper (`403`); nothing about a
+ * conflict is written into the review, so the reviewer decides whether they
+ * can review fairly. {@link describeConflictSummary} says that plainly rather
+ * than pretending a red row is a locked door.
  *
  * Pure data and functions, no React: the component, the page and vitest share
  * this module.
@@ -186,6 +187,14 @@ export async function loadConflictCheck(
 }
 
 /**
+ * What a failed check means before the review is committed, and who decides.
+ * The node refuses only an author of the paper; the other checks are advice.
+ */
+const CONFLICT_ADVICE =
+  "Only authors of the paper are refused; the other checks are advisory. " +
+  "If one fails, decide whether you can review fairly.";
+
+/**
  * One sentence summarising the three checks, for the panel's lede.
  *
  * @param reviewed The reviewer already has a review of this paper (sealed or
@@ -209,8 +218,8 @@ export function describeConflictSummary(
         : `${conflicts.length} checks found a conflict. The review was committed despite ${conflicts.length} declared conflicts.`;
     }
     return conflicts.length === 1
-      ? "One check found a conflict. A conflict is declared with the review; the node decides whether it can be committed."
-      : `${conflicts.length} checks found a conflict. A conflict is declared with the review; the node decides whether it can be committed.`;
+      ? `One check found a conflict. ${CONFLICT_ADVICE}`
+      : `${conflicts.length} checks found a conflict. ${CONFLICT_ADVICE}`;
   }
   if (unknown.length > 0) {
     return unknown.length === 1

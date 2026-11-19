@@ -112,7 +112,17 @@ describe("/review route (server render)", () => {
 
     expect(html).toContain("You are reviewing anonymously.");
     expect(html).toContain("hidden from authors, readers and this node");
-    expect(html).toContain("3 of 5 integrity committee members");
+    // What is true: one sealed box under the committee's key, opened only in a
+    // misconduct case. No threshold scheme exists.
+    expect(html).toContain(
+      "It is held in escrow under the integrity committee’s key and can be opened only in a misconduct case.",
+    );
+    // Scoped to the notice: the score radios elsewhere on the page are
+    // legitimately labelled "3 of 5".
+    const notice = html.match(/<p class="rf-anonymity-text"[^>]*>(.*?)<\/p>/)?.[1] ?? "";
+    expect(notice).toContain("held in escrow");
+    expect(notice).not.toContain("3 of 5");
+    expect(notice).not.toMatch(/committee members/);
   });
 
   it("renders Sign with my name instead and the stylometry tip, anonymous to begin with", async () => {

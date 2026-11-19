@@ -461,8 +461,8 @@ function RatingControl({
           </span>
         </p>
         <p className="ra-note">
-          Thank you. A rating is about the review’s quality and affects the
-          reviewer’s reputation only.
+          Thank you. A rating is about the review’s quality. It is recorded with
+          the review and never changes the paper’s status.
         </p>
       </div>
     );

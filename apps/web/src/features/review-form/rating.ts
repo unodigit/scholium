@@ -5,8 +5,9 @@
  * `POST /v1/reviews/{cid}/rating` takes `{"rating": 1–5}` with the member's
  * access token. The API decides who may rate: a tier-3 member who is neither
  * the review's own reviewer nor an author of the paper (`403` otherwise). The
- * rating is about the review's quality, not its verdict, and affects the
- * reviewer's reputation only (PRD REV-6).
+ * rating is about the review's quality, not its verdict. It is recorded with
+ * the review and never changes the paper's status; nothing reads it to build a
+ * reputation, so no copy may promise one.
  *
  * The API keeps one rating per member per review (its primary key is the
  * review and the rater), so a rating is a single decision: the control does
@@ -29,7 +30,7 @@ export const RATING_LABEL = "Rate this review’s quality";
 
 /** What the scale and the rating mean, so a rater knows what they are doing. */
 export const RATING_HINT =
-  "1 is a review that does not help, 5 is one that sharpens the paper. You rate the review, not the paper; it affects the reviewer’s reputation only.";
+  "1 is a review that does not help, 5 is one that sharpens the paper. You rate the review, not the paper. Ratings are recorded with the review and never change the paper’s status.";
 
 /** The button that sends the rating. */
 export const RATING_SUBMIT_LABEL = "Send rating";

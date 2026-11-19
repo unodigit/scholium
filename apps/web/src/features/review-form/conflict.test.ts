@@ -144,7 +144,43 @@ describe("describeConflictSummary", () => {
 
     const summary = describeConflictSummary(report);
     expect(summary).toContain("One check found a conflict");
-    expect(summary).toContain("declared with the review");
+  });
+
+  it("says only authors are refused and the other checks are advisory", () => {
+    // Nothing about the conflict is written into the review, and the node
+    // refuses only a byline author: the reviewer decides about the rest.
+    const advice =
+      "Only authors of the paper are refused; the other checks are advisory. " +
+      "If one fails, decide whether you can review fairly.";
+    const one: ConflictReport = {
+      ...base,
+      clear: false,
+      checks: base.checks.map((check, index) =>
+        index === 0 ? { ...check, status: "fail", passed: false } : check,
+      ),
+    };
+    const many: ConflictReport = {
+      ...base,
+      clear: false,
+      checks: base.checks.map((check) => ({ ...check, status: "fail", passed: false })),
+    };
+
+    expect(describeConflictSummary(one)).toBe(`One check found a conflict. ${advice}`);
+    expect(describeConflictSummary(many)).toBe(`3 checks found a conflict. ${advice}`);
+  });
+
+  it("does not claim a conflict is declared with the review or that the node decides", () => {
+    const report: ConflictReport = {
+      ...base,
+      clear: false,
+      checks: base.checks.map((check, index) =>
+        index === 2 ? { ...check, status: "fail", passed: false } : check,
+      ),
+    };
+
+    const summary = describeConflictSummary(report);
+    expect(summary).not.toMatch(/declared with the review/);
+    expect(summary).not.toMatch(/decides whether it can be committed/);
   });
 
   it("says when a check could not be completed", () => {

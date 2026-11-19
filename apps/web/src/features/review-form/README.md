@@ -19,7 +19,7 @@ card](#replying-and-rating-on-the-review-card)).
 | --- | --- |
 | Header | `Reviewing: {title} · v{n}` (the one `h1`), above a `scholium / review / sch:…` kicker. |
 | Left | The paper: id pill (click copies), version, categories, abstract, then the full text paragraph by paragraph. Each carries `data-paragraph-id` and `data-cite` (the name a citation gives it). Selecting words offers **Cite in review**. |
-| Right, top | The anonymity notice, in the design's words: "You are reviewing anonymously. Your identity is hidden from authors, readers and this node. It can be opened only by 3 of 5 integrity committee members in a misconduct case." Beneath it, **Sign with my name instead**. |
+| Right, top | The anonymity notice, in the design's words: "You are reviewing anonymously. Your identity is hidden from authors, readers and this node. It is held in escrow under the integrity committee’s key and can be opened only in a misconduct case." (The escrow is one sealed box under `COMMITTEE_PUBLIC_KEY`; there is no threshold of committee members, so the notice promises none.) Beneath it, **Sign with my name instead**. |
 | Right, above the form | **Conflict check** — the three checks for this reviewer, each with an icon and a status word: not an author, no co-authorship in 3 years, different institution. |
 | Right | Six rubric dimensions, each five `1`–`5` radios and a **required** justification box; **Confidence** (Low / Medium / High); **Recommendation** (Sound as is / Minor revisions / Major concerns / Fundamentally flawed); the checkbox "I used AI assistance in writing this review (declared on the report)"; a progress line. |
 | Right, bottom | **Commit review**. After a successful commit the form is replaced by **Your review is sealed**, the reveal date, the review id and **Reveal review**; a revealed review says **Your review is revealed** (see [Revealing](#revealing)). |
@@ -138,8 +138,11 @@ signed-in caller and names no one else. Each check has a `status` of `pass`,
 | `unknown` | ? **Couldn’t check**, then what profile detail would complete it |
 
 The icon shape differs by state as well as the colour (`docs/design.md` §9).
-The check is **advisory**: a conflict is declared with the review; the commit
-endpoint decides who may review. A failed conflict check never hides the form.
+The check is **advisory**: the commit endpoint refuses only an author of the
+paper (`403`), and nothing about a conflict is written into the review. The
+panel says so — "Only authors of the paper are refused; the other checks are
+advisory. If one fails, decide whether you can review fairly." — and the
+reviewer decides. A failed conflict check never hides the form.
 
 A signed-out visitor is asked to sign in instead of being shown three empty
 rows. A report already fetched elsewhere is shown whether or not the current
@@ -316,8 +319,11 @@ form says what signing does in the design's words ("You’re signing with your
 passkey. Scholium never sees your key.") and, once sent, shows back what was
 sent. A reply is sent once, not edited in place.
 
-**The rating** is about the review’s quality, not its verdict, and affects the
-reviewer’s reputation only (PRD REV-6). It needs no passkey prompt: the API
+**The rating** is about the review’s quality, not its verdict. It is recorded
+with the review and never changes the paper’s status; nothing reads it to build
+a reputation, so the hint says only that ("You rate the review, not the paper.
+Ratings are recorded with the review and never change the paper’s status.").
+It needs no passkey prompt: the API
 takes the plain `{"rating": N}` with the member's access token. The API keeps
 **one rating per member per review** (its primary key), so the control offers no
 "change rating", and a repeat is explained ("your first rating stands") instead

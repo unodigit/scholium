@@ -556,12 +556,16 @@ describe("the rating", () => {
     expect(new Set(radios.map((radio) => radio.name)).size).toBe(1);
   });
 
-  it("says what the scale means and what a rating affects", () => {
+  it("says what the scale means and what a rating is recorded as", () => {
     renderRating(vi.fn());
 
     const group = screen.getByRole("group", { name: "Rate this review’s quality" });
     expect(group.textContent).toMatch(/1 is a review that does not help, 5 is one that sharpens the paper/);
-    expect(group.textContent).toMatch(/affects the reviewer’s reputation only/);
+    expect(group.textContent).toContain(
+      "You rate the review, not the paper. Ratings are recorded with the review and never change the paper’s status.",
+    );
+    // No reputation exists, so the hint must not promise an effect on one.
+    expect(group.textContent).not.toMatch(/reputation/i);
     expect(group.getAttribute("aria-describedby")).toBeTruthy();
   });
 
@@ -597,7 +601,11 @@ describe("the rating", () => {
     expect(done).toBeTruthy();
     expect(rate).toHaveBeenCalledWith({ reviewCid: "bafyreireviewcommit", rating: 4 });
     expect(onRated).toHaveBeenCalledWith({ reviewCid: "bafyreireviewcommit", rating: 4 });
-    expect(screen.getByRole("status").textContent).toMatch(/reputation only/);
+    const note = screen.getByRole("status").textContent ?? "";
+    expect(note).toContain(
+      "A rating is about the review’s quality. It is recorded with the review and never changes the paper’s status.",
+    );
+    expect(note).not.toMatch(/reputation/i);
     // One rating per member per review: there is nothing left to change.
     expect(screen.queryByRole("radio")).toBeNull();
     expect(screen.queryByRole("button", { name: "Send rating" })).toBeNull();

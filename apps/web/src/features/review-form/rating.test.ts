@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError, NetworkError } from "../../lib/api";
 import {
   InvalidRatingError,
+  RATING_HINT,
   RATING_VALUES,
   RatingInputError,
   describeRatingError,
@@ -28,6 +29,20 @@ describe("ratings", () => {
     for (const bad of [0, 6, -1, 2.5, NaN, Infinity, "3", null, undefined, true]) {
       expect(isRating(bad)).toBe(false);
     }
+  });
+});
+
+describe("the rating hint", () => {
+  it("says what a rating is and what it does, and nothing more", () => {
+    expect(RATING_HINT).toBe(
+      "1 is a review that does not help, 5 is one that sharpens the paper. " +
+        "You rate the review, not the paper. " +
+        "Ratings are recorded with the review and never change the paper’s status.",
+    );
+  });
+
+  it("does not promise a reputation effect: no reputation exists", () => {
+    expect(RATING_HINT).not.toMatch(/reputation/i);
   });
 });
 

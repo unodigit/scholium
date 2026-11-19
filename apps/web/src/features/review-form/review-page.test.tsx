@@ -55,8 +55,8 @@ describe("ReviewPage", () => {
     expect(notice.textContent).toBe(`${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`);
     expect(notice.textContent).toBe(
       "You are reviewing anonymously. Your identity is hidden from authors, " +
-        "readers and this node. It can be opened only by 3 of 5 integrity " +
-        "committee members in a misconduct case.",
+        "readers and this node. It is held in escrow under the integrity " +
+        "committee’s key and can be opened only in a misconduct case.",
     );
 
     const side = container.querySelector(".rf-side") as HTMLElement;
