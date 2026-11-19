@@ -51,7 +51,7 @@ Your identity is not stored in readable form. When you commit, Scholium stores y
 
 > **In this release** the escrow uses a single committee key; a scheme that needs several committee members to agree is planned. There is no way to open an identity through the website or the API.
 
-If you prefer public credit, choose **Sign with my name instead**. Your review then appears under **Signed reviews** on your public profile once revealed. On the paper's Reviews tab it keeps its letter and reads "Signed by {your name}", linking to your profile (a short form of your DID if you have erased your profile).
+If you prefer public credit, choose **Sign with my name instead**. Your review then appears under **Signed reviews** on your public profile once revealed. On the paper's Reviews tab it keeps its letter and reads "Signed by {your name}", linking to your profile (a short form of your DID if you have erased your profile). When you come back to a review you signed, the form opens in the signed state on any device, with **Stay anonymous instead** offered.
 
 ## 4. Fill the rubric
 

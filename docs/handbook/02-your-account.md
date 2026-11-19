@@ -121,7 +121,7 @@ When you reach the limit, Scholium tells you when you can write again, for examp
 
 Because your key lives on one device, losing that device would mean losing your account. Recovery guardians prevent that.
 
-- You name **exactly five** guardians. Each must be another Scholium account, entered by its DID (people find theirs on their dashboard **Credentials** card or public profile).
+- You name **exactly five** guardians. Each must be another Scholium account, entered by its DID. People find theirs in the address of their public profile (`/u/{DID}`), or on their dashboard **Credentials** card (the **Account** line if the card shows one, otherwise the key under "You sign with this key").
 - If you lose your device, **three of the five** must approve before you get your account back.
 - After the third approval there is a **72-hour safety window** before the new key takes over. Until the window ends, you can cancel a recovery you did not start (see [A recovery you did not start](#a-recovery-you-did-not-start)).
 
@@ -133,7 +133,7 @@ Pick five people you trust and can reach, such as colleagues, a supervisor or co
 2. Replace any of the five DIDs.
 3. Choose **Save guardians**. Scholium asks for your passkey: your device signs the new list with your account's key, so a stolen session alone cannot redirect your recovery.
 
-You see "Guardians updated", and Scholium sends you a notification about the change. Change them here, not at `/onboarding`: onboarding only saves your first list.
+You see "Guardians updated", and Scholium sends you a notification about the change. Once your guardians are saved, `/onboarding` shows them with a **Change them on Security** link to this page.
 
 ### Recover a lost account
 
@@ -147,15 +147,14 @@ If you see "We couldn't find an account linked to that ORCID iD", the ORCID was 
 
 ### A recovery you did not start
 
-When anyone starts a recovery of your account, you get a notification, and an email if your email is confirmed. If you did not start it and you still have your device:
+When anyone starts a recovery of your account, you get a **Recovery of your account** notification ("Someone started a recovery of your account. Unless you cancel it, it can complete after {date}."), and an email if your email is confirmed. If you did not start it:
 
-1. Find the request id in the notice. It starts with `rec_`: it is the last part of the notice's link, and the email lists it as `request_id`.
-2. On the device that holds your passkey, open **/recover?request={request id}**.
-3. Choose **Cancel this recovery**. Cancelling asks for your passkey.
+1. Sign in and open **/me/security** (the notification links there).
+2. In the **Recovery in progress** section, choose **Cancel this recovery**.
 
-You can cancel until the 72-hour safety window ends. Also tell your guardians not to approve: without three approvals the recovery never completes.
+You can cancel until the 72-hour safety window ends, including after a key rotation. Also tell your guardians not to approve: without three approvals the recovery never completes.
 
-> **Known issues:** the notice is worded like a guardian's request ("…needs your approval as a guardian") and its link opens the guardian page, and `/me/security` has no cancel button for it. Use the steps above. If you have rotated your key, the cancel can fail with "Not authorized to cancel this recovery request." In that case ask your guardians not to approve, and contact the node operator.
+A recovery can also be cancelled from **/recover?request={request id}** on a device that holds your passkey: choose **Cancel this recovery**, which asks for your passkey.
 
 ### If you are someone's guardian
 
@@ -163,19 +162,20 @@ A recovery request appears in **Needs your attention** on your dashboard and as 
 
 ## Security settings
 
-**/me/security** has five sections:
+**/me/security** has these sections:
 
 | Section | What it does |
 | --- | --- |
 | Devices | Shows the key held by this device. |
+| Recovery in progress | Appears only while someone is recovering your account. **Cancel this recovery** stops it. |
 | Recovery guardians | Shows your five guardians. **Change guardians** replaces them (see [Change your guardians](#change-your-guardians)). |
 | Recovery requests | Recovery requests waiting for your approval as someone's guardian. |
-| Key rotation | **Rotate key** replaces your signing key. It asks for your passkey twice, signs you out everywhere else, and "can't be undone". Afterwards you sign in with your passkey as usual: your account, DID and tier stay the same. |
+| Key rotation | **Rotate key** replaces your signing key. It asks for your passkey twice, signs you out everywhere else, and "can't be undone". Afterwards Scholium takes you to sign-in: "Your key was rotated. Sign in with this device to continue." Your account, DID and tier stay the same. |
 | Erase my profile | Removes your personal details (see below). |
 
 ## Your public profile
 
-Your profile is at **/u/{your DID}**. It shows your name (or a short form of your DID), affiliation, ORCID chip, trust tier, your DID with a copy button, your endorsements, your papers and your **Signed reviews**. Your email is never shown.
+Your profile is at **/u/{your DID}**. It shows your name (or a short form of your DID), affiliation, ORCID chip, trust tier, your DID with a copy button, your endorsements, your papers and your **Signed reviews** (each names the paper and version, with its recommendation and confidence). Your email is never shown.
 
 ## Erase your profile
 
@@ -201,7 +201,7 @@ Names and ORCID iDs typed into a paper's author list are part of that paper's si
 | My papers | Your papers and their status |
 | My reviews | Your reviews: sealed, revealed or awaiting a reply |
 | Saved searches | Searches you saved from the search page. **Delete** removes one. |
-| Credentials | Your signing DID, your ORCID iD and **View public profile** |
+| Credentials | The key you sign with ("You sign with this key"), your **Account** DID if you have rotated your key, your ORCID iD and **View public profile** |
 | Security | Link to `/me/security` |
 | Notifications | Your notifications (the bell in the navigation bar opens this) |
 | Follows | Categories you follow |

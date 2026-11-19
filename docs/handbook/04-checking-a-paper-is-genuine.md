@@ -44,6 +44,7 @@ Two details:
 
 - **Large files.** Your browser fingerprints up to 32 MiB of files. A file it skips shows a warning, never a pass.
 - **Retracted papers** still verify. A retraction is an extra signed record, not a change to the paper, so the checklist shows "Retracted: a retraction notice applies. The signed history still verifies."
+- **Withdrawn papers** still verify too. The notices row reads "Withdrawn by the authors on {date}" and links to **View the withdrawal record**.
 
 ## Check a file you already have
 
@@ -85,7 +86,7 @@ Other commands:
 | --- | --- |
 | `scholium verify sch:k3f9-q2xz-7mwd --node https://…` | Fetch a paper's records from a server and verify them |
 | `scholium verify-file paper.pdf sch:k3f9-q2xz-7mwd/v2 --archive paper.car` | Check one file against one version in an archive |
-| `scholium rebuild archive.car --db rebuilt.db` | Check a whole-server archive and rebuild its paper catalogue into a fresh database |
+| `scholium rebuild archive.car --db rebuilt.db` | Check a whole-server archive and rebuild its paper catalogue into a fresh database. A paper whose newest version a moderator has not listed yet is shown as "awaiting moderation". |
 | `scholium --version` | Print the version |
 
 > **Getting the tool:** in this release the verifier is not published as a separate download. It ships in the Scholium source code: from a checkout, run `cd apps/api && uv run --all-packages scholium --help`.

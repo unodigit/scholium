@@ -67,6 +67,8 @@ If moderation holds or rejects your paper, you can ask for a fresh look from a p
 
 **Who can appeal:** an author of the paper (the person who submitted it, the signer of a version, or a co-author who accepted). For a hidden post or review, its author.
 
+**Your own hidden posts.** Other readers see only the placeholder, but you see "Your post was hidden: {reason}." with the start of your post, **Show my post** to read all of it, and the appeal control beside it. That way you can tell which post was hidden.
+
 **How often:** **once per decision**. One appeal covers all the co-authors, so agree among yourselves before filing.
 
 **How to appeal:**

@@ -96,7 +96,4 @@ These are deliberate limits of the first release. Plan around them.
 
 ## Known issues
 
-These are bugs we know about in this release.
-
-- **The notice that a recovery of your account was started** is worded like a guardian's request ("…needs your approval as a guardian") and its link opens the guardian page. `/me/security` has no cancel button for it. To cancel a recovery you did not start, follow [A recovery you did not start](02-your-account.md#a-recovery-you-did-not-start).
-- **Cancelling a recovery after a key rotation** can fail with "Not authorized to cancel this recovery request." Ask your guardians not to approve, and contact the node operator.
+None at the moment. Known gaps that are deliberate are listed under [Known limitations in this release](#known-limitations-in-this-release).
