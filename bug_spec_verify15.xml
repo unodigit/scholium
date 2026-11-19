@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 15: findings of verify sweep 15 (2026-11-19, worktree @ 2aba984 = main incl. round 14 and the handbook round,
+  next 16.4.6). 15/16 journeys pass; 06 fails at step 10 (the owner's side of a recovery). All 12 handbook fixes and
+  all round-14 fixes were confirmed in the browser except bug 12's web side (bug 1 below).
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png.
+  Decisions (recorded here):
+  D1  A withdrawal changes no paper status (handbook D-decision), so the header chip stays; the Proof tab names the
+      withdrawal instead.
+  D2  The author of a hidden post may read their own post's text; nobody else gains access.
+  D3  A queued paper is "awaiting moderation" in every CLI summary (verify did this in round 14; rebuild follows).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       touches_files="apps/api/src/app/modules/recovery/requests_router.py,apps/api/src/app/modules/recovery/signatures.py,apps/api/src/app/modules/recovery/tests/test_requests.py,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/security.ts,apps/web/src/features/dashboard/security.test.ts,apps/web/src/features/dashboard/security-page.tsx,apps/web/src/features/dashboard/security-page.test.tsx,apps/web/src/features/web-auth/recover.ts,apps/web/src/features/web-auth/recover.test.ts,apps/web/src/features/web-auth/signin-form.tsx,apps/web/src/features/web-auth/signin-messages.ts,apps/web/src/features/web-auth/signin-messages.test.ts">
+    <title>The account owner cannot see or stop a recovery of their own account: guardian wording, guardian link, no cancel on /me/security, and cancel fails after a key rotation</title>
+    <symptoms>
+      The owner's recovery.request notification (sent by recovery/opening.py since 2aba984) is labelled "Recovery approval" and reads "A recovery request from {own name} needs your approval as a guardian." (dashboard.ts notificationSummary, ~L901/1061); its Open link goes to /me/recovery/{id} (notificationLink ~L1182), the guardian page, which offers the owner Approve/Decline on their own recovery; the payload's cancel_path "/me/security" and link are ignored
+      /me/security lists no recovery of the owner's account and has no cancel control: GET /v1/recovery/requests (requests_router.list_recovery_requests ~L216) returns only requests where the caller is a guardian
+      On /recover?request={id} from the owner's own device, "Cancel this recovery" fails with 401 and "This device doesn't hold the key that opened the account" when the account has rotated its key: requests_router._verify_detached (~L275-286) checks the signature against public_key_from_did_key(row.did), the original key, not the account's active key; recover.ts cancelRecoveryRequest sends auth: false, so the signed-in session is never used. A never-rotated owner cancels fine
+      After "Rotate key" the page reloads straight to /signin with no word that the rotation succeeded
+      A guardian added on /me/security shows as a bare did:key until a reload
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 steps 8-10 (screenshots/06-key-recovery/20c-*.png, 21b-*.png, 30a-*.png to 30g-*.png): Marta rotates her key, then a recovery of her account is opened by ORCID iD; as Marta open the notification, /me/security, and /recover?request={id} → Cancel this recovery (401)
+    </reproduction_steps>
+    <expected>The owner's recovery.request notice has its own label ("Recovery of your account") and sentence ('Someone started a recovery of your account. Unless you cancel it, it can complete after {local date}.'), links to /me/security, and still reads correctly after the safety window opens; guardians' notices are unchanged. /me/security shows a "Recovery in progress" card for each open request on the caller's own account (API: the list includes the caller's own requests marked role "owner", or a separate owner endpoint) with a "Cancel this recovery" button that works from the signed-in session (no extra key ceremony), recording the cancel exactly as the signed cancel does. A signed cancel verifies against the account's ACTIVE key (the key after any rotations, as signatures.py resolves it for guardian changes), so /recover?request= also works after a rotation; a stranger's or a guardian's session cannot cancel. After a rotation, /signin shows "Your key was rotated. Sign in with this device to continue." A guardian added on /me/security shows by name at once. Tests: owner notice wording and link; owner list and session cancel (owner ok, guardian 403, stranger 403/404); signed cancel after one and two rotations; the rotated sign-in notice</expected>
+    <actual>The owner is told they are a guardian, is sent to the guardian page, cannot cancel from /me/security, and cannot cancel at all after a key rotation, so a hostile recovery completes</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/review-form/review-session.tsx,apps/web/src/features/review-form/review-page.tsx,apps/web/src/features/review-form/review-page.test.tsx,apps/web/src/features/review-form/anonymity-notice.tsx">
+    <title>A reviewer who signed with her name is told "You are reviewing anonymously" after a reload, and the update form defaults to anonymous</title>
+    <symptoms>
+      Solheim committed a review with "Sign with my name"; the public card reads "Signed by Dr. Ingrid Solheim", but her own review page, after a reload or in a fresh browser, says "You are reviewing anonymously … held in escrow" and the update form offers "Sign with my name instead" (the session's signed flag starts false: review-session.tsx; it is never set from the reviewer's committed or revealed review)
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 steps 0 and 9 (screenshots/13-new-version-and-review-update/00d-solheim-signed-review-page-says-anonymous.png, 09b-solheim-update-form-defaults-anonymous.png)
+    </reproduction_steps>
+    <expected>When the reviewer's existing review on this paper is signed, the review page and the update form start in the signed state (signed headline, "Stay anonymous instead" offered) on any reload or device; an unsigned review still starts anonymous; tests cover both after a fresh mount</expected>
+    <actual>The page contradicts the published byline</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/review-form/conflict.ts,apps/web/src/features/review-form/conflict.test.ts">
+    <title>The conflict panel says "Committed despite a declared affiliation overlap" but nothing is declared</title>
+    <symptoms>
+      After committing past the affiliation warning, the panel reads "Committed despite a declared affiliation overlap." (conflict.ts ~L218/241); the overlap is not written into the review or shown to anyone, so "declared" overclaims (the handbook round removed the other overclaims)
+    </symptoms>
+    <reproduction_steps>
+      Journey 12 step 2 (screenshots/12-review-commit-reveal/02c-okafor-committed.png)
+    </reproduction_steps>
+    <expected>The text says what happened without claiming a declaration, e.g. "Committed despite an affiliation overlap with an author."; tests assert the wording and that "declared" is not used</expected>
+    <actual>Overclaiming copy</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-proof/checklist.ts,apps/web/src/features/paper-proof/checklist.test.ts">
+    <title>The Proof tab of a withdrawn paper says "No retraction or correction on record" and never mentions the withdrawal</title>
+    <symptoms>
+      After a Withdrawal notice the paper page shows the "Withdrawn by the authors" banner, but the Proof checklist's notice row still reads "No retraction or correction on record" (paper-proof/checklist.ts ~L232) with no mention of the withdrawal
+    </symptoms>
+    <reproduction_steps>
+      Journey 15 handbook check (screenshots/15-correction-notice/20d-handbook-withdrawn-banner-anon.png); open the Proof tab of sch:5uoa-i67i-ktb6
+    </reproduction_steps>
+    <expected>Per D1, the notice row names a withdrawal ("Withdrawn by the authors on {local date}", neutral, linking the notice record) and still reports retraction/correction as before; tests cover a withdrawn, a corrected and a clean paper</expected>
+    <actual>The withdrawal is missing from the proof</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/src/scholium_cli/status.py,apps/api/packages/cli/src/scholium_cli/rebuild.py,apps/api/packages/cli/tests/test_cli_rebuild_command.py">
+    <title>`scholium rebuild` gives a paper still in the moderation queue the status "preprint"</title>
+    <symptoms>
+      Round 14 made `scholium verify` count a queued paper as "awaiting moderation", but `scholium rebuild` on the same export still lists sch:srx4-pdws-p6sd as "preprint" (status.py default rule 7)
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 5 (screenshots/09-preserve-and-transparency/05b-export-cli-verify-and-rebuild.png)
+    </reproduction_steps>
+    <expected>Per D3, rebuild classifies a paper whose newest version has no listing decision as "awaiting_moderation" (shown "awaiting moderation"), consistent with verify (reuse its classification rather than a second rule); listed, held, corrected and retracted papers are unchanged; a test rebuilds an export with a queued paper</expected>
+    <actual>Queued paper shown as a preprint</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="low"
+       touches_files="apps/web/src/features/web-auth/onboarding.ts,apps/web/src/features/web-auth/onboarding-messages.ts,apps/web/src/features/web-auth/onboarding.test.ts,apps/web/src/features/web-auth/onboarding-form.tsx">
+    <title>Replacing a saved guardian list on /onboarding shows the raw 403 "requires a signature by the account's active key"</title>
+    <symptoms>
+      On /onboarding with five guardians already saved, saving a different list returns 403 and the form shows "Changing recovery guardians requires a signature by the account's active key." under the stale "Five guardians set…" line, with no pointer to /me/security, where changing guardians works
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 (screenshots/06-key-recovery/31-*.png)
+    </reproduction_steps>
+    <expected>Once guardians are saved, /onboarding shows them with "Change them on Security" linking /me/security instead of an editable list that can only fail; if a 403 still arrives, the message is plain words with that link; the first save is unchanged; tests cover first save, saved state and the 403 message</expected>
+    <actual>A raw server error and a dead-end form</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/discussion/service.py,apps/api/src/app/modules/discussion/tests/test_hidden_posts.py,apps/web/src/features/paper-discussion/discussion.ts,apps/web/src/features/paper-discussion/discussion.test.ts,apps/web/src/features/paper-discussion/discussion-tab.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx">
+    <title>The author of two hidden posts cannot tell them apart: the placeholder never shows their own text</title>
+    <symptoms>
+      An author whose two posts were hidden for the same reason sees two identical rows "Your post was hidden: {reason}" (discussion.ts hiddenOwnNotice), because the hidden-post placeholder carries no body for anyone (discussion/service.py ~L521), so they cannot choose which one to appeal
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 (two posts by sam hidden for the same reason; Discussion tab as sam)
+    </reproduction_steps>
+    <expected>Per D2, for the post's own author the placeholder includes their post's text (collapsed to a short excerpt with "Show my post"), and the appeal control sits with it; readers, other members and moderators below the tier that may see hidden content still get no body; API tests prove the body is returned only to its author (and to whoever already may see hidden posts)</expected>
+    <actual>Indistinguishable rows</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/profiles/schemas.py,apps/api/src/app/modules/profiles/views.py,apps/api/src/app/modules/profiles/tests/test_get_profile.py,apps/web/src/features/dashboard/profile.ts,apps/web/src/features/dashboard/profile-page.tsx,apps/web/src/features/dashboard/profile-page.test.tsx,apps/web/src/features/dashboard/dashboard-page.tsx,apps/web/src/features/dashboard/dashboard-page.test.tsx">
+    <title>Profile "Signed reviews" show raw labels and no paper; /me shows the old key after a rotation</title>
+    <symptoms>
+      A reviewer's profile lists a signed review as "Major Concerns · Confidence 3" plus a review cid, with no paper title or link (profile-page.tsx ReviewRow; PublicReviewOut has no paper id or title), while the review card says "Major concerns" and "Confidence: Medium"
+      After a key rotation, /me "You sign with this key" still shows the account DID while /me/security shows the new active key (dashboard-page.tsx)
+    </symptoms>
+    <reproduction_steps>
+      Journey 12 (screenshots/12-review-commit-reveal/06e-signed-link-opens-reviewer-profile.png); journey 06 (screenshots/06-key-recovery/20e-me-after-signout-signin.png)
+    </reproduction_steps>
+    <expected>Each signed review on a profile names the paper (title linking /p/{id}, version) and uses the same recommendation and confidence words as the review card; /me shows the active signing key (the same value /me/security shows) and the account id separately if both are shown; tests cover both</expected>
+    <actual>Raw labels, no paper; stale key</actual>
+  </bug>
+
+</bug_spec>
