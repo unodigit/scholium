@@ -25,7 +25,11 @@ The module loader mounts this router under ``/v1``:
   without a signed-in session.  A caller who *does* send a token must be this
   DID (a ``403`` otherwise, like the PUT); one that is sent and unusable is a
   ``401``.  A missing, forged, expired or address-changed token is ``400``
-  problem details, and a DID with no readable profile is ``404``.
+  problem details, and a DID with no readable profile is ``404``.  A successful
+  redemption also runs the tier-1 promotion check (feature 34): tier 1 needs a
+  verified email *and* a linked ORCID iD, and the iD cannot be linked twice,
+  so the order of the two onboarding steps must not decide whether the account
+  is ever promoted -- completing either half runs the same check.
 * ``POST /v1/profiles/{did}/verify-email/resend`` (feature 178) emails the
   owner a fresh link for the address already saved.  It is the expired-link
   screen's resend option and is owner-only: a DID is public, so an
@@ -51,6 +55,7 @@ from the validation errors and an anonymous caller always sees ``401``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from typing import Optional
 
@@ -81,6 +86,8 @@ from .service import (
 from .views import public_profile
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
+
+logger = logging.getLogger(__name__)
 
 # For the GET: no token is fine, one that is sent must be usable (see above).
 _bearer = HTTPBearer(auto_error=False)
@@ -172,7 +179,12 @@ def verify_email(
     body: Optional[VerifyEmailIn] = Body(default=None),
     caller: Optional[Principal] = Depends(optional_principal),
 ) -> EmailVerificationOut:
-    """Redeem the emailed verification token and mark the address verified."""
+    """Redeem the emailed verification token and mark the address verified.
+
+    A successful redemption also runs the tier-1 promotion check (feature 34),
+    so completing the email half of the Member pair promotes exactly like
+    completing the ORCID half does; see the module docstring.
+    """
     if caller is not None and caller.did != did:
         raise HTTPException(
             status_code=403,
@@ -198,6 +210,21 @@ def verify_email(
             status_code=400,
             detail="The email verification link is invalid or has expired.",
         ) from exc
+
+    # The redemption may complete the tier-1 pair (feature 34): a verified
+    # email and a linked ORCID iD.  The link itself runs the same check, but
+    # an iD cannot be linked twice, so when the iD came first this redemption
+    # is the pair's last step and must promote too.  The orcid plugin exports
+    # the check for exactly this caller; it is imported lazily because that
+    # plugin already imports this one lazily (a top-level import would be
+    # circular).  Best-effort, like the link's own check: the verification is
+    # already committed, so a failure is logged, not raised.
+    try:
+        from app.modules.orcid import promote_if_eligible
+
+        promote_if_eligible(did)
+    except Exception:
+        logger.exception("could not promote %s to tier 1 after verifying the email", did)
 
     # The answer reflects personal state (whether this DID's address was proven).
     response.headers["Cache-Control"] = "no-store"

@@ -11,6 +11,12 @@ Also pinned here: the token is bound to the DID *and* to the saved address, so
 changing the address (or erasing the profile) invalidates it; the link carries
 no plaintext address; and a caller may post the token as a query parameter (the
 shape of the emailed link) or as JSON.
+
+Redeeming the link is also the step that can complete the tier-1 pair (feature
+34): a verified email plus a linked ORCID iD.  The ORCID link runs the
+promotion check itself, but an iD cannot be linked twice, so redeeming the link
+must run the same check -- otherwise the order of the two onboarding steps
+decides whether the account is ever promoted.
 """
 
 from __future__ import annotations
@@ -18,11 +24,16 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from urllib.parse import parse_qs, urlparse, urlsplit
 
 import pytest
+from nacl.signing import SigningKey
 
+from app import db
+from app.modules.identity.models import Account, ensure_account_table
 from app.modules.notifications import clear_outbox, get_outbox
+from app.modules.orcid import MEMBER_TIER, generate_mock_orcid_id, issue_orcid_credential
 from app.settings import settings
 from app.modules.profiles import (
     DEFAULT_VERIFICATION_TTL,
@@ -395,6 +406,98 @@ def test_a_broken_bearer_token_is_a_401(client, did, auth):
     assert response.status_code == 401
     assert _problem(response)["type"] == UNAUTHENTICATED_TYPE
     assert email_verified(did) is False
+
+
+# --- tier 1: the order of the two onboarding steps must not matter ----------
+
+
+@pytest.fixture
+def node_key(tmp_path, monkeypatch):
+    """A node Ed25519 key at a temporary ``NODE_KEY_PATH``, as the orcid tests use."""
+    seed = SigningKey.generate()
+    path = tmp_path / "node.key"
+    path.write_text(seed.encode().hex())
+    monkeypatch.setattr(settings, "NODE_KEY_PATH", str(path))
+    return seed
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _add_account(did: str, tier: int = 0) -> None:
+    """Insert the ``accounts`` row a first sign-in creates; promotion needs one."""
+    ensure_account_table()
+    with db.SessionLocal() as session:
+        session.add(Account(did=did, tier=tier, created_at=_utcnow()))
+        session.commit()
+
+
+def _tier(did: str) -> Optional[int]:
+    """The stored tier, or ``None`` when there is no account row."""
+    ensure_account_table()
+    with db.SessionLocal() as session:
+        account = session.get(Account, did)
+        return None if account is None else int(account.tier)
+
+
+def _link_orcid(did: str) -> str:
+    """Link a fresh ORCID iD to ``did`` the way the OAuth callback does.
+
+    Each call draws a fresh iD: the nullifier binds one iD to one active DID,
+    and this suite's database is shared across tests and runs.
+    """
+    return issue_orcid_credential(did, generate_mock_orcid_id())
+
+
+def test_verifying_the_email_after_linking_orcid_promotes_to_tier_1(
+    client, did, auth, node_key
+):
+    """The order must not matter: the iD came first, the link redemption last.
+
+    An ORCID iD cannot be re-linked, so when the promotion check ran only on
+    the link this member stayed at tier 0 until an operator moved the account.
+    """
+    _add_account(did, tier=0)
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    _link_orcid(did)  # the email is still pending: linking promotes nothing
+    assert _tier(did) == 0
+
+    response = _verify(client, did, _last_token())
+
+    assert response.status_code == 200
+    assert _tier(did) == MEMBER_TIER
+
+
+def test_linking_orcid_after_verifying_the_email_still_promotes(client, did, auth, node_key):
+    """The other order keeps promoting: the link itself runs the check."""
+    _add_account(did, tier=0)
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    assert _verify(client, did, _last_token()).status_code == 200
+    assert _tier(did) == 0  # the pair is only half complete
+
+    _link_orcid(did)
+
+    assert _tier(did) == MEMBER_TIER
+
+
+def test_verifying_the_email_never_lowers_a_higher_tier(client, did, auth, node_key):
+    _add_account(did, tier=3)
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    _link_orcid(did)
+
+    assert _verify(client, did, _last_token()).status_code == 200
+
+    assert _tier(did) == 3  # an operator's raise is never undone
+
+
+def test_verifying_without_an_orcid_link_leaves_the_account_at_tier_0(client, did, auth):
+    _add_account(did, tier=0)
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    assert _verify(client, did, _last_token()).status_code == 200
+
+    assert _tier(did) == 0  # a verified email alone is half of the pair
 
 
 # --- the underlying primitives and predicate --------------------------------
