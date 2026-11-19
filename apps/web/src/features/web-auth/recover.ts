@@ -726,7 +726,7 @@ export async function cancelRecoveryRequest(options: {
   await client.post(
     `${recoveryRequestPath(requestId)}/cancel`,
     { signature: toBase64Url(signature) },
-    { auth: false },
+    { auth: true },
   );
 }
 

@@ -16,7 +16,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { SIGNIN_UNSUPPORTED_MESSAGE } from "./signin-messages";
+import { SIGNIN_ROTATED_MESSAGE, SIGNIN_UNSUPPORTED_MESSAGE } from "./signin-messages";
 import { useSignIn, type SignInAuth } from "./use-signin";
 
 /** Props for {@link SignInForm}. */
@@ -25,10 +25,12 @@ export interface SignInFormProps {
   next?: string;
   /** Auth layer override, for tests. */
   auth?: SignInAuth;
+  /** True when this device's key was just rotated. */
+  rotated?: boolean;
 }
 
 /** The sign-in button, its progress line and its failure message. */
-export function SignInForm({ next, auth }: SignInFormProps) {
+export function SignInForm({ next, auth, rotated = false }: SignInFormProps) {
   const router = useRouter();
   const { working, done, unsupported, progress, error, start } = useSignIn({
     next,
@@ -45,6 +47,12 @@ export function SignInForm({ next, auth }: SignInFormProps) {
       <p className="wa-lede">
         Use your passkey to sign in. Scholium never sees your key.
       </p>
+
+      {rotated ? (
+        <p className="wa-note" role="status">
+          {SIGNIN_ROTATED_MESSAGE}
+        </p>
+      ) : null}
 
       <button
         type="button"

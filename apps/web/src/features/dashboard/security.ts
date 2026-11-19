@@ -241,7 +241,8 @@ export function parseRecoveryRequests(payload: unknown): RecoveryRequestSummary[
             : 0;
     const threshold = typeof item.threshold === "number" ? item.threshold : GUARDIAN_THRESHOLD;
     const status = readText(item.status) ?? "pending";
-    out.push({ requestId, accountDid, status, approvals, threshold, newPublicKey });
+    const role = readText(item.role) ?? undefined;
+    out.push({ requestId, accountDid, status, approvals, threshold, newPublicKey, role });
   }
   return out;
 }
@@ -302,6 +303,7 @@ export interface RecoveryRequestSummary {
   readonly approvals: number;
   readonly threshold: number;
   readonly newPublicKey: string;
+  readonly role?: string;
 }
 
 /** A key held by one of the member's devices. */

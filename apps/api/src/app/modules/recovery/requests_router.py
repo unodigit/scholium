@@ -220,10 +220,13 @@ def list_recovery_requests(principal: Principal = Depends(get_current_principal)
         rows = session.scalars(select(RecoveryRequest)).all()
         for row in rows:
             guardians = get_guardians(row.did)
-            if principal.did not in guardians:
+            is_owner = row.did == principal.did
+            is_guardian = principal.did in guardians
+            if not (is_owner or is_guardian):
                 continue
             if row.status not in ("pending", "contest"):
                 continue
+            role = "owner" if is_owner else "guardian"
             approvals = list(row.approvals or [])
             count = len(approvals)
             contest_until = (
@@ -248,6 +251,7 @@ def list_recovery_requests(principal: Principal = Depends(get_current_principal)
                     "contest_until": contest_until,
                     "contestUntil": contest_until,
                     "threshold": _approvals.APPROVAL_THRESHOLD,
+                    "role": role,
                 }
             )
     return result
@@ -274,14 +278,9 @@ def _extract_signature(body):
 
 def _verify_detached(did: str, message: str, signature: str) -> bool:
     try:
-        from scholium_record_core import decode_signature, public_key_from_did_key
-        from nacl.exceptions import BadSignatureError
-        from nacl.signing import VerifyKey
+        from . import signatures
 
-        raw = decode_signature(signature)
-        pk = public_key_from_did_key(did)
-        VerifyKey(pk).verify(message.encode("utf-8"), raw)
-        return True
+        return bool(signatures.verify_detached(did, [message.encode("utf-8")], signature))
     except Exception:
         return False
 
@@ -297,7 +296,8 @@ async def cancel_recovery_request(request_id: str, request: Request, authorizati
         row_id = row.id
 
     authorized = False
-    # Bearer access token signed by the old key.
+    authenticated_non_owner = False
+    # Bearer access token for the account owner's signed-in session.
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
         try:
@@ -306,10 +306,12 @@ async def cancel_recovery_request(request_id: str, request: Request, authorizati
             principal = decode_access_token(token)
             if principal.did == did:
                 authorized = True
+            else:
+                authenticated_non_owner = True
         except Exception:
             authorized = False
 
-    # Detached signature by the old key over the request id.
+    # Detached signature by the account's active key over the request id.
     try:
         body = await request.json()
     except Exception:
@@ -320,10 +322,14 @@ async def cancel_recovery_request(request_id: str, request: Request, authorizati
             signer = did
         if signer == did and _verify_detached(did, request_id, signature):
             authorized = True
+        else:
+            authenticated_non_owner = True
 
     if not authorized:
         from fastapi import HTTPException
 
+        if authenticated_non_owner:
+            raise HTTPException(status_code=403, detail="Not authorized to cancel this recovery request.")
         raise HTTPException(status_code=401, detail="Not authorized to cancel this recovery request.")
 
     approvals: list = []

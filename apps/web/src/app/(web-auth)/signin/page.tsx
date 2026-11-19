@@ -20,6 +20,13 @@ export default async function SignInPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const { next } = await searchParams;
-  return <SignInForm next={Array.isArray(next) ? next[0] : next} />;
+  const { next, rotated } = await searchParams;
+  const rotatedFlag =
+    rotated === "1" || rotated === "true" || rotated === "yes";
+  return (
+    <SignInForm
+      next={Array.isArray(next) ? next[0] : next}
+      rotated={rotatedFlag || (Array.isArray(rotated) && rotated.includes("1"))}
+    />
+  );
 }

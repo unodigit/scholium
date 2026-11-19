@@ -243,7 +243,7 @@ function NotificationRow({
   onMarkRead: () => void;
   onOpen: () => void;
 }) {
-  const label = notificationKindLabel(item.kind);
+  const label = notificationKindLabel(item.kind, item.payload);
   const detail = notificationDetail(item);
   const link = notificationLink(item);
   const time = notificationTime(item);

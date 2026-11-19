@@ -36,6 +36,8 @@ import {
   formatDay,
   formatInstant,
   guardiansComplete,
+  RECOVERY_REQUESTS_ENDPOINT,
+  loadProfileNames,
   loadSecurity as fetchSecurity,
   type DeviceInfo,
   type GuardianState,
@@ -62,6 +64,15 @@ function saveGuardiansWithPasskey(did: string, values: readonly string[]): Promi
   return saveGuardiansSigned(apiClient, did, values, { signer: deviceKey });
 }
 
+/** The default: cancel a recovery using the signed-in session. */
+function defaultCancelRecovery(requestId: string): Promise<void> {
+  return apiClient.post<void>(
+    `${RECOVERY_REQUESTS_ENDPOINT}/${encodeURIComponent(requestId)}/cancel`,
+    {},
+    { auth: true },
+  ).then(() => undefined);
+}
+
 /** Props for {@link SecurityPage}. Everything is optional. */
 export interface SecurityPageProps {
   /** Security data already in hand (tests, or a server route that fetched it). */
@@ -74,6 +85,8 @@ export interface SecurityPageProps {
   eraseProfile?: (did: string) => Promise<void>;
   /** Replace the signed guardian save, for tests. */
   saveGuardians?: SaveGuardians;
+  /** Replace the recovery cancel, for tests. */
+  cancelRecovery?: (requestId: string) => Promise<void>;
   /**
    * Called once the key has changed. The default reloads the page: the app's
    * in-memory device key still holds the old key until it is read again.
@@ -98,6 +111,12 @@ function reloadPage(): void {
   globalThis.location?.reload();
 }
 
+function rotatedRedirect(): void {
+  if (typeof globalThis.location !== "undefined") {
+    globalThis.location.href = "/signin?rotated=1";
+  }
+}
+
 /** `/me/security`: devices, recovery guardians, last key rotation, Rotate key. */
 export function SecurityPage({
   initialSecurity,
@@ -105,7 +124,8 @@ export function SecurityPage({
   rotate = defaultRotateKey,
   eraseProfile = defaultEraseProfile,
   saveGuardians = saveGuardiansWithPasskey,
-  onRotated = reloadPage,
+  cancelRecovery = defaultCancelRecovery,
+  onRotated = rotatedRedirect,
   signedIn,
 }: SecurityPageProps = {}) {
   const [state, setState] = useState<SecurityState>(() =>
@@ -188,6 +208,13 @@ export function SecurityPage({
             <RecoveryRequestsCard
               requests={state.data.recoveryRequests ?? []}
               names={state.data.profileNames}
+            />
+            <RecoveryInProgressCard
+              requests={(state.data.recoveryRequests ?? []).filter(
+                (request) =>
+                  request.role === "owner" || request.accountDid === state.data.did,
+              )}
+              cancelRecovery={cancelRecovery}
             />
             <KeyRotationCard data={state.data} rotate={rotate} onRotated={onRotated} />
           </div>
@@ -309,6 +336,7 @@ function GuardiansCard({
   const [problems, setProblems] = useState<GuardianProblem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [namesState, setNamesState] = useState<Record<string, string>>(() => ({ ...(names ?? {}) }));
 
   const headingId = useId();
   const fieldId = useId();
@@ -331,6 +359,10 @@ function GuardiansCard({
     setCurrent([...guardians.dids]);
     setValues(guardianFields(guardians.dids));
   }, [guardians.dids]);
+
+  useEffect(() => {
+    setNamesState({ ...(names ?? {}) });
+  }, [names]);
 
   // Move focus with the interface, as Rotate key does: into the form when it
   // opens, back to the button when it closes.
@@ -381,6 +413,11 @@ function GuardiansCard({
       setCurrent(next);
       setValues(next);
       setSaved("Guardians updated. Scholium has told you about the change.");
+      void loadProfileNames(next).then((fetched) => {
+        if (mounted.current) {
+          setNamesState((prev) => ({ ...prev, ...fetched }));
+        }
+      });
       setPhase("idle");
     } catch (failure) {
       if (!mounted.current) {
@@ -421,7 +458,7 @@ function GuardiansCard({
       {current.length > 0 ? (
         <ol className="db-guardians" aria-label="Your recovery guardians">
           {current.map((guardianDid) => {
-            const name = names?.[guardianDid];
+            const name = namesState?.[guardianDid];
             return (
               <li className="db-guardian" key={guardianDid}>
                 {name ? <span className="db-guardian-name">{name}</span> : null}
@@ -525,6 +562,69 @@ function GuardiansCard({
           </div>
         </form>
       )}
+    </Card>
+  );
+}
+
+// ---- Recovery in progress (the account owner's own) -------------------------
+
+function RecoveryInProgressCard({
+  requests,
+  cancelRecovery,
+}: {
+  requests: readonly {
+    requestId: string;
+    accountDid: string;
+    status: string;
+    approvals: number;
+    threshold: number;
+    newPublicKey: string;
+  }[];
+  cancelRecovery: (requestId: string) => Promise<void>;
+}) {
+  const [items, setItems] = useState<readonly typeof requests[number][]>(() => [...requests]);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setItems([...requests]);
+  }, [requests]);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  async function cancel(requestId: string) {
+    setCancelling(requestId);
+    setError(null);
+    try {
+      await cancelRecovery(requestId);
+      setItems((prev) => prev.filter((item) => item.requestId !== requestId));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not cancel this recovery.");
+    } finally {
+      setCancelling(null);
+    }
+  }
+
+  return (
+    <Card title="Recovery in progress" anchor="recovery-in-progress">
+      <ul className="db-list">
+        {items.map((request) => (
+          <li key={request.requestId} className="db-requester">
+            <span>Someone started a recovery of your account.</span>
+            <button
+              type="button"
+              className="db-button"
+              disabled={cancelling === request.requestId}
+              onClick={() => cancel(request.requestId)}
+            >
+              {cancelling === request.requestId ? "Cancelling…" : "Cancel this recovery"}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {error ? <p className="db-error" role="alert">{error}</p> : null}
     </Card>
   );
 }

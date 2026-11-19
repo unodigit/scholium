@@ -379,7 +379,7 @@ describe("cancelling", () => {
     expect(client.post).toHaveBeenCalledWith(
       "/recovery/requests/rec_1/cancel",
       { signature: "AQID" },
-      { auth: false },
+      { auth: true },
     );
     expect(result.current.snapshot?.status).toBe("cancelled");
     expect(result.current.notice).toBe(RECOVER_CANCELLED_NOTICE);

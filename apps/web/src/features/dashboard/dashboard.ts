@@ -911,8 +911,28 @@ const NOTIFICATION_KIND_LABELS: Readonly<Record<string, string>> = {
   "email.verify": "Email verification",
 };
 
+/** True when a `recovery.request` notice is the one sent to the account owner. */
+function isOwnerRecoveryNotice(
+  kind: string,
+  payload?: Readonly<Record<string, unknown>>,
+): boolean {
+  if (kind !== "recovery.request" || payload === undefined) {
+    return false;
+  }
+  if (readText(payload.cancel_path) === "/me/security") return true;
+  if (readText(payload.security_path) === "/me/security") return true;
+  if (readText(payload.link) === "/me/security") return true;
+  return readNumber(payload.safety_window_hours) !== null;
+}
+
 /** The word for a notification kind; an unknown kind reads as itself, in words. */
-export function notificationKindLabel(kind: string): string {
+export function notificationKindLabel(
+  kind: string,
+  payload?: Readonly<Record<string, unknown>>,
+): string {
+  if (kind === "recovery.request" && isOwnerRecoveryNotice(kind, payload)) {
+    return "Recovery of your account";
+  }
   return NOTIFICATION_KIND_LABELS[kind] ?? sentenceCase(kind);
 }
 
@@ -1034,6 +1054,28 @@ function recoverySummary(payload: Readonly<Record<string, unknown>>): string | n
 
 /** One plain sentence for what happened, never the payload's keys. */
 export function notificationSummary({ kind, payload, read }: NotificationLike): string {
+  if (kind === "recovery.request" && isOwnerRecoveryNotice(kind, payload)) {
+    const closed = readText(payload.closed);
+    if (closed === "cancelled") {
+      return "The recovery of your account was cancelled.";
+    }
+    const contestUntil = readText(payload.contest_until) ?? readText(payload.contestUntil);
+    let date: string | null = contestUntil !== null ? formatDate(contestUntil) : null;
+    if (date === null) {
+      const requested = readText(payload.requested_at) ?? readText(payload.requestedAt);
+      const hours = readNumber(payload.safety_window_hours);
+      if (requested !== null && hours !== null) {
+        const when = new Date(requested);
+        if (!Number.isNaN(when.getTime())) {
+          when.setUTCHours(when.getUTCHours() + Math.trunc(hours));
+          date = formatDate(when.toISOString());
+        }
+      }
+    }
+    return date !== null
+      ? `Someone started a recovery of your account. Unless you cancel it, it can complete after ${date}.`
+      : "Someone started a recovery of your account. Unless you cancel it, it can complete.";
+  }
   if (kind === "recovery.request") {
     const recorded = recoverySummary(payload);
     if (recorded !== null) {
@@ -1177,6 +1219,9 @@ export function notificationLink({ kind, payload, read }: NotificationLike): str
       break;
     }
     case "recovery.request": {
+      if (isOwnerRecoveryNotice(kind, payload)) {
+        return "/me/security";
+      }
       const request = readText(payload.request_id);
       if (request !== null) {
         return `/me/recovery/${pathSegment(request)}`;

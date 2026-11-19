@@ -295,7 +295,7 @@ describe("cancelling a recovery", () => {
     expect(client.post).toHaveBeenCalledWith(
       "/recovery/requests/rec_1/cancel",
       { signature: "AQID" },
-      { auth: false },
+      { auth: true },
     );
   });
 

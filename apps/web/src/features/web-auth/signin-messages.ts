@@ -22,6 +22,9 @@ export const SIGNIN_STAGE_MESSAGES: Record<SignInStage, string> = {
 /** Shown once the sign-in has succeeded and the page is about to navigate. */
 export const SIGNIN_SUCCESS_MESSAGE = "Signed in. Taking you there…";
 
+/** Shown when this device's key was just rotated and the member must sign in again. */
+export const SIGNIN_ROTATED_MESSAGE = "Your key was rotated. Sign in with this device to continue.";
+
 /** Shown when the browser cannot create a passkey-protected key at all. */
 export const SIGNIN_UNSUPPORTED_MESSAGE =
   "This browser can't create a passkey-protected key. Try a current version of Chrome, Safari, Edge or Firefox.";
