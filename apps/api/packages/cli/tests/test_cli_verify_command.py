@@ -431,6 +431,7 @@ def test_a_whole_node_archive_summarises_every_paper_status(car_file, capsys):
     status.
     """
     one, two = make_paper(seed="one"), make_paper(seed="two")
+    one.extra.append(list_decision("committee", one.versions[0]["id"]))
     two.extra.append(notice("alice", "retraction", two.paper_id))
     data = whole_node_archive(
         [one.records(), two.records()], files=[*one.files.values(), *two.files.values()]
@@ -446,6 +447,8 @@ def test_a_whole_node_archive_summarises_every_paper_status(car_file, capsys):
 
 def test_a_whole_node_archive_of_listed_papers_says_how_many(car_file, capsys):
     one, two = make_paper(seed="one"), make_paper(seed="two")
+    for paper in (one, two):
+        paper.extra.append(list_decision("committee", paper.versions[0]["id"]))
     data = whole_node_archive([one.records(), two.records()])
 
     code, out, _ = verify(car_file, data, capsys=capsys)
@@ -460,6 +463,7 @@ def test_a_whole_node_archive_counts_each_notice_status(car_file, capsys):
         make_paper(seed="two"),
         make_paper(seed="three"),
     )
+    one.extra.append(list_decision("committee", one.versions[0]["id"]))
     two.extra.append(notice("alice", "correction", two.paper_id))
     three.extra.append(notice("alice", "retraction", three.paper_id))
     data = whole_node_archive([one.records(), two.records(), three.records()])
@@ -469,6 +473,16 @@ def test_a_whole_node_archive_counts_each_notice_status(car_file, capsys):
     assert code == 0, out
     assert (
         "Result: VERIFIED — 3 papers (1 listed, 1 corrected, 1 retracted)" in out
+    )
+
+
+def list_decision(name, target, *, created="2026-11-14T05:32:00Z"):
+    """A moderator's ``list`` decision on a version, as the node records it."""
+    return signed(
+        name,
+        "moderation.decision",
+        {"target": target, "action": "list", "clause": "MOD-01", "reasonCid": "x"},
+        created=created,
     )
 
 
@@ -492,6 +506,27 @@ def release(name, target, *, state="listed", created="2026-11-14T05:35:00Z"):
     )
 
 
+def test_a_whole_node_archive_counts_a_queued_paper_as_awaiting_moderation(
+    car_file, capsys
+):
+    """A paper with no decision yet is in the queue, not listed.
+
+    The node serves no page for it -- ``GET /v1/papers/{id}`` answers 404 until
+    a moderator lists a version -- so the archive summary must not sweep it into
+    the listed papers (bug_spec_verify14, bug 2).  The listed paper carries the
+    ``list`` decision that put it in the catalog.
+    """
+    listed, queued = make_paper(seed="one"), make_paper(seed="two")
+    listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
+    data = whole_node_archive([listed.records(), queued.records()])
+
+    code, out, err = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert err == ""
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 awaiting moderation)" in out
+
+
 def test_a_whole_node_archive_counts_a_held_paper_as_held(car_file, capsys):
     """A paper under a moderation hold is not listed, whatever its history verifies.
 
@@ -499,6 +534,7 @@ def test_a_whole_node_archive_counts_a_held_paper_as_held(car_file, capsys):
     classify it the same way, not sweep it into the listed papers.
     """
     one, two = make_paper(seed="one"), make_paper(seed="two")
+    one.extra.append(list_decision("committee", one.versions[0]["id"]))
     two.extra.append(hold("committee", two.versions[0]["id"]))
     data = whole_node_archive([one.records(), two.records()])
 
@@ -512,6 +548,7 @@ def test_a_whole_node_archive_counts_a_held_paper_as_held(car_file, capsys):
 def test_a_released_hold_does_not_count_as_held(car_file, capsys):
     """The summary reads the current moderation state, not every decision in the log."""
     one, two = make_paper(seed="one"), make_paper(seed="two")
+    one.extra.append(list_decision("committee", one.versions[0]["id"]))
     target = two.versions[0]["id"]
     two.extra.append(hold("committee", target))
     two.extra.append(release("committee", target))

@@ -105,9 +105,33 @@ _STATUS_SEVERITY = ("invalid", "retracted", "tombstoned", "corrected")
 _STATE_SETTING_ACTIONS = frozenset(
     {"list", "hold", "reject", "delist", "tombstone", "release"}
 )
-_HOLD_ACTION = "hold"
 _RELEASE_ACTION = "release"
 _HELD_STATE = "held"
+_REJECTED_STATE = "rejected"
+
+#: The version state each plain state-setting action asks for, as
+#: ``app.modules.moderation.decisions.ACTION_STATES`` maps them.  A ``release``
+#: names its state in the record, so it is read from ``body.state`` instead,
+#: and a ``tombstone`` moves the version it can to ``rejected``.
+_ACTION_STATES = {
+    "list": "listed",
+    "hold": _HELD_STATE,
+    "reject": _REJECTED_STATE,
+    "delist": _REJECTED_STATE,
+    "tombstone": _REJECTED_STATE,
+}
+_LISTED_STATE = "listed"
+_MODERATION_STATE = "moderation"
+
+#: The states a ``release`` may name (``app.modules.moderation.decisions``).
+_RELEASE_STATES = frozenset(
+    {_LISTED_STATE, _MODERATION_STATE, _HELD_STATE, _REJECTED_STATE}
+)
+
+#: The state of a paper whose newest version no moderator has listed (or held,
+#: rejected, ...): it is in the moderation queue, and the node serves no page
+#: for it.
+_AWAITING_MODERATION = "awaiting moderation"
 
 #: An unreadable ``created`` sorts before every real time.
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
@@ -405,16 +429,28 @@ def _version_record_ids(archive: Archive, paper_id: str) -> set[str]:
     return ids
 
 
-def _held_in_force(archive: Archive, paper_id: str) -> bool:
-    """Whether a moderation hold is in force on any version of ``paper_id``.
+def _state_of_decision(body: Mapping[str, Any]) -> str | None:
+    """The version state the decision in ``body`` asks for, if it sets one."""
+    action = _action(body.get("action"))
+    if action not in _STATE_SETTING_ACTIONS:
+        return None
+    if action == _RELEASE_ACTION:
+        state = _action(body.get("state"))
+        return state if state in _RELEASE_STATES else None
+    return _ACTION_STATES.get(action)
+
+
+def _states_in_force(archive: Archive, targets: Iterable[str]) -> dict[str, str]:
+    """The state each of ``targets`` is in, from the newest decision on it.
 
     The node settles a version's state by its newest state-setting decision
     (``app.modules.status.compute``).  An archive carries those same decisions,
     so the summary can read the state the node's own pages show: a later
-    ``release`` -- or any other state-setting decision -- ends the hold, and
-    only a hold still in force counts.
+    ``release`` -- or any other state-setting decision -- replaces the earlier
+    one, and only the newest counts.  A target no decision has set is absent,
+    which is the moderation queue's own "no decision yet".
     """
-    targets = _version_record_ids(archive, paper_id)
+    targets = frozenset(targets)
     current: dict[str, tuple[datetime, str, str]] = {}
     for record in archive.records:
         if record.get("type") != "moderation.decision":
@@ -425,19 +461,64 @@ def _held_in_force(archive: Archive, paper_id: str) -> bool:
         target = body.get("target")
         if not isinstance(target, str) or target not in targets:
             continue
-        action = _action(body.get("action"))
-        if action not in _STATE_SETTING_ACTIONS:
+        state = _state_of_decision(body)
+        if state is None:
             continue
-        if action == _RELEASE_ACTION and _action(body.get("state")) == _HELD_STATE:
-            action = _HOLD_ACTION  # released back into a hold: still held
         record_id = record.get("id")
         order = (
             _created(record.get("created")),
             record_id if isinstance(record_id, str) else "",
         )
         if target not in current or order > current[target][:2]:
-            current[target] = (order[0], order[1], action)
-    return any(action == _HOLD_ACTION for _, _, action in current.values())
+            current[target] = (order[0], order[1], state)
+    return {target: state for target, (_, _, state) in current.items()}
+
+
+def _held_in_force(archive: Archive, paper_id: str) -> bool:
+    """Whether a moderation hold is in force on any version of ``paper_id``."""
+    states = _states_in_force(archive, _version_record_ids(archive, paper_id))
+    return _HELD_STATE in states.values()
+
+
+def _newest_version_id(archive: Archive, paper_id: str) -> str | None:
+    """The record id of the paper's newest posted version, if it has one.
+
+    ``body.n`` is the version number; a fork may hold two records with the same
+    number, so ``created`` and the record id break the tie the way the rest of
+    the summary orders decisions.
+    """
+    newest: str | None = None
+    newest_key: tuple[int, datetime, str] | None = None
+    for record in archive.records:
+        if record.get("type") != "paper.version":
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping) or body.get("paper") != paper_id:
+            continue
+        record_id = record.get("id")
+        if not isinstance(record_id, str):
+            continue
+        number = body.get("n")
+        if not isinstance(number, int) or isinstance(number, bool):
+            number = 0
+        key = (number, _created(record.get("created")), record_id)
+        if newest_key is None or key > newest_key:
+            newest, newest_key = record_id, key
+    return newest
+
+
+def _newest_version_listed(archive: Archive, paper_id: str) -> bool:
+    """Whether the paper's newest version is listed.
+
+    Only a ``list`` decision (or a ``release`` naming ``listed``) puts a version
+    in the catalog; a version no moderator has decided on, or one held or
+    rejected, is not listed.  The node serves no page for the paper until its
+    newest version is.
+    """
+    newest = _newest_version_id(archive, paper_id)
+    if newest is None:
+        return False
+    return _states_in_force(archive, {newest}).get(newest) == _LISTED_STATE
 
 
 def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) -> PaperVerdict:
@@ -458,6 +539,14 @@ def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) 
     # never a retraction or tombstone (nor an invalid history).
     if not failed and status in ("verified", "corrected") and _held_in_force(archive, paper_id):
         status = "held"
+    elif (
+        not failed
+        and status == "verified"
+        and not _newest_version_listed(archive, paper_id)
+    ):
+        # Verified history, but no moderator has listed its newest version: the
+        # paper is in the queue, and the node serves no page for it.
+        status = _AWAITING_MODERATION
     return PaperVerdict(
         label=verdict.version or report.short_id or label,
         report=report,
@@ -634,16 +723,21 @@ def _whole_node_result_line(verdict: ArchiveVerdict) -> str:
     counts = {status: 0 for status in _STATUS_SEVERITY if status != "invalid"}
     listed = 0
     held = 0
+    awaiting = 0
     for paper in verdict.papers:
         if paper.status == "verified":
             listed += 1
         elif paper.status == "held":
             held += 1
+        elif paper.status == _AWAITING_MODERATION:
+            awaiting += 1
         else:
             counts[paper.status] = counts.get(paper.status, 0) + 1
     parts = [f"{listed} listed"]
     if held:
         parts.append(f"{held} held")
+    if awaiting:
+        parts.append(f"{awaiting} awaiting moderation")
     for status in ("corrected", "retracted", "tombstoned"):
         if counts.get(status):
             parts.append(f"{counts[status]} {status}")

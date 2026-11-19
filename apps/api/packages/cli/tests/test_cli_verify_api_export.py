@@ -27,19 +27,28 @@ from scholium_cli.main import main
 #: The API's workspace root (``apps/api``), the directory ``uv run`` uses.
 API_ROOT = Path(__file__).resolve().parents[3]
 
-#: What the child process runs: build two papers through the API, then export.
+#: What the child process runs: build a listed and a queued paper through the
+#: API, then export.  The first is put in the catalog by the ``list`` decision
+#: the node records; the second is left in the moderation queue, which is what
+#: a paper with no decision yet is.
 BUILD_AND_EXPORT = """
 import json
 import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from nacl.signing import SigningKey
 
 from app.main import create_app
+from app.modules import ledger
 from app.modules.export.tests.test_paper_car import build_paper
+from app.modules.submissions import LISTED, MODERATION
+from scholium_record_core import did_key_from_signing_key, sign_record
 
 with TestClient(create_app()) as client:
-    papers = [build_paper(), build_paper()]
+    listed = build_paper(state=LISTED)
+    queued = build_paper(state=MODERATION)
+    papers = [listed, queued]
     for paper in papers:
         paper.append(
             paper.sign(
@@ -51,6 +60,26 @@ with TestClient(create_app()) as client:
                 },
             )
         )
+    moderator_key = SigningKey.generate()
+    ledger.append(
+        sign_record(
+            {
+                "v": 1,
+                "type": "moderation.decision",
+                "author": did_key_from_signing_key(moderator_key),
+                "created": "2026-11-15T09:00:03Z",
+                "prev": None,
+                "body": {
+                    "target": listed.version["id"],
+                    "action": "list",
+                    "clause": "MOD-01",
+                    "reason": "In scope and scholarly form.",
+                },
+                "proofs": [],
+            },
+            moderator_key,
+        )
+    )
     response = client.get("/v1/export/archive.car")
     if response.status_code != 200:
         print(
@@ -127,6 +156,7 @@ def test_the_documented_command_verifies_the_api_export(tmp_path, capsys):
 
     assert code == 0, out
     assert "Result: VERIFIED" in out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 awaiting moderation)" in out
     for paper in papers:
         assert paper["short_id"] in out
 
