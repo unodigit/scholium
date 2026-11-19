@@ -16,7 +16,7 @@ import {
   type FileState,
   type ManifestState,
 } from "./verdict";
-import { SIGNED_BYTES, VERSION_ID, manifest, versionRef } from "./verify-fixtures";
+import { SIGNED_BYTES, VERSION_ID, manifest, manifestBody, versionRef } from "./verify-fixtures";
 import { fileCid } from "../paper-proof/files";
 import { formatBytes } from "../ui-kit/format-bytes";
 
@@ -170,7 +170,44 @@ describe("deriveVerdict", () => {
       expect(verdict.kind).toBe("mismatch");
       expect(verdict.headline).toBe("This file does not match what the authors signed");
       expect(verdict.summary).toBe(
-        `It is not one of the 2 files signed for ${VERSION_ID}. Do not rely on it as the authors' version.`,
+        `It is not any of the 2 files signed for ${VERSION_ID}. Do not rely on it as the authors' version.`,
+      );
+    });
+
+    it("names the file, not 'the only file', when the version has one signed file", () => {
+      const oneFile = manifest({ files: [(manifestBody().files as unknown[])[0]] });
+      expect(oneFile.files).toHaveLength(1);
+
+      const verdict = deriveVerdict({
+        ref: REF,
+        manifest: { status: "ready", manifest: oneFile },
+        file: readFile(OTHER, "notes.txt"),
+      });
+
+      expect(verdict.kind).toBe("mismatch");
+      expect(verdict.summary).toBe(
+        `It is not the file signed for ${VERSION_ID}. Do not rely on it as the authors' version.`,
+      );
+      expect(verdict.summary).not.toContain("only file");
+    });
+
+    it("counts every signed file when the version has several", () => {
+      const three = manifest({
+        files: [
+          ...(manifestBody().files as unknown[]),
+          { ...(manifestBody().files as Record<string, unknown>[])[0], path: "extra/appendix.pdf" },
+        ],
+      });
+      expect(three.files).toHaveLength(3);
+
+      const verdict = deriveVerdict({
+        ref: REF,
+        manifest: { status: "ready", manifest: three },
+        file: readFile(OTHER, "notes.txt"),
+      });
+
+      expect(verdict.summary).toBe(
+        `It is not any of the 3 files signed for ${VERSION_ID}. Do not rely on it as the authors' version.`,
       );
     });
 

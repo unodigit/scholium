@@ -185,10 +185,14 @@ function matchVerdict(file: FileFacts, manifest: VersionManifest): Verdict {
     "It may belong to a different version, or it may have changed since the authors signed. " +
       "Check the version id above, or get a fresh copy from the paper's page.",
   );
+  // Not `countPhrase`: "the only file" and "one of the N files" complete "It is
+  // <name>, …" but turn misleading after "It is not" ("It is not the only file
+  // signed" reads as if several were signed).
+  const signedPhrase = count === 1 ? "the file" : `any of the ${count} files`;
   return build(
     "mismatch",
     MISMATCH_HEADLINE,
-    `It is not ${countPhrase} signed for ${manifest.ref.schId}. Do not rely on it as the authors' version.`,
+    `It is not ${signedPhrase} signed for ${manifest.ref.schId}. Do not rely on it as the authors' version.`,
     { details },
   );
 }
