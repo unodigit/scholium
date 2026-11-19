@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { tokenStore } from "../../lib/api";
 import { formatDate, parseInstant } from "../feed/feed";
+import { confidenceLabel, recommendationLabel } from "../paper-reviews/review";
 import { initials } from "../ui-kit/initials";
 
 import { CopyDid } from "./copy-did";
@@ -16,6 +17,7 @@ import {
   orcidUrl,
   profileDisplayName,
   profileShortDid,
+  signedReviewPaperHref,
   tierLabel,
   type ProfileData,
   type SignedReview,
@@ -310,15 +312,34 @@ function ProfileView({
   );
 }
 
+/**
+ * One signed review, in the same words as the paper's review card: the paper
+ * and version it was written on, then the recommendation ("Major concerns")
+ * and the confidence ("Confidence: Medium"). The review cid stays as the
+ * record's identifier beneath them, not as the only thing naming the review.
+ */
 function ReviewRow({ review }: { review: SignedReview }) {
   const revealed = parseInstant(review.revealed_at);
+  const paperHref = signedReviewPaperHref(review);
+  const paperLabel = review.paper_title ?? review.paper_id;
+  const confidence = confidenceLabel(review.confidence);
   return (
     <li className="pp-review">
-      {review.recommendation ? (
-        <p className="pp-review-rec">{review.recommendation.replace(/_/g, " ")}</p>
+      {paperLabel !== null ? (
+        paperHref !== null ? (
+          <a className="pp-paper-title" href={paperHref}>
+            {paperLabel}
+          </a>
+        ) : (
+          <p className="pp-review-paper">{paperLabel}</p>
+        )
+      ) : null}
+      {review.recommendation !== null ? (
+        <p className="pp-review-rec">{recommendationLabel(review.recommendation)}</p>
       ) : null}
       <p className="pp-review-meta">
-        {review.confidence !== null ? <span>Confidence {review.confidence}</span> : null}
+        {review.version !== null ? <span>v{review.version}</span> : null}
+        {confidence !== null ? <span>Confidence: {confidence}</span> : null}
         {revealed !== null && review.revealed_at !== null ? (
           <time dateTime={review.revealed_at}>{formatDate(revealed)}</time>
         ) : null}

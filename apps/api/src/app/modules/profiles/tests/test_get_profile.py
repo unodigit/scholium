@@ -168,6 +168,39 @@ def _add_review(
     return review_cid
 
 
+def _add_paper(
+    *,
+    version_cid: str,
+    title: str,
+    n: int = 1,
+    short_id: str | None = None,
+    paper_cid: str | None = None,
+) -> tuple[str, str]:
+    """Create a catalog paper and one of its versions, returning (paper_cid, short_id)."""
+    from app.modules.submissions.models import Paper, PaperVersion
+
+    paper_cid = paper_cid or f"bafy-paper-{uuid.uuid4().hex}"
+    short_id = short_id or f"sch:{uuid.uuid4().hex[:12]}"
+    with db.SessionLocal() as session:
+        session.add(
+            Paper(paper_cid=paper_cid, short_id=short_id, categories=[])
+        )
+        session.add(
+            PaperVersion(
+                version_cid=version_cid,
+                paper_cid=paper_cid,
+                n=n,
+                title=title,
+                abstract="",
+                manifest_cid=f"bafy-manifest-{uuid.uuid4().hex}",
+                licence="CC-BY-4.0",
+                state="listed",
+            )
+        )
+        session.commit()
+    return paper_cid, short_id
+
+
 @pytest.fixture
 def credentials_table():
     """The spec's ``credentials`` table, created only when it does not exist yet."""
@@ -555,6 +588,10 @@ def test_the_review_items_carry_the_public_columns(client, did, review_table):
     assert review == {
         "review_cid": review_cid,
         "version_cid": "sch:version:9",
+        # No catalog row places this version, so the paper is not guessed.
+        "paper_id": None,
+        "paper_title": None,
+        "version": None,
         "recommendation": "accept",
         "confidence": 5,
         "scores": {"soundness": 5, "evidence": 4, "reproducibility": 3, "novelty": 4, "clarity": 5, "limitations": 4},
@@ -563,6 +600,32 @@ def test_the_review_items_carry_the_public_columns(client, did, review_table):
         "revealed_at": "2026-11-14T10:00:00",
     }
     assert review["report_cid"].startswith("sch:report:")
+
+
+def test_a_signed_review_names_the_paper_it_was_written_on(client, did, review_table):
+    """The profile can link the paper instead of showing a bare review cid."""
+    version_cid = f"bafy-version-{uuid.uuid4().hex}"
+    _, short_id = _add_paper(
+        version_cid=version_cid,
+        title="Can a Meta-Agent Choose the Safer Branch?",
+        n=2,
+    )
+    _add_review(did, version_cid=version_cid)
+
+    review = client.get(f"/v1/profiles/{did}").json()["reviews"][0]
+
+    assert review["paper_id"] == short_id
+    assert review["paper_title"] == "Can a Meta-Agent Choose the Safer Branch?"
+    assert review["version"] == 2
+
+
+def test_a_review_of_a_version_the_catalog_lacks_has_no_paper(client, did, review_table):
+    """A review whose version row is gone keeps the raw cid and guesses nothing."""
+    _add_review(did, version_cid=f"bafy-unknown-{uuid.uuid4().hex}")
+
+    review = client.get(f"/v1/profiles/{did}").json()["reviews"][0]
+
+    assert (review["paper_id"], review["paper_title"], review["version"]) == (None, None, None)
 
 
 def test_anonymous_reviews_never_appear(client, did, review_table):
@@ -610,6 +673,9 @@ def test_the_pseudonymity_material_never_leaves_the_table(client, did, review_ta
         assert set(review) == {
             "review_cid",
             "version_cid",
+            "paper_id",
+            "paper_title",
+            "version",
             "recommendation",
             "confidence",
             "scores",

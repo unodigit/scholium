@@ -22,7 +22,13 @@ in :mod:`app.modules.profiles.views`::
      "orcid": "0000-0002-1825-0097",  # null: not linked, or erased
      "tier": 1,
      "erased": false,
-     "reviews": [{"review_cid": "sch:...", ...}]}
+     "reviews": [{"review_cid": "sch:...",
+                  "paper_id": "sch:k3f9-q2xz-7mwd",
+                  "paper_title": "Sparse attention ...",
+                  "version": 2,
+                  "recommendation": "minor_revisions",
+                  "confidence": 3,
+                  ...}]}
 
 Every personal member is nullable: "nothing to show" is a normal answer for a
 DID that never saved a profile, and it is the *only* answer after erasure.
@@ -133,6 +139,11 @@ class VerificationEmailResendOut(BaseModel):
 class PublicReviewOut(BaseModel):
     """One revealed review the DID signed, for public credit.
 
+    ``paper_id``/``paper_title``/``version`` name the paper the review was
+    written on: the catalog's short id (the ``/p/{id}`` segment), the version's
+    title and its number.  They are ``None`` when the catalog cannot place the
+    reviewed version, so a profile never guesses.
+
     The rubric scores pass through as stored.  ``review_key`` and ``nullifier``
     have no member here on purpose: the pseudonymity material must never leave
     the ``review`` table.
@@ -140,6 +151,9 @@ class PublicReviewOut(BaseModel):
 
     review_cid: str
     version_cid: str
+    paper_id: Optional[str] = None
+    paper_title: Optional[str] = None
+    version: Optional[int] = None
     recommendation: Optional[str] = None
     confidence: Optional[int] = None
     scores: Optional[Any] = None

@@ -616,6 +616,62 @@ describe("/me My papers moderation chip (Contested regression)", () => {
   });
 });
 
+describe("/me Credentials card after a key rotation", () => {
+  // The account DID never changes; the key it signs with does.
+  const ROTATED = "did:key:z6MkNewActiveKeyAfterRotation000000000000000000";
+
+  it("shows the active signing key, with the account DID beside it", async () => {
+    render(
+      <DashboardPage
+        initialDashboard={DATA}
+        signedIn
+        loadActiveKey={async () => ROTATED}
+        loadLinkedOrcid={async () => null}
+      />,
+    );
+
+    const credentials = within(card("Credentials"));
+    // The same value `/me/security` shows under "Active key".
+    expect(await credentials.findByText(ROTATED)).toBeTruthy();
+    expect(credentials.queryByText(/Checking your signing key/)).toBeNull();
+    // The account is a separate fact once the two differ.
+    expect(credentials.getByText("Account")).toBeTruthy();
+    expect(credentials.getByText(DATA.did)).toBeTruthy();
+  });
+
+  it("does not repeat the DID as the signing key before any rotation", async () => {
+    render(
+      <DashboardPage
+        initialDashboard={DATA}
+        signedIn
+        loadActiveKey={async () => DATA.did}
+        loadLinkedOrcid={async () => null}
+      />,
+    );
+
+    const credentials = within(card("Credentials"));
+    await waitFor(() => expect(credentials.queryByText("Account")).toBeNull());
+    expect(credentials.getAllByText(DATA.did)).toHaveLength(1);
+  });
+
+  it("keeps the account DID when the signing key cannot be read", async () => {
+    render(
+      <DashboardPage
+        initialDashboard={DATA}
+        signedIn
+        loadActiveKey={async () => {
+          throw new NetworkError("/v1/did");
+        }}
+        loadLinkedOrcid={async () => null}
+      />,
+    );
+
+    const credentials = within(card("Credentials"));
+    expect(await credentials.findByText(/Couldn.t read your signing key/i)).toBeTruthy();
+    expect(credentials.getByText(DATA.did)).toBeTruthy();
+  });
+});
+
 describe("/me public profile link", () => {
   it("links to the member's own public profile at /u/{did}", () => {
     render(<DashboardPage initialDashboard={DATA} signedIn />);

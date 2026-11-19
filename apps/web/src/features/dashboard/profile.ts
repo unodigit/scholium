@@ -137,6 +137,14 @@ export interface SignedReview {
   readonly reviewCid: string;
   readonly version_cid: string;
   readonly versionCid: string;
+  /** The reviewed paper's short id (`sch:k3f9-…`), when the API can name it. */
+  readonly paper_id: string | null;
+  readonly paperId: string | null;
+  /** The reviewed version's title, when the API can name it. */
+  readonly paper_title: string | null;
+  readonly paperTitle: string | null;
+  /** The reviewed version's number, when the API can name it. */
+  readonly version: number | null;
   readonly recommendation: string | null;
   readonly confidence: number | null;
   readonly scores: unknown;
@@ -183,11 +191,27 @@ function parseSignedReview(value: unknown, index: number): SignedReview {
   const reportCid = readText(value.report_cid) ?? readText(value.reportCid);
   const confidence = readNumber(value.confidence);
   const recommendation = readText(value.recommendation);
+  // The paper the review was written on. The API serves `paper_id`/`title`;
+  // the aliases cover the `me` vocabulary (`shortId`, `paper`, `title`).
+  const paperId =
+    readText(value.paper_id) ??
+    readText(value.paperId) ??
+    readText(value.short_id) ??
+    readText(value.shortId) ??
+    readText(value.paper);
+  const paperTitle =
+    readText(value.paper_title) ?? readText(value.paperTitle) ?? readText(value.title);
+  const version = readNumber(value.version);
   return {
     review_cid: reviewCid,
     reviewCid,
     version_cid: versionCid,
     versionCid,
+    paper_id: paperId,
+    paperId,
+    paper_title: paperTitle,
+    paperTitle,
+    version: version === null ? null : Math.trunc(version),
     recommendation,
     confidence: confidence === null ? null : Math.trunc(confidence),
     scores: value.scores ?? null,
@@ -198,6 +222,18 @@ function parseSignedReview(value: unknown, index: number): SignedReview {
     revealed_at: revealed,
     revealedAt: revealed,
   };
+}
+
+/**
+ * `/p/{id}` for the paper a signed review names, or `null` when the API could
+ * not place it. Paper URLs drop the `sch:` prefix (docs/design.md §4), as the
+ * feed's own `paperHref` does.
+ */
+export function signedReviewPaperHref(
+  review: Pick<SignedReview, "paper_id">,
+): string | null {
+  const id = (review.paper_id ?? "").trim().replace(/^sch:/, "");
+  return id === "" ? null : `/p/${encodeURIComponent(id)}`;
 }
 
 /**

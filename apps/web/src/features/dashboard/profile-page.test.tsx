@@ -259,6 +259,11 @@ describe("ProfilePage: cards for papers and signed reviews", () => {
               reviewCid: "bafyreireview1",
               version_cid: "bafyreiversion1",
               versionCid: "bafyreiversion1",
+              paper_id: "sch:k3f9-q2xz-7mwd",
+              paperId: "sch:k3f9-q2xz-7mwd",
+              paper_title: "Can a Meta-Agent Choose the Safer Branch?",
+              paperTitle: "Can a Meta-Agent Choose the Safer Branch?",
+              version: 2,
               recommendation: "accept",
               confidence: 4,
               scores: null,
@@ -276,8 +281,57 @@ describe("ProfilePage: cards for papers and signed reviews", () => {
       />,
     );
 
-    expect(screen.getByText("accept")).toBeTruthy();
-    expect(screen.getByText(/Confidence 4/)).toBeTruthy();
+    // The review card's words, not the wire slug (`accept` → `Accept`).
+    expect(screen.getByText("Accept")).toBeTruthy();
+    expect(screen.getByText("Confidence: High")).toBeTruthy();
+    expect(screen.getByText("v2")).toBeTruthy();
+  });
+
+  it("names and links the paper a signed review was written on (journey 12)", () => {
+    render(
+      <ProfilePage
+        did={DID}
+        initialProfile={{
+          ...PROFILE,
+          reviews: [
+            {
+              review_cid: "bafyreireview2",
+              reviewCid: "bafyreireview2",
+              version_cid: "bafyreiversion2",
+              versionCid: "bafyreiversion2",
+              paper_id: "sch:k3f9-q2xz-7mwd",
+              paperId: "sch:k3f9-q2xz-7mwd",
+              paper_title: "Can a Meta-Agent Choose the Safer Branch?",
+              paperTitle: "Can a Meta-Agent Choose the Safer Branch?",
+              version: 2,
+              recommendation: "major_concerns",
+              confidence: 3,
+              scores: null,
+              report_cid: null,
+              reportCid: null,
+              committed_at: null,
+              committedAt: null,
+              revealed_at: "2026-11-17T09:30:00Z",
+              revealedAt: "2026-11-17T09:30:00Z",
+            },
+          ],
+        }}
+        signedIn={false}
+        loadPapers={noPapers}
+      />,
+    );
+
+    const link = screen.getByRole("link", {
+      name: "Can a Meta-Agent Choose the Safer Branch?",
+    });
+    // Paper URLs drop the `sch:` prefix.
+    expect(link.getAttribute("href")).toBe("/p/k3f9-q2xz-7mwd");
+    // The same words the review card shows, never `major_concerns` or `3`.
+    expect(screen.getByText("Major concerns")).toBeTruthy();
+    expect(screen.queryByText("major_concerns")).toBeNull();
+    expect(screen.getByText("Confidence: Medium")).toBeTruthy();
+    expect(screen.queryByText(/Confidence 3/)).toBeNull();
+    expect(screen.getByText("v2")).toBeTruthy();
   });
 });
 

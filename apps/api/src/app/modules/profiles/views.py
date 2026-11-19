@@ -36,7 +36,12 @@ own storage:
     they have been revealed: signed **and** revealed is what "public" means
     here.  An anonymous review (``signed_by`` empty) never appears on a
     profile -- that is the point of pseudonymous review -- and a signed one
-    stays off it until the escrow opens.
+    stays off it until the escrow opens.  Each review is named by the paper it
+    reviewed -- ``papers.short_id`` and the title and number of the
+    ``paper_versions`` row its ``version_cid`` names -- so a profile can link
+    the paper instead of showing a bare review cid.  Those two tables belong
+    to the submissions plugin and may not be loaded; the paper members then
+    read as ``None``.
 
 Erasure
     Erasure is detected without waiting for the DELETE route (feature 30): a
@@ -93,6 +98,8 @@ __all__ = [
     "accounts_table",
     "credentials_table",
     "event_log_table",
+    "paper_versions_table",
+    "papers_table",
     "public_profile",
     "read_orcid",
     "read_signed_reviews",
@@ -171,10 +178,34 @@ review_table = Table(
     Column("revealed_at", DateTime),
 )
 
+# The catalog tables, read only to name the paper each signed review was
+# written on.  ``submissions`` owns them (``submissions/models.py``); the
+# mirror names just the columns the join and the answer use.
+papers_table = Table(
+    "papers",
+    _foreign_metadata,
+    Column("paper_cid", Text, primary_key=True),
+    Column("short_id", Text, nullable=False),
+)
+
+paper_versions_table = Table(
+    "paper_versions",
+    _foreign_metadata,
+    Column("version_cid", Text, primary_key=True),
+    Column("paper_cid", Text, nullable=False),
+    Column("n", Integer, nullable=False),
+    Column("title", Text, nullable=False),
+)
+
 
 @dataclass(frozen=True)
 class SignedReview:
     """One revealed review the DID chose to sign with their name.
+
+    ``paper_id``, ``paper_title`` and ``version`` name the paper reviewed:
+    the catalog's short id (the ``/p/{id}`` segment), the version's title and
+    its number.  They are ``None`` when the catalog cannot place
+    ``version_cid``.
 
     Only public columns are carried across.  ``review_key`` and ``nullifier``
     -- the material that ties a review to its pseudonymous commitment -- are
@@ -183,6 +214,9 @@ class SignedReview:
 
     review_cid: str
     version_cid: str
+    paper_id: Optional[str] = None
+    paper_title: Optional[str] = None
+    version: Optional[int] = None
     recommendation: Optional[str] = None
     confidence: Optional[int] = None
     scores: Optional[Any] = None
@@ -336,13 +370,52 @@ def read_orcid(did: str) -> Optional[str]:
     return None
 
 
+def _read_review_papers(
+    version_cids: list[str],
+) -> dict[str, tuple[Optional[str], Optional[str], Optional[int]]]:
+    """Name the paper each reviewed version belongs to.
+
+    Returns ``{version_cid: (paper short id, version title, version number)}``.
+    A version row whose paper row is missing (or a catalog that is not loaded)
+    simply contributes nothing; the review then keeps its ``None`` paper
+    members.  Nothing here creates a table.
+    """
+    if not version_cids:
+        return {}
+    if not (_table_exists("paper_versions") and _table_exists("papers")):
+        return {}
+    query = (
+        select(
+            paper_versions_table.c.version_cid,
+            paper_versions_table.c.n,
+            paper_versions_table.c.title,
+            papers_table.c.short_id,
+        )
+        .join(
+            papers_table,
+            papers_table.c.paper_cid == paper_versions_table.c.paper_cid,
+        )
+        .where(paper_versions_table.c.version_cid.in_(version_cids))
+    )
+    with db.engine.connect() as conn:
+        return {
+            row["version_cid"]: (
+                row["short_id"],
+                row["title"],
+                _int_or_none(row["n"]),
+            )
+            for row in conn.execute(query).mappings()
+        }
+
+
 def read_signed_reviews(did: str) -> list[SignedReview]:
     """Return the DID's revealed, signed reviews, oldest reveal first.
 
     "Public" is ``signed_by`` set (the reviewer asked for credit) *and*
     ``revealed_at`` set (the escrow opened; feature 110 keeps report bodies
-    sealed until then).  A row whose columns will not coerce is skipped rather
-    than allowed to fail the whole profile.
+    sealed until then).  Each review names the paper it was written on when
+    the catalog can place its ``version_cid``.  A row whose columns will not
+    coerce is skipped rather than allowed to fail the whole profile.
     """
     if not _table_exists("review"):
         return []
@@ -360,24 +433,32 @@ def read_signed_reviews(did: str) -> list[SignedReview]:
         .where(review_table.c.signed_by == did, review_table.c.revealed_at.is_not(None))
         .order_by(review_table.c.revealed_at, review_table.c.review_cid)
     )
-    reviews: list[SignedReview] = []
     with db.engine.connect() as conn:
-        for row in conn.execute(query).mappings():
-            try:
-                reviews.append(
-                    SignedReview(
-                        review_cid=row["review_cid"],
-                        version_cid=row["version_cid"],
-                        recommendation=row["recommendation"],
-                        confidence=_int_or_none(row["confidence"]),
-                        scores=_decode_json_cell(row["scores"]),
-                        report_cid=row["report_cid"],
-                        committed_at=row["committed_at"],
-                        revealed_at=row["revealed_at"],
-                    )
+        rows = [dict(row) for row in conn.execute(query).mappings()]
+    papers = _read_review_papers(
+        [row["version_cid"] for row in rows if isinstance(row["version_cid"], str)]
+    )
+    reviews: list[SignedReview] = []
+    for row in rows:
+        try:
+            paper = papers.get(row["version_cid"])
+            reviews.append(
+                SignedReview(
+                    review_cid=row["review_cid"],
+                    version_cid=row["version_cid"],
+                    paper_id=paper[0] if paper is not None else None,
+                    paper_title=paper[1] if paper is not None else None,
+                    version=paper[2] if paper is not None else None,
+                    recommendation=row["recommendation"],
+                    confidence=_int_or_none(row["confidence"]),
+                    scores=_decode_json_cell(row["scores"]),
+                    report_cid=row["report_cid"],
+                    committed_at=row["committed_at"],
+                    revealed_at=row["revealed_at"],
                 )
-            except (TypeError, ValueError):
-                continue
+            )
+        except (TypeError, ValueError):
+            continue
     return reviews
 
 

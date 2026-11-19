@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { tokenStore } from "../../lib/api";
+import { tokenStore, api } from "../../lib/api";
 import { filedAppeal } from "../paper-page/appeal-dialog";
 import { latestDecision, loadPaperRecords } from "../paper-page/unlisted-paper";
 import { EmptyState, StatusChip, isPaperStatus } from "../ui-kit";
@@ -26,10 +26,24 @@ import {
 } from "./dashboard";
 import { NotificationsCard, type NotificationsCardProps } from "./notifications-card";
 import { SavedSearchesCard, type SavedSearchesCardProps } from "./saved-searches-card";
+import { didEndpoint, parseKeyState } from "./security";
 import "./dashboard-page.css";
 
 /** Loads the dashboard; replaceable in tests. */
 export type LoadDashboard = () => Promise<DashboardData>;
+
+/**
+ * Loads the key the account currently signs with, from `GET /v1/did/{did}` —
+ * the same read `/me/security` makes. The account DID is not the signing key:
+ * after a rotation the DID is unchanged while the key is not.
+ */
+export type LoadActiveKey = (did: string) => Promise<string>;
+
+/** The default: the DID document's active key. */
+async function defaultLoadActiveKey(did: string): Promise<string> {
+  const payload = await api.get<unknown>(didEndpoint(did), { cache: "no-store" });
+  return parseKeyState(payload).activeKey;
+}
 
 /** Props for {@link DashboardPage}. Everything is optional. */
 export interface DashboardPageProps {
@@ -70,6 +84,8 @@ export interface DashboardPageProps {
   markNotificationRead?: NotificationsCardProps["markNotificationRead"];
   /** Replace the linked-ORCID-iD loader, for tests or an alternate API client. */
   loadLinkedOrcid?: LoadLinkedOrcid;
+  /** Replace the active signing-key loader, for tests or an alternate API client. */
+  loadActiveKey?: LoadActiveKey;
   /** Replace the appeal lookup for held papers, for tests or an alternate API client. */
   loadAppealPending?: LoadAppealPending;
 }
@@ -118,6 +134,7 @@ export function DashboardPage({
   loadNotifications,
   markNotificationRead,
   loadLinkedOrcid,
+  loadActiveKey,
   loadAppealPending,
 }: DashboardPageProps = {}) {
   const initial =
@@ -251,6 +268,7 @@ export function DashboardPage({
           loadNotifications={loadNotifications}
           markNotificationRead={markNotificationRead}
           loadLinkedOrcid={loadLinkedOrcid}
+          loadActiveKey={loadActiveKey}
           loadAppealPending={loadAppealPending}
         />
       ) : null}
@@ -282,11 +300,13 @@ function DashboardView({
   loadNotifications,
   markNotificationRead,
   loadLinkedOrcid = fetchLinkedOrcid,
+  loadActiveKey = defaultLoadActiveKey,
   loadAppealPending = defaultLoadAppealPending,
 }: {
   data: DashboardData;
   onRefresh: () => void;
   loadLinkedOrcid?: LoadLinkedOrcid;
+  loadActiveKey?: LoadActiveKey;
   loadAppealPending?: LoadAppealPending;
 } & SavedSearchesCardProps &
   NotificationsCardProps) {
@@ -300,7 +320,11 @@ function DashboardView({
         loadSavedSearches={loadSavedSearches}
         deleteSavedSearch={deleteSavedSearch}
       />
-      <CredentialsCard did={data.did} loadLinkedOrcid={loadLinkedOrcid} />
+      <CredentialsCard
+        did={data.did}
+        loadLinkedOrcid={loadLinkedOrcid}
+        loadActiveKey={loadActiveKey}
+      />
       <SecurityCard />
       <NotificationsCard
         signedIn={signedIn}
@@ -595,20 +619,37 @@ type OrcidState =
   | { status: "error" }
   | { status: "ready"; orcid: string | null };
 
+type SigningKeyState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; activeKey: string };
+
 /**
- * The key the member signs with, the ORCID iD linked to it, and the way to
- * their public profile. The iD is read on its own, so failing to read it
- * never hides the key.
+ * The key the member signs with — the account's *active* key, read from
+ * `GET /v1/did/{did}` like `/me/security` does — the ORCID iD linked to the
+ * account, and the way to the public profile.
+ *
+ * The account DID and the signing key are shown separately because a rotation
+ * changes one and not the other: labelling the DID "the key you sign with" is
+ * what made `/me` disagree with `/me/security` after a rotation. When they
+ * are the same (no rotation yet) one line says it.
+ *
+ * The key and the iD are read on their own, so failing to read one never
+ * hides the other.
  */
 function CredentialsCard({
   did,
   loadLinkedOrcid,
+  loadActiveKey,
 }: {
   did: string;
   loadLinkedOrcid: LoadLinkedOrcid;
+  loadActiveKey: LoadActiveKey;
 }) {
   const [orcid, setOrcid] = useState<OrcidState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [signingKey, setSigningKey] = useState<SigningKeyState>({ status: "loading" });
+  const [keyAttempt, setKeyAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -630,10 +671,54 @@ function CredentialsCard({
     };
   }, [did, loadLinkedOrcid, attempt]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setSigningKey({ status: "loading" });
+    loadActiveKey(did).then(
+      (activeKey) => {
+        if (!cancelled) {
+          setSigningKey({ status: "ready", activeKey });
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setSigningKey({ status: "error" });
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [did, loadActiveKey, keyAttempt]);
+
   return (
     <Card title="Credentials" anchor="credentials">
       <p className="db-cred-label meta">You sign with this key</p>
-      <p className="db-cred-id mono-id">{did}</p>
+      {signingKey.status === "loading" ? (
+        <p className="db-cred-note meta">Checking your signing key…</p>
+      ) : null}
+      {signingKey.status === "ready" ? (
+        <p className="db-cred-id mono-id">{signingKey.activeKey}</p>
+      ) : null}
+      {signingKey.status === "error" ? (
+        <div className="db-cred-error">
+          <p className="db-cred-note meta">Couldn&rsquo;t read your signing key.</p>
+          <button
+            type="button"
+            className="db-button"
+            onClick={() => setKeyAttempt((count) => count + 1)}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+      {/* The account DID, separately, only when it is not the signing key. */}
+      {signingKey.status === "ready" && signingKey.activeKey === did ? null : (
+        <>
+          <p className="db-cred-label meta">Account</p>
+          <p className="db-cred-id mono-id">{did}</p>
+        </>
+      )}
 
       <p className="db-cred-label meta">ORCID iD</p>
       {orcid.status === "loading" ? (
