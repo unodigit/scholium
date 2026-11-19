@@ -9,7 +9,14 @@
  *    with the CURRENT key                                  (passkey prompt)
  * 3. POST /v1/records                       -> the old key is retired server-side
  * 4. only now, save the replacement as this device's key
+ *    (with the account DID it signs for)
  * ```
+ *
+ * The account's DID does not change, but the key does, so the replacement's own
+ * did:key is not the account's DID. Step 4 therefore saves the account DID
+ * beside the key: sign-in sends it, and the server checks the replacement's
+ * signature against the account's new active key, so the member signs back
+ * into the account they rotated instead of a new, empty one.
  *
  * The order is the safety property. Until step 3 succeeds the stored key is
  * untouched, so every failure before it leaves the account exactly as it was.
@@ -35,6 +42,8 @@ import {
   createDeviceKeyStorage,
   isPasskeyCancellation,
   signRecord,
+  type DeviceKeyManagerOptions,
+  type DeviceKeyStorage,
   type SignedRecord,
 } from "../web-auth";
 
@@ -93,8 +102,11 @@ export function isRotationError(error: unknown): error is RotationError {
 export interface ReplacementKey {
   /** `did:key` of the replacement. */
   readonly did: string;
-  /** Save it as this device's key. Call only after the server accepted the rotation. */
-  install(): Promise<void>;
+  /**
+   * Save it as this device's key, signing for `accountDid`. Call only after
+   * the server accepted the rotation.
+   */
+  install(accountDid: string): Promise<void>;
 }
 
 /** Every side effect the rotation performs. */
@@ -142,9 +154,19 @@ export interface RotationResult {
 /** The function the page calls; {@link rotateKey} by default, replaceable in tests. */
 export type RotateKey = (input: RotateKeyInput) => Promise<RotationResult>;
 
+/** What {@link createReplacementKey} builds on; the defaults are the browser's own. */
+export interface ReplacementKeyDeps {
+  /** Where the replacement is saved on install; defaults to the device key store. */
+  target?: DeviceKeyStorage;
+  /** Passkeys, crypto and relying party for the new key (tests inject fakes). */
+  managerOptions?: Omit<DeviceKeyManagerOptions, "storage">;
+}
+
 /** Create a replacement key in memory; refuse up front if it could not be kept. */
-async function createReplacementKey(): Promise<ReplacementKey> {
-  const target = createDeviceKeyStorage();
+export async function createReplacementKey(
+  deps: ReplacementKeyDeps = {},
+): Promise<ReplacementKey> {
+  const target = deps.target ?? createDeviceKeyStorage();
   if (target.kind !== "indexeddb") {
     // Without IndexedDB the new key could not outlive this tab, and the old
     // one is about to be retired. Refuse before anything irreversible happens.
@@ -155,7 +177,7 @@ async function createReplacementKey(): Promise<ReplacementKey> {
   }
 
   const staging = new MemoryDeviceKeyStorage();
-  const manager = new DeviceKeyManager({ storage: staging });
+  const manager = new DeviceKeyManager({ ...deps.managerOptions, storage: staging });
   if (!manager.isSupported()) {
     throw new RotationError(
       "unsupported",
@@ -172,7 +194,12 @@ async function createReplacementKey(): Promise<ReplacementKey> {
     throw new RotationError("replacement-failed", "The new key was not created.");
   }
   const did = await manager.didKey();
-  return { did, install: () => target.put(record) };
+  return {
+    did,
+    // The staged record names the replacement's own did:key as its account; the
+    // account it replaces the key of is the one the device must sign in as.
+    install: (accountDid) => target.put({ ...record, accountDid }),
+  };
 }
 
 /** The real seams: web-auth's key and signer, and the shared API client. */
@@ -290,7 +317,7 @@ export async function rotateKey(input: RotateKeyInput): Promise<RotationResult> 
   }
 
   try {
-    await replacement.install();
+    await replacement.install(input.accountDid);
   } catch (error) {
     throw new RotationError(
       "install-failed",

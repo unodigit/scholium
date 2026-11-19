@@ -28,6 +28,7 @@ import type { TokenStorage } from "../../lib/api";
 import { deviceKey } from "./device-key";
 import type { DeviceKeyManager } from "./device-key";
 import {
+  adoptRecoveredAccount,
   clearPersistedRecovery,
   fetchRecoveryStatus,
   isRecoveryStatusUnavailable,
@@ -55,7 +56,7 @@ import {
 /** The slice of the device key the page uses. */
 export type RecoveryDeviceKey = Pick<
   DeviceKeyManager,
-  "exists" | "didKey" | "ensure" | "signWithPasskey"
+  "exists" | "didKey" | "ensure" | "signWithPasskey" | "setAccountDid"
 >;
 
 /** The collaborators the page needs; swappable in tests. */
@@ -168,8 +169,17 @@ export function useRecover({
         if (!mounted.current || mine !== generation.current) {
           return;
         }
-        remember(mergeRecoveryStatus(current, update));
+        const merged = mergeRecoveryStatus(current, update);
+        remember(merged);
         setStatusLive(true);
+        try {
+          // A completed recovery leaves this device holding a key that signs
+          // for the recovered account: record which, so signing in reaches it.
+          await adoptRecoveredAccount(merged, services.deviceKey);
+        } catch {
+          // The recovery is complete either way; a device that cannot record
+          // the account is told it again by the server when it signs in.
+        }
       } catch (failure) {
         if (!mounted.current || mine !== generation.current) {
           return;
@@ -187,7 +197,7 @@ export function useRecover({
         }
       }
     },
-    [remember, services.client],
+    [remember, services.client, services.deviceKey],
   );
 
   // Load the request this browser was already tracking (or the one named by

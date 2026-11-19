@@ -10,6 +10,7 @@ import {
   RECOVERY_REQUEST_NOT_FOUND_TYPE,
   RECOVERY_STORAGE_KEY,
   RecoveryError,
+  adoptRecoveredAccount,
   approvalProgressText,
   approvalsRemaining,
   cancelRecoveryRequest,
@@ -368,6 +369,79 @@ describe("remembering the request", () => {
     expect(loadPersistedRecovery(storage)).toBeNull();
     expect(() => savePersistedRecovery(storage, snapshot())).not.toThrow();
     expect(() => clearPersistedRecovery(storage)).not.toThrow();
+  });
+});
+
+describe("adopting the recovered account", () => {
+  const ACCOUNT = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+
+  function deviceKey(ownDid: string = NEW_KEY) {
+    return {
+      didKey: vi.fn(async () => ownDid),
+      setAccountDid: vi.fn(async () => undefined),
+    };
+  }
+
+  it("tells the device which account its key now signs for once the recovery has completed", async () => {
+    const key = deviceKey();
+
+    const adopted = await adoptRecoveredAccount(
+      snapshot({ status: "finalized", newPublicKey: NEW_KEY, accountDid: ACCOUNT }),
+      key,
+    );
+
+    expect(adopted).toBe(true);
+    expect(key.setAccountDid).toHaveBeenCalledTimes(1);
+    expect(key.setAccountDid).toHaveBeenCalledWith(ACCOUNT);
+  });
+
+  it.each(["pending", "contest", "cancelled"] as const)(
+    "does nothing while the recovery is %s",
+    async (status) => {
+      const key = deviceKey();
+
+      const adopted = await adoptRecoveredAccount(
+        snapshot({ status, newPublicKey: NEW_KEY, accountDid: ACCOUNT }),
+        key,
+      );
+
+      expect(adopted).toBe(false);
+      expect(key.setAccountDid).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does nothing when the recovery moved the account to some other device's key", async () => {
+    // The cancel link opens this page on the old, trusted device: its key is not the new one.
+    const key = deviceKey("did:key:z6MkrQDrTkUp4gGH7aUiPNDDT2B2DzAssL2wib7awcqYzKqH");
+
+    const adopted = await adoptRecoveredAccount(
+      snapshot({ status: "finalized", newPublicKey: NEW_KEY, accountDid: ACCOUNT }),
+      key,
+    );
+
+    expect(adopted).toBe(false);
+    expect(key.setAccountDid).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the account or the new key is not known", async () => {
+    const key = deviceKey();
+
+    expect(
+      await adoptRecoveredAccount(snapshot({ status: "finalized", newPublicKey: NEW_KEY }), key),
+    ).toBe(false);
+    expect(
+      await adoptRecoveredAccount(
+        snapshot({ status: "finalized", newPublicKey: "", accountDid: ACCOUNT }),
+        key,
+      ),
+    ).toBe(false);
+    expect(
+      await adoptRecoveredAccount(
+        snapshot({ status: "finalized", newPublicKey: NEW_KEY, accountDid: "not-a-did" }),
+        key,
+      ),
+    ).toBe(false);
+    expect(key.setAccountDid).not.toHaveBeenCalled();
   });
 });
 

@@ -38,6 +38,7 @@ type MockDeviceKey = RecoveryDeviceKey & {
   didKey: ReturnType<typeof vi.fn>;
   ensure: ReturnType<typeof vi.fn>;
   signWithPasskey: ReturnType<typeof vi.fn>;
+  setAccountDid: ReturnType<typeof vi.fn>;
 };
 
 type MockClient = RecoveryServices["client"] & {
@@ -56,6 +57,7 @@ function makeServices(options: {
     didKey: vi.fn(async () => NEW_KEY),
     ensure: vi.fn(async () => ({ credentialId: "cred", createdAt: NOW })),
     signWithPasskey: vi.fn(async () => new Uint8Array([1, 2, 3])),
+    setAccountDid: vi.fn(async () => undefined),
   };
   const client = {
     get: vi.fn(async (path: string) =>
@@ -303,6 +305,59 @@ describe("progress step", () => {
     });
 
     expect(result.current.snapshot?.approvals).toBe(2);
+  });
+});
+
+describe("a recovery that completes on this device", () => {
+  const ACCOUNT = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+  const OTHER_KEY = "did:key:z6MkrQDrTkUp4gGH7aUiPNDDT2B2DzAssL2wib7awcqYzKqH";
+  const FINALIZED = { status: "finalized", approvals: 3, did: ACCOUNT, new_public_key: NEW_KEY };
+
+  it("records the recovered account on the device, so signing in reaches it", async () => {
+    const { services, storage, deviceKey } = makeServices({ get: () => FINALIZED });
+    savePersistedRecovery(storage, snapshot({ status: "contest", newPublicKey: NEW_KEY }));
+
+    const { result } = renderHook(() => useRecover({ services }));
+
+    await waitFor(() => expect(result.current.snapshot?.status).toBe("finalized"));
+    await waitFor(() => expect(deviceKey.setAccountDid).toHaveBeenCalledWith(ACCOUNT));
+    expect(deviceKey.setAccountDid).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not record anything while the safety window is still open", async () => {
+    const { services, storage, deviceKey } = makeServices({
+      get: () => ({ ...FINALIZED, status: "contest" }),
+    });
+    savePersistedRecovery(storage, snapshot({ status: "contest", newPublicKey: NEW_KEY }));
+
+    const { result } = renderHook(() => useRecover({ services }));
+
+    await waitFor(() => expect(result.current.statusLive).toBe(true));
+    expect(deviceKey.setAccountDid).not.toHaveBeenCalled();
+  });
+
+  it("does not record anything on a device that is not the one the account moved to", async () => {
+    const { services, storage, deviceKey } = makeServices({
+      get: () => ({ ...FINALIZED, new_public_key: OTHER_KEY }),
+    });
+    savePersistedRecovery(storage, snapshot({ status: "contest", newPublicKey: OTHER_KEY }));
+
+    const { result } = renderHook(() => useRecover({ services }));
+
+    await waitFor(() => expect(result.current.snapshot?.status).toBe("finalized"));
+    expect(deviceKey.setAccountDid).not.toHaveBeenCalled();
+  });
+
+  it("still shows the completed recovery when the device cannot store the account", async () => {
+    const { services, storage, deviceKey } = makeServices({ get: () => FINALIZED });
+    deviceKey.setAccountDid.mockRejectedValue(new Error("storage blocked"));
+    savePersistedRecovery(storage, snapshot({ status: "contest", newPublicKey: NEW_KEY }));
+
+    const { result } = renderHook(() => useRecover({ services }));
+
+    await waitFor(() => expect(result.current.snapshot?.status).toBe("finalized"));
+    await waitFor(() => expect(deviceKey.setAccountDid).toHaveBeenCalled());
+    expect(result.current.error).toBeNull();
   });
 });
 

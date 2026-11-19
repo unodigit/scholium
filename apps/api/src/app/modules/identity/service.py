@@ -21,7 +21,7 @@ from scholium_record_core import (
     decode_signature,
 )
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from app import db
 from app.security import issue_access_token
@@ -72,6 +72,7 @@ __all__ = [
     "purge_expired_challenges",
     "validate_did",
     "verify_signin",
+    "resolve_account_did",
     "resolve_active_key",
     "resolve_active_signing_key",
     "resolve_signing_key",
@@ -249,7 +250,15 @@ def purge_expired_challenges(*, now: Optional[datetime] = None) -> int:
 
 
 def issue_challenge(did: str, *, now: Optional[datetime] = None) -> AuthChallenge:
+    """Issue a nonce for the account ``did`` signs in as.
+
+    ``did`` is usually the account's own DID.  A device that only knows its
+    key's did:key (it was rotated or recovered before devices stored the
+    account DID) sends that instead; :func:`resolve_account_did` maps it to the
+    account the key signs for, and the challenge is bound to the account.
+    """
     validate_did(did)
+    did = resolve_account_did(did)
     issued_at = _utcnow() if now is None else _as_naive_utc(now)
     ensure_table()
     challenge = AuthChallenge(
@@ -335,6 +344,11 @@ def verify_signin(
     and the newly activated one does.  A DID that never rotated resolves to
     its own genesis key -- the key the ``did:key`` identifier encodes.
 
+    ``did`` may be the account's DID or, for a device that never learned it,
+    the did:key of the key that now signs for the account
+    (:func:`resolve_account_did`); either way the nonce must have been issued
+    to the account.
+
     Raises:
         InvalidDid: ``did`` is not a canonical Ed25519 did:key.
         InvalidNonce: the nonce is unknown, expired, used, or not bound to ``did``.
@@ -353,6 +367,11 @@ def verify_signin(
     ensure_table()
     ensure_account_table()
     ensure_refresh_tokens_table()
+
+    # A did:key that is the active key of a rotated or recovered account is
+    # that account: the key and its signature are checked below, so this only
+    # decides *which* account the proven key signs into.
+    did = resolve_account_did(did)
 
     # Verify against the key that is authorised to sign for this DID *now*,
     # not the key its identifier was born with.
@@ -744,6 +763,63 @@ def resolve_active_key(did: str, *args, **kwargs) -> str:
             candidates.sort(key=lambda item: item[0])
             return str(candidates[-1][1].public_key)
 
+    return did
+
+
+def resolve_account_did(did: str) -> str:
+    """Return the account DID that ``did`` signs in as.
+
+    An account's DID never changes when its key does, so after a rotation or a
+    guardians recovery the key that signs for the account is a did:key that is
+    *not* the account's DID.  A device that holds such a key and does not know
+    the account DID (it was rotated or recovered before devices stored it)
+    asks to sign in as that did:key; left alone, sign-in would create a new,
+    empty tier-0 account for it.  When ``did`` is the *active* key of another
+    account (``account_keys``, :func:`resolve_active_key`), that account is
+    returned instead.  Otherwise -- an account that never rotated, a brand-new
+    key, a key that has since been retired -- ``did`` is returned unchanged.
+
+    Resolution only decides which account a key is asked to sign into: the
+    signature is still checked against that account's active key, so naming an
+    account never lends it to a key that does not sign for it.
+
+    A rotation record is signed by the *old* key alone, so anyone can name any
+    did:key as their account's ``newKey``.  To keep that from taking another
+    person's sign-in away, an account that has earned a trust tier is never
+    shadowed: its own DID wins.  What is shadowed is the empty tier-0 account
+    that signing in as the bare key creates (tier 0 is where every new account
+    starts).
+    """
+    validate_did(did)
+    ensure_account_keys_table()
+    ensure_account_table()
+
+    with db.SessionLocal() as session:
+        rows = (
+            session.execute(
+                select(AccountKey).where(AccountKey.public_key == did, AccountKey.did != did)
+            )
+            .scalars()
+            .all()
+        )
+        rows.sort(
+            key=lambda row: _coerce_timestamp(row.active_from) or datetime.min,
+            reverse=True,
+        )
+        accounts = []
+        for row in rows:
+            if row.did not in accounts:
+                accounts.append(row.did)
+        own = session.get(Account, did)
+        own_tier = int(own.tier) if own is not None else 0
+
+    if own_tier > 0:
+        return did
+    for account_did in accounts:
+        # The newest window may be a different key by now, or this one's
+        # window may have closed: only the account's *current* key counts.
+        if resolve_active_key(account_did) == did:
+            return account_did
     return did
 
 

@@ -443,6 +443,97 @@ describe("public identity", () => {
   });
 });
 
+describe("account DID", () => {
+  const ACCOUNT_DID = "did:key:z6MkrQDrTkUp4gGH7aUiPNDDT2B2DzAssL2wib7awcqYzKqG";
+
+  it("is the key's own did:key when the key creates the account, stored beside the key", async () => {
+    const harness = createHarness();
+    await harness.manager.create(CREATE_OPTIONS);
+
+    const own = await harness.manager.didKey();
+
+    expect(await harness.manager.accountDid()).toBe(own);
+    expect((await harness.storage.get())?.accountDid).toBe(own);
+  });
+
+  it("is null for a key stored before devices recorded it", async () => {
+    const harness = createHarness();
+    await harness.manager.create(CREATE_OPTIONS);
+    const record = (await harness.storage.get()) as StoredDeviceKey;
+    const { accountDid: _accountDid, ...legacy } = record;
+    await harness.storage.put(legacy);
+
+    const reloaded = harness.newManager();
+
+    expect(await reloaded.exists()).toBe(true);
+    expect(await reloaded.accountDid()).toBeNull();
+  });
+
+  it("is null when there is no key", async () => {
+    const harness = createHarness();
+
+    expect(await harness.manager.accountDid()).toBeNull();
+  });
+
+  it("can be pointed at another account, and a new manager on the same storage sees it", async () => {
+    const harness = createHarness();
+    await harness.manager.create(CREATE_OPTIONS);
+    const own = await harness.manager.didKey();
+
+    await harness.manager.setAccountDid(ACCOUNT_DID);
+
+    expect(await harness.manager.accountDid()).toBe(ACCOUNT_DID);
+    expect(await harness.newManager().accountDid()).toBe(ACCOUNT_DID);
+    // The key itself is untouched: it still signs, and its own did:key is unchanged.
+    expect(await harness.manager.didKey()).toBe(own);
+    expect((await harness.storage.get())?.credentialId).toBe("credential-1");
+    await expect(harness.manager.sign(PAYLOAD)).resolves.toHaveLength(64);
+  });
+
+  it("refuses something that is not an Ed25519 did:key, and keeps the stored one", async () => {
+    const harness = createHarness();
+    await harness.manager.create(CREATE_OPTIONS);
+    const own = await harness.manager.didKey();
+
+    await expect(harness.manager.setAccountDid("not-a-did")).rejects.toMatchObject({
+      code: "invalid-key",
+    });
+
+    expect(await harness.manager.accountDid()).toBe(own);
+  });
+
+  it("cannot be set without a key", async () => {
+    const harness = createHarness();
+
+    await expect(harness.manager.setAccountDid(ACCOUNT_DID)).rejects.toMatchObject({
+      code: "not-found",
+    });
+  });
+
+  it("is forgotten with the key", async () => {
+    const harness = createHarness();
+    await harness.manager.create(CREATE_OPTIONS);
+    await harness.manager.setAccountDid(ACCOUNT_DID);
+
+    await harness.manager.reset();
+    await harness.manager.create(CREATE_OPTIONS);
+
+    expect(await harness.manager.accountDid()).toBe(await harness.manager.didKey());
+  });
+
+  it("is ignored when the stored value is not a did:key", async () => {
+    const harness = createHarness();
+    await harness.manager.create(CREATE_OPTIONS);
+    const record = (await harness.storage.get()) as StoredDeviceKey;
+    await harness.storage.put({ ...record, accountDid: "garbage" });
+
+    // A damaged value must never make the key vanish: it just reads as absent.
+    const reloaded = harness.newManager();
+    expect(await reloaded.exists()).toBe(true);
+    expect(await reloaded.accountDid()).toBeNull();
+  });
+});
+
 describe("ensure and reset", () => {
   it("creates only when missing", async () => {
     const harness = createHarness();

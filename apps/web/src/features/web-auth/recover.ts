@@ -655,6 +655,45 @@ export function isRecoveryStatusUnavailable(error: unknown): boolean {
   return false;
 }
 
+/** The slice of the device key that adopting a recovered account needs. */
+export interface RecoveredAccountKey {
+  /** `did:key` of this device's key. */
+  didKey(): Promise<string>;
+  /** Record which account this device's key signs for. */
+  setAccountDid(accountDid: string): Promise<void>;
+}
+
+/**
+ * Once a recovery has completed, remember on this device which account it
+ * recovered, so signing in reaches that account.
+ *
+ * The recovered account keeps its DID; only its key moved, to the one this
+ * device made when the recovery was opened. That key's own did:key is not the
+ * account's DID, so without this the device would sign in as the key's own
+ * did:key and land in a new, empty account.
+ *
+ * Only a **finalized** recovery whose new key is **this device's** key counts:
+ * another device (the old one opening the cancel link) holds a different key,
+ * and a recovery still in its safety window has not moved the account yet.
+ *
+ * @returns true when the device now records the recovered account.
+ * @throws whatever the device key throws while reading or storing.
+ */
+export async function adoptRecoveredAccount(
+  snapshot: RecoverySnapshot,
+  key: RecoveredAccountKey,
+): Promise<boolean> {
+  const { accountDid, newPublicKey } = snapshot;
+  if (snapshot.status !== "finalized" || !newPublicKey || !isEd25519DidKey(accountDid)) {
+    return false;
+  }
+  if ((await key.didKey()) !== newPublicKey) {
+    return false;
+  }
+  await key.setAccountDid(accountDid);
+  return true;
+}
+
 /**
  * Cancel an open recovery, signed by the key that is still on the account.
  *

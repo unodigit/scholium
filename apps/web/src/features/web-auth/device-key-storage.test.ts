@@ -158,6 +158,8 @@ async function makeRecord(
   };
 }
 
+const ACCOUNT_DID = "did:key:z6MkrQDrTkUp4gGH7aUiPNDDT2B2DzAssL2wib7awcqYzKqG";
+
 describe("isStoredDeviceKey", () => {
   it("accepts a complete record and rejects partial ones", async () => {
     const record = await makeRecord();
@@ -165,6 +167,13 @@ describe("isStoredDeviceKey", () => {
     expect(isStoredDeviceKey(null)).toBe(false);
     expect(isStoredDeviceKey({ id: DEVICE_KEY_RECORD_ID })).toBe(false);
     expect(isStoredDeviceKey({ ...record, credentialId: "" })).toBe(false);
+  });
+
+  it("accepts a record with or without the account DID it signs for", async () => {
+    const legacy = await makeRecord();
+    expect("accountDid" in legacy).toBe(false);
+    expect(isStoredDeviceKey(legacy)).toBe(true);
+    expect(isStoredDeviceKey({ ...legacy, accountDid: ACCOUNT_DID })).toBe(true);
   });
 });
 
@@ -181,6 +190,13 @@ describe("MemoryDeviceKeyStorage", () => {
 
     await storage.delete();
     expect(await storage.get()).toBeNull();
+  });
+
+  it("keeps the account DID beside the key", async () => {
+    const storage = new MemoryDeviceKeyStorage();
+    await storage.put(await makeRecord({ accountDid: ACCOUNT_DID }));
+
+    expect((await storage.get())?.accountDid).toBe(ACCOUNT_DID);
   });
 
   it("refuses to persist an extractable private key", async () => {
@@ -212,6 +228,20 @@ describe("IndexedDbDeviceKeyStorage", () => {
     const loaded = await second.get();
     expect(loaded?.credentialId).toBe(record.credentialId);
     expect(loaded?.privateKey.extractable).toBe(false);
+  });
+
+  it("persists the account DID beside the key, and a key without one still loads", async () => {
+    const { factory } = fakeIndexedDb();
+    const first = new IndexedDbDeviceKeyStorage({ factory });
+    await first.put(await makeRecord({ accountDid: ACCOUNT_DID }));
+
+    const second = new IndexedDbDeviceKeyStorage({ factory });
+    expect((await second.get())?.accountDid).toBe(ACCOUNT_DID);
+
+    await second.put(await makeRecord());
+    const loaded = await new IndexedDbDeviceKeyStorage({ factory }).get();
+    expect(loaded).not.toBeNull();
+    expect(loaded?.accountDid).toBeUndefined();
   });
 
   it("returns null for a malformed stored value", async () => {

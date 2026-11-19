@@ -9,7 +9,7 @@ import {
   type FetchLike,
 } from "../../lib/api";
 import { DeviceKeyManager } from "./device-key";
-import { MemoryDeviceKeyStorage } from "./device-key-storage";
+import { MemoryDeviceKeyStorage, type StoredDeviceKey } from "./device-key-storage";
 import { ed25519PublicKeyFromDidKey } from "./did-key";
 import { fromBase64Url, toBase64Url, utf8Encode } from "./encoding";
 import { DeviceKeyError, PasskeyCancelledError } from "./errors";
@@ -92,12 +92,30 @@ function json(body: unknown, status = 200): Response {
 
 /**
  * A stand-in for the identity API that checks signatures the way the real
- * one does: Ed25519 over the nonce's UTF-8 bytes, key taken from the did.
+ * one does: Ed25519 over the nonce's UTF-8 bytes, against the account's
+ * *active* key (the did's own key until `activeKeys` says it moved), and
+ * mapping a did:key that is some account's active key to that account.
  */
 function createServer() {
   const requests: RecordedRequest[] = [];
   const nonces = new Map<string, string>();
+  /** account did -> did:key of the key that now signs for it (after a rotation). */
+  const activeKeys = new Map<string, string>();
+  /** The account each completed sign-in landed in. */
+  const signedInAs: string[] = [];
   let counter = 0;
+
+  const accountFor = (did: string): string => {
+    if (activeKeys.has(did)) {
+      return did;
+    }
+    for (const [account, key] of activeKeys) {
+      if (key === did) {
+        return account;
+      }
+    }
+    return did;
+  };
 
   const hooks: {
     challenge?: (body: Record<string, unknown>) => Response | undefined;
@@ -123,10 +141,11 @@ function createServer() {
       }
       counter += 1;
       const nonce = `nonce-${counter}-q3V7_abc`;
-      nonces.set(nonce, String(body?.did));
+      const account = accountFor(String(body?.did));
+      nonces.set(nonce, account);
       return json({
         nonce,
-        did: body?.did,
+        did: account,
         expires_at: "2026-11-15T09:35:12Z",
       });
     }
@@ -136,14 +155,14 @@ function createServer() {
       if (override) {
         return override;
       }
-      const did = String(body?.did);
+      const did = accountFor(String(body?.did));
       const nonce = String(body?.nonce);
       if (nonces.get(nonce) !== did) {
         return problem(401, "urn:scholium:problem:authentication-failed");
       }
       const publicKey = await crypto.subtle.importKey(
         "raw",
-        new Uint8Array(ed25519PublicKeyFromDidKey(did)),
+        new Uint8Array(ed25519PublicKeyFromDidKey(activeKeys.get(did) ?? did)),
         { name: "Ed25519" },
         false,
         ["verify"],
@@ -158,13 +177,14 @@ function createServer() {
         return problem(401, "urn:scholium:problem:authentication-failed");
       }
       nonces.delete(nonce);
+      signedInAs.push(did);
       return json({ access_token: "access-jwt", refresh_token: "refresh-raw" });
     }
 
     return new Response("not found", { status: 404 });
   };
 
-  return { fetch, requests, hooks };
+  return { fetch, requests, hooks, activeKeys, signedInAs };
 }
 
 function createHarness() {
@@ -362,6 +382,166 @@ describe("signIn: returning account", () => {
 
     await expect(h.run({ deviceKey: h.fresh })).rejects.toMatchObject({ status: 401 });
     expect(h.tokenStore.get()).toBeNull();
+  });
+});
+
+describe("signIn: after a key rotation or a recovery", () => {
+  /** Install a replacement key on the device, as Rotate key or a recovery leaves it. */
+  async function installReplacementKey(
+    h: ReturnType<typeof createHarness>,
+    accountDid: string | undefined,
+  ): Promise<{ device: DeviceKeyManager; keyDid: string }> {
+    const staging = new MemoryDeviceKeyStorage();
+    const maker = new DeviceKeyManager({
+      storage: staging,
+      passkeys: h.passkeys,
+      rpId: "scholium.test",
+    });
+    await maker.create({ userName: "mei@example.edu", skipUnlock: true });
+    const record = (await staging.get()) as StoredDeviceKey;
+    const { accountDid: _own, ...bare } = record;
+    await h.keyStorage.put(accountDid === undefined ? bare : { ...bare, accountDid });
+    const device = h.newManager();
+    return { device, keyDid: await maker.didKey() };
+  }
+
+  /** An account created by a first sign-in, whose key then moved to a new one. */
+  async function rotatedAccount(accountDidStored: boolean) {
+    const h = createHarness();
+    const first = await h.run();
+    const accountDid = first.did;
+    const { device, keyDid } = await installReplacementKey(
+      h,
+      accountDidStored ? accountDid : undefined,
+    );
+    h.server.activeKeys.set(accountDid, keyDid);
+    h.server.requests.length = 0;
+    h.server.signedInAs.length = 0;
+    h.browserStorage.removeItem(NEW_ACCOUNT_STORAGE_KEY);
+    return { h, accountDid, keyDid, device };
+  }
+
+  it("signs in as the account the device stored, not as the key's own did:key", async () => {
+    const { h, accountDid, keyDid, device } = await rotatedAccount(true);
+    expect(keyDid).not.toBe(accountDid);
+
+    const result = await h.run({ deviceKey: device });
+
+    const [challenge, verify] = h.server.requests;
+    expect(challenge.body).toEqual({ did: accountDid });
+    expect(verify.body).toMatchObject({ did: accountDid });
+    expect(h.server.signedInAs).toEqual([accountDid]);
+    expect(result.did).toBe(accountDid);
+    expect(result.isNewAccount).toBe(false);
+    expect(result.redirectTo).toBe("/");
+  });
+
+  it("signs in as the same account every time, never as a new one", async () => {
+    const { h, accountDid, device } = await rotatedAccount(true);
+
+    await h.run({ deviceKey: device });
+    const again = await h.run({ deviceKey: h.newManager() });
+
+    expect(h.server.signedInAs).toEqual([accountDid, accountDid]);
+    expect(again.did).toBe(accountDid);
+    expect(again.isNewAccount).toBe(false);
+  });
+
+  it("follows the account the server names for a key rotated before devices stored it", async () => {
+    const { h, accountDid, keyDid, device } = await rotatedAccount(false);
+
+    const result = await h.run({ deviceKey: device });
+
+    const [challenge, verify] = h.server.requests;
+    // The device only knows its key's did:key; the server answers with the account.
+    expect(challenge.body).toEqual({ did: keyDid });
+    expect(verify.body).toMatchObject({ did: accountDid });
+    expect(h.server.signedInAs).toEqual([accountDid]);
+    expect(result.did).toBe(accountDid);
+    expect(result.isNewAccount).toBe(false);
+    expect(result.redirectTo).toBe("/");
+  });
+
+  it("remembers the account it was told about, so the next sign-in asks for it directly", async () => {
+    const { h, accountDid, device } = await rotatedAccount(false);
+
+    await h.run({ deviceKey: device });
+    expect(await device.accountDid()).toBe(accountDid);
+    expect(await h.newManager().accountDid()).toBe(accountDid);
+
+    h.server.requests.length = 0;
+    await h.run({ deviceKey: h.newManager() });
+    expect(h.server.requests[0].body).toEqual({ did: accountDid });
+  });
+
+  it("still signs in when the account cannot be remembered", async () => {
+    const { h, accountDid, device } = await rotatedAccount(false);
+    const failing = {
+      load: () => device.load(),
+      create: device.create.bind(device),
+      didKey: () => device.didKey(),
+      accountDid: () => device.accountDid(),
+      setAccountDid: async () => {
+        throw new DeviceKeyError("storage-unavailable", "blocked");
+      },
+      sign: device.sign.bind(device),
+      signWithPasskey: device.signWithPasskey.bind(device),
+      isSupported: () => true,
+    };
+
+    const result = await h.run({ deviceKey: failing });
+
+    expect(result.did).toBe(accountDid);
+  });
+
+  it("refuses a challenge for another account when the device knows its account", async () => {
+    const { h, device } = await rotatedAccount(true);
+    const other = "did:key:z6MkrQDrTkUp4gGH7aUiPNDDT2B2DzAssL2wib7awcqYzKqG";
+    h.server.hooks.challenge = () => json({ nonce: "n", did: other, expires_at: "x" });
+
+    await expect(h.run({ deviceKey: device })).rejects.toMatchObject({
+      code: "invalid-response",
+    });
+    expect(h.passkeys.assertions).toHaveLength(0);
+  });
+
+  it("refuses a challenge naming something that is not a did:key, even without a stored account", async () => {
+    const { h, device } = await rotatedAccount(false);
+    h.server.hooks.challenge = () => json({ nonce: "n", did: "someone", expires_at: "x" });
+
+    await expect(h.run({ deviceKey: device })).rejects.toMatchObject({
+      code: "invalid-response",
+    });
+    expect(h.passkeys.assertions).toHaveLength(0);
+  });
+
+  it("is unchanged for a key that was never rotated: its own did:key, onboarding on first sign-in", async () => {
+    const h = createHarness();
+
+    const first = await h.run();
+    const own = await h.deviceKey.didKey();
+    const second = await h.run({ deviceKey: h.newManager() });
+
+    expect(first.did).toBe(own);
+    expect(first.isNewAccount).toBe(true);
+    expect(second.did).toBe(own);
+    expect(second.isNewAccount).toBe(false);
+    expect(h.server.requests.map((request) => request.body?.did)).toEqual([own, own, own, own]);
+    expect(await h.deviceKey.accountDid()).toBe(own);
+  });
+
+  it("does not store anything for a legacy key whose account is its own did:key", async () => {
+    const h = createHarness();
+    await h.deviceKey.create({ userName: "mei@example.edu" });
+    const own = await h.deviceKey.didKey();
+    const record = (await h.keyStorage.get()) as StoredDeviceKey;
+    const { accountDid: _own, ...legacy } = record;
+    await h.keyStorage.put(legacy);
+
+    const result = await h.run({ deviceKey: h.newManager() });
+
+    expect(result.did).toBe(own);
+    expect((await h.keyStorage.get())?.accountDid).toBeUndefined();
   });
 });
 

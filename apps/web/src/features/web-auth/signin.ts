@@ -4,11 +4,25 @@
  * Sign-in is challenge-response against the Scholium API:
  *
  * ```text
- * did   = device key's did:key
+ * did   = the account DID this device's key signs for
  * POST /v1/auth/challenge {did}                    -> {nonce, did, expires_at}
  * sig   = Ed25519(device key, UTF-8 bytes of nonce)   (behind a passkey prompt)
  * POST /v1/auth/verify    {did, nonce, signature}  -> {access_token, expires_in}
  * ```
+ *
+ * ## Which DID
+ *
+ * An account's DID never changes when its key does. A key that created its
+ * account signs for its own did:key, but after Rotate key or a recovery the
+ * key on this device is a *different* did:key from the account's, so the
+ * device stores the account DID beside the key (`DeviceKeyManager.accountDid`)
+ * and sign-in sends that. The server checks the signature against the account's
+ * active key, so the signature of the new key signs into the original account.
+ *
+ * A key saved before devices stored the account DID has none recorded. Its
+ * sign-in asks for the key's own did:key, and the server answers with the
+ * account that key now signs for (or the same did:key, if it never rotated);
+ * the device keeps the account it was told, so the next sign-in names it.
  *
  * The refresh token is not in that body: the API delivers it as an HttpOnly,
  * SameSite cookie (`Set-Cookie: scholium_refresh=…`), which the browser keeps
@@ -36,6 +50,7 @@ import { apiClient, browserTokenStorage, tokenStore, tokensFromResponse } from "
 import type { ApiClient, AuthTokens, TokenStorage, TokenStore } from "../../lib/api";
 
 import { deviceKey, type DeviceKeyManager } from "./device-key";
+import { isEd25519DidKey } from "./did-key";
 import { toBase64Url, utf8Encode } from "./encoding";
 
 /** Where the sign-in page lives. */
@@ -114,7 +129,14 @@ export function isSignInError(error: unknown): error is SignInError {
 /** The slice of {@link DeviceKeyManager} that sign-in uses. */
 export type SignInDeviceKey = Pick<
   DeviceKeyManager,
-  "load" | "create" | "didKey" | "sign" | "signWithPasskey" | "isSupported"
+  | "load"
+  | "create"
+  | "didKey"
+  | "accountDid"
+  | "setAccountDid"
+  | "sign"
+  | "signWithPasskey"
+  | "isSupported"
 >;
 
 /** The slice of {@link ApiClient} that sign-in uses. */
@@ -142,7 +164,7 @@ export interface SignInOptions {
 
 /** What a completed sign-in produced. */
 export interface SignInResult {
-  /** The signed-in account's did:key. */
+  /** The signed-in account's DID (the DID its key signs for; not always the key's own did:key). */
   did: string;
   /** True when this is the account's first sign-in. */
   isNewAccount: boolean;
@@ -220,20 +242,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Validate a challenge response and make sure it is for `did`. */
-export function parseChallenge(payload: unknown, did: string): ChallengeResponse {
+/**
+ * Validate a challenge response and make sure it is for `did`.
+ *
+ * With `allowResolved`, `did` is only the device key's own did:key and the
+ * server may name the account that key now signs for instead; the response is
+ * then for that account (and `did` in the result is the account's).
+ */
+export function parseChallenge(
+  payload: unknown,
+  did: string,
+  options: { allowResolved?: boolean } = {},
+): ChallengeResponse {
   if (!isRecord(payload) || typeof payload.nonce !== "string" || payload.nonce === "") {
     throw new SignInError("invalid-response", "The server did not return a sign-in challenge");
   }
+  let issuedTo = did;
   if (payload.did !== undefined && payload.did !== did) {
-    throw new SignInError(
-      "invalid-response",
-      "The server issued a sign-in challenge for a different account",
-    );
+    if (!options.allowResolved || !isEd25519DidKey(payload.did)) {
+      throw new SignInError(
+        "invalid-response",
+        "The server issued a sign-in challenge for a different account",
+      );
+    }
+    issuedTo = payload.did;
   }
   return {
     nonce: payload.nonce,
-    did,
+    did: issuedTo,
     ...(typeof payload.expires_at === "string" ? { expires_at: payload.expires_at } : {}),
   };
 }
@@ -287,13 +323,20 @@ export async function signIn(options: SignInOptions = {}): Promise<SignInResult>
     markPendingNewAccount(storage);
   }
 
-  const did = await key.didKey();
+  // The account this key signs for: the one the device recorded, else the
+  // key's own did:key. Only when it *is* the key's own did:key may the server
+  // answer with a different account (the key was rotated or recovered into
+  // one); a device that knows its account takes no other.
+  const keyDid = await key.didKey();
+  const did = (await key.accountDid()) ?? keyDid;
 
   progress("requesting-challenge");
   const challenge = parseChallenge(
     await client.post<unknown>("/auth/challenge", { did }, { auth: false }),
     did,
+    { allowResolved: did === keyDid },
   );
+  const accountDid = challenge.did;
 
   // Fresh registration already proved the user is present; every later
   // sign-in asks for the passkey.
@@ -310,17 +353,28 @@ export async function signIn(options: SignInOptions = {}): Promise<SignInResult>
   const issued = parseTokens(
     await client.post<unknown>(
       "/auth/verify",
-      { did, nonce: challenge.nonce, signature: toBase64Url(signature) },
+      { did: accountDid, nonce: challenge.nonce, signature: toBase64Url(signature) },
       { auth: false },
     ),
   );
   tokens.set(issued);
 
+  if (accountDid !== did) {
+    // The server named the account this key signs for: keep it, so the next
+    // sign-in asks for that account directly. A device that cannot store it
+    // is still signed in; it is told again next time.
+    try {
+      await key.setAccountDid(accountDid);
+    } catch {
+      // Not remembering costs one more lookup, never the sign-in.
+    }
+  }
+
   const isNewAccount = created || hasPendingNewAccount(storage);
   clearPendingNewAccount(storage);
 
   return {
-    did,
+    did: accountDid,
     isNewAccount,
     redirectTo: signInDestination(isNewAccount, options.next),
     tokens: issued,

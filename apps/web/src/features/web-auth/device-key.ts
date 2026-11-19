@@ -35,7 +35,7 @@ import {
   createEd25519Crypto,
   type Ed25519Crypto,
 } from "./webcrypto-ed25519";
-import { didKeyFromEd25519PublicKey } from "./did-key";
+import { didKeyFromEd25519PublicKey, isEd25519DidKey } from "./did-key";
 
 /** How long a successful unlock lasts before the key locks itself again. */
 export const DEFAULT_UNLOCK_TTL_MS = 5 * 60_000;
@@ -249,6 +249,10 @@ export class DeviceKeyManager {
       userId: toBase64Url(userId),
       createdAt: this.now(),
       rpId,
+      // A key that creates its account signs for the DID it is born with.
+      accountDid: didKeyFromEd25519PublicKey(
+        await this.ed25519.exportPublicKey(pair.publicKey),
+      ),
     };
 
     await this.storage.put(record);
@@ -408,6 +412,51 @@ export class DeviceKeyManager {
   /** The account identifier derived from the public key (`did:key:z6Mk…`). */
   async didKey(): Promise<string> {
     return didKeyFromEd25519PublicKey(await this.publicKey());
+  }
+
+  /**
+   * The account DID this key signs in as, or `null` when none was recorded.
+   *
+   * `null` means a key saved before devices recorded it (or no key at all):
+   * callers fall back to {@link didKey} and let the server say if the key now
+   * signs for another account. A stored value that is not a `did:key` reads as
+   * absent rather than hiding the key.
+   */
+  async accountDid(): Promise<string | null> {
+    await this.load();
+    const stored = this.record?.accountDid;
+    return isEd25519DidKey(stored) ? stored : null;
+  }
+
+  /**
+   * Record which account this device's key signs for.
+   *
+   * Used when Rotate key saves a replacement, when a recovery completes on
+   * this device, and when the server names the account of a key rotated
+   * before devices stored it. The key itself is untouched.
+   */
+  async setAccountDid(accountDid: string): Promise<void> {
+    await this.load();
+    const record = this.record;
+    if (!record) {
+      throw new DeviceKeyError(
+        "not-found",
+        "No device key exists on this device yet",
+      );
+    }
+    if (!isEd25519DidKey(accountDid)) {
+      throw new DeviceKeyError(
+        "invalid-key",
+        "The account must be an Ed25519 did:key",
+      );
+    }
+    if (record.accountDid === accountDid) {
+      return;
+    }
+    const updated: StoredDeviceKey = { ...record, accountDid };
+    await this.storage.put(updated);
+    this.record = updated;
+    this.loadPromise = Promise.resolve(updated);
   }
 
   /** Credential id of the passkey that unlocks the key, if one exists. */

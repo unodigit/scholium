@@ -45,6 +45,16 @@ export interface StoredDeviceKey {
   createdAt: number;
   /** WebAuthn relying-party id the passkey is bound to. */
   rpId: string;
+  /**
+   * `did:key` of the account this key signs for, kept beside the key.
+   *
+   * An account's DID never changes when its key does, so after Rotate key or a
+   * recovery the key's own did:key is no longer the account's DID: this field
+   * says which account the key signs in as. A key that created its account
+   * stores its own did:key. Absent on a key saved before this field existed,
+   * which reads as "the key's own did:key, unless the server says otherwise".
+   */
+  accountDid?: string;
 }
 
 /** Pluggable persistence for the device key. */

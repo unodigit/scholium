@@ -1,13 +1,35 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError, NetworkError } from "../../lib/api";
-import { DeviceKeyError, PasskeyCancelledError, type SignedRecord } from "../web-auth";
+import {
+  ApiError,
+  MemoryTokenStorage,
+  NetworkError,
+  TokenStore,
+  createApiClient,
+  type FetchLike,
+} from "../../lib/api";
+import {
+  DeviceKeyError,
+  DeviceKeyManager,
+  MemoryDeviceKeyStorage,
+  PasskeyCancelledError,
+  fromBase64Url,
+  signIn,
+  toBase64Url,
+  utf8Encode,
+  type DeviceKeyStorage,
+  type PasskeyProvider,
+  type SignedRecord,
+} from "../web-auth";
+import { ed25519PublicKeyFromDidKey } from "../web-auth/did-key";
 
 import {
   KEY_ROTATION_RECORD_TYPE,
   ROTATION_REASON_MAX_LENGTH,
   RotationError,
   TERMINAL_ROTATION_CODES,
+  createReplacementKey,
   describeRotationError,
   isRotationError,
   rotateKey,
@@ -96,6 +118,17 @@ describe("rotateKey", () => {
     expect(calls).toEqual(["createReplacement", "sign", "submit", "install"]);
     expect(install).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ recordId: "bafy-rotation-record", newKey: NEW_KEY });
+  });
+
+  it("installs the replacement as the key of the account it signs for", async () => {
+    const { seams, install } = harness();
+    const account = "did:key:z6MkAccountAccountAccountAccountAccountAccountAcc3";
+
+    await rotateKey(input(seams, { accountDid: account }));
+
+    // The account's DID is not the replacement key's did:key: the device must
+    // be told which account the key it keeps signs for.
+    expect(install).toHaveBeenCalledWith(account);
   });
 
   it("signs a key.rotation naming the old and new keys and the moment it takes effect", async () => {
@@ -391,5 +424,161 @@ describe("describeRotationError", () => {
   it("handles an error that is not a RotationError", () => {
     expect(describeRotationError(new Error("boom"))).toBe("The key was not rotated: boom.");
     expect(describeRotationError("???")).toBe("The key was not rotated: an unknown error.");
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// Rotate, sign out, sign in: the same account
+// --------------------------------------------------------------------------- //
+
+describe("rotating the key and signing in again", () => {
+  class FakePasskeys implements PasskeyProvider {
+    isSupported(): boolean {
+      return true;
+    }
+
+    async register(): Promise<{ credentialId: string; transports: string[] }> {
+      return { credentialId: "credential-1", transports: ["internal"] };
+    }
+
+    async assert(options: { credentialId: string; challenge: Uint8Array }) {
+      return {
+        credentialId: options.credentialId,
+        challenge: toBase64Url(options.challenge),
+        userPresent: true,
+        userVerified: true,
+        signCount: 1,
+      };
+    }
+  }
+
+  /** The device's IndexedDB store, stood in for by memory behind the same interface. */
+  function indexedDbLike(inner: MemoryDeviceKeyStorage): DeviceKeyStorage {
+    return {
+      kind: "indexeddb",
+      isAvailable: () => true,
+      get: () => inner.get(),
+      put: (record) => inner.put(record),
+      delete: () => inner.delete(),
+    };
+  }
+
+  /** The identity API: accounts with tiers, whose active key moves on rotation. */
+  function identityServer() {
+    const accounts = new Map<string, { tier: number }>();
+    const activeKeys = new Map<string, string>();
+    const nonces = new Map<string, string>();
+    let counter = 0;
+
+    const accountFor = (did: string): string => {
+      if (accounts.has(did) || activeKeys.has(did)) {
+        return did;
+      }
+      for (const [account, key] of activeKeys) {
+        if (key === did) {
+          return account;
+        }
+      }
+      return did;
+    };
+    const json = (body: unknown): Response =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    const fetch: FetchLike = async (input, init) => {
+      const url = String(input);
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
+      if (url.endsWith("/v1/auth/challenge")) {
+        counter += 1;
+        const account = accountFor(body.did);
+        const nonce = `nonce-${counter}`;
+        nonces.set(nonce, account);
+        return json({ nonce, did: account, expires_at: "2026-11-15T09:35:12Z" });
+      }
+      if (url.endsWith("/v1/auth/verify")) {
+        const account = accountFor(body.did);
+        if (nonces.get(body.nonce) !== account) {
+          return new Response("{}", { status: 401 });
+        }
+        const key = await crypto.subtle.importKey(
+          "raw",
+          new Uint8Array(ed25519PublicKeyFromDidKey(activeKeys.get(account) ?? account)),
+          { name: "Ed25519" },
+          false,
+          ["verify"],
+        );
+        const valid = await crypto.subtle.verify(
+          { name: "Ed25519" },
+          key,
+          fromBase64Url(body.signature),
+          utf8Encode(body.nonce),
+        );
+        if (!valid) {
+          return new Response("{}", { status: 401 });
+        }
+        if (!accounts.has(account)) {
+          accounts.set(account, { tier: 0 });
+        }
+        return json({ access_token: `access-for-${account}` });
+      }
+      return new Response("not found", { status: 404 });
+    };
+    return { fetch, accounts, activeKeys };
+  }
+
+  it("signs the member back into the account they rotated, with its tier", async () => {
+    const passkeys = new FakePasskeys();
+    const target = indexedDbLike(new MemoryDeviceKeyStorage());
+    const managerOptions = { passkeys, rpId: "scholium.test" };
+    const newManager = () => new DeviceKeyManager({ storage: target, ...managerOptions });
+    const server = identityServer();
+    const client = createApiClient({
+      baseUrl: "http://api.test",
+      fetch: server.fetch,
+      tokenStore: new TokenStore(new MemoryTokenStorage()),
+    });
+    const signInAgain = () =>
+      signIn({
+        deviceKey: newManager(),
+        client,
+        tokenStore: new TokenStore(new MemoryTokenStorage()),
+        storage: new MemoryTokenStorage(),
+      });
+
+    // Sign up, and earn a tier.
+    const first = await signInAgain();
+    const accountDid = first.did;
+    server.accounts.set(accountDid, { tier: 2 });
+    expect(first.isNewAccount).toBe(true);
+
+    // Rotate the key: only the server's active key and this device's key change.
+    const result = await rotateKey({
+      accountDid,
+      activeKey: accountDid,
+      deviceDid: await newManager().didKey(),
+      prev: null,
+      seams: {
+        createReplacement: () => createReplacementKey({ target, managerOptions }),
+        sign: async (_type, body, prev) => signedRecord(body, prev),
+        submit: async (record) => {
+          const rotation = (record as SignedRecord).body as { newKey: string };
+          server.activeKeys.set(accountDid, rotation.newKey);
+          return {};
+        },
+      },
+    });
+    expect(await newManager().didKey()).toBe(result.newKey);
+    expect(result.newKey).not.toBe(accountDid);
+
+    // Sign out and sign in again.
+    const returning = await signInAgain();
+
+    expect(returning.did).toBe(accountDid);
+    expect(returning.isNewAccount).toBe(false);
+    expect(server.accounts.size).toBe(1);
+    expect(server.accounts.get(returning.did)?.tier).toBe(2);
+    expect(returning.tokens.accessToken).toBe(`access-for-${accountDid}`);
   });
 });
