@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 16: findings of verify sweep 16 (2026-11-20, worktree @ 0abc2b9 = main incl. round 15, next 16.4.6).
+  15/16 journeys pass; 06 still fails at step 10 (owner side of a recovery, partly). Round-15 fixes confirmed in the
+  browser: owner notice wording/link, owner cancel from /me/security before and after a rotation, signed cancel after a
+  rotation, guardian cancel refused, rotated sign-in notice, guardian shown by name, /onboarding saved guardians,
+  signed-review state, conflict copy, Proof-tab withdrawal, rebuild awaiting_moderation, profile names the paper,
+  /me active key, author sees own hidden post.
+  236237a (round 15 bug 1, high) merged with no tests of its own behaviour although its expected listed them: bugs 1 and
+  2 below add them. Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png.
+  Decisions (recorded here):
+  D1  Only the account holder can cancel a recovery (round 15 bug 1 enforces it: a guardian's cancel is 403); copy that
+      says a guardian can cancel is wrong.
+  D2  When a recovery is cancelled, every guardian who was asked (approved or not) is told, and the request page reads
+      "Cancelled" for everyone.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       creates="apps/api/src/app/modules/recovery/tests/test_owner_recovery.py"
+       touches_files="apps/api/src/app/modules/recovery/requests_router.py,apps/api/src/app/modules/recovery/notices.py,apps/api/src/app/modules/recovery/tests/test_requests.py">
+    <title>Recovery cancel tells only the guardians who had not approved, leaves the owner's notice open, and the owner endpoints from 236237a have no tests</title>
+    <symptoms>
+      After the owner cancels, guardians who had not answered get "The recovery request from {name} was cancelled." but guardians who had approved get nothing (notices.py resolves only guardians who never answered)
+      The owner's own "Recovery of your account" notice stays unread and still reads "Unless you cancel it, it can complete after 23 Nov 2026." after the cancel (screenshots/03-new-member-onboarding/10b-*.png)
+      236237a changed requests_router.py (owner role in the list, session cancel, signed cancel against the active key) but added no API test; recovery/tests has nothing for the owner list, session cancel or cancel after rotation
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 step 10 (screenshots/06-key-recovery/30g-*.png to 30k-*.png, 33b-*.png to 34f-*.png)
+    </reproduction_steps>
+    <expected>Per D2, a cancel sends every guardian of the account (approved or not) one "cancelled" notice, and resolves the owner's open recovery.request notice (payload status "cancelled", so the web can say "The recovery of your account was cancelled."); a completed recovery likewise resolves it. New test_owner_recovery.py covers: the owner sees their own request in GET /v1/recovery/requests marked role "owner" and guardians see role "guardian"; session cancel by the owner 200, by a guardian 403, by a stranger 403/404, unauthenticated 401; signed cancel with the original key, after one rotation and after two rotations (old keys refused); cancel notices reach approving and non-answering guardians exactly once; the owner's notice is resolved</expected>
+    <actual>Approving guardians are never told; the owner's notice still invites a cancel; the high fix is untested</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/security-page.tsx,apps/web/src/features/dashboard/security-page.test.tsx,apps/web/src/features/dashboard/security.ts,apps/web/src/features/dashboard/security.test.ts,apps/web/src/features/web-auth/signin-messages.test.ts">
+    <title>The owner still gets a guardian "Approve the recovery" item and sees their own request in the guardian card; /me/security cancel gives no confirmation; 236237a's web side has no tests</title>
+    <symptoms>
+      The owner's Needs your attention shows "Approve the recovery of {own name} · You are one of this account's guardians." linking the guardian page with Approve/Decline (dashboard.ts recovery attention mapping ~L440-490 turns every listed request into a guardian item)
+      /me/security passes the unfiltered list to RecoveryRequestsCard (security-page.tsx ~L208), so the owner's own request also shows there as "0 of 3 approvals" linking /me/recovery/{id}, besides the new "Recovery in progress" card
+      Cancelling from /me/security shows no confirmation, the request stays as "3 of 3 approvals" until a reload, and the "Recovery in progress" card shows no date
+      A cancelled owner notice still reads "Unless you cancel it, it can complete after ..."
+      236237a added no test to security-page.test.tsx, dashboard.test.ts or signin-messages.test.ts
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 step 10 (screenshots/06-key-recovery/30a-*.png, 30c-*.png, 30d-*.png, 30g-*.png, 33b-*.png)
+    </reproduction_steps>
+    <expected>Requests where the caller is the owner (role "owner", or account DID equals the viewer's) never become guardian attention items and never appear in the guardian Recovery requests card; they appear only in "Recovery in progress", which shows when the recovery was started and when it can complete (local dates) and, after Cancel, a confirmation line ("Recovery cancelled. Your account stays with your current key.") with the card removed in the same render; an owner notice whose payload says cancelled (or completed) reads so instead of inviting a cancel. Tests: owner vs guardian rows in attention and both cards; cancel confirmation and immediate update; owner notice label, sentence, link and cancelled state; the rotated sign-in message</expected>
+    <actual>The owner is still treated as a guardian in two places</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/guardian-approval.tsx,apps/web/src/features/dashboard/guardian-approval.test.tsx,apps/web/src/features/web-auth/recover-messages.ts,apps/web/src/features/web-auth/recover-messages.test.ts">
+    <title>A cancelled recovery never reads "Cancelled" on the guardian page; the requester page says a guardian can cancel; a refused cancel says "Please try again"</title>
+    <symptoms>
+      After the owner cancels, /me/recovery/{id} still reads "3 of 3 · You approved... No further action is needed." for approving guardians, "Enough guardians have approved." for one who did not answer, and "0 of 3" when nobody approved (guardian-approval.tsx has no cancelled state)
+      The requester's page says "until then your old key still works and any guardian or you can cancel." (recover-messages.ts ~L226), but a guardian's cancel is refused (D1)
+      A guardian's refused cancel shows the generic "That didn't work. Please try again." (RECOVER_FALLBACK_MESSAGE), inviting a retry that can never work
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 step 10 (screenshots/06-key-recovery/30i-*.png, 30k-*.png, 33e-*.png, 34c-*.png)
+    </reproduction_steps>
+    <expected>A cancelled request shows "Cancelled by the account holder on {local date}" on the guardian page for every guardian, with no approve/decline and no approval progress claim; a completed one says so; the requester copy says only the account holder can cancel; a 403 on cancel reads "Only the account holder can cancel this recovery."; tests cover cancelled for an approver, a non-answerer and nobody-approved, and the 403 wording</expected>
+    <actual>Guardians are told nothing changed</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-discussion/discussion.ts,apps/web/src/features/paper-discussion/discussion.test.ts,apps/web/src/features/paper-discussion/discussion-tab.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx">
+    <title>Once an appeal is filed, the author's hidden-post row drops their own text again, so two appealed posts read alike</title>
+    <symptoms>
+      Round 15 shows the author their own hidden post's text, but after they file an appeal the row becomes "Appeal filed on 20 Nov 2026 — awaiting panel" with no text, so sam's two appealed posts are two identical rows again
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 (screenshots/07-flag-and-dispute/21e-*.png)
+    </reproduction_steps>
+    <expected>The author's own excerpt (with "Show my post") stays on the row in every appeal state (filed, panel not yet formed, awaiting panel, decided); other readers still see no body; tests cover each state</expected>
+    <actual>Text disappears after filing</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/profile-page.css,apps/web/src/features/dashboard/profile-page.css.test.ts">
+    <title>Profile signed reviews show "Major Concerns" (CSS capitalize) while the review card says "Major concerns"</title>
+    <symptoms>
+      The text is "Major concerns" but `.pp-review-rec` has `text-transform: capitalize` (profile-page.css ~L383)
+    </symptoms>
+    <reproduction_steps>
+      Journey 12 (screenshots/12-review-commit-reveal/22-profile-signed-review-names-paper.png)
+    </reproduction_steps>
+    <expected>No text-transform on the recommendation; a CSS test asserts it</expected>
+    <actual>Title-cased label</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="low"
+       touches_files="apps/web/src/features/review-form/identity.ts,apps/web/src/features/review-form/identity.test.ts,apps/web/src/features/review-form/anonymity-notice.tsx">
+    <title>After a review is committed, the review page still says "The choice is sealed with your review, so make it before you commit"</title>
+    <symptoms>
+      On a revisit after committing (and on the update form) the identity text is the pre-commit sentence (identity.ts ~L31); right after committing it correctly reads "The choice was sealed with your review."
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 steps 0 and 13 (screenshots/13-new-version-and-review-update/00b-*.png, 13b-*.png)
+    </reproduction_steps>
+    <expected>Whenever the reviewer already has a committed review, the text is past tense ("The choice was sealed with your review."), signed or anonymous; the pre-commit sentence only before a first commit; tests cover both</expected>
+    <actual>Future-tense instruction after the fact</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/web/src/features/web-auth/onboarding-form.tsx">
+    <title>Saved guardians on /onboarding run past the card's right edge</title>
+    <symptoms>
+      Right after saving, the five full did:key values overflow the card (no wrapping or truncation)
+    </symptoms>
+    <reproduction_steps>
+      Journey 03 (screenshots/03-new-member-onboarding/03b-*.png)
+    </reproduction_steps>
+    <expected>Saved guardians show the member's name when known, otherwise a shortened DID (full value in a title attribute) that wraps inside the card at 1440 px and at phone width</expected>
+    <actual>Overflowing DIDs</actual>
+  </bug>
+
+</bug_spec>
