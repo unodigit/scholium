@@ -903,6 +903,8 @@ const NOTIFICATION_KIND_LABELS: Readonly<Record<string, string>> = {
   "moderation.decision": "Moderation outcome",
   "appeal.panel": "Appeal panel",
   "appeal.decision": "Appeal outcome",
+  "flag.outcome": "Flag decision",
+  // Stored notices from before the API renamed the kind keep their label.
   "flag.decided": "Flag decision",
   "review.invitation": "Review invitation",
   review_invitation: "Review invitation",
@@ -1077,6 +1079,7 @@ export function notificationSummary({ kind, payload, read }: NotificationLike): 
         ? "You were drawn for an appeal panel."
         : withLocalDueDay(sentence, payload.deadline);
     }
+    case "flag.outcome":
     case "flag.decided": {
       const summary = readText(payload.summary) ?? readText(payload.outcome);
       if (summary) {

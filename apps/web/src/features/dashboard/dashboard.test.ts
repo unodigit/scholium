@@ -519,6 +519,31 @@ describe("notification wording", () => {
     expect(notificationKindLabel("appeal.panel")).toBe("Appeal panel");
   });
 
+  it("labels and words the report outcome under the kind the API sends", () => {
+    // The flags module notifies the reporter with `flag.outcome`
+    // (flags/service.py), not the old `flag.decided`. Left unlisted, the notice
+    // reads as the kind's own words and a payload without a sentence never
+    // states the decision.
+    expect(notificationKindLabel("flag.outcome")).toBe("Flag decision");
+    expect(notificationSummary({ kind: "flag.outcome", payload: { status: "upheld" } })).toMatch(
+      /upheld/i,
+    );
+
+    const sentence =
+      'The post you reported as "Off topic" on "Sparse attention" was reviewed and kept. Moderator\'s note: The post is on topic.';
+    const payload = { summary: sentence, outcome: sentence, reason: "Off topic", status: "decided" };
+    expect(notificationSummary({ kind: "flag.outcome", payload })).toBe(sentence);
+    // The moderator's note is already in the sentence, so the reason is not
+    // repeated beneath it.
+    expect(notificationDetail({ kind: "flag.outcome", payload })).toBeNull();
+
+    // Notices stored under the old kind read the same way.
+    expect(notificationKindLabel("flag.decided")).toBe("Flag decision");
+    expect(notificationSummary({ kind: "flag.decided", payload: { status: "upheld" } })).toMatch(
+      /upheld/i,
+    );
+  });
+
   it("labels a restoration that answered an appeal as an appeal outcome", () => {
     // The API settles the author's release notice with the appeal it answers;
     // the dashboard labels that notice like the upheld one.
@@ -799,7 +824,7 @@ describe("notification wording", () => {
       'The post you reported as "Off topic" on "Sparse attention" was reviewed and kept. Moderator\'s note: The post is on topic.';
     expect(
       notificationDetail({
-        kind: "flag.decided",
+        kind: "flag.outcome",
         payload: { summary: sentence, outcome: sentence, reason: "Off topic" },
       }),
     ).toBeNull();

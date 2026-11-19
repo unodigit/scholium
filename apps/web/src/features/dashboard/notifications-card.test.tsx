@@ -166,7 +166,7 @@ describe("NotificationsCard: what it shows", () => {
         loadNotifications={loaderOf(
           row({
             id: 8,
-            kind: "flag.decided",
+            kind: "flag.outcome",
             payload: { summary: sentence, outcome: sentence, reason: "Off topic", reason_code: "off-topic" },
           }),
         )}
@@ -177,6 +177,23 @@ describe("NotificationsCard: what it shows", () => {
     expect(within(item).getByText(sentence)).toBeTruthy();
     expect(within(item).queryByText("Off topic")).toBeNull();
     expect(item.textContent?.match(/Off topic/g)).toHaveLength(1);
+  });
+
+  it("states the decision in a report outcome notice that carries no sentence", async () => {
+    // The API sends the reporter `flag.outcome`; without a summary the notice
+    // must still say what was decided, not fall back to the kind's own words.
+    render(
+      <NotificationsCard
+        signedIn
+        loadNotifications={loaderOf(
+          row({ id: 9, kind: "flag.outcome", payload: { status: "upheld" } }),
+        )}
+      />,
+    );
+    const item = (await screen.findAllByRole("listitem"))[0];
+
+    expect(within(item).getByText(/upheld/i)).toBeTruthy();
+    expect(within(item).queryByText("Flag outcome")).toBeNull();
   });
 
   it("still shows a reason the sentence leaves out", async () => {
