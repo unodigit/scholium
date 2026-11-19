@@ -37,7 +37,9 @@ import {
   PROFILE_AFFILIATION_MAX,
   PROFILE_EMAIL_MAX,
   PROFILE_NAME_MAX,
+  loadPersistedOnboarding,
 } from "./onboarding";
+import { apiClient, browserTokenStorage, type ApiClient, type TokenStorage } from "../../lib/api";
 import {
   CATEGORIES_ADD_ACTION,
   CATEGORIES_ADD_LABEL,
@@ -83,12 +85,21 @@ import {
   orcidReturnLinkedMessage,
   profileSavedMessage,
 } from "./onboarding-messages";
-import { useOnboarding, useOrcidReturn } from "./use-onboarding";
+import { useOnboarding, useOrcidReturn, type OnboardingServices } from "./use-onboarding";
+import { shortDid } from "./verify-email";
+
+/** Props for {@link OnboardingForm}. */
+export interface OnboardingFormProps {
+  /** Service override, for tests. */
+  services?: OnboardingServices;
+}
 
 /** The `/onboarding` checklist. */
-export function OnboardingForm() {
+export function OnboardingForm({ services }: OnboardingFormProps = {}) {
   const router = useRouter();
-  const onboarding = useOnboarding();
+  const onboarding = useOnboarding(services ? { services } : {});
+  const client = services?.client ?? apiClient;
+  const storage = services?.storage ?? browserTokenStorage;
   const [customCategory, setCustomCategory] = useState("");
 
   const doneById = new Map(onboarding.steps.map((step) => [step.id, step.done]));
@@ -141,7 +152,9 @@ export function OnboardingForm() {
                     onCustomCategoryChange={setCustomCategory}
                   />
                 ) : null}
-                {step.id === "guardians" ? <GuardiansBody onboarding={onboarding} /> : null}
+                {step.id === "guardians" ? (
+                  <GuardiansBody onboarding={onboarding} client={client} storage={storage} />
+                ) : null}
               </div>
             </li>
           );
@@ -449,25 +462,119 @@ function CategoriesBody({
   );
 }
 
+/** Read a public profile name out of a `GET /profiles/{did}` body, or `null`. */
+function profileNameFrom(payload: unknown): string | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  if (record.erased === true) {
+    return null;
+  }
+  for (const key of ["name", "display_name", "displayName"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
 /** Guardians step: five DID inputs and the save action. */
-function GuardiansBody({ onboarding }: { onboarding: ReturnType<typeof useOnboarding> }) {
+function GuardiansBody({
+  onboarding,
+  client,
+  storage,
+}: {
+  onboarding: ReturnType<typeof useOnboarding>;
+  client: Pick<ApiClient, "get">;
+  storage: TokenStorage;
+}) {
   const { guardians, setGuardianValue, saveGuardiansAction } = onboarding;
   const guardiansStepDone = onboarding.steps.some(
     (step) => step.id === "guardians" && step.done,
   );
   const isSaved = guardians.saved !== null || guardiansStepDone;
 
+  // Saved guardians may live only in browser storage (after a reload) even when
+  // the in-memory `guardians.saved` is null, so fall back to them there.
+  let persistedGuardians: string[] = [];
+  try {
+    persistedGuardians = storage
+      ? loadPersistedOnboarding(storage).guardians
+      : [];
+  } catch {
+    persistedGuardians = [];
+  }
+  const savedList =
+    guardians.saved !== null
+      ? guardians.saved
+      : isSaved && persistedGuardians.length > 0
+        ? persistedGuardians
+        : null;
+
+  const [names, setNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (savedList === null || savedList.length === 0) {
+      setNames((current) =>
+        Object.keys(current).length === 0 ? current : {},
+      );
+      return;
+    }
+    const list = savedList;
+    const controller = new AbortController();
+    let active = true;
+    void Promise.all(
+      list.map(async (did) => {
+        try {
+          const payload = await client.get<unknown>(
+            `/profiles/${encodeURIComponent(did)}`,
+            { auth: false, cache: "no-store", signal: controller.signal },
+          );
+          return [did, profileNameFrom(payload)] as const;
+        } catch {
+          return [did, null] as const;
+        }
+      }),
+    ).then((results) => {
+      if (!active || controller.signal.aborted) {
+        return;
+      }
+      const next: Record<string, string> = {};
+      for (const [did, name] of results) {
+        if (name !== null && name !== "") {
+          next[did] = name;
+        }
+      }
+      setNames(next);
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedList === null ? "" : savedList.join("\n"), client]);
+
   if (isSaved) {
     return (
       <>
         <p className="wa-note">{GUARDIANS_SAVED_NOTE}</p>
-        {guardians.saved !== null ? (
+        {savedList !== null ? (
           <ul className="wa-guardian-list">
-            {guardians.saved.map((value, index) => (
-              <li key={`${value}-${index}`} className="wa-note wa-input--mono">
-                {value}
-              </li>
-            ))}
+            {savedList.map((value, index) => {
+              const label = names[value] ?? shortDid(value);
+              return (
+                <li
+                  key={`${value}-${index}`}
+                  className="wa-note wa-input--mono"
+                  title={value}
+                  style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                >
+                  {label}
+                </li>
+              );
+            })}
           </ul>
         ) : null}
         <p className="wa-note">
