@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Handbook audit (2026-11-19, main @ 3ae3571): defects found while checking every statement of docs/handbook/ against the
+  code. Root causes confirmed in source (file:line below); not yet reproduced in a browser (verify sweep 15 checks them).
+  Decisions (recorded here):
+  D1  Recovery guardians stay optional at submission (recovery/gate.py is not wired in): enforcing them would change every
+      seeded and tested submission. The copy stops claiming they are required and says what they are for.
+  D2  Follows are categories. The API's follows, Following tab and digest match categories only, so the Follow control on a
+      paper page and on a member profile is removed rather than built; following papers or people would be a feature.
+  D3  Every saved search is in the daily digest (what the API already does), so the per-search email checkbox is removed.
+  D4  docs/handbook/ is updated after this round merges, outside these footprints, so the fixes can run in parallel.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       creates="apps/web/src/features/paper-page/paper-notice-banner.test.tsx"
+       touches_files="apps/web/src/features/paper-page/paper-header.tsx,apps/web/src/features/ui-kit/decision.ts,apps/web/src/features/ui-kit/decision.test.ts">
+    <title>A withdrawal notice is shown as "Content removed for legal reasons"</title>
+    <symptoms>
+      noticeDecisionKind in paper-page/paper-header.tsx (lines 144-157) maps the notice kinds "withdrawal" and "withdrawn" to the removed_legal banner, so a paper its authors withdrew reads "Content removed for legal reasons … The record of its existence remains." although the paper stays listed and its files stay downloadable (a withdrawal changes no status: submissions/notices.py)
+      Readers are told a legal takedown happened when none did
+    </symptoms>
+    <reproduction_steps>
+      As an author of a listed paper: Issue notice → Withdrawal, give a reason, confirm; reload /p/{id}: the legal-removal banner shows above the title and the PDF still opens
+    </reproduction_steps>
+    <expected>A withdrawal has its own banner kind in ui-kit/decision.ts ("withdrawn": neutral tone, icon plus word, never --critical), e.g. heading "Withdrawn by the authors" and text "The authors withdrew this paper. It stays available as part of the record." plus the notice's reason when present and the View record link; the removed_legal banner appears only for tombstoned/removed content; tests (in the new paper-notice-banner.test.tsx, rendering the header) cover a withdrawal and a tombstone side by side</expected>
+    <actual>A withdrawal is presented as a legal removal</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/follows/router.py,apps/api/src/app/modules/follows/service.py,apps/api/src/app/modules/follows/tests/test_saved_searches.py">
+    <title>Deleting a saved search from the dashboard fails: the API has no DELETE route</title>
+    <symptoms>
+      The dashboard's Saved searches card calls DELETE /v1/me/saved-searches/{id} (web dashboard/saved-searches.ts lines 7-10, 28, 129-134, which documents "204, idempotent"), but follows/router.py serves only GET and POST /v1/me/saved-searches (lines 9-10, 192, 241), so the delete answers 404/405 and the search stays
+    </symptoms>
+    <reproduction_steps>
+      Sign in, run a search on /search, choose Save this search; on /me open Saved searches and delete it; reload /me: it is still listed
+    </reproduction_steps>
+    <expected>DELETE /v1/me/saved-searches/{id} removes the caller's own saved search and answers 204, idempotently (an id already gone is 204); another reader's id is 404 and is not deleted; unauthenticated is 401; tests cover own, repeated, foreign and unauthenticated deletes and that the digest no longer matches a deleted search</expected>
+    <actual>No route; deleting does nothing</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/paper-actions.tsx,apps/web/src/features/paper-page/paper-header.test.tsx,apps/web/src/features/dashboard/profile-page.tsx,apps/web/src/features/dashboard/profile-page.test.tsx">
+    <title>"+ Follow" on a paper page and on a member profile stores a follow that nothing ever reads</title>
+    <symptoms>
+      paper-actions.tsx renders FollowToggle with category={paperId} and profile-page.tsx with the member's DID; PUT /v1/me/follows/{subject} stores the id, but the Following tab (follows/router.py "listed papers in followed categories") and the daily digest (follows/digest.py compose_digest, matching followed_categories against each paper's categories) only ever match categories, so the button shows "✓ Following" and changes nothing
+    </symptoms>
+    <reproduction_steps>
+      Sign in; open a listed paper, choose + Follow (it turns to ✓ Following); open / → Following: the paper is not there unless its category is also followed; the same for + Follow on /u/{did}
+    </reproduction_steps>
+    <expected>Per decision D2 the paper page and the member profile no longer offer a Follow control; the paper header keeps its back link to the category page, where the category can be followed; category follows (category page, onboarding, dashboard Follows card) are unchanged; tests assert no Follow control on the paper page or profile</expected>
+    <actual>A Follow control that has no effect</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/search-page/save-search-button.tsx,apps/web/src/features/search-page/save-search-button.test.tsx,apps/web/src/features/dashboard/saved-searches.ts,apps/web/src/features/dashboard/saved-searches.test.ts">
+    <title>The "Email me new matches in the daily digest" checkbox is ignored</title>
+    <symptoms>
+      save-search-button.tsx offers the checkbox, but SaveSearchOptions.digest in dashboard/saved-searches.ts (lines 185-194) is "carried in the request body for forward compatibility only": the API stores no per-search flag and the daily digest includes every saved search, ticked or not
+    </symptoms>
+    <reproduction_steps>
+      Save a search with the box unticked; the next daily digest (06:00 UTC, verified email) still lists its new matches
+    </reproduction_steps>
+    <expected>Per decision D3 the checkbox and the unused digest option are removed; the save confirmation says what happens, e.g. "Saved. New matches are included in your daily digest." (and, when the reader has no confirmed email, that the digest needs one); tests assert the copy and that no digest flag is sent</expected>
+    <actual>A choice that is not honoured</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="high"
+       creates="apps/api/src/app/modules/identity/tests/test_signin_after_rotation.py"
+       touches_files="apps/web/src/features/web-auth/signin.ts,apps/web/src/features/web-auth/signin.test.ts,apps/web/src/features/web-auth/device-key.ts,apps/web/src/features/web-auth/device-key.test.ts,apps/web/src/features/web-auth/device-key-storage.ts,apps/web/src/features/web-auth/device-key-storage.test.ts,apps/web/src/features/web-auth/recover.ts,apps/web/src/features/web-auth/recover.test.ts,apps/web/src/features/web-auth/use-recover.ts,apps/web/src/features/web-auth/use-recover.test.ts,apps/web/src/features/dashboard/rotate-key.ts,apps/web/src/features/dashboard/rotate-key.test.ts,apps/api/src/app/modules/identity/service.py">
+    <title>After a key rotation or an account recovery, signing in lands in a new, empty tier-0 account</title>
+    <symptoms>
+      signIn (web-auth/signin.ts ~line 290) always sends `did = await key.didKey()`, the DID of the key stored on this device, to /auth/challenge and /auth/verify
+      Rotate key (dashboard/rotate-key.ts step 4) saves the replacement key as this device's key, and a completed recovery leaves the new device holding its own new key; neither records which account the key now signs for
+      The server verifies against the active key of the DID it is given (identity/service.py verify_signin, resolve_active_key), and a DID it has never seen becomes a new tier-0 account, so the next sign-in after a rotation or recovery reaches an empty account; rotation revokes every refresh token, so that next sign-in comes within the 15-minute access-token lifetime
+    </symptoms>
+    <reproduction_steps>
+      Sign in as an account with tier 1+ and a paper; /me/security → Rotate key, confirm both passkey prompts; Sign out; Sign in with passkey: the dashboard is empty, the tier is 0 and the DID differs from the one shown before the rotation. Recovery: complete a guardian recovery to a new device, then sign in there: same result
+    </reproduction_steps>
+    <expected>The device stores the account DID its key signs for, beside the key: its own did:key when the key creates the account, the account DID when Rotate key saves a replacement, and the recovered account's DID when a recovery completes on this device; signIn sends that account DID with the device key's signature, so the server's existing active-key check signs into the original account. For devices rotated before this fix (no stored account DID), /auth/challenge and /auth/verify resolve a did:key that is the active key of a rotated or recovered account to that account. Regression tests: rotate → sign out → sign in returns the same account DID and tier (web unit test and an API test of sign-in with the new key); recovery to a new device then sign-in reaches the recovered account; an account that never rotated signs in exactly as before</expected>
+    <actual>The user is silently moved to a new empty account and loses access to their papers, reviews and tier</actual>
+    <constraints>The private key never leaves the device; the server never learns a private key; the existing sign-in of never-rotated accounts is unchanged</constraints>
+  </bug>
+
+  <bug index="6" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/profiles/router.py,apps/api/src/app/modules/profiles/tests/test_verify_email.py">
+    <title>Confirming the email after linking ORCID never promotes the account to tier 1</title>
+    <symptoms>
+      Tier 1 needs a verified email and a linked ORCID (orcid/promotion.py promotion_eligible), but promote_if_eligible is called only when the ORCID link completes (orcid/service.py line 167); profiles/router.py verify_email (lines 168-204) marks the email verified and promotes nothing
+      An ORCID iD cannot be re-linked (orcid/nullifier.py), so a member who linked ORCID first stays at tier 0 until an operator runs set-tier
+    </symptoms>
+    <reproduction_steps>
+      New account: in onboarding save the profile but do not open the verification email yet; link ORCID (tier stays 0, email unverified); now open the verification link: /verify-email succeeds and the tier is still 0
+    </reproduction_steps>
+    <expected>Redeeming a verification link also runs the tier-1 promotion check (promote_if_eligible; import it lazily to avoid a profiles→orcid import cycle), so the order of the two steps no longer matters; tests: ORCID then email → tier 1; email then ORCID → tier 1 (unchanged); a tier-2+ account is never lowered</expected>
+    <actual>Promotion depends on doing the steps in one order</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="medium"
+       touches_files="apps/web/src/features/web-auth/onboarding.ts,apps/web/src/features/web-auth/onboarding.test.ts,apps/web/src/features/web-auth/onboarding-messages.ts,apps/web/src/features/dashboard/security-page.tsx,apps/web/src/features/dashboard/security-page.test.tsx">
+    <title>/me/security cannot change recovery guardians, and "Erase my profile" erases in one click</title>
+    <symptoms>
+      Guardians: PUT /v1/me/guardians replacing an existing list requires the account key's signature over the change (recovery/router.py lines 203-212, preimages in recovery/service.py guardian_change_preimages) and otherwise answers "Changing recovery guardians requires a signature by the account's active key."; web-auth/onboarding.ts saveGuardians (lines ~886-909) never sends a signature, so every change after the first save fails, and /me/security shows the guardians with no way to change them
+      Guardian copy: onboarding-messages.ts line 145 says "You can change them at any time from Settings" (no Settings page exists) and line 152 says guardians are "required before your first submission", which nothing enforces (decision D1)
+      Erase: EraseProfileCard in dashboard/security-page.tsx (lines 580-625) calls eraseProfile on the first click, and its note says "Remove your name, affiliation, email and ORCID from this profile", but erasure keeps the ORCID link (hidden on the profile and still used for recovery: profiles/views.py, recovery/opening.py)
+    </symptoms>
+    <reproduction_steps>
+      Finish onboarding with five guardians; reopen /onboarding, replace one guardian DID and save: the save fails with the signature problem; /me/security offers no change. On /me/security choose Erase my profile: the profile is erased immediately
+    </reproduction_steps>
+    <expected>/me/security's Recovery guardians section offers "Change guardians" with the five fields; saving a replacement signs one of the preimages the API accepts with this device's key (passkey prompt) and sends it as `signature`, so the change succeeds and the owner notice goes out; the first save during onboarding is unchanged; onboarding copy names /me/security instead of Settings and stops saying guardians are required before the first submission, saying what they are for instead, e.g. "Strongly recommended: without guardians you cannot recover your account if you lose this device."; Erase my profile first asks for confirmation in the page (the way Rotate key's confirming phase does), naming what is erased (name, affiliation, email) and what stays (account, DID, tier, signed records, the ORCID link kept hidden for recovery), with "Erase my profile" and "Cancel", and the card's note says the same; tests: a guardian replacement sends a signature that verifies against the API's preimage and the first save sends none; one click does not erase, confirm erases, cancel does not</expected>
+    <actual>Changing guardians always fails, the copy points to a page that does not exist, and an irreversible erase has no confirmation and an inaccurate description</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,apps/web/src/features/dashboard/notifications-card.test.tsx">
+    <title>A report's outcome notification shows a fallback label: the web expects flag.decided, the API sends flag.outcome</title>
+    <symptoms>
+      flags/service.py line 66 and notifications/reported.py line 27 send the kind "flag.outcome"; dashboard.ts handles only "flag.decided" (lines 906, 1080), so the reporter's notice falls through to the generic label instead of saying what was decided
+    </symptoms>
+    <reproduction_steps>
+      Report a post or paper; as a moderator decide the flag on /mod; as the reporter open /me#notifications: the notice has no outcome wording
+    </reproduction_steps>
+    <expected>dashboard.ts labels and summarises "flag.outcome" with the outcome in words and the moderator's note, as it does today for "flag.decided" (kept as an alias for stored notices); tests use the kind the API sends</expected>
+    <actual>Generic label; the outcome is not stated</actual>
+  </bug>
+
+  <bug index="9" shape="core" severity="low"
+       touches_files="apps/web/src/features/submit/submit-wizard.tsx,apps/web/src/features/submit/submit-wizard.test.tsx">
+    <title>The submit wizard keeps the submitted paper as a draft after a successful submit</title>
+    <symptoms>
+      The draft autosaves to IndexedDB (submit/submit-draft-storage.ts) and use-submit-draft.ts exposes clear(), but nothing calls it after "Submitted – version 1", so opening /submit again restores the paper that was just submitted
+    </symptoms>
+    <reproduction_steps>
+      Complete /submit through Sign and submit; open /submit again: the files, title, abstract and authors of the submitted paper are back
+    </reproduction_steps>
+    <expected>The stored draft is cleared once the version is submitted (after the last signed record is accepted), so /submit starts empty; a failed submit keeps the draft; tests cover both</expected>
+    <actual>A stale draft of an already-submitted paper</actual>
+  </bug>
+
+  <bug index="10" shape="core" severity="low"
+       touches_files="apps/web/src/features/review-form/anonymity-notice.tsx,apps/web/src/features/review-form/review-route.test.tsx,apps/web/src/features/review-form/rating.ts,apps/web/src/features/review-form/rating.test.ts,apps/web/src/features/review-form/review-actions.tsx,apps/web/src/features/review-form/review-actions.test.tsx,apps/web/src/features/review-form/conflict.ts,apps/web/src/features/review-form/conflict.test.ts,apps/web/src/features/review-form/README.md">
+    <title>The review form promises protections and effects the system does not have</title>
+    <symptoms>
+      anonymity-notice.tsx: "It can be opened only by 3 of 5 integrity committee members in a misconduct case." The escrow is one sealed box under COMMITTEE_PUBLIC_KEY (reviews/escrow.py lines 1-31, 151-160); no threshold scheme exists
+      rating.ts line 32 and review-actions.tsx line 465: a quality rating "affects the reviewer's reputation only"; nothing reads review ratings and no reputation exists
+      conflict.ts lines 210-212: "A conflict is declared with the review; the node decides whether it can be committed." Nothing about the conflict is written into the review (rubric.ts lines 296-323); only byline authors are refused (reviews/service.py lines 1096-1110)
+    </symptoms>
+    <reproduction_steps>
+      Open /review/{id} as a tier-3 reviewer: read the anonymity notice and the conflict panel; reveal a review and open Rate this review's quality: read the hint
+    </reproduction_steps>
+    <expected>The copy states what is true: the identity "is held in escrow under the integrity committee's key and can be opened only in a misconduct case"; the rating hint says "You rate the review, not the paper. Ratings are recorded with the review and never change the paper's status."; the conflict panel says only authors of the paper are refused and the other checks are advisory ("if one fails, decide whether you can review fairly"); the README matches; tests assert the new wording and that the old claims are gone</expected>
+    <actual>Reviewers are told about a 3-of-5 committee, reputation effects and conflict declarations that do not exist</actual>
+  </bug>
+
+  <bug index="11" shape="core" severity="low"
+       creates="apps/api/src/app/modules/reviews/tests/test_review_ai_assistance.py"
+       touches_files="apps/api/src/app/modules/reviews/reveal.py,apps/api/src/app/modules/reviews/models.py,apps/api/src/app/modules/reviews/router.py,apps/web/src/features/paper-reviews/review.ts,apps/web/src/features/paper-reviews/review.test.ts,apps/web/src/features/paper-reviews/reviews-tab.tsx,apps/web/src/features/paper-reviews/reviews-tab.test.tsx">
+    <title>The Reviews tab drops what a reviewer signed: the AI-assistance declaration and, on signed reviews, the reviewer's name</title>
+    <symptoms>
+      The review form sends `aiAssisted` in the signed review.formal body (review-form/rubric.ts lines 258-275) and tells the reviewer it is "(declared on the report)", but reviews/reveal.py ignores it and GET /v1/papers/{id}/reviews never returns it
+      A review revealed with "Sign with my name instead" has signed_by set and served (reviews/router.py lines 328, 507), but the card meta in paper-reviews/reviews-tab.tsx line 637 is always "Anonymous reviewer"; the name appears only on /u/{did}
+    </symptoms>
+    <reproduction_steps>
+      Commit and reveal a review with "I used AI assistance" ticked and "Sign with my name instead": the paper's Reviews tab shows "Reviewer A · Anonymous reviewer" and no AI declaration
+    </reproduction_steps>
+    <expected>The reveal keeps the declaration (a new column follows the ensure_columns pattern of identity/models.py so existing databases keep working, or it is read from the stored signed body) and the listing returns ai_assisted; the card shows "AI assistance declared" for those reviews; a signed review's card reads "Signed by {name}" linking to /u/{did} (the short DID when the profile is erased) instead of "Anonymous reviewer"; anonymous reviews are unchanged and keep their letter; tests cover both fields through the API and the tab</expected>
+    <actual>Signed declarations are not shown where the review is read</actual>
+  </bug>
+
+  <bug index="12" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/recovery/opening.py,apps/api/src/app/modules/recovery/tests/test_requests.py,apps/web/src/features/web-auth/recover-messages.ts,apps/web/src/features/web-auth/recover-messages.test.ts">
+    <title>The account owner is not told when someone starts a recovery of their account</title>
+    <symptoms>
+      Opening a recovery notifies only the guardians (recovery/opening.py _notify_guardians, lines 242-277, 313), yet /recover tells the user "A cancel link goes to all your known contacts" (web-auth/recover-messages.ts line 74) and the safety window exists so the owner can cancel a recovery they did not start
+      An owner who still has their device has no way to learn that a recovery is running unless they happen to open /me/security
+      The no-guardians message (recover-messages.ts line 167) says to "set them from Settings first"; there is no Settings page (guardians live on /me/security)
+    </symptoms>
+    <reproduction_steps>
+      Account A with five guardians and a verified email; from another browser start /recover with A's ORCID iD; as A, open /me#notifications and the inbox of A's email: nothing about the recovery
+    </reproduction_steps>
+    <expected>When a recovery opens, the account itself is notified in-app and, when its profile has a verified email, by email (as consent emails are sent), saying a recovery was started, when the safety window ends, and how to cancel it from /me/security; the /recover copy says who is told, and the no-guardians message names /me/security instead of Settings; tests assert the owner notification and its email</expected>
+    <actual>Only guardians are told; the owner cannot react within the 72-hour window</actual>
+  </bug>
+
+</bug_spec>
