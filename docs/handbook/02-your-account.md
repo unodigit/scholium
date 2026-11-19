@@ -156,6 +156,8 @@ You can cancel until the 72-hour safety window ends, including after a key rotat
 
 A recovery can also be cancelled from **/recover?request={request id}** on a device that holds your passkey: choose **Cancel this recovery**, which asks for your passkey.
 
+> **Known issue:** while a recovery of your own account is open, your dashboard also lists it as if you were a guardian: "Approve the recovery of {your name}" under **Needs your attention**, and an entry under **Recovery requests** on `/me/security`. Do not approve it. Cancel it as described above.
+
 ### If you are someone's guardian
 
 A recovery request appears in **Needs your attention** on your dashboard and as a notification. Open it at `/me/recovery/{id}`. Approve only if you have confirmed with the person, by a channel you trust, that they really lost their device.
