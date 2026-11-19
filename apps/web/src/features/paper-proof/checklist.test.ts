@@ -3,7 +3,14 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { verifyPaper, type VerifyPaperOptions } from "../verify-core";
+import {
+  computeRecordId,
+  didKeyFromSeed,
+  signEnvelope,
+  verifyPaper,
+  type VerifyPaperOptions,
+} from "../verify-core";
+import { formatDate } from "../ui-kit/format-date";
 import { PENDING_PROOF, type RecordProofInfo } from "./anchor";
 import {
   abbreviateId,
@@ -15,12 +22,42 @@ import {
   technicalRows,
   verdictCopy,
   verdictState,
+  withdrawalFromRecords,
   type ItemKey,
   type ItemState,
 } from "./checklist";
+import type { WithdrawalNotice } from "./checklist";
 import { versionManifest } from "./files";
 import { buildPaper } from "./proof-fixtures";
 import { LOCAL_PRESERVATION, type PreservationInfo } from "./preservation";
+
+/** A seed for `didKeyFromSeed`, the same shape `proof-fixtures` uses. */
+function seedFor(author: number): Uint8Array {
+  return new Uint8Array(32).fill(author + 1);
+}
+
+/** A genuinely signed notice record, the shape the node's export serves. */
+function signNotice(
+  author: number,
+  type: string,
+  body: Record<string, unknown>,
+  created: string,
+): Record<string, unknown> {
+  const envelope = {
+    v: 1,
+    type,
+    author: didKeyFromSeed(seedFor(author)),
+    created,
+    prev: null,
+    body,
+    proofs: [],
+  };
+  return {
+    ...envelope,
+    id: computeRecordId(envelope),
+    sig: signEnvelope(envelope, seedFor(author)),
+  };
+}
 
 /**
  * The browser's checklist must fold verify-core's six checks into the same
@@ -71,7 +108,14 @@ function checklistOf(
 ) {
   const report = verifyPaper(vector.records, vector.call);
   const manifest = versionManifest(vector.records, report);
-  const items = buildChecklist({ report, manifest, fileResults: [], proof, preservation });
+  const items = buildChecklist({
+    report,
+    manifest,
+    fileResults: [],
+    proof,
+    preservation,
+    withdrawal: null,
+  });
   const states = Object.fromEntries(items.map((item) => [item.key, item.state])) as Record<
     ItemKey,
     ItemState
@@ -157,6 +201,7 @@ describe("plain-language lines", () => {
       fileResults: [],
       proof: PENDING_PROOF,
       preservation: LOCAL_PRESERVATION,
+      withdrawal: null,
     });
     expect(items[0]).toMatchObject({ state: "pass", text: "Signed by the listed author" });
   });
@@ -170,6 +215,7 @@ describe("plain-language lines", () => {
       fileResults: [],
       proof: PENDING_PROOF,
       preservation: LOCAL_PRESERVATION,
+      withdrawal: null,
     });
     expect(items[0]).toMatchObject({ state: "pass", text: "Signed by both listed authors" });
   });
@@ -277,6 +323,7 @@ describe("plain-language lines", () => {
       report,
       manifest: versionManifest(retracted.records, report),
       proof: PENDING_PROOF,
+      withdrawal: null,
     });
     expect(rows).toContainEqual(
       expect.objectContaining({ key: "notice-1-record", label: "Retraction record", value: notice.id }),
@@ -303,6 +350,126 @@ describe("plain-language lines", () => {
     )!;
     const { items } = checklistOf(vector);
     expect(items[5].details[0]).toBe("Tombstone notice signed by a trusted authority (applies)");
+  });
+});
+
+describe("the withdrawal notice (D1: a withdrawal changes no status, so the row names it)", () => {
+  const vector = vectors.find((entry) => entry.name === "verified-single-version")!;
+  const WITHDRAWN_AT = "2026-11-14T12:00:00Z";
+  const NOTICE_ID = "bafyreicwithdrawalnotice0000000000000000000000";
+
+  function itemsOf(
+    withdrawal: WithdrawalNotice | null,
+    vectorName = vector.name,
+  ) {
+    const chosen = vectors.find((entry) => entry.name === vectorName)!;
+    const report = verifyPaper(chosen.records, chosen.call);
+    return buildChecklist({
+      report,
+      manifest: versionManifest(chosen.records, report),
+      fileResults: [],
+      proof: PENDING_PROOF,
+      preservation: LOCAL_PRESERVATION,
+      withdrawal,
+    });
+  }
+
+  const signedByAuthor = (
+    reportAuthor: string | null,
+  ): WithdrawalNotice => ({
+    id: NOTICE_ID,
+    createdAt: WITHDRAWN_AT,
+    author: reportAuthor,
+    recordUrl: `https://node.example/v1/records/${NOTICE_ID}`,
+  });
+
+  it("names a withdrawal on the notice row, with the local date and a link to the notice record", () => {
+    const chosen = vectors.find((entry) => entry.name === vector.name)!;
+    const report = verifyPaper(chosen.records, chosen.call);
+    const row = itemsOf(signedByAuthor(report.authors[0] ?? null))[5];
+    // Neutral, per D1: a withdrawal is the authors taking the paper back, not
+    // a defect in the proof, so the line stays a pass and the verdict with it.
+    expect(row.state).toBe("pass");
+    expect(row.text).toBe(
+      `Withdrawn by the authors on ${formatDate(WITHDRAWN_AT)}. No retraction or correction on record`,
+    );
+    expect(row.link).toEqual({
+      href: `https://node.example/v1/records/${NOTICE_ID}`,
+      label: "View the withdrawal record",
+    });
+  });
+
+  it("does not attribute a withdrawal someone else signed to the authors", () => {
+    const row = itemsOf(signedByAuthor("did:key:z6MkSomeoneElse"))[5];
+    expect(row.state).toBe("pass");
+    expect(row.text).toBe(
+      `Withdrawn on ${formatDate(WITHDRAWN_AT)}. No retraction or correction on record`,
+    );
+  });
+
+  it("keeps the clean wording when there is no withdrawal", () => {
+    const row = itemsOf(null)[5];
+    expect(row).toMatchObject({
+      state: "pass",
+      text: "No retraction or correction on record",
+      link: null,
+    });
+  });
+
+  it("still warns for a correction, and names the withdrawal underneath it", () => {
+    const row = itemsOf(
+      signedByAuthor(null),
+      "corrected-by-co-author",
+    )[5];
+    expect(row.state).toBe("warn");
+    expect(row.text).toMatch(/^Corrected: a correction notice applies/);
+    expect(row.details.at(-1)).toBe(`Withdrawn on ${formatDate(WITHDRAWN_AT)}`);
+  });
+
+  it("reads the withdrawal out of the loaded records: the newest wins, and only this paper's", () => {
+    const paper = buildPaper({ authors: 2, versions: 2 });
+    const older = signNotice(0, "withdrawal", {
+      target: paper.genesisId,
+      reason: "Taking the paper back.",
+    }, "2026-11-01T09:00:00Z");
+    const newer = signNotice(1, "withdrawal", {
+      target: paper.versionIds[1],
+      reason: "Taking the paper back, again.",
+    }, "2026-11-14T12:00:00Z");
+    const otherPaper = signNotice(0, "withdrawal", {
+      target: "bafyreianotherpapergenesis0000000000000000000",
+      reason: "Not this paper.",
+    }, "2026-11-20T12:00:00Z");
+    const report = verifyPaper(paper.records, { paper: paper.shortId });
+
+    const found = withdrawalFromRecords(
+      [...paper.records, older, newer, otherPaper],
+      report,
+      "https://node.example/",
+    );
+    expect(found).toEqual({
+      id: newer.id,
+      createdAt: "2026-11-14T12:00:00Z",
+      author: newer.author,
+      recordUrl: `https://node.example/v1/records/${newer.id}`,
+    });
+
+    // No withdrawal at all: nothing to name.
+    expect(withdrawalFromRecords(paper.records, report, "https://node.example")).toBeNull();
+  });
+
+  it("carries the withdrawal record and signer in the technical details, one copy away", () => {
+    const chosen = vectors.find((entry) => entry.name === vector.name)!;
+    const report = verifyPaper(chosen.records, chosen.call);
+    const rows = technicalRows({
+      report,
+      manifest: null,
+      proof: PENDING_PROOF,
+      withdrawal: signedByAuthor(report.authors[0] ?? null),
+    });
+    expect(rows).toContainEqual(
+      expect.objectContaining({ key: "withdrawal-record", label: "Withdrawal record", value: NOTICE_ID }),
+    );
   });
 });
 
@@ -355,7 +522,12 @@ describe("technical details", () => {
   it("lists the version, manifest and paper records, the anchor and every signer", () => {
     const { report } = checklistOf(verified);
     const manifest = versionManifest(verified.records, report);
-    const rows = technicalRows({ report, manifest, proof: { ...PENDING_PROOF, seq: 7 } });
+    const rows = technicalRows({
+      report,
+      manifest,
+      proof: { ...PENDING_PROOF, seq: 7 },
+      withdrawal: null,
+    });
     const byKey = Object.fromEntries(rows.map((row) => [row.key, row]));
 
     expect(byKey.version.value).toBe(report.head);
@@ -371,7 +543,12 @@ describe("technical details", () => {
 
   it("says an anchor is the node's word, since the browser does not check the chain", () => {
     const { report } = checklistOf(verified);
-    const rows = technicalRows({ report, manifest: null, proof: ANCHORED });
+    const rows = technicalRows({
+      report,
+      manifest: null,
+      proof: ANCHORED,
+      withdrawal: null,
+    });
     const anchor = rows.find((row) => row.key === "anchor")!;
     expect(anchor.value).toBe(
       "chain 8453 · batch 18211 · anchored 2 Mar 2027 04:00 UTC · reported by the node",
@@ -481,6 +658,7 @@ describe("the preservation line", () => {
       fileResults: [],
       proof: PENDING_PROOF,
       preservation: info,
+      withdrawal: null,
     }).find((item) => item.key === "preservation")!;
   }
 

@@ -36,7 +36,8 @@ import {
   type VerifyCounts,
   type VerifyState,
 } from "../ui-kit/verify";
-import type { CheckResult, VerificationReport } from "../verify-core";
+import { formatDate } from "../ui-kit/format-date";
+import { VERSION_TYPE, type CheckResult, type VerificationReport } from "../verify-core";
 import { formatAnchorTime, type RecordProofInfo } from "./anchor";
 import type { FileResult, VersionManifest } from "./files";
 import { NETWORK_PAGE_HREF, preservationCopy, type PreservationInfo } from "./preservation";
@@ -201,35 +202,158 @@ function noticeDetail(
   return `${noticeKindWord(notice.kind)} notice signed by ${noticeSignerWord(notice, report)} (${applied})`;
 }
 
-function retractionItem(report: VerificationReport): ChecklistItem {
+// --- the withdrawal notice -------------------------------------------------
+
+/**
+ * A withdrawal notice on the paper, read out of the records the check loaded
+ * ({@link withdrawalFromRecords}).
+ *
+ * verify-core deliberately does not treat a withdrawal as a supersession (the
+ * six statuses have no *withdrawn*; a withdrawal is the authors taking the
+ * paper back, not a defect in the proof — the same decision D1 records for the
+ * banner), so the checklist names it from the record itself instead.
+ */
+export interface WithdrawalNotice {
+  /** The notice record's id: what "View the withdrawal record" opens. */
+  readonly id: string;
+  /** The instant the notice record is dated (`created`), for the local date. */
+  readonly createdAt: string;
+  /** The did:key that signed it, to say "the authors" only when one did. */
+  readonly author: string | null;
+  /** Where the notice's raw record can be read, `${node}/v1/records/{id}`. */
+  readonly recordUrl: string | null;
+}
+
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The paper's withdrawal notice, from the records the check verified — or
+ * `null` when there is none.
+ *
+ * A notice the node accepted targets the paper's genesis record or one of its
+ * versions (`submissions/notices.py`); the newest by `created` is the paper's
+ * current state. The raw record the node serves under the id is the link, so a
+ * reader can check the withdrawal itself.
+ */
+export function withdrawalFromRecords(
+  records: readonly Record<string, unknown>[],
+  report: VerificationReport,
+  nodeUrl: string,
+): WithdrawalNotice | null {
+  if (report.genesis === null) return null;
+
+  // What a withdrawal of *this* paper may name: its genesis record, or one of
+  // its version records. Records of other papers may be mixed in; they don't.
+  const targets = new Set<string>([report.genesis]);
+  for (const record of records) {
+    if (record.type !== VERSION_TYPE) continue;
+    const body = isMapping(record.body) ? record.body : {};
+    if (body.paper === report.genesis && typeof record.id === "string") {
+      targets.add(record.id);
+    }
+  }
+
+  let newest: (WithdrawalNotice & { rank: number }) | null = null;
+  for (const record of records) {
+    if (record.type !== "withdrawal") continue;
+    const body = isMapping(record.body) ? record.body : {};
+    if (typeof body.target !== "string" || !targets.has(body.target)) continue;
+    if (typeof record.id !== "string" || record.id === "") continue;
+    const created = typeof record.created === "string" ? record.created : "";
+    // A `created` that cannot be parsed still names a withdrawal; it only
+    // loses the race for "newest" and the date in the sentence.
+    const at = Date.parse(created);
+    const rank = Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at;
+    if (newest !== null && rank <= newest.rank) continue;
+    const origin = nodeUrl.replace(/\/+$/, "");
+    newest = {
+      id: record.id,
+      createdAt: created,
+      author:
+        typeof record.author === "string" && record.author !== "" ? record.author : null,
+      recordUrl: origin === "" ? null : `${origin}/v1/records/${encodeURIComponent(record.id)}`,
+      rank,
+    };
+  }
+  if (newest === null) return null;
+  const { rank: _rank, ...notice } = newest;
+  return notice;
+}
+
+/**
+ * The withdrawal as a reader reads it. "The authors" only when one of them
+ * signed the notice (the node also lets a moderator withdraw any paper); the
+ * date is the reader's own calendar (see `formatDate`), and a `created` that
+ * cannot be read is left out rather than guessed at.
+ */
+function withdrawalSentence(
+  withdrawal: WithdrawalNotice,
+  report: VerificationReport,
+): string {
+  const by =
+    withdrawal.author !== null && report.authors.includes(withdrawal.author)
+      ? " by the authors"
+      : "";
+  const on = formatDate(withdrawal.createdAt);
+  return on === null ? `Withdrawn${by}` : `Withdrawn${by} on ${on}`;
+}
+
+/** "View the withdrawal record": the notice's own raw record, when there is one. */
+function withdrawalLink(withdrawal: WithdrawalNotice): ChecklistItem["link"] {
+  return withdrawal.recordUrl === null || withdrawal.recordUrl === ""
+    ? null
+    : { href: withdrawal.recordUrl, label: "View the withdrawal record" };
+}
+
+function retractionItem(
+  report: VerificationReport,
+  withdrawal: WithdrawalNotice | null,
+): ChecklistItem {
   const check = report.checks.supersession;
   if (!check.passed) return fromChecks("retraction", "", [check]);
 
   const notices = report.supersessions.map((notice) => noticeDetail(notice, report));
+  // D1: a withdrawal changes no status and fails nothing, so it is named on
+  // the row (and, under a retraction or correction that keeps its own words,
+  // as the finding underneath).
+  const withdrawn = withdrawal === null ? null : withdrawalSentence(withdrawal, report);
+  const withWithdrawal = (details: readonly string[]) =>
+    withdrawn === null ? details : [...details, withdrawn];
   switch (report.status) {
     case "retracted":
       return item(
         "retraction",
         "warn",
         "Retracted: a retraction notice applies. The signed history still verifies.",
-        notices,
+        withWithdrawal(notices),
       );
     case "tombstoned":
       return item(
         "retraction",
         "warn",
         "Content removed: a trusted authority tombstoned it. The signed record remains.",
-        notices,
+        withWithdrawal(notices),
       );
     case "corrected":
       return item(
         "retraction",
         "warn",
         "Corrected: a correction notice applies to this paper.",
-        notices,
+        withWithdrawal(notices),
       );
     default:
-      return item("retraction", "pass", "No retraction or correction on record", notices);
+      if (withdrawal === null) {
+        return item("retraction", "pass", "No retraction or correction on record", notices);
+      }
+      return item(
+        "retraction",
+        "pass",
+        `${withdrawalSentence(withdrawal, report)}. No retraction or correction on record`,
+        notices,
+        withdrawalLink(withdrawal),
+      );
   }
 }
 
@@ -361,6 +485,13 @@ export interface ChecklistInput {
   readonly proof: RecordProofInfo;
   /** The node's replication summary, or `null` when it did not say. */
   readonly preservation: PreservationInfo | null;
+  /**
+   * The paper's withdrawal notice from the same loaded records
+   * (`withdrawalFromRecords`), or `null` when there is none. verify-core
+   * cannot report it (a withdrawal changes no status), so the caller passes
+   * it; the notice row names it (D1).
+   */
+  readonly withdrawal: WithdrawalNotice | null;
 }
 
 /**
@@ -369,14 +500,14 @@ export interface ChecklistInput {
  * the node's preservation state last.
  */
 export function buildChecklist(input: ChecklistInput): ChecklistItem[] {
-  const { report, manifest, fileResults, proof, preservation } = input;
+  const { report, manifest, fileResults, proof, preservation, withdrawal } = input;
   return [
     authorsItem(report),
     historyItem(report),
     filesItem(report, manifest, fileResults),
     ledgerItem(proof),
     anchorItem(proof),
-    retractionItem(report),
+    retractionItem(report, withdrawal),
     preservationItem(preservation),
   ];
 }
@@ -465,11 +596,13 @@ export interface TechnicalInput {
   readonly report: VerificationReport;
   readonly manifest: VersionManifest | null;
   readonly proof: RecordProofInfo;
+  /** The paper's withdrawal notice, when the loaded records hold one. */
+  readonly withdrawal: WithdrawalNotice | null;
 }
 
 /** The record ids, anchor and signers behind the checklist. */
 export function technicalRows(input: TechnicalInput): TechnicalRow[] {
-  const { report, manifest, proof } = input;
+  const { report, manifest, proof, withdrawal } = input;
   const rows: TechnicalRow[] = [];
   const add = (
     key: string,
@@ -491,6 +624,12 @@ export function technicalRows(input: TechnicalInput): TechnicalRow[] {
     add(`notice-${index + 1}-record`, `${word} record`, notice.id);
     add(`notice-${index + 1}-signer`, `${word} signer`, notice.author);
   });
+  // The withdrawal's raw id and signer, by the same one-copy-away rule: the
+  // row names the withdrawal in words and links the record, not the id.
+  if (withdrawal !== null) {
+    add("withdrawal-record", "Withdrawal record", withdrawal.id);
+    add("withdrawal-signer", "Withdrawal signer", withdrawal.author);
+  }
 
   const { anchor } = proof;
   if (anchor.status === "anchored") {

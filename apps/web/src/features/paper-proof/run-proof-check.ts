@@ -37,6 +37,7 @@ import {
   technicalRows,
   verdictCopy,
   verdictState,
+  withdrawalFromRecords,
   type ChecklistItem,
   type CheckLine,
   type TechnicalRow,
@@ -233,7 +234,17 @@ async function checkRecords(
     }
   }
 
-  const items = buildChecklist({ report, manifest, fileResults, proof, preservation });
+  // D1: verify-core reports no withdrawal (a withdrawal changes no status), so
+  // the checklist names it from the loaded records instead.
+  const withdrawal = withdrawalFromRecords(records, report, nodeUrl);
+  const items = buildChecklist({
+    report,
+    manifest,
+    fileResults,
+    proof,
+    preservation,
+    withdrawal,
+  });
   const state = verdictState(items, report, proof);
   // The indicator carries the PRD's counts for a check that passed; the anchor
   // state follows as the verdict's summary line. Both numbers are the report's
@@ -248,7 +259,7 @@ async function checkRecords(
     state,
     counts,
     items,
-    rows: technicalRows({ report, manifest, proof }),
+    rows: technicalRows({ report, manifest, proof, withdrawal }),
     checks: checkLines(report),
     command: offlineCommand(schId, nodeUrl),
     schId,
