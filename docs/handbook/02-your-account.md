@@ -34,9 +34,9 @@ After your first sign-in, **/onboarding** walks you through five steps:
 | 2. Add your name | Name (required), affiliation (optional), email (required). Your email is "used to verify your account. It is never shown on your public profile." | Yes |
 | 3. Link your ORCID iD | Connect your ORCID record. | Needed for tier 1 |
 | 4. Pick categories to follow | Their new papers appear in your **Following** feed and daily digest. | No |
-| 5. Set recovery guardians | Name five people who can help you recover your account. | See below |
+| 5. Set recovery guardians | Name five people who can help you recover your account. | Strongly recommended |
 
-The **Start reading Scholium** button stays disabled until you save your guardians. **Skip for now** is always available, and you can come back to `/onboarding` later.
+The **Start reading Scholium** button stays disabled until you save your guardians. **Skip for now** is always available, and you can come back to `/onboarding` later. Without guardians you cannot recover your account if you lose this device.
 
 Your onboarding progress is saved in this browser only. **To change your name, affiliation or email later, go back to `/onboarding`.** It is the only place in this release where you can edit your profile.
 
@@ -52,7 +52,7 @@ When you save your profile, Scholium emails you a confirmation link.
 
 Linking ORCID proves who you are as a researcher. It gives you:
 
-- the step up to **tier 1 (Member)**, if your email is already confirmed;
+- the step up to **tier 1 (Member)**, together with a confirmed email;
 - a **✓ ORCID** chip on your public profile;
 - the only way to **recover your account** if you lose your device.
 
@@ -62,7 +62,7 @@ Rules:
 - You cannot unlink or re-link an ORCID iD in this release.
 - You have 10 minutes to finish the round trip to orcid.org.
 
-> **Confirm your email before you link ORCID.** The step up to tier 1 is checked at the moment your ORCID link completes. If your email is not confirmed yet at that moment, you stay at tier 0, and because you cannot re-link, you then need the node operator to raise your tier.
+> **Tier 1 needs both steps, in either order.** You move to tier 1 as soon as your email is confirmed and your ORCID iD is linked, whichever you finish last.
 
 ## Trust tiers
 
@@ -123,19 +123,39 @@ Because your key lives on one device, losing that device would mean losing your 
 
 - You name **exactly five** guardians. Each must be another Scholium account, entered by its DID (people find theirs on their dashboard **Credentials** card or public profile).
 - If you lose your device, **three of the five** must approve before you get your account back.
-- After the third approval there is a **72-hour safety window** before the new key takes over. You can cancel a recovery you did not start during this window.
+- After the third approval there is a **72-hour safety window** before the new key takes over. Until the window ends, you can cancel a recovery you did not start (see [A recovery you did not start](#a-recovery-you-did-not-start)).
 
-> **Choose your guardians carefully.** In this release you cannot change your guardian list from the web app once it is saved. Pick five people you trust and can reach, such as colleagues, a supervisor or co-authors.
+Pick five people you trust and can reach, such as colleagues, a supervisor or co-authors.
+
+### Change your guardians
+
+1. On **/me/security**, under **Recovery guardians**, choose **Change guardians**.
+2. Replace any of the five DIDs.
+3. Choose **Save guardians**. Scholium asks for your passkey: your device signs the new list with your account's key, so a stolen session alone cannot redirect your recovery.
+
+You see "Guardians updated", and Scholium sends you a notification about the change. Change them here, not at `/onboarding`: onboarding only saves your first list.
 
 ### Recover a lost account
 
 1. On a new device, go to **/recover** (or **Recover your account** on the sign-in page).
 2. Enter the **ORCID iD** linked to your account and choose **Start recovery**.
-3. Your guardians are notified. Each one opens the request on their dashboard and chooses **Approve**.
+3. Your guardians are notified, and so is the account itself: a notification in Scholium, and an email if the account's email is confirmed. Each guardian opens the request on their dashboard and chooses **Approve**.
 4. Use **Check for approvals** to follow progress ("2 of 3 approvals").
 5. After three approvals and the 72-hour safety window, your new device holds your account.
 
 If you see "We couldn't find an account linked to that ORCID iD", the ORCID was never linked. If you see "That account hasn't set recovery guardians yet", recovery is not possible. In both cases contact the node operator.
+
+### A recovery you did not start
+
+When anyone starts a recovery of your account, you get a notification, and an email if your email is confirmed. If you did not start it and you still have your device:
+
+1. Find the request id in the notice. It starts with `rec_`: it is the last part of the notice's link, and the email lists it as `request_id`.
+2. On the device that holds your passkey, open **/recover?request={request id}**.
+3. Choose **Cancel this recovery**. Cancelling asks for your passkey.
+
+You can cancel until the 72-hour safety window ends. Tell your guardians not to approve.
+
+> **Known issue:** the notice is worded like a guardian's request ("…needs your approval as a guardian") and its link opens the guardian page. `/me/security` has no cancel button for it. Use the steps above.
 
 ### If you are someone's guardian
 
@@ -148,9 +168,9 @@ A recovery request appears in **Needs your attention** on your dashboard and as 
 | Section | What it does |
 | --- | --- |
 | Devices | Shows the key held by this device. |
-| Recovery guardians | Shows your five guardians. |
-| Recovery requests | Shows any recovery in progress for your account. |
-| Key rotation | **Rotate key** replaces your signing key. It asks for your passkey twice, signs you out everywhere else, and "can't be undone". |
+| Recovery guardians | Shows your five guardians. **Change guardians** replaces them (see [Change your guardians](#change-your-guardians)). |
+| Recovery requests | Recovery requests waiting for your approval as someone's guardian. |
+| Key rotation | **Rotate key** replaces your signing key. It asks for your passkey twice, signs you out everywhere else, and "can't be undone". Afterwards you sign in with your passkey as usual: your account, DID and tier stay the same. |
 | Erase my profile | Removes your personal details (see below). |
 
 ## Your public profile
@@ -159,7 +179,7 @@ Your profile is at **/u/{your DID}**. It shows your name (or a short form of you
 
 ## Erase your profile
 
-**Erase my profile** on `/me/security` acts immediately, in one click, with no confirmation step.
+Choose **Erase my profile** on `/me/security`. Scholium asks "Erase your profile?" and says what is erased and what stays. Choose **Erase my profile** again to erase, or **Cancel**. Erasure can't be undone.
 
 | Erased | Kept |
 | --- | --- |
@@ -169,7 +189,7 @@ Your profile is at **/u/{your DID}**. It shows your name (or a short form of you
 
 After erasure your profile says "This profile has been erased." and your name is replaced by a short form of your DID wherever it appears. The erasure itself is recorded in the public log.
 
-Names and ORCID iDs typed into a paper's author list are part of that paper's signed record. Erasing your profile does not remove them. Saving your profile again cancels the erasure.
+Names and ORCID iDs typed into a paper's author list are part of that paper's signed record. Erasing your profile does not remove them. If you later save your profile again at `/onboarding`, it shows the details you enter then; the erased ones cannot be brought back.
 
 ## Your dashboard
 
@@ -180,7 +200,7 @@ Names and ORCID iDs typed into a paper's author list are part of that paper's si
 | Needs your attention | Consents to sign, review invitations, author replies, moderation outcomes, appeal panels you sit on, email confirmation, recovery requests where you are a guardian |
 | My papers | Your papers and their status |
 | My reviews | Your reviews: sealed, revealed or awaiting a reply |
-| Saved searches | Searches you saved from the search page |
+| Saved searches | Searches you saved from the search page. **Delete** removes one. |
 | Credentials | Your signing DID, your ORCID iD and **View public profile** |
 | Security | Link to `/me/security` |
 | Notifications | Your notifications (the bell in the navigation bar opens this) |

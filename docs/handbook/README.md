@@ -33,7 +33,7 @@ Operators who run a Scholium server should read [`docs/deploy.md`](../deploy.md)
 ### I want to publish my first paper
 
 1. **Sign in** with a passkey on the device you will keep using ([2](02-your-account.md#sign-in-with-a-passkey)).
-2. In onboarding, add your name and email, then **confirm your email** *before* you **link ORCID**. Now you are tier 1 ([2](02-your-account.md#link-your-orcid-id)).
+2. In onboarding, add your name and email, **confirm your email** and **link ORCID**, in either order. Now you are tier 1 ([2](02-your-account.md#link-your-orcid-id)).
 3. **Set your five recovery guardians** ([2](02-your-account.md#recovery-guardians)).
 4. **Get endorsed** in each category you will publish in. Send your profile link to a reviewer in that category ([2](02-your-account.md#endorsements)).
 5. **Collect your co-authors' DIDs.** Each co-author needs a Scholium account.

@@ -33,7 +33,7 @@ flowchart TD
 
 ## The submit wizard
 
-Go to **Submit** in the navigation bar (**/submit**). The wizard has five steps: **Files → Details → Authors → Checks → Sign**. Your progress saves automatically in this browser ("Draft saved").
+Go to **Submit** in the navigation bar (**/submit**). The wizard has five steps: **Files → Details → Authors → Checks → Sign**. Your progress saves automatically in this browser ("Draft saved"). Once the version is submitted, the draft is cleared, so the next visit to **/submit** starts empty. If submitting fails, the draft is kept.
 
 ### Step 1: Files
 
@@ -204,7 +204,7 @@ Use **Issue notice** on the paper page. A reason is required. Any author of the 
 | --- | --- | --- |
 | Correction | An error needs pointing out but the work stands | Status becomes **Corrected**; a banner shows on every version |
 | Retraction | The work should no longer be relied on | Status becomes **Retracted**; banner on every version and in citations |
-| Withdrawal | You no longer stand behind the paper | Recorded as a notice; status does not change |
+| Withdrawal | You no longer stand behind the paper | A "Withdrawn by the authors" banner shows with your reason; status does not change, and the paper and its files stay available |
 
 Retraction and withdrawal ask you to confirm. Notices cannot be undone: the paper and its history remain, with the notice added.
 

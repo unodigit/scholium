@@ -56,7 +56,7 @@ Tiers 3 and 4 are granted by the node operator. Contact them.
 
 ### What emails will I get?
 
-Email confirmation, co-author consent requests and the daily digest. Everything else, including moderation outcomes, report outcomes, appeal notices and recovery requests, appears as a notification in Scholium (the bell, or **/me**).
+Email confirmation, co-author consent requests, the daily digest, and the notice that someone started a recovery of your account (if your email is confirmed). Everything else, including moderation outcomes, report outcomes, appeal notices and recovery requests you are asked to approve as a guardian, appears as a notification in Scholium (the bell, or **/me**).
 
 ## Known limitations in this release
 
@@ -66,9 +66,7 @@ These are deliberate limits of the first release. Plan around them.
 
 - **One browser, one account.** You cannot add a second device. Signing in from another browser creates a new, separate account.
 - **Profile editing** is only available at `/onboarding`.
-- **Recovery guardians** cannot be changed from the web app once saved.
-- **ORCID** cannot be unlinked or re-linked. Confirm your email before linking ORCID.
-- **Erase my profile** acts immediately, without asking you to confirm.
+- **ORCID** cannot be unlinked or re-linked.
 
 **Publishing**
 
@@ -83,9 +81,7 @@ These are deliberate limits of the first release. Plan around them.
 - **Revealing** is manual. Come back and choose **Reveal review** when the gate opens.
 - **Your review key** lives in the browser where you committed. Export the review key file if you might switch browsers.
 - **Invitations** cannot be accepted or declined.
-- **Signed reviews** show your name on your profile, not on the paper's Reviews tab.
 - **Review ratings** are recorded but not yet used for anything.
-- The **AI-assistance declaration** is sent with your review but not yet shown on it.
 
 **Discussion**
 
@@ -102,7 +98,4 @@ These are deliberate limits of the first release. Plan around them.
 
 These are bugs we know about in this release.
 
-- **Withdrawal notices** are shown with the "Content removed for legal reasons" banner, although the paper and its files remain available.
-- **Deleting a saved search** from the dashboard does not work.
-- **+ Follow on a paper page** does not add the paper to your Following feed or digest. Follow the paper's category instead.
-- **Report outcome notifications** may show a generic label instead of the outcome. Open the notification for details.
+- **The notice that a recovery of your account was started** is worded like a guardian's request ("…needs your approval as a guardian") and its link opens the guardian page. `/me/security` has no cancel button for it. To cancel a recovery you did not start, follow [A recovery you did not start](02-your-account.md#a-recovery-you-did-not-start).

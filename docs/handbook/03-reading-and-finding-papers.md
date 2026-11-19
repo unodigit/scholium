@@ -62,11 +62,11 @@ Narrow keyword results with the filters on the left:
 
 ### Save a search
 
-Choose **Save this search** on the results page. Your saved searches are listed on your dashboard, and new matches arrive in your daily digest. In this release every saved search is included in the digest, whether or not you tick **Email me new matches in the daily digest**.
+Choose **Save this search** on the results page. Scholium confirms: "Saved. New matches are included in your daily digest." The digest needs a confirmed email address, and the confirmation tells you if yours is not confirmed yet. Your saved searches are listed on your dashboard's **Saved searches** card, where **Delete** removes one.
 
 ## Following and the daily digest
 
-Follow a category with **+ Follow** on its page or during onboarding. Its new papers then appear in your **Following** tab.
+Follow a category with **+ Follow** on its page or during onboarding. Its new papers then appear in your **Following** tab. You follow categories, not single papers or people: paper pages and member profiles have no Follow button. A paper's header links back to its main category, where you can follow it.
 
 Once a day (06:00 UTC), Scholium emails a digest of new papers in the categories you follow and new matches for your saved searches. It covers up to 50 papers from the last 7 days. You receive it only if your email address is confirmed, and only on days when there is something new.
 
@@ -88,7 +88,7 @@ A paper lives at **/p/{id}**, for example `/p/k3f9-q2xz-7mwd`. That address alwa
 
 - **Back link** to the paper's main category, the **title**, and the **authors** (each links to their profile).
 - The **status chip**, the version (`v2 of 2`), and the **licence**.
-- Actions: **PDF**, **HTML**, **Cite**, **Download ▾**, **+ Follow** and **Report**.
+- Actions: **PDF**, **HTML**, **Cite**, **Download ▾** and **Report**.
 - Authors of the paper also see **Invite reviewer**, **New version**, **Issue notice** and, after a moderation hold or rejection, **File an appeal**.
 
 ### Banners
@@ -99,6 +99,7 @@ A full-width banner above the title tells you when something important applies:
 | --- | --- |
 | Retracted | "A retraction notice is on record. Every version carries it." |
 | Corrected | "A correction notice is on record." |
+| Withdrawn | "Withdrawn by the authors": "The authors withdrew this paper. It stays available as part of the record.", followed by the authors' reason |
 | Newer version | "You are reading an older version. The newest is v3." with **Go to v3** |
 | Removed | "Content removed for legal reasons … The record of its existence remains." |
 

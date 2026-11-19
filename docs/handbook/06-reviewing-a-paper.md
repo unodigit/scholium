@@ -41,7 +41,7 @@ The form runs three checks and marks each as pass, fail or unknown:
 - "No co-authorship with any author in the last 3 years"
 - "Different institution from all authors". If you have not saved an affiliation, the form asks you to: "Save an affiliation on your profile so the node can compare it with the authors'."
 
-Only the first check blocks you. The other two are **advisory**: if one fails, think carefully about whether you can review fairly, and decline if you cannot.
+Only the first check blocks you. The other two are **advisory**. As the form puts it: "Only authors of the paper are refused; the other checks are advisory. If one fails, decide whether you can review fairly." Decline if you cannot.
 
 ## 3. Choose anonymous or signed
 
@@ -49,9 +49,9 @@ By default **you review anonymously**. Your review is published as "Reviewer A",
 
 Your identity is not stored in readable form. When you commit, Scholium stores your identity encrypted with the integrity committee's key, so it can only be opened in a misconduct case.
 
-> **In this release** the escrow uses a single committee key. The form's wording, "It can be opened only by 3 of 5 integrity committee members", describes the planned threshold scheme, which is not built yet. There is no way to open an identity through the website or the API.
+> **In this release** the escrow uses a single committee key; a scheme that needs several committee members to agree is planned. There is no way to open an identity through the website or the API.
 
-If you prefer public credit, choose **Sign with my name instead**. Your review then appears under **Signed reviews** on your public profile once revealed. On the paper's Reviews tab it is still labelled "Reviewer A".
+If you prefer public credit, choose **Sign with my name instead**. Your review then appears under **Signed reviews** on your public profile once revealed. On the paper's Reviews tab it keeps its letter and reads "Signed by {your name}", linking to your profile (a short form of your DID if you have erased your profile).
 
 ## 4. Fill the rubric
 
@@ -78,7 +78,7 @@ Then set:
 | Major concerns | Keeps the paper **Under review** |
 | Fundamentally flawed | Makes the paper **Contested** |
 
-You can add an optional **Written report** in Markdown, and tick **I used AI assistance in writing this review** if you did.
+You can add an optional **Written report** in Markdown, and tick **I used AI assistance in writing this review** if you did. Once revealed, your review shows "AI assistance declared" on the paper's Reviews tab.
 
 ## 5. Commit the review (sealed)
 
@@ -113,7 +113,7 @@ When the authors publish a new version, choose **Update for v{n}** on the form. 
 
 ## Rate other reviews
 
-Any reviewer who did not write a review and is not an author of the paper can rate it once, from 1 to 5, with **Rate this review's quality**. "1 is a review that does not help, 5 is one that sharpens the paper. You rate the review, not the paper." Ratings are recorded. Reviewer reputation is planned for a later release and nothing uses ratings yet.
+Any reviewer who did not write a review and is not an author of the paper can rate it once, from 1 to 5, with **Rate this review's quality**. "1 is a review that does not help, 5 is one that sharpens the paper. You rate the review, not the paper. Ratings are recorded with the review and never change the paper's status." Reviewer reputation is planned for a later release.
 
 ## How paper status is decided
 
