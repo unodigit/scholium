@@ -68,7 +68,7 @@ describe("ConflictCheck", () => {
     );
 
     expect(
-      screen.getByText(/Committed despite a declared affiliation overlap/),
+      screen.getByText(/Committed despite an affiliation overlap with an author/),
     ).toBeTruthy();
     expect(screen.queryByText(/decides whether it can be committed/)).toBeNull();
   });

@@ -209,7 +209,8 @@ describe("describeConflictSummary", () => {
     };
 
     const summary = describeConflictSummary(report, true);
-    expect(summary).toContain("Committed despite a declared affiliation overlap");
+    expect(summary).toContain("Committed despite an affiliation overlap with an author");
+    expect(summary).not.toContain("declared");
     expect(summary).not.toMatch(/decides whether it can be committed/);
   });
 
@@ -222,6 +223,7 @@ describe("describeConflictSummary", () => {
 
     const summary = describeConflictSummary(report, true);
     expect(summary).toContain("3 checks found a conflict");
+    expect(summary).not.toContain("declared");
     expect(summary).not.toMatch(/decides whether it can be committed/);
   });
 });

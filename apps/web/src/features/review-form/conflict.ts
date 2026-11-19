@@ -199,7 +199,7 @@ const CONFLICT_ADVICE =
  *
  * @param reviewed The reviewer already has a review of this paper (sealed or
  *   revealed). A conflict then describes something that already happened: the
- *   review was committed with the conflict declared, so the panel notes it in
+ *   review was committed despite the conflict, so the panel notes it in
  *   the past tense instead of saying the node still has to decide. A clear
  *   result likewise must not invite another review, since the API takes one
  *   review from each reviewer (REV-3).
@@ -215,7 +215,7 @@ export function describeConflictSummary(
     if (reviewed) {
       return conflicts.length === 1
         ? `One check found a conflict. Committed despite ${committedConflict(conflicts[0])}.`
-        : `${conflicts.length} checks found a conflict. The review was committed despite ${conflicts.length} declared conflicts.`;
+        : `${conflicts.length} checks found a conflict. The review was committed despite ${conflicts.length} conflicts.`;
     }
     return conflicts.length === 1
       ? `One check found a conflict. ${CONFLICT_ADVICE}`
@@ -232,19 +232,20 @@ export function describeConflictSummary(
 }
 
 /**
- * What one failed check is called in the past tense, once the review that
- * declared it is committed. The words name the overlap, not the person.
+ * What one failed check is called in the past tense, once the review is
+ * committed despite it. Nothing is declared on the review itself, so the words
+ * never say "declared". The words name the overlap, not the person.
  */
 function committedConflict(check: ConflictCheck): string {
   switch (check.id) {
     case "different_institution":
-      return "a declared affiliation overlap";
+      return "an affiliation overlap with an author";
     case "no_recent_coauthorship":
-      return "a declared co-authorship";
+      return "a recent co-authorship with an author";
     default:
       // The API refuses an author's commit, so that failure is not a state a
       // committed review is in; anything else is named plainly.
-      return "a declared conflict";
+      return "a conflict";
   }
 }
 
