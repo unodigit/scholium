@@ -91,21 +91,41 @@ describe("SaveSearchButton: saving", () => {
       hasCode: true,
       dateFrom: "2026-01-01",
     });
-    expect(save.mock.calls[0][1]).toEqual({ digest: false });
-    expect((await screen.findByRole("status")).textContent).toContain("Saved");
+    expect(save.mock.calls[0]).toHaveLength(1);
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "Saved. New matches are included in your daily digest.",
+    );
   });
 
-  it("passes the optional daily-digest choice", async () => {
+  it("mentions the daily digest in the confirmation", async () => {
     const save = vi.fn().mockResolvedValue({ id: "ss_1", query: {} });
     render(<SaveSearchButton state={state()} signedIn save={save} />);
 
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: /daily digest/i }),
-    );
     fireEvent.click(screen.getByRole("button", { name: "Save this search" }));
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(save.mock.calls[0][1]).toEqual({ digest: true });
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "Saved. New matches are included in your daily digest.",
+    );
+  });
+
+  it("notes that the digest needs a confirmed email", async () => {
+    const save = vi.fn().mockResolvedValue({ id: "ss_1", query: {} });
+    render(
+      <SaveSearchButton
+        state={state()}
+        signedIn
+        emailVerified={false}
+        save={save}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save this search" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "confirmed email",
+    );
   });
 
   it("says why when the save fails and lets the reader try again", async () => {
@@ -128,7 +148,7 @@ describe("SaveSearchButton: saving", () => {
   it("sends one request for a double click", async () => {
     let finish: () => void = () => {};
     const save = vi.fn(
-      (_state: SearchState, _options: { readonly digest: boolean }) =>
+      (_state: SearchState) =>
         new Promise<{ id: string; query: Record<string, never> }>((resolve) => {
           finish = () => resolve({ id: "ss_1", query: {} });
         }),

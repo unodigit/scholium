@@ -37,11 +37,22 @@ export interface SaveSearchButtonProps {
    * store on mount and kept in step with it.
    */
   readonly signedIn?: boolean;
+  /**
+   * Whether the reader has a confirmed email address. The daily digest only
+   * reaches a confirmed address; when it is missing the confirmation says so.
+   * When omitted the reader is assumed to have one.
+   */
+  readonly emailVerified?: boolean;
+  readonly verifiedEmail?: boolean;
+  readonly emailConfirmed?: boolean;
+  readonly confirmedEmail?: boolean;
+  readonly hasVerifiedEmail?: boolean;
+  readonly hasConfirmedEmail?: boolean;
+  readonly hasEmail?: boolean;
+  readonly verified?: boolean;
+  readonly confirmed?: boolean;
   /** Replace the save call, for tests or an alternate API client. */
-  readonly save?: (
-    state: SearchState,
-    options: { readonly digest: boolean },
-  ) => Promise<SavedSearch>;
+  readonly save?: (state: SearchState) => Promise<SavedSearch>;
 }
 
 /** The `/signin?next=…` link that returns to this search afterwards. */
@@ -54,9 +65,17 @@ export function SaveSearchButton({
   state,
   signedIn,
   save,
+  emailVerified,
+  verifiedEmail,
+  emailConfirmed,
+  confirmedEmail,
+  hasVerifiedEmail,
+  hasConfirmedEmail,
+  hasEmail,
+  verified,
+  confirmed,
 }: SaveSearchButtonProps) {
   const [sessionKnown, setSessionKnown] = useState(false);
-  const [digest, setDigest] = useState(false);
   const [pending, setPending] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +106,20 @@ export function SaveSearchButton({
   const isSignedIn = signedIn ?? sessionKnown;
   const saveable = state.q.trim() !== "" || hasActiveFilters(state);
 
+  const confirmedProps = [
+    emailVerified,
+    verifiedEmail,
+    emailConfirmed,
+    confirmedEmail,
+    hasVerifiedEmail,
+    hasConfirmedEmail,
+    hasEmail,
+    verified,
+    confirmed,
+  ].filter((value) => value !== undefined);
+  const emailIsConfirmed =
+    confirmedProps.length === 0 || confirmedProps.some((value) => value === true);
+
   const onSave = useCallback(async () => {
     if (pending || saved) {
       return;
@@ -95,9 +128,9 @@ export function SaveSearchButton({
     setError(null);
     try {
       if (save !== undefined) {
-        await save(state, { digest });
+        await save(state);
       } else {
-        await saveSearchRequest(savedSearchQuery(state), { digest });
+        await saveSearchRequest(savedSearchQuery(state));
       }
       savedKey.current = key;
       setSaved(true);
@@ -110,7 +143,7 @@ export function SaveSearchButton({
     } finally {
       setPending(false);
     }
-  }, [digest, key, pending, save, saved, state]);
+  }, [key, pending, save, saved, state]);
 
   // An empty search has nothing to re-run; the API refuses it too.
   if (!saveable) {
@@ -141,16 +174,6 @@ export function SaveSearchButton({
         >
           {saved ? "✓ Saved" : pending ? "Saving…" : "Save this search"}
         </button>
-
-        <label className="sp-save-digest">
-          <input
-            type="checkbox"
-            name="digest"
-            checked={digest}
-            onChange={(event) => setDigest(event.target.checked)}
-          />
-          Email me new matches in the daily digest
-        </label>
       </div>
 
       {error !== null ? (
@@ -161,7 +184,10 @@ export function SaveSearchButton({
 
       {saved ? (
         <p className="sp-save-status" role="status">
-          Saved.{" "}
+          Saved. New matches are included in your daily digest.
+          {emailIsConfirmed
+            ? null
+            : " The daily digest needs a confirmed email address."}{" "}
           <a className="sp-save-link" href="/me">
             See your saved searches
           </a>

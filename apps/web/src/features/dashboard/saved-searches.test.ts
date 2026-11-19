@@ -190,7 +190,7 @@ describe("saveSearch", () => {
       .fn()
       .mockResolvedValue({ id: "ss_0123", did: "did:key:z6Mk", query: { q: "reward" } });
 
-    const saved = await saveSearch({ q: "reward" }, {}, { post });
+    const saved = await saveSearch({ q: "reward" }, { post });
 
     expect(post).toHaveBeenCalledWith("/me/saved-searches", {
       query: { q: "reward" },
@@ -199,22 +199,21 @@ describe("saveSearch", () => {
     expect(saved.query.q).toBe("reward");
   });
 
-  it("carries the optional daily-digest choice", async () => {
+  it("sends no daily-digest flag", async () => {
     const post = vi
       .fn()
       .mockResolvedValue({ id: "ss_0123", did: "did:key:z6Mk", query: { q: "reward" } });
 
-    await saveSearch({ q: "reward" }, { digest: true }, { post });
+    await saveSearch({ q: "reward" }, { post });
 
     expect(post).toHaveBeenCalledWith("/me/saved-searches", {
       query: { q: "reward" },
-      digest: true,
     });
   });
 
   it("rejects a body that is not a saved search rather than pretending it saved", async () => {
     const post = vi.fn().mockResolvedValue({ unexpected: true });
-    await expect(saveSearch({ q: "reward" }, {}, { post })).rejects.toThrow(
+    await expect(saveSearch({ q: "reward" }, { post })).rejects.toThrow(
       SavedSearchError,
     );
   });

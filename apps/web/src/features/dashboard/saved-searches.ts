@@ -183,15 +183,9 @@ export function savedSearchQuery(state: SearchState): SavedSearchQuery {
   return query;
 }
 
-/** Optional extras when saving a search. */
-export interface SaveSearchOptions {
-  /**
-   * Ask for new matches by email. The API does not store a per-search flag
-   * yet (its daily digest already covers every saved search and follows), so
-   * this is carried in the request body for forward compatibility only.
-   */
-  readonly digest?: boolean;
-}
+/** Optional extras when saving a search. (None are honoured: the daily digest
+ *  already covers every saved search; kept as an empty shape for callers.) */
+export interface SaveSearchOptions {}
 
 /**
  * Save a search through `POST /v1/me/saved-searches`.
@@ -201,14 +195,17 @@ export interface SaveSearchOptions {
  */
 export async function saveSearch(
   query: SavedSearchQuery,
-  options: SaveSearchOptions = {},
+  optionsOrClient?: SaveSearchOptions | SavedSearchesWriteClient,
   client: SavedSearchesWriteClient = api,
 ): Promise<SavedSearch> {
+  const resolvedClient =
+    optionsOrClient !== null &&
+    typeof optionsOrClient === "object" &&
+    "post" in optionsOrClient
+      ? (optionsOrClient as SavedSearchesWriteClient)
+      : client;
   const body: Record<string, unknown> = { query };
-  if (options.digest === true) {
-    body.digest = true;
-  }
-  const payload = await client.post<unknown>(SAVED_SEARCHES_ENDPOINT, body);
+  const payload = await resolvedClient.post<unknown>(SAVED_SEARCHES_ENDPOINT, body);
   const [saved] = parseSavedSearches([payload]);
   return saved;
 }
