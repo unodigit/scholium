@@ -6,13 +6,16 @@ the records alone -- with the node's own code imported nowhere.  This module
 is that independent implementation of the status rules the product states
 (the contract ``papers.status`` documents, feature 83):
 
-    status_of(records).status    # "preprint" | "under_review" | "reviewed"
+    status_of(records).status    # "awaiting_moderation" | "preprint"
+                                # | "under_review" | "reviewed"
                                 # | "contested" | "corrected" | "retracted"
 
 Only moderation, review and notice records are read -- ``retraction``,
 ``correction``, ``moderation.decision``, ``review.commit`` and
 ``review.formal`` -- and ``ai.review`` is never read: the AI pre-review is
 advisory and can never change a paper's status, whatever its body claims.
+``paper.version`` records are read for one thing only: which version is the
+newest, so the queue rule can ask whether a moderator has listed it.
 The first matching rule decides:
 
 ====  ======================  ============
@@ -24,7 +27,8 @@ The first matching rule decides:
  4    ``correction``          corrected
  5    ``reviews_supportive``  reviewed
  6    ``review_activity``     under_review
- 7    ``default``             preprint
+ 7    ``awaiting_moderation`` awaiting_moderation
+ 8    ``default``             preprint
 ====  ======================  ============
 
 Reading the records
@@ -42,6 +46,14 @@ authenticated every record in the archive before any view is written.
   contested while any target's decision in force is a hold.  A *release*
   (an overturned appeal's restoration) puts the target in the state
   ``body.state`` names, so it is a hold only when it names ``held``.
+* A paper is **awaiting moderation** when its newest ``paper.version`` is not
+  listed: per target, the newest state-setting decision is the one in force,
+  and only a *list* (or a *release* naming ``listed``) puts a version in the
+  catalog.  A version no moderator has decided on, or one held, rejected,
+  delisted or tombstoned, is not listed.  This is the same classification
+  ``scholium verify`` shows, and it is reached only when the records include
+  the paper's version records -- a caller that supplies the status records
+  alone cannot tell, and keeps the old default.
 * A reviewer's **current review** is the head of their ``prev`` chain: a
   ``review.formal`` that another review by the same reviewer names as
   ``prev`` has been replaced.  A ``prev`` naming somebody else's review
@@ -74,6 +86,7 @@ __all__ = [
     "MIN_REVIEWS_FOR_REVIEWED",
     "RULES",
     "STATUSES",
+    "STATUS_AWAITING_MODERATION",
     "STATUS_CONTESTED",
     "STATUS_CORRECTED",
     "STATUS_PREPRINT",
@@ -87,6 +100,7 @@ __all__ = [
 
 # --- statuses and rules -----------------------------------------------------
 
+STATUS_AWAITING_MODERATION = "awaiting_moderation"
 STATUS_PREPRINT = "preprint"
 STATUS_UNDER_REVIEW = "under_review"
 STATUS_REVIEWED = "reviewed"
@@ -96,6 +110,7 @@ STATUS_RETRACTED = "retracted"
 
 #: Every status, in the order the paper view documents them.
 STATUSES: tuple[str, ...] = (
+    STATUS_AWAITING_MODERATION,
     STATUS_PREPRINT,
     STATUS_UNDER_REVIEW,
     STATUS_REVIEWED,
@@ -112,10 +127,11 @@ RULES: tuple[str, ...] = (
     "correction",
     "reviews_supportive",
     "review_activity",
+    "awaiting_moderation",
     "default",
 )
 
-#: The only record types the status rules read (never ``ai.review``).
+#: The status-bearing record types the status rules read (never ``ai.review``).
 STATUS_RECORD_TYPES: frozenset[str] = frozenset(
     {
         "retraction",
@@ -133,15 +149,35 @@ MIN_REVIEWS_FOR_REVIEWED = 2
 _STATE_SETTING_ACTIONS: frozenset[str] = frozenset(
     {"list", "hold", "reject", "delist", "tombstone", "release"}
 )
-_HOLD = "hold"
 _RELEASE = "release"
 _HELD = "held"
+_LISTED = "listed"
+
+#: The state a plain state-setting action asks for, as the node maps them.
+#: A ``release`` names its state in the record, so it is read separately.
+_ACTION_STATES: dict[str, str] = {
+    "list": _LISTED,
+    "hold": _HELD,
+    "reject": "rejected",
+    "delist": "rejected",
+    "tombstone": "rejected",
+}
+
+#: The states a ``release`` may name.
+_RELEASE_STATES: frozenset[str] = frozenset(
+    {_LISTED, "moderation", _HELD, "rejected"}
+)
 
 _RETRACTION = "retraction"
 _CORRECTION = "correction"
 _MODERATION = "moderation.decision"
 _REVIEW_COMMIT = "review.commit"
 _REVIEW_FORMAL = "review.formal"
+_VERSION = "paper.version"
+
+#: Everything :func:`status_of` may look at.  ``paper.version`` decides only
+#: which version is the newest, for the queue rule; ``ai.review`` is never here.
+_STATUS_INPUT_TYPES: frozenset[str] = STATUS_RECORD_TYPES | {_VERSION}
 
 #: Normalised recommendations (see "Reading the records").
 _SUPPORTIVE: frozenset[str] = frozenset(
@@ -225,19 +261,81 @@ def _ids(records: Iterable[Mapping[str, Any]]) -> tuple[str, ...]:
 # --- the rules --------------------------------------------------------------
 
 
-def _holds_in_force(decisions: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    """Per target, the newest state-setting decision, kept when it is a hold.
+def _state_of_decision(decision: Mapping[str, Any]) -> str | None:
+    """The state the decision asks for, or ``None`` when it sets none."""
+    action = _token(_body(decision).get("action"))
+    if action not in _STATE_SETTING_ACTIONS:
+        return None
+    if action == _RELEASE:
+        state = _token(_body(decision).get("state"))
+        return state if state in _RELEASE_STATES else None
+    return _ACTION_STATES.get(action)
+
+
+def _states_in_force(
+    decisions: list[Mapping[str, Any]],
+) -> dict[str | None, tuple[str, Mapping[str, Any]]]:
+    """Per target, the newest state-setting decision and the state it sets.
 
     ``decisions`` is already in canonical (oldest first) order.
     """
     current: dict[str | None, tuple[str, Mapping[str, Any]]] = {}
     for decision in decisions:
-        action = _token(_body(decision).get("action"))
-        if action in _STATE_SETTING_ACTIONS:
-            if action == _RELEASE and _token(_body(decision).get("state")) == _HELD:
-                action = _HOLD  # released back into a hold: the hold is in force again
-            current[_text(_body(decision).get("target"))] = (action, decision)
-    return [d for action, d in current.values() if action == _HOLD]
+        state = _state_of_decision(decision)
+        if state is not None:
+            current[_text(_body(decision).get("target"))] = (state, decision)
+    return current
+
+
+def _holds_in_force(decisions: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Per target, the newest state-setting decision, kept when it is a hold.
+
+    ``decisions`` is already in canonical (oldest first) order.
+    """
+    return [
+        decision
+        for state, decision in _states_in_force(decisions).values()
+        if state == _HELD
+    ]
+
+
+def _newest_version_id(versions: list[Mapping[str, Any]]) -> str | None:
+    """The record id of the newest posted version, if any is supplied.
+
+    ``body.n`` is the version number; a fork may hold two records with the same
+    number, so ``created`` and the record id break the tie, as ``verify`` orders
+    the rest of its summary.
+    """
+    newest: str | None = None
+    newest_key: tuple[int, datetime, str] | None = None
+    for version in versions:
+        record_id = _text(version.get("id"))
+        if record_id is None:
+            continue
+        number = _body(version).get("n")
+        if isinstance(number, bool) or not isinstance(number, int):
+            number = 0
+        key = (number, _created(version.get("created")), record_id)
+        if newest_key is None or key > newest_key:
+            newest, newest_key = record_id, key
+    return newest
+
+
+def _newest_version_listed(
+    versions: list[Mapping[str, Any]], decisions: list[Mapping[str, Any]]
+) -> bool | None:
+    """Whether the newest version is listed; ``None`` when it cannot be told.
+
+    Only a ``list`` decision (or a ``release`` naming ``listed``) puts a
+    version in the catalog, the classification ``scholium verify`` uses.  With
+    no version records supplied there is no newest version to ask about, so the
+    caller gets ``None`` and the default rule keeps its old answer.
+    """
+    newest = _newest_version_id(versions)
+    if newest is None:
+        return None
+    entry = _states_in_force(decisions).get(newest)
+    return entry is not None and entry[0] == _LISTED
 
 
 def _current_reviews(formal: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -265,11 +363,14 @@ def _current_reviews(formal: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]
 
 
 def status_of(records: Iterable[Any]) -> StatusResult:
-    """Compute one paper's status from its status-bearing records.
+    """Compute one paper's status from its records.
 
-    See the module docstring for the input, the precedence table and the
-    review and moderation rules.  Records of types the rules do not read --
-    ``ai.review`` included -- are ignored by construction.
+    ``records`` must hold the paper's status-bearing records; include its
+    ``paper.version`` records too, or the queue rule cannot tell whether the
+    newest version is listed and the default is ``preprint``.  See the module
+    docstring for the input, the precedence table and the review and moderation
+    rules.  Records of types the rules do not read -- ``ai.review`` included --
+    are ignored by construction.
 
     Raises:
         ValueError: if ``records`` is not an iterable of record mappings.
@@ -288,11 +389,11 @@ def status_of(records: Iterable[Any]) -> StatusResult:
 
     kept: list[Mapping[str, Any]] = []
     for item in items:
-        if isinstance(item, Mapping) and item.get("type") in STATUS_RECORD_TYPES:
+        if isinstance(item, Mapping) and item.get("type") in _STATUS_INPUT_TYPES:
             kept.append(item)
     kept.sort(key=_order)
 
-    by_type: dict[str, list[Mapping[str, Any]]] = {kind: [] for kind in STATUS_RECORD_TYPES}
+    by_type: dict[str, list[Mapping[str, Any]]] = {kind: [] for kind in _STATUS_INPUT_TYPES}
     for record in kept:
         by_type[str(record["type"])].append(record)
 
@@ -321,5 +422,9 @@ def status_of(records: Iterable[Any]) -> StatusResult:
     activity = by_type[_REVIEW_COMMIT] + by_type[_REVIEW_FORMAL]
     if activity:
         return StatusResult(STATUS_UNDER_REVIEW, "review_activity", _ids(activity))
+
+    listed = _newest_version_listed(by_type[_VERSION], by_type[_MODERATION])
+    if listed is False:
+        return StatusResult(STATUS_AWAITING_MODERATION, "awaiting_moderation")
 
     return StatusResult(STATUS_PREPRINT, "default")

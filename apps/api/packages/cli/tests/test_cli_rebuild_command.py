@@ -98,6 +98,7 @@ def test_the_log_chain_line_reports_the_head(car_file, db_path, capsys):
 
 def test_paper_rows_carry_the_view_columns(car_file, db_path, capsys):
     paper = make_paper(versions=2)
+    paper.extra.append(list_decision("committee", paper.versions[-1]["id"]))
     code, out, _ = rebuild(car_file, archive_car([paper]), db_path, capsys)
     assert code == 0, out
     row = one(db_path, "SELECT * FROM paper WHERE paper_cid = ?", (paper.paper_id,))
@@ -213,9 +214,110 @@ def test_every_status_rule_lands_in_the_status_view(
     assert paper_row["status"] == status
 
 
+def list_decision(name, target, *, created="2026-11-14T05:33:00Z"):
+    """A moderator's ``list`` decision on a version, as the node records it."""
+    return signed(
+        name,
+        "moderation.decision",
+        {"target": target, "action": "list", "clause": "MOD-01", "reasonCid": "x"},
+        created=created,
+    )
+
+
+def statuses_by_paper(db):
+    return {
+        row["paper_cid"]: (row["status"], row["rule"])
+        for row in query(db, "SELECT * FROM paper_status")
+    }
+
+
+def test_a_queued_paper_is_awaiting_moderation_not_a_preprint(
+    car_file, db_path, capsys
+):
+    """A paper no moderator has listed is in the queue, as ``verify`` says.
+
+    The node serves no page for a paper whose newest version no ``list``
+    decision has put in the catalog, so the rebuilt status must not call it a
+    preprint (bug_spec_verify15, D3).  The listed paper carries the decision
+    that put it in the catalog and keeps its preprint status.
+    """
+    listed, queued = make_paper(seed="one"), make_paper(seed="two")
+    listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
+    code, out, _ = rebuild(car_file, archive_car([listed, queued]), db_path, capsys)
+    assert code == 0, out
+
+    statuses = statuses_by_paper(db_path)
+    assert statuses[listed.paper_id] == ("preprint", "default")
+    assert statuses[queued.paper_id] == (
+        "awaiting_moderation",
+        "awaiting_moderation",
+    )
+    papers = {
+        row["paper_cid"]: row["status"]
+        for row in query(db_path, "SELECT paper_cid, status FROM paper")
+    }
+    assert papers == {
+        listed.paper_id: "preprint",
+        queued.paper_id: "awaiting_moderation",
+    }
+
+
+def test_only_the_newest_version_decides_whether_the_paper_is_queued(
+    car_file, db_path, capsys
+):
+    """A listed v1 does not cover a v2 no moderator has listed."""
+    paper = make_paper(versions=2)
+    paper.extra.append(list_decision("committee", paper.versions[0]["id"]))
+    code, out, _ = rebuild(car_file, archive_car([paper]), db_path, capsys)
+    assert code == 0, out
+    assert statuses_by_paper(db_path)[paper.paper_id] == (
+        "awaiting_moderation",
+        "awaiting_moderation",
+    )
+
+
+def test_listed_held_corrected_and_retracted_papers_keep_their_status(
+    car_file, db_path, capsys
+):
+    """The queue rule changes only what used to fall through to ``preprint``."""
+    listed = make_paper(seed="listed")
+    listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
+    held = make_paper(seed="held")
+    held.extra.append(
+        signed(
+            "committee",
+            "moderation.decision",
+            {
+                "target": held.versions[0]["id"],
+                "action": "hold",
+                "clause": "MOD-07",
+                "reasonCid": "x",
+            },
+        )
+    )
+    corrected = make_paper(seed="corrected")
+    corrected.extra.append(notice("alice", "correction", corrected.paper_id))
+    retracted = make_paper(seed="retracted")
+    retracted.extra.append(notice("alice", "retraction", retracted.paper_id))
+
+    code, out, _ = rebuild(
+        car_file,
+        archive_car([listed, held, corrected, retracted]),
+        db_path,
+        capsys,
+    )
+    assert code == 0, out
+    statuses = statuses_by_paper(db_path)
+    assert statuses[listed.paper_id] == ("preprint", "default")
+    assert statuses[held.paper_id] == ("contested", "moderation_hold")
+    assert statuses[corrected.paper_id] == ("corrected", "correction")
+    assert statuses[retracted.paper_id] == ("retracted", "retraction")
+
+
 def test_a_notice_about_one_paper_does_not_touch_the_other(car_file, db_path, capsys):
     one_, two = make_paper(seed="one"), make_paper(seed="two")
     one_.extra.append(notice("alice", "retraction", one_.paper_id))
+    two.extra.append(list_decision("committee", two.versions[0]["id"]))
     code, out, _ = rebuild(car_file, archive_car([one_, two]), db_path, capsys)
     assert code == 0, out
     statuses = {

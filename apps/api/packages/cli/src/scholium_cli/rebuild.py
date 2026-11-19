@@ -470,6 +470,7 @@ def _status_views(
 ) -> list[StatusView]:
     """One status row per ``(paper_cid, short_id)``, in the order given."""
     targets = _status_targets(records)
+    versions = _versions_of(records)
     by_paper: dict[str, list[Mapping[str, Any]]] = {}
     for record in records:
         if record.get("type") not in STATUS_RECORD_TYPES:
@@ -480,7 +481,11 @@ def _status_views(
 
     views = []
     for paper_id, short_id in papers:
-        result: StatusResult = status_of(by_paper.get(paper_id, []))
+        # The version records let the status rules see whether the newest
+        # version is listed; without them a queued paper cannot be told apart
+        # from a listed one.
+        paper_records = by_paper.get(paper_id, []) + versions.get(paper_id, [])
+        result: StatusResult = status_of(paper_records)
         views.append(
             StatusView(
                 paper_cid=paper_id,
