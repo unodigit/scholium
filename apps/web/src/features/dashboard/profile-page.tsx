@@ -8,7 +8,6 @@ import { initials } from "../ui-kit/initials";
 
 import { CopyDid } from "./copy-did";
 import { EndorseSection } from "./endorse-button";
-import { FollowToggle } from "./follow-toggle";
 import { MemberPapersCard, type LoadMemberPapers } from "./member-papers";
 import {
   PROFILE_TITLE,
@@ -281,21 +280,6 @@ function ProfileView({
             ) : null}
           </div>
         </div>
-
-        {/* Follow this person, so their new work reaches the Following feed
-            and their name appears on /me's Follows card. */}
-        {isOwnProfile ? null : (
-          <div className="pp-hero-actions">
-            <FollowToggle
-              category={profile.did}
-              label={profile.name ?? "this member"}
-              follow={follow}
-              unfollow={unfollow}
-              loadFollowing={loadFollowing}
-              signedIn={signedIn}
-            />
-          </div>
-        )}
       </header>
 
       <div className="pp-grid">

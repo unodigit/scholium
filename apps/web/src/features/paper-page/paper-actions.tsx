@@ -48,7 +48,6 @@ import { fetchConsents, type FetchConsents } from "../submit/consents";
 import { NewVersionLink } from "../submit/new-version-link";
 import { useViewer } from "../review-form/use-viewer";
 import type { Viewer } from "../review-form/viewer";
-import { FollowToggle } from "../dashboard";
 import { AppealDialog } from "./appeal-dialog";
 import { CiteDialog } from "./cite-dialog";
 import { DownloadMenu } from "./download-menu";
@@ -116,8 +115,7 @@ export function PaperActions({
         <CiteDialog paperId={paperId} version={version} href={citeUrl} />
         <DownloadMenu href={archiveUrl} />
       </div>
-      <div className="ppg-extra-actions" role="group" aria-label="Follow and report">
-        <FollowToggle category={paperId} />
+      <div className="ppg-extra-actions" role="group" aria-label="Report">
         <ReportPaper versionCid={versionCid} signInHref={signInHref} />
       </div>
       {pdf.kind === "unavailable" ? (

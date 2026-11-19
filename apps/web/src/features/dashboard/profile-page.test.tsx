@@ -38,7 +38,7 @@ afterEach(() => {
 });
 
 describe("ProfilePage: follow this person", () => {
-  it("offers a Follow toggle on /u/{did} when signed in", async () => {
+  it("offers no Follow control on /u/{did}", () => {
     const follow = vi.fn().mockResolvedValue(undefined);
     render(
       <ProfilePage
@@ -50,22 +50,12 @@ describe("ProfilePage: follow this person", () => {
       />,
     );
 
-    const button = screen.getByRole("button", { name: "Follow Ada Lovelace" });
-    expect(button.getAttribute("aria-pressed")).toBe("false");
-
-    fireEvent.click(button);
-
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole("button", { name: "Follow Ada Lovelace" })
-          .getAttribute("aria-pressed"),
-      ).toBe("true"),
-    );
-    expect(follow).toHaveBeenCalledWith(DID);
+    expect(screen.queryByRole("button", { name: /Follow/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Follow/ })).toBeNull();
+    expect(follow).not.toHaveBeenCalled();
   });
 
-  it("shows the person as already followed when the read says so", async () => {
+  it("shows no Follow control even when the read says so", async () => {
     render(
       <ProfilePage
         did={DID}
@@ -75,22 +65,15 @@ describe("ProfilePage: follow this person", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole("button", { name: "Follow Ada Lovelace" })
-          .getAttribute("aria-pressed"),
-      ).toBe("true"),
-    );
+    expect(screen.queryByRole("button", { name: /Follow/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Follow/ })).toBeNull();
   });
 
-  it("sends a signed-out reader to sign in, then back to this profile", () => {
+  it("offers no Follow control to a signed-out reader", () => {
     render(<ProfilePage did={DID} initialProfile={PROFILE} signedIn={false} />);
 
-    const link = screen.getByRole("link", { name: /Follow Ada Lovelace/ });
-    expect(link.getAttribute("href")).toBe(
-      `/signin?next=${encodeURIComponent(`/u/${encodeURIComponent(DID)}`)}`,
-    );
+    expect(screen.queryByRole("link", { name: /Follow/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Follow/ })).toBeNull();
   });
 });
 
@@ -314,7 +297,7 @@ describe("ProfilePage: one's own profile", () => {
     expect(screen.queryByRole("heading", { name: "Endorse" })).toBeNull();
   });
 
-  it("still offers Follow on someone else's profile", async () => {
+  it("offers no Follow control on someone else's profile", async () => {
     tokenStore.set({ accessToken: accessJwt({ sub: "did:key:z6MkSomeoneElse", tier: 1 }) });
 
     render(
@@ -326,7 +309,8 @@ describe("ProfilePage: one's own profile", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: "Follow Ada Lovelace" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Follow/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Follow/ })).toBeNull();
   });
 });
 
