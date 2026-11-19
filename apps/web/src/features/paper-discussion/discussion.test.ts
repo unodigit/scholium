@@ -34,6 +34,7 @@ import {
   postAuthorLabel,
   postBody,
   hiddenOwnNotice,
+  ownHiddenText,
   postCountLabel,
   postTextProblem,
   profilePath,
@@ -212,6 +213,41 @@ describe("parseThreads", () => {
     });
     // A post nobody appealed has no state to show.
     expect(parsed.threads[1].appeal).toBeNull();
+  });
+
+  it("reads the author's own text of a hidden post, apart from the public body", () => {
+    const parsed = parseThreads({
+      threads: [
+        {
+          post_cid: "hidden",
+          author: ME,
+          hidden: true,
+          hidden_reason: "Off topic.",
+          // The node serves the author's copy under its own field (D2); the
+          // tab shows it only where the card knows the reader wrote the post.
+          own_text: "My own words.\n\nSecond line.  ",
+        },
+        { post_cid: "camel", author: ME, hidden: true, ownText: "Camel spelling." },
+        // `own_text` belongs to a hidden post: a visible one is its `text`.
+        { post_cid: "visible", author: ME, text: "Fine.", own_text: "Ignored." },
+      ],
+    });
+
+    expect(parsed.threads[0].ownText).toBe("My own words.\n\nSecond line.");
+    expect(parsed.threads[1].ownText).toBe("Camel spelling.");
+    expect(parsed.threads[2].ownText).toBeNull();
+    // A post with no author's copy (every other reader) has none to show.
+    expect(parseThreads({ threads: [{ post_cid: "h", author: ME, hidden: true }] }).threads[0].ownText).toBeNull();
+  });
+
+  it("treats an empty or blank author's copy as no text", () => {
+    const parsed = parseThreads({
+      threads: [
+        { post_cid: "blank", author: ME, hidden: true, own_text: "   " },
+        { post_cid: "none", author: ME, hidden: true, own_text: null },
+      ],
+    });
+    expect(parsed.threads.map((thread) => thread.ownText)).toEqual([null, null]);
   });
 
   it("treats an empty list as no discussion, not as an error", () => {
@@ -911,6 +947,40 @@ describe("words and formats", () => {
     expect(hiddenOwnNotice(null)).toBe("Your post was hidden.");
     expect(hiddenOwnNotice("   ")).toBe("Your post was hidden.");
     expect(hiddenOwnNotice(undefined)).toBe("Your post was hidden.");
+  });
+
+  it("collapses the author's own hidden post to the opening words the card shows", () => {
+    // Two posts hidden for the same reason must still be tellable apart: the
+    // placeholder names each by the reader's first words, on one line.
+    expect(ownHiddenText("  Two   lines\n\nhere.  ")).toEqual({
+      excerpt: "Two lines here.",
+      full: "Two lines here.",
+      cut: false,
+    });
+    expect(ownHiddenText("Short and whole.")).toEqual({
+      excerpt: "Short and whole.",
+      full: "Short and whole.",
+      cut: false,
+    });
+    expect(ownHiddenText("")).toBeNull();
+    expect(ownHiddenText("   \n  ")).toBeNull();
+    expect(ownHiddenText(null)).toBeNull();
+    expect(ownHiddenText(undefined)).toBeNull();
+  });
+
+  it("cuts a long excerpt at a word boundary and says it was cut", () => {
+    const words = Array.from({ length: 80 }, (_, index) => `word${index}`);
+    const full = words.join(" ");
+    const shown = ownHiddenText(full, 30);
+
+    expect(shown).not.toBeNull();
+    expect(shown!.full).toBe(full);
+    expect(shown!.cut).toBe(true);
+    expect(shown!.excerpt.endsWith("…")).toBe(true);
+    // No more than the limit, and never half a word.
+    expect(shown!.excerpt.length).toBeLessThanOrEqual(31);
+    expect(full.startsWith(shown!.excerpt.slice(0, -1))).toBe(true);
+    expect(shown!.excerpt.slice(0, -1).endsWith(" ")).toBe(false);
   });
 
   it("builds page paths without the sch: prefix", () => {

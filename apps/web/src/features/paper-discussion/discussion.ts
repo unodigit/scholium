@@ -82,6 +82,12 @@ export interface DiscussionPost {
   readonly authorName: string | null;
   /** The post text; `null` when the node holds it separately (`textCid`). */
   readonly text: string | null;
+  /**
+   * The reader's own copy of a hidden post, served only to that post's author
+   * (bug_spec_verify15 D2). Every other reader, and every visible post, has
+   * `null`: the card shows it only where it knows the viewer wrote the post.
+   */
+  readonly ownText?: string | null;
   /** When the author signed it (ISO 8601, UTC); `null` when not stamped. */
   readonly createdAt: string | null;
   /** Members who marked it helpful. Only orders the thread. */
@@ -150,6 +156,18 @@ function readText(value: unknown): string | null {
   return text === "" ? null : text;
 }
 
+/**
+ * A post body as written: only an all-blank string counts as "no text", and
+ * only trailing white space goes. `null` when no listed key holds one.
+ */
+function readBodyText(record: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") return value.replace(/\s+$/, "");
+  }
+  return null;
+}
+
 /** The first non-empty string among `keys` (the API spells every field twice or more). */
 function pickText(record: Record<string, unknown>, ...keys: string[]): string | null {
   for (const key of keys) {
@@ -207,8 +225,9 @@ function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPos
   seen.add(cid);
 
   // Text is shown as written. Only an all-blank string counts as "no text".
-  const text =
-    typeof raw.text === "string" && raw.text.trim() !== "" ? raw.text.replace(/\s+$/, "") : null;
+  const text = readBodyText(raw, "text");
+  const hidden =
+    raw.hidden === true || pickTimestamp(raw, "hidden_at", "hiddenAt") !== null;
 
   const rawReplies = Array.isArray(raw.replies) ? raw.replies : [];
   const replies: DiscussionPost[] = [];
@@ -229,12 +248,14 @@ function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPos
     quote: readQuote(raw.anchor),
     seq: pickInteger(raw, "seq"),
     // A moderator's hide is a placeholder: the body is withheld even if a node
-    // mistakenly sends one, and the reason is the card's whole message.
-    hidden: raw.hidden === true || pickTimestamp(raw, "hidden_at", "hiddenAt") !== null,
+    // mistakenly sends one, and the reason is the card's whole message. The
+    // node serves the author's own copy under `ownText` (D2), and only then.
+    hidden,
     hiddenReason: pickText(raw, "hidden_reason", "hiddenReason", "reason"),
     hiddenAt: pickTimestamp(raw, "hidden_at", "hiddenAt"),
     decisionCid: pickText(raw, "decision_cid", "decisionCid"),
     appeal: readAppeal(raw.appeal),
+    ownText: hidden ? readBodyText(raw, "own_text", "ownText") : null,
     replies,
   };
 }
@@ -839,6 +860,42 @@ export function helpfulLabel(count: number): string {
 export function postCountLabel(count: number, hidden = 0): string {
   const posts = `${count} ${count === 1 ? "post" : "posts"}`;
   return hidden > 0 ? `${posts}, ${hidden} hidden` : posts;
+}
+
+/** How much of the author's own hidden post the placeholder shows unasked. */
+export const OWN_HIDDEN_EXCERPT_MAX = 140;
+
+/** The author's own hidden post, as the placeholder shows it. */
+export interface OwnHiddenText {
+  /** The opening words, one line, with `…` when it was cut. */
+  readonly excerpt: string;
+  /** The whole post, white space collapsed to one line. */
+  readonly full: string;
+  /** True when `excerpt` is shorter than `full`, so "Show my post" is offered. */
+  readonly cut: boolean;
+}
+
+/**
+ * The author's own text on a hidden post, ready for the placeholder, or `null`.
+ *
+ * Two posts a moderator hid for the same reason read as two identical rows of
+ * "Your post was hidden: …" unless each names itself, so the card shows the
+ * opening of the reader's own words and offers the rest behind "Show my post".
+ * The words are collapsed to one line and cut on a word boundary, never half a
+ * word, so a long post never pushes the appeal control out of reach.
+ */
+export function ownHiddenText(
+  raw: string | null | undefined,
+  limit = OWN_HIDDEN_EXCERPT_MAX,
+): OwnHiddenText | null {
+  const full = (raw ?? "").trim().split(/\s+/).filter((part) => part !== "").join(" ");
+  if (full === "") return null;
+  if (full.length <= limit) return { excerpt: full, full, cut: false };
+  // Cut on the last space before the limit; a single enormous word may cut mid-word.
+  let cutAt = full.slice(0, limit);
+  const space = cutAt.lastIndexOf(" ");
+  if (space > 0) cutAt = cutAt.slice(0, space);
+  return { excerpt: `${cutAt.trimEnd()}…`, full, cut: true };
 }
 
 /**

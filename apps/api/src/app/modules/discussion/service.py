@@ -511,20 +511,40 @@ def _appeal_state(decision_cid: Any) -> Optional[dict[str, Any]]:
     }
 
 
+def _own_hidden_text(entry: Any) -> Optional[str]:
+    """The hidden post's body, when its author's read may carry it (D2).
+
+    Served whole rather than as an excerpt: the tab shortens it and offers
+    "Show my post", which must be able to reveal all of what the author wrote.
+    A body this node cannot read is ``None`` -- access is never invented.
+    """
+    text = _body(entry).get("text")
+    if isinstance(text, str) and text.strip():
+        return text
+    return None
+
+
 def _hidden_document(
     row: DiscussionPost,
     entry: Any,
     hidden: Any,
     author_name_value: Optional[str] = None,
     appeal: Optional[dict[str, Any]] = None,
+    own_text: Optional[str] = None,
 ) -> dict[str, Any]:
-    """One hidden post as a placeholder: its place, author and ruling -- no body.
+    """One hidden post as a placeholder: its place, author and ruling.
 
     A ``hide`` decision withdraws the post from public reads but keeps it in
     the thread, so the replies under it keep their place.  The document carries
     the fields a reader needs to see that something was removed and why
     (``hidden``, ``hidden_at``, ``hidden_reason``) and none of the record's
     content: no ``text``, ``textCid`` or ``anchor`` (whose ``quote`` is body).
+
+    The one exception is the post's own author (bug_spec_verify15 D2): they may
+    read what they wrote, so their read carries it under ``own_text`` -- served
+    to nobody else -- while ``text`` stays empty for every caller.  Two posts
+    hidden for the same reason are otherwise identical rows, and the author
+    needs their words to tell which one they are appealing.
     """
     post_cid = row.post_cid
     author = row.author_did
@@ -544,6 +564,8 @@ def _hidden_document(
         "authorName": author_name_value,
         "text": None,
         "textCid": None,
+        "own_text": own_text,
+        "ownText": own_text,
         "target": None,
         "paper": None,
         "anchor": None,
@@ -680,10 +702,19 @@ def threads_for(ref: PaperRef, *, viewer_did: Optional[str] = None) -> dict[str,
             hidden = hidden_record(row.post_cid)
             if hidden is not None:
                 appeal_state = None
+                own_text = None
                 if viewer_did is not None and str(did) == str(viewer_did):
                     appeal_state = _appeal_state(getattr(hidden, "decision_cid", None))
+                    # D2: the author may still read their own post, so they can
+                    # tell two identically-hidden rows apart.
+                    own_text = _own_hidden_text(entries.get(row.post_cid))
                 documents[row.post_cid] = _hidden_document(
-                    row, entries.get(row.post_cid), hidden, names[did], appeal_state
+                    row,
+                    entries.get(row.post_cid),
+                    hidden,
+                    names[did],
+                    appeal_state,
+                    own_text,
                 )
             else:
                 documents[row.post_cid] = _post_document(

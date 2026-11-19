@@ -5,7 +5,10 @@ surfaces while the signed record stays in the log.  ``GET
 /v1/papers/{id}/threads`` is one of those surfaces: it must keep the post's
 place in the thread (so replies stay nested under it) and its author's
 pseudonym, but serve a placeholder -- id, author, ``hidden_at`` and the
-decision's reason -- instead of the text.  The tab's post count excludes it.
+decision's reason -- instead of the text.  The post's own author is the one
+exception (bug_spec_verify15 D2): their read carries what they wrote under
+``own_text`` so they can tell two identically-hidden posts apart, and no other
+caller is served it.  The tab's post count excludes the placeholder.
 
 Isolation: fresh DIDs and unique bodies, like the rest of this module's tests.
 """
@@ -87,6 +90,65 @@ def test_a_hidden_post_is_returned_as_a_placeholder_without_its_text(client):
     assert nested["post_cid"] == reply["id"]
     # The tab's count excludes the hidden placeholder.
     assert payload["count"] == 1
+
+
+def test_the_author_reads_their_own_hidden_text_so_two_placeholders_differ(client):
+    """D2: an author may read their own post's text; nobody else gains access.
+
+    Two posts hidden for the same reason are otherwise identical rows, so the
+    author cannot tell which one they are appealing.  The author's read carries
+    their post verbatim under ``own_text`` (the tab collapses it to an excerpt);
+    the public ``text`` field stays empty, as it is for every reader.
+    """
+    author = Member(tier=1)
+    paper = publish(author)
+    first = f"the first hidden body {uuid.uuid4().hex}"
+    second = f"the second hidden body {uuid.uuid4().hex}"
+    one = post(client, author, paper, first)
+    two = post(client, author, paper, second)
+    moderator = _moderator()
+    _hide(moderator, one["id"], "Off-topic and abusive.")
+    _hide(moderator, two["id"], "Off-topic and abusive.")
+
+    payload = threads(client, paper, author)
+
+    assert _find(payload, one["id"])["own_text"] == first
+    assert _find(payload, two["id"])["own_text"] == second
+    # The author's copy is a separate field: a hidden post still has no public body.
+    assert _find(payload, one["id"])["text"] is None
+    assert _find(payload, two["id"])["text"] is None
+
+
+def test_a_long_hidden_post_reaches_its_author_in_full(client):
+    """The tab shortens it; the node does not, so "Show my post" has all of it."""
+    author = Member(tier=1)
+    paper = publish(author)
+    text = f"{uuid.uuid4().hex} " * 40
+    hidden = post(client, author, paper, text.strip())
+    _hide(_moderator(), hidden["id"], "Off topic.")
+
+    document = _find(threads(client, paper, author), hidden["id"])
+
+    assert document["own_text"] == text.strip()
+
+
+def test_only_the_author_reads_a_hidden_posts_body(client):
+    """A reader, another member and a moderator who is not the author see none."""
+    author = Member(tier=1)
+    other = Member(tier=1)
+    moderator = _moderator()
+    paper = publish(author)
+    text = f"the private hidden body {uuid.uuid4().hex}"
+    hidden = post(client, author, paper, text)
+    _hide(moderator, hidden["id"], "Off-topic and abusive.")
+
+    for viewer in (None, other, moderator):
+        payload = threads(client, paper, viewer)
+        document = _find(payload, hidden["id"])
+        assert document["hidden"] is True
+        assert document.get("own_text") is None
+        assert document["text"] is None
+        assert text not in str(payload)
 
 
 def test_a_release_restores_the_post_body(client):

@@ -1115,6 +1115,93 @@ describe("DiscussionTab: the author's hidden post", () => {
     return el;
   }
 
+  /** One hidden post by the reader, with the node's copy of their own text. */
+  function ownHiddenBody(ownText: string): DiscussionData {
+    return {
+      paper: SHORT,
+      paperCid: "bafyrei-genesis",
+      threads: [
+        post("mine", {
+          author: ME,
+          hidden: true,
+          hiddenReason: "Off topic.",
+          decisionCid: "bafyrei-decision",
+          text: null,
+          ownText,
+        }),
+        post("visible"),
+      ],
+    };
+  }
+
+  it("names the post by its own words, so two rows hidden alike can be told apart", () => {
+    renderTab(
+      { viewerDid: ME },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("one", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision-1",
+            text: null,
+            ownText: "The lemma's case n = 0 is missing.",
+          }),
+          post("two", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision-2",
+            text: null,
+            ownText: "The dataset licence is incompatible.",
+          }),
+          post("visible"),
+        ],
+      },
+    );
+
+    expect(within(card("one")).getByText("The lemma's case n = 0 is missing.")).toBeTruthy();
+    expect(within(card("two")).getByText("The dataset licence is incompatible.")).toBeTruthy();
+    expect(within(card("one")).queryByText("The dataset licence is incompatible.")).toBeNull();
+    expect(within(card("two")).queryByText("The lemma's case n = 0 is missing.")).toBeNull();
+  });
+
+  it("collapses a long hidden post and opens all of it with Show my post", () => {
+    const text = "The lemma's case n = 0 is missing from the proof. ".repeat(8).trim();
+    renderTab({ viewerDid: ME }, ownHiddenBody(text));
+
+    // Collapsed: the opening words stand in for the body, which is not all there.
+    const excerpt = within(card("mine")).getByText(/^The lemma's case n = 0 is missing/);
+    expect(excerpt.textContent?.endsWith("…")).toBe(true);
+    expect(within(card("mine")).queryByText(text)).toBeNull();
+
+    const show = within(card("mine")).getByRole("button", { name: /Show my post/ });
+    expect(show.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(show);
+
+    expect(within(card("mine")).getByText(text)).toBeTruthy();
+    const hide = within(card("mine")).getByRole("button", { name: /Hide my post/ });
+    expect(hide.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(hide);
+    expect(within(card("mine")).queryByText(text)).toBeNull();
+  });
+
+  it("offers no Show my post when the whole post already fits", () => {
+    renderTab({ viewerDid: ME }, ownHiddenBody("Too short to hide."));
+
+    expect(within(card("mine")).getByText("Too short to hide.")).toBeTruthy();
+    expect(within(card("mine")).queryByRole("button", { name: /Show my post/ })).toBeNull();
+  });
+
+  it("keeps a hidden post's text from every reader but its author", () => {
+    renderTab({ viewerDid: BOB }, ownHiddenBody("My private words."));
+    expect(within(card("mine")).getByText("Hidden by moderation: Off topic.")).toBeTruthy();
+    expect(within(card("mine")).queryByText("My private words.")).toBeNull();
+    expect(within(card("mine")).queryByRole("button", { name: /Show my post/ })).toBeNull();
+  });
+
   it("ends the reason sentence with one full stop, not two", () => {
     renderTab({ viewerDid: ME }, ownHidden("Needs the claim clarified."));
 

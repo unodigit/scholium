@@ -39,6 +39,7 @@ import {
   describeActionError,
   helpfulLabel,
   hiddenOwnNotice,
+  ownHiddenText,
   postAuthorLabel,
   profilePath,
   reportReason,
@@ -101,6 +102,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
   const [helpfulBusy, setHelpfulBusy] = useState(false);
   const [helpfulFailure, setHelpfulFailure] = useState<ActionFailure | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
 
   const postRef = useRef<HTMLDivElement>(null);
   const replyButton = useRef<HTMLButtonElement>(null);
@@ -142,6 +144,16 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
   const replyId = `${uid}-reply`;
   const reportId = `${uid}-report`;
   const appealId = `${uid}-appeal`;
+  const ownId = `${uid}-own`;
+  // The author's own words on their hidden post (bug_spec_verify15 D2), shown
+  // only on a post the viewer wrote: the node serves the copy, the card decides
+  // it is theirs. Another reader's card never has it, whatever the node says.
+  const own = post.hidden === true && isOwn ? ownHiddenText(post.ownText) : null;
+  // Enough of the post to tell several "Show my post" buttons apart.
+  const ownStart =
+    own === null
+      ? ""
+      : `${own.full.slice(0, 40).trimEnd()}${own.full.length > 40 ? "…" : ""}`;
 
   const togglePanel = (next: Panel) => {
     setHelpfulFailure(null);
@@ -239,6 +251,26 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
                   </a>
                 )}
               </p>
+              {own !== null ? (
+                <>
+                  <p className="pd-post__text" id={ownId} data-own-text="true">
+                    {ownOpen ? own.full : own.excerpt}
+                  </p>
+                  {own.cut ? (
+                    <button
+                      type="button"
+                      className="pd-action"
+                      data-action="show-own-post"
+                      aria-expanded={ownOpen}
+                      aria-controls={ownId}
+                      onClick={() => setOwnOpen((current) => !current)}
+                    >
+                      {ownOpen ? "Hide my post" : "Show my post"}
+                      <span className="pd-visually-hidden">{`, starting “${ownStart}”`}</span>
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
               {appealOpen && actions.appeal !== undefined ? (
                 <div id={appealId}>
                   <AppealForm
