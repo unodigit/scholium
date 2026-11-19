@@ -1,14 +1,18 @@
 /**
- * The four decisions a DecisionBanner can announce, and everything that
+ * The five decisions a DecisionBanner can announce, and everything that
  * decides how each one looks and reads: its word, its icon, its colour
  * family and its default sentence.
  *
  * The words and tones are docs/design.md §5.2's banner list, verbatim:
  * *Retracted* (critical), *Corrected* (pending), *A newer version exists*
  * (neutral), *Content removed for legal reasons* (neutral, with reason
- * category). §7 adds the rule every banner obeys: it links to the record
- * and the policy clause, and principle 6 says why — every decision shows
- * its reason.
+ * category). A notice can also be a *withdrawal* — the authors taking the
+ * paper back. That is not a removal: the paper stays listed and its files
+ * stay downloadable (`submissions/notices.py` changes no status), so it
+ * gets its own neutral banner (`withdrawn`) rather than the legal-removal
+ * one. §7 adds the rule every banner obeys: it links to the record and the
+ * policy clause, and principle 6 says why — every decision shows its
+ * reason.
  *
  * `retracted` and `corrected` reuse the wire values of the API's
  * `compute_status` (see ./status.ts), so a paper page can pass a computed
@@ -23,12 +27,14 @@
 import type { IconName } from "./icons";
 
 /**
- * The four banner kinds, in docs/design.md §5.2's order: the two notices a
- * record can carry, then the two states a page discovers about itself.
+ * The banner kinds, in the order they read: the three notices a record can
+ * carry (retraction, correction, withdrawal), then the two states a page
+ * discovers about itself.
  */
 export const DECISION_KINDS = [
   "retracted",
   "corrected",
+  "withdrawn",
   "newer_version",
   "removed_legal",
 ] as const;
@@ -40,8 +46,9 @@ export type DecisionKind = (typeof DECISION_KINDS)[number];
  * StatusChip uses. It maps onto a token pair in `decision-banner.css`:
  * `critical` → `--critical` on `--critical-soft`, `pending` → `--pending`
  * on `--pending-soft`; `neutral` uses `--ink-2` and `--rule` on
- * `--surface`. Two banners share `neutral` on purpose: a newer version and
- * a legal removal are facts, not fault states (design.md §5.2).
+ * `--surface`. Three banners share `neutral` on purpose: a newer version, a
+ * withdrawal and a legal removal are facts, not fault states (design.md
+ * §5.2).
  */
 export type DecisionTone = "neutral" | "pending" | "critical";
 
@@ -79,6 +86,16 @@ export const DECISION_BANNER_SPECS: Readonly<
     meaning:
       "A correction notice is on record. Like a retraction, it travels with every version.",
   },
+  withdrawn: {
+    kind: "withdrawn",
+    label: "Withdrawn by the authors",
+    tone: "neutral",
+    icon: "cross",
+    detail:
+      "The authors withdrew this paper. It stays available as part of the record.",
+    meaning:
+      "The authors took the paper back. It stays listed and downloadable: a withdrawal is not a removal, and no status changes.",
+  },
   newer_version: {
     kind: "newer_version",
     label: "A newer version exists",
@@ -114,9 +131,10 @@ export function isDecisionKind(value: unknown): value is DecisionKind {
 export interface DecisionContext {
   /**
    * The decision's own reason, signed in its record (`body.reason` of a
-   * `retraction`, `correction` or `moderation.decision`). When present it
-   * is the banner's sentence, verbatim — principle 6: every decision shows
-   * its reason.
+   * `retraction`, `correction`, `withdrawal` or `moderation.decision`). When
+   * present it is the banner's sentence, verbatim — principle 6: every
+   * decision shows its reason. A withdrawal keeps its own sentence and adds
+   * the reason after it.
    */
   reason?: string;
   /**
@@ -158,6 +176,9 @@ function sentence(text: string): string {
  *   docs/design.md §8 — "The record of its existence remains." — because
  *   that promise is the point of a tombstone; the lead is the reason, or
  *   the removal date and category.
+ * - `withdrawn` keeps its own sentence — what a withdrawal means — and adds
+ *   the authors' reason after it when the notice carries one: the paper is
+ *   still there, so the banner never reads like a removal.
  * - `newer_version` names the newest version when it knows it.
  * - Every other kind falls back to its plain default.
  */
@@ -177,6 +198,11 @@ export function decisionDetail(
       category,
     ].filter((part): part is string => part !== undefined);
     return lead.length > 0 ? `${lead.join(" · ")}. ${closing}` : closing;
+  }
+
+  if (kind === "withdrawn") {
+    const withdrawn = DECISION_BANNER_SPECS.withdrawn.detail;
+    return reason ? `${withdrawn} ${sentence(reason)}` : withdrawn;
   }
 
   if (reason) return sentence(reason);

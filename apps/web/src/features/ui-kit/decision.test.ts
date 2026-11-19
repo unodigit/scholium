@@ -11,20 +11,22 @@ import {
 } from "./decision";
 
 describe("the decision data", () => {
-  it("has the four kinds of docs/design.md §5.2, in its order", () => {
+  it("has the kinds the banner announces, notices first, in reading order", () => {
     expect(DECISION_KINDS).toEqual([
       "retracted",
       "corrected",
+      "withdrawn",
       "newer_version",
       "removed_legal",
     ]);
   });
 
-  it("renders the four words of docs/design.md §5.2, verbatim", () => {
+  it("renders the words of docs/design.md §5.2 plus the withdrawal, verbatim", () => {
     expect(DECISION_KINDS.map((kind) => DECISION_BANNER_SPECS[kind].label)).toEqual(
       [
         "Retracted",
         "Corrected",
+        "Withdrawn by the authors",
         "A newer version exists",
         "Content removed for legal reasons",
       ],
@@ -37,7 +39,16 @@ describe("the decision data", () => {
       "pending",
       "neutral",
       "neutral",
+      "neutral",
     ]);
+  });
+
+  it("never paints a withdrawal as critical: it is not a removal", () => {
+    expect(DECISION_BANNER_SPECS.withdrawn.tone).toBe("neutral");
+    expect(DECISION_BANNER_SPECS.withdrawn.tone).not.toBe("critical");
+    expect(DECISION_BANNER_SPECS.withdrawn.detail).toBe(
+      "The authors withdrew this paper. It stays available as part of the record.",
+    );
   });
 
   it("gives every kind a different icon, so colour is never the only difference", () => {
@@ -54,7 +65,8 @@ describe("the decision data", () => {
 
   it("isDecisionKind narrows unknown values", () => {
     for (const kind of DECISION_KINDS) expect(isDecisionKind(kind)).toBe(true);
-    for (const value of ["withdrawn", "", "newer-version", undefined, null, 7]) {
+    // "withdrawal" is the API's notice kind; the banner kind is "withdrawn".
+    for (const value of ["withdrawal", "", "newer-version", undefined, null, 7]) {
       expect(isDecisionKind(value)).toBe(false);
     }
   });
@@ -80,6 +92,9 @@ describe("decisionDetail", () => {
     expect(decisionDetail("corrected")).toBe(
       "A correction notice is on record.",
     );
+    expect(decisionDetail("withdrawn")).toBe(
+      "The authors withdrew this paper. It stays available as part of the record.",
+    );
     expect(decisionDetail("newer_version")).toBe(
       "You are reading an older version of this paper.",
     );
@@ -103,6 +118,22 @@ describe("decisionDetail", () => {
         DECISION_BANNER_SPECS.retracted.detail,
       );
     }
+  });
+
+  it("keeps a withdrawal's own sentence and adds the authors' reason", () => {
+    expect(decisionDetail("withdrawn", { reason: "The dataset was mislabelled" })).toBe(
+      "The authors withdrew this paper. It stays available as part of the record. The dataset was mislabelled.",
+    );
+    // A blank reason changes nothing: the withdrawal still says what it means.
+    expect(decisionDetail("withdrawn", { reason: "   " })).toBe(
+      DECISION_BANNER_SPECS.withdrawn.detail,
+    );
+  });
+
+  it("never gives a withdrawal the tombstone's promise", () => {
+    expect(decisionDetail("withdrawn", { reason: "Taken back." })).not.toContain(
+      "The record of its existence remains.",
+    );
   });
 
   it("names the newest version when it knows it", () => {

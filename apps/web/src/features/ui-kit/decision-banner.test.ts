@@ -56,10 +56,11 @@ describe("DecisionBanner", () => {
     expect(icon?.getAttribute("stroke")).toBe("currentColor");
   });
 
-  it("renders the four words from docs/design.md §5.2", () => {
+  it("renders each kind's word", () => {
     const labels = [
       "Retracted",
       "Corrected",
+      "Withdrawn by the authors",
       "A newer version exists",
       "Content removed for legal reasons",
     ];
@@ -124,8 +125,8 @@ describe("DecisionBanner links to the record", () => {
     }
   });
 
-  it("renders nothing for a kind outside the four", () => {
-    for (const kind of ["withdrawn", "", "newer-version", undefined, null, 3]) {
+  it("renders nothing for a kind outside the known kinds", () => {
+    for (const kind of ["withdrawal", "", "newer-version", undefined, null, 3]) {
       const { container } = render(
         createElement(DecisionBanner, { kind, recordCid: CID } as never),
       );

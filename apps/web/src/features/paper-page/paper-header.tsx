@@ -141,15 +141,18 @@ export function PaperHeader({ data }: PaperHeaderProps) {
 }
 
 
-function noticeDecisionKind(kind: string): "retracted" | "corrected" | "removed_legal" | null {
+function noticeDecisionKind(
+  kind: string,
+): "retracted" | "corrected" | "withdrawn" | "removed_legal" | null {
   const normalized = kind.trim().toLowerCase();
   if (normalized === "retraction" || normalized === "retracted") return "retracted";
   if (normalized === "correction" || normalized === "corrected") return "corrected";
+  // A withdrawal changes no status and removes no file (`submissions/notices.py`):
+  // it is the authors taking the paper back, not a legal takedown.
+  if (normalized === "withdrawal" || normalized === "withdrawn") return "withdrawn";
   if (
     normalized === "tombstone" ||
     normalized === "tombstoned" ||
-    normalized === "withdrawal" ||
-    normalized === "withdrawn" ||
     normalized === "removed" ||
     normalized === "removed_legal" ||
     normalized === "removal"

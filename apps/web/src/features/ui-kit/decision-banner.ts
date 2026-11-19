@@ -24,9 +24,11 @@
  * />
  * ```
  *
- * Four kinds, the words and tones of docs/design.md §5.2: Retracted
+ * Five kinds, the words and tones of docs/design.md §5.2: Retracted
  * (critical), Corrected (pending), A newer version exists (neutral),
- * Content removed for legal reasons (neutral, with reason category).
+ * Content removed for legal reasons (neutral, with reason category) — plus
+ * Withdrawn by the authors (neutral), the authors' own notice, which is a
+ * fact about the paper rather than a removal.
  *
  * Every decision shows its reason (principle 6), so the banner always
  * links to the two places a reader can check it:
