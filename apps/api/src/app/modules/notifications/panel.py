@@ -15,6 +15,10 @@ is settled against that record whenever the inbox is read:
   them, and there is nothing left to vote on);
 * otherwise it is untouched and still asks for the vote.
 
+An appeal about a post, annotation or review keeps the ``("{excerpt}...")``
+quote the seat notice carried, so two appeals on one paper do not settle to the
+same sentence.
+
 Both ``summary`` and ``outcome`` are rewritten (the seat notice set them to the
 same request for a vote), and the facts are kept beside them: ``answer`` is the
 member's vote and ``decided`` the panel's outcome.  Settling is idempotent.
@@ -54,16 +58,49 @@ _VOTE_VERBS: dict[str, str] = {
 }
 
 
-def _sentence(title: Optional[str], vote: Optional[str], decided: Optional[str]) -> Optional[str]:
+def _excerpt_of(payload: Any) -> Optional[str]:
+    """The quoted opening of the appealed record, when the notice is about one.
+
+    The seat notice already quotes the record the appeal is about in the
+    sentence that asks for the vote (:func:`app.modules.appeals.subject.seat_summary`),
+    and the member reading the settled notice is that same seated member.  So
+    the quote is kept when the sentence is rewritten; without it two appeals on
+    one paper would read alike.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    if payload.get("target_kind") not in ("post", "annotation", "review"):
+        return None
+    target = payload.get("target_cid")
+    if not isinstance(target, str) or not target:
+        return None
+    try:
+        from app.modules.appeals.subject import _quoted_excerpt
+        from app.modules.moderation import outcomes
+
+        excerpt = outcomes.excerpt(target)
+        return _quoted_excerpt(excerpt) if excerpt else None
+    except Exception:  # pragma: no cover - a quote is never worth failing a notice
+        logger.debug("could not read the excerpt of %s", target, exc_info=True)
+        return None
+
+
+def _sentence(
+    title: Optional[str],
+    excerpt: Optional[str],
+    vote: Optional[str],
+    decided: Optional[str],
+) -> Optional[str]:
     """The notice's sentence for the recorded facts, or ``None`` when nothing changed."""
+    quoted = f' ("{excerpt}")' if excerpt else ""
     if vote:
         verb = _VOTE_VERBS.get(vote, vote)
         if title:
-            return f'You voted to {verb} the decision on the appeal for "{title}".'
+            return f'You voted to {verb} the decision on the appeal for "{title}"{quoted}.'
         return f"You voted to {verb} the decision on an appeal panel."
     if decided:
         if title:
-            return f"The panel {decided} the decision on \"{title}\"."
+            return f'The panel {decided} the decision on "{title}"{quoted}.'
         return f"The panel {decided} the decision."
     return None
 
@@ -124,7 +161,12 @@ def _settle(did: str) -> None:
             status = statuses.get(appeal_cid)
             decided = status if status and status != _UNDECIDED else None
             payload = dict(row.payload)
-            sentence = _sentence(payload.get("title"), vote, None if vote else decided)
+            sentence = _sentence(
+                payload.get("title"),
+                _excerpt_of(payload),
+                vote,
+                None if vote else decided,
+            )
             if sentence is None:
                 continue
             facts: dict[str, Any] = {"summary": sentence, "outcome": sentence}

@@ -25,13 +25,15 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from scholium_record_core import sign_record, verify_record
 
 from app import db
 from app.modules import ledger, submissions
 from app.modules.appeals import Appeal, get_appeal, get_panel
 from app.modules.appeals import panel as panel_module
 from app.modules.appeals import votes
-from app.modules.moderation.tests.test_decisions import Moderator
+from app.modules.moderation.tests.test_decisions import Moderator, Submission, _timestamp
+from app.modules.moderation.tests.test_record_decisions import RecordAuthor, _post
 
 from .test_appeal_panels import _account, client  # noqa: F401 - fixture re-export
 from .test_appeal_polish import HiddenPost, _bearer
@@ -45,6 +47,7 @@ from .test_appeals import (  # noqa: F401 - autouse fixtures
 
 NOTIFICATIONS_URL = "/v1/me/notifications"
 VOTES_URL = "/v1/appeals/{cid}/votes"
+DECISIONS_URL = "/v1/moderation/decisions"
 DECIDE_URL = "/v1/appeals/{cid}/decide"
 KIND = "appeal.decision"
 
@@ -98,6 +101,7 @@ class HiddenPostAppeal:
         self.moderator = self.scene.moderator
         self.appeal_cid: str = self.scene.appeal()["id"]
         self.title = self.scene.title
+        self.text = self.scene.text
 
     @property
     def appellant_did(self) -> str:
@@ -152,6 +156,143 @@ def _age(appeal_cid: str, days: int = 15) -> None:
 
 def _appeal_notices(rows: list[dict]) -> list[dict]:
     return [row for row in rows if row["kind"] == KIND]
+
+
+# --------------------------------------------------------------------------- #
+# Two appeals on one paper: their outcome notices must be told apart
+# --------------------------------------------------------------------------- #
+
+
+class TwoPostAppeals:
+    """Two posts on one paper, each hidden and appealed by the same author.
+
+    The pool is exactly one panel, so both appeals are decided by the same
+    three members and the appellant reads one notice per appeal.
+    """
+
+    def __init__(self, client, pool) -> None:
+        self.members = [_account(3) for _ in range(3)]
+        pool(*self.members)
+        self.paper = Submission(state="listed")
+        self.moderator = Moderator()
+        self.author = RecordAuthor()
+        _account(3, self.author.did)
+        self.posts = [_post(self.author, self.paper), _post(self.author, self.paper)]
+        self.appeals: list[str] = []
+        for post in self.posts:
+            decision = self._hide(client, post)
+            record = sign_record(
+                {
+                    "v": 1,
+                    "type": "appeal",
+                    "author": self.author.did,
+                    "created": _timestamp(),
+                    "prev": None,
+                    "body": {
+                        "target": decision,
+                        "grounds": f"Unfair {uuid.uuid4().hex}",
+                    },
+                    "proofs": [],
+                },
+                self.author.seed,
+            )
+            assert verify_record(record)
+            response = client.post(
+                APPEALS_URL, json=record, headers=_bearer(self.author.did)
+            )
+            assert response.status_code == 201, response.text
+            self.appeals.append(record["id"])
+
+    def _hide(self, client, post: dict) -> str:
+        record = sign_record(
+            {
+                "v": 1,
+                "type": "moderation.decision",
+                "author": self.moderator.did,
+                "created": _timestamp(),
+                "prev": None,
+                "body": {
+                    "target": post["id"],
+                    "action": "hide",
+                    "clause": "MOD-09",
+                    "reason": "Abusive.",
+                },
+                "proofs": [],
+            },
+            self.moderator.seed,
+        )
+        assert verify_record(record)
+        response = client.post(DECISIONS_URL, json=record, headers=self.moderator.headers)
+        assert response.status_code == 201, response.text
+        return record["id"]
+
+    @property
+    def appellant_did(self) -> str:
+        return self.author.did
+
+    @property
+    def title(self) -> str:
+        return self.paper.title
+
+    def excerpt(self, index: int) -> str:
+        return self.posts[index]["body"]["text"]
+
+
+def _panel_decides(client, appeal_cid: str, outcome: str) -> None:
+    members = _panel(appeal_cid)
+    assert len(members) == 3
+    for member in members[:2]:
+        assert _vote(client, member, appeal_cid, outcome).status_code == 200
+
+
+def test_two_upheld_appeals_on_one_paper_get_distinct_notices(client, pool):
+    scene = TwoPostAppeals(client, pool)
+
+    seen: list[dict] = []
+    for appeal_cid in scene.appeals:
+        before = {row["id"] for row in _notifications(client, scene.appellant_did)}
+        _panel_decides(client, appeal_cid, "upheld")
+        [row] = [
+            row
+            for row in _notifications(client, scene.appellant_did)
+            if row["id"] not in before and row["kind"] == KIND
+        ]
+        seen.append(row)
+
+    assert seen[0]["payload"]["summary"] == (
+        f'The appeal panel upheld the decision to hide your post '
+        f'("{scene.excerpt(0)}...") on "{scene.title}".'
+    )
+    assert seen[1]["payload"]["summary"] == (
+        f'The appeal panel upheld the decision to hide your post '
+        f'("{scene.excerpt(1)}...") on "{scene.title}".'
+    )
+    assert seen[0]["payload"]["summary"] != seen[1]["payload"]["summary"]
+
+
+def test_two_overturned_appeals_on_one_paper_get_distinct_notices(client, pool):
+    scene = TwoPostAppeals(client, pool)
+
+    seen: list[dict] = []
+    for appeal_cid in scene.appeals:
+        before = {row["id"] for row in _notifications(client, scene.appellant_did)}
+        _panel_decides(client, appeal_cid, "overturned")
+        [row] = [
+            row
+            for row in _notifications(client, scene.appellant_did)
+            if row["id"] not in before and row["payload"].get("action") == "release"
+        ]
+        seen.append(row)
+
+    assert seen[0]["payload"]["summary"] == (
+        f'The appeal panel overturned the decision to hide your post '
+        f'("{scene.excerpt(0)}...") on "{scene.title}"; it is visible again.'
+    )
+    assert seen[1]["payload"]["summary"] == (
+        f'The appeal panel overturned the decision to hide your post '
+        f'("{scene.excerpt(1)}...") on "{scene.title}"; it is visible again.'
+    )
+    assert seen[0]["payload"]["summary"] != seen[1]["payload"]["summary"]
 
 
 # --------------------------------------------------------------------------- #
@@ -232,7 +373,10 @@ def test_upholding_a_hidden_post_tells_the_appellant_once_naming_the_posts_paper
 
     assert [row["kind"] for row in added] == [KIND], added
     payload = added[0]["payload"]
-    assert payload["summary"] == f'The appeal panel upheld the decision to hide your post on "{scene.title}".'
+    assert payload["summary"] == (
+        f'The appeal panel upheld the decision to hide your post '
+        f'("{scene.text}...") on "{scene.title}".'
+    )
     assert payload["title"] == scene.title
     assert payload["target_cid"] == scene.target_cid
     assert payload["target_kind"] == "post"
@@ -258,7 +402,8 @@ def test_overturning_a_hidden_post_tells_the_appellant_once_through_the_restorat
     payload = added[0]["payload"]
     assert payload["action"] == "release"
     assert payload["summary"] == (
-        f'The appeal panel overturned the decision to hide your post on "{scene.title}"; it is visible again.'
+        f'The appeal panel overturned the decision to hide your post '
+        f'("{scene.text}...") on "{scene.title}"; it is visible again.'
     )
     assert not _appeal_notices(_notifications(client, scene.appellant_did))
 
@@ -293,7 +438,8 @@ def test_a_decision_without_a_panel_tells_the_appellant_so(client, pool):
     assert [row["kind"] for row in added] == [KIND], added
     payload = added[0]["payload"]
     assert payload["summary"] == (
-        f'Decided without a panel: upheld the decision to hide your post on "{scene.title}".'
+        f'Decided without a panel: upheld the decision to hide your post '
+        f'("{scene.text}...") on "{scene.title}".'
     )
     assert payload["decided_without_panel"] is True
     assert payload["appeal_cid"] == appeal_cid

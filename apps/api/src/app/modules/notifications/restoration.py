@@ -14,8 +14,9 @@ panel seat's notice (:mod:`~app.modules.notifications.panel`), the notice is
 settled against the record whenever the inbox is read:
 
 * a release that answers an appeal reads
-  ``The appeal panel overturned the decision to hide your post on "Title"; it is
-  visible again.`` and carries no separate reason line (the sentence is the
+  ``The appeal panel overturned the decision to hide your post ("{excerpt}...")
+  on "Title"; it is visible again.`` (the quote is what tells two appeals on
+  one paper apart) and carries no separate reason line (the sentence is the
   reason);
 * a release a moderator signed on their own keeps the moderation module's words
   and its reason: no panel decided it, so none is credited.
@@ -73,13 +74,40 @@ def _appeal_it_answers(decision_cid: object) -> Optional[str]:
     return appeal if isinstance(appeal, str) and appeal else None
 
 
+def _excerpt(payload: Mapping[str, Any], target: Optional[str]) -> Optional[str]:
+    """The quoted opening of the record the appeal brought back, if it is one.
+
+    The notice goes to the record's own author, who may read what they wrote
+    (the notice itself was sent to them); without the quote two appeals on one
+    paper would read alike.
+    """
+    if not isinstance(target, str) or not target:
+        return None
+    if payload.get("target_kind") not in ("post", "annotation", "review"):
+        return None
+    try:
+        from app.modules.appeals.subject import _quoted_excerpt
+        from app.modules.moderation import outcomes
+
+        excerpt = outcomes.excerpt(target)
+        return _quoted_excerpt(excerpt) if excerpt else None
+    except Exception:  # pragma: no cover - a quote is never worth failing a notice
+        logger.debug("could not read the excerpt of %s", target, exc_info=True)
+        return None
+
+
 def _sentence(payload: Mapping[str, Any]) -> str:
     from app.modules.moderation import outcomes
 
     noun = _NOUNS.get(str(payload.get("target_kind") or ""), "record")
     target = payload.get("target_cid")
     title: Optional[str] = outcomes.paper_title(target) if isinstance(target, str) and target else None
-    subject = f'your {noun} on "{title}"' if title else f"your {noun}"
+    excerpt = _excerpt(payload, target)
+    quoted = f' ("{excerpt}")' if excerpt else ""
+    if title:
+        subject = f'your {noun}{quoted} on "{title}"'
+    else:
+        subject = f"your {noun}{quoted}"
     return f"The appeal panel overturned the decision to hide {subject}; it is visible again."
 
 

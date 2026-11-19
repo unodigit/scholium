@@ -116,7 +116,7 @@ from .errors import (
 from .models import Appeal, AppealPanelMember, AppealVoteReasons, ensure_tables
 from .panel import get_panel
 from .service import get_appeal, panel_exclusions, resolve_decision, vote_deadline
-from .subject import describe_subject
+from .subject import _quoted_excerpt, describe_subject
 
 logger = logging.getLogger(__name__)
 
@@ -827,9 +827,13 @@ def _notify_appellant(
         title = subject.title
         action = subject.action
 
+        quoted = ""
         if subject.is_record:
             noun = {"post": "post", "annotation": "annotation", "review": "review"}.get(subject.kind, "record")
-            target_part = f"hide your {noun} on \"{title}\"" if title else f"hide your {noun}"
+            # The opening of the record tells two appeals on one paper apart;
+            # the appellant is the record's author and may read it.
+            quoted = f' ("{_quoted_excerpt(subject.excerpt)}")' if subject.excerpt else ""
+            target_part = f'hide your {noun}{quoted} on "{title}"' if title else f"hide your {noun}{quoted}"
         else:
             action_word = action if isinstance(action, str) and action else "hold"
             target_part = f'{action_word} "{title}"' if title else f"{action_word} your paper"
@@ -843,7 +847,11 @@ def _notify_appellant(
             if decided_without_panel:
                 summary = f"Decided without a panel: the appeal was {outcome}."
             else:
-                summary = f"The appeal panel {outcome} the decision on \"{title}\"." if title else f"The appeal panel {outcome} the decision."
+                summary = (
+                    f'The appeal panel {outcome} the decision on "{title}"{quoted}.'
+                    if title
+                    else f"The appeal panel {outcome} the decision."
+                )
 
         link = subject.link
         if not isinstance(link, str) or not link.strip():

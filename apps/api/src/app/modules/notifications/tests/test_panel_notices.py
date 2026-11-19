@@ -16,9 +16,13 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from scholium_record_core import sign_record, verify_record
 
+from app.modules import submissions
 from app.modules.appeals import get_appeal
+from app.modules.appeals import panel as panel_module
 from app.modules.appeals.tests.test_appeal_panels import (  # noqa: F401 - fixture re-exports
+    _account,
     _members,
     client,
     scene,
@@ -34,11 +38,13 @@ from app.modules.appeals.tests.test_appeal_resolution import (  # noqa: F401 - a
     _bearer,
     node_key,
 )
-from app.modules import submissions
+from app.modules.moderation.tests.test_decisions import Moderator, Submission, _timestamp
+from app.modules.moderation.tests.test_record_decisions import RecordAuthor, _post
 from app.modules.notifications import list_notifications
 
 NOTIFICATIONS_URL = "/v1/me/notifications"
 VOTES_URL = "/v1/appeals/{cid}/votes"
+DECISIONS_URL = "/v1/moderation/decisions"
 
 
 def _file(client: TestClient, scene: Scene) -> dict:
@@ -54,6 +60,70 @@ def _vote(client: TestClient, did: str, appeal_cid: str, outcome: str):
         json={"outcome": outcome, "reasons": f"Reasons {uuid.uuid4().hex}"},
         headers=_bearer(did),
     )
+
+
+@pytest.fixture
+def pool(monkeypatch):
+    """Pin the panel candidates to exactly the DIDs a test names."""
+
+    def pin(*dids: str) -> None:
+        monkeypatch.setattr(panel_module, "_tiered_dids", lambda: list(dids))
+
+    return pin
+
+
+class TwoHiddenPosts:
+    """Two posts on one paper, each hidden and appealed: two appeals on one paper.
+
+    Both appeals draw the same three members (the pool is exactly a panel), so
+    one member's two seat notices can be read side by side.
+    """
+
+    def __init__(self, client: TestClient, pool) -> None:
+        self.pool = [_account(3) for _ in range(3)]
+        pool(*self.pool)
+        self.paper = Submission(state="listed")
+        self.moderator = Moderator()
+        self.author = RecordAuthor()
+        _account(3, self.author.did)
+        self.posts = [_post(self.author, self.paper), _post(self.author, self.paper)]
+        self.appeals: list[str] = []
+        for post in self.posts:
+            decision = self._hide(client, post)
+            record = _appeal(self.author, decision)
+            response = client.post(APPEALS_URL, json=record, headers=_bearer(self.author.did))
+            assert response.status_code == 201, response.text
+            self.appeals.append(record["id"])
+
+    def _hide(self, client: TestClient, post: dict) -> str:
+        record = sign_record(
+            {
+                "v": 1,
+                "type": "moderation.decision",
+                "author": self.moderator.did,
+                "created": _timestamp(),
+                "prev": None,
+                "body": {
+                    "target": post["id"],
+                    "action": "hide",
+                    "clause": "MOD-09",
+                    "reason": "Abusive.",
+                },
+                "proofs": [],
+            },
+            self.moderator.seed,
+        )
+        assert verify_record(record)
+        response = client.post(DECISIONS_URL, json=record, headers=self.moderator.headers)
+        assert response.status_code == 201, response.text
+        return record["id"]
+
+    @property
+    def title(self) -> str:
+        return self.paper.title
+
+    def excerpt(self, index: int) -> str:
+        return self.posts[index]["body"]["text"]
 
 
 def _seat_notice(client: TestClient, did: str, appeal_cid: str) -> dict:
@@ -151,3 +221,45 @@ def test_listing_in_the_service_settles_the_notice_too(client, scene, standing):
     ]
     assert row.read is True
     assert row.payload["summary"].startswith("You voted to uphold the decision on the appeal for")
+
+
+# --------------------------------------------------------------------------- #
+# Two appeals on one paper: the excerpt tells them apart
+# --------------------------------------------------------------------------- #
+
+
+def test_two_appeals_on_one_paper_are_told_apart_once_voted(client, pool):
+    scene = TwoHiddenPosts(client, pool)
+    member = _members(scene.appeals[0])[0]
+    assert set(_members(scene.appeals[0])) == set(_members(scene.appeals[1])) == set(scene.pool)
+
+    for appeal_cid in scene.appeals:
+        assert _vote(client, member, appeal_cid, "upheld").status_code == 200
+
+    summaries = [
+        _seat_notice(client, member, appeal_cid)["payload"]["summary"]
+        for appeal_cid in scene.appeals
+    ]
+    assert summaries == [
+        f'You voted to uphold the decision on the appeal for "{scene.title}" ("{scene.excerpt(0)}...").',
+        f'You voted to uphold the decision on the appeal for "{scene.title}" ("{scene.excerpt(1)}...").',
+    ]
+    assert summaries[0] != summaries[1]
+
+
+def test_two_appeals_on_one_paper_are_told_apart_once_decided(client, pool):
+    scene = TwoHiddenPosts(client, pool)
+
+    summaries = []
+    for appeal_cid in scene.appeals:
+        seats = _members(appeal_cid)
+        assert set(seats) == set(scene.pool)
+        for member in seats[:2]:
+            assert _vote(client, member, appeal_cid, "upheld").status_code == 200
+        summaries.append(_seat_notice(client, seats[2], appeal_cid)["payload"]["summary"])
+
+    assert summaries == [
+        f'The panel upheld the decision on "{scene.title}" ("{scene.excerpt(0)}...").',
+        f'The panel upheld the decision on "{scene.title}" ("{scene.excerpt(1)}...").',
+    ]
+    assert summaries[0] != summaries[1]

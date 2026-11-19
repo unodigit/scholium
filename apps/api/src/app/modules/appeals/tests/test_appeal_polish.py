@@ -437,10 +437,13 @@ def test_a_notice_for_a_member_who_never_voted_names_the_subject(client, pool):
         assert response.status_code == 200, response.text
 
     bystander = _seat_notice(seated[2], record["id"]).payload["summary"]
-    assert bystander == f'The panel overturned the decision on "{scene.title}".'
+    assert bystander == (
+        f'The panel overturned the decision on "{scene.title}" ("{scene.text}...").'
+    )
     voter = _seat_notice(seated[0], record["id"]).payload["summary"]
     assert voter == (
-        f'You voted to overturn the decision on the appeal for "{scene.title}".'
+        f'You voted to overturn the decision on the appeal for "{scene.title}" '
+        f'("{scene.text}...").'
     )
 
 
@@ -472,8 +475,8 @@ def test_the_authors_overturn_notice_names_the_post_and_shows_no_cid(client, poo
     assert notices[0].payload["appeal"] == record["id"]
     payload = notices[0].payload
     assert payload["summary"] == (
-        f'The appeal panel overturned the decision to hide your post on "{scene.title}"; '
-        "it is visible again."
+        f'The appeal panel overturned the decision to hide your post '
+        f'("{scene.text}...") on "{scene.title}"; it is visible again.'
     )
     assert payload["outcome"] == payload["summary"]
     assert "moderator" not in payload["summary"].lower()
