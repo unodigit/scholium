@@ -24,6 +24,7 @@ invitation's lifecycle (``pending`` until the reviewer acts on it).
            confidence INTEGER,
            report_cid TEXT,
            signed_by TEXT,
+           ai_assisted BOOLEAN,
            committed_at TIMESTAMP,
            revealed_at TIMESTAMP)
 
@@ -67,7 +68,17 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, Integer, LargeBinary, Text, JSON, inspect
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Integer,
+    LargeBinary,
+    Text,
+    JSON,
+    inspect,
+    text,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
@@ -79,6 +90,7 @@ __all__ = [
     "ReviewInvitation",
     "ReviewRating",
     "ReviewResponse",
+    "ensure_columns",
     "ensure_table",
     "ensure_tables",
 ]
@@ -122,6 +134,9 @@ class Review(db.Base):
     #: The reviewer's own DID when they signed the review with their name
     #: (feature 111); NULL keeps it pseudonymous.
     signed_by = Column(Text, nullable=True)
+    #: Whether the reviewer declared AI assistance on the review.  NULL is the
+    #: ordinary case -- no declaration -- and is read as false.
+    ai_assisted = Column(Boolean, nullable=True)
     #: When the ``review.commit`` record was dated (its ``created``).
     committed_at = Column(DateTime, nullable=True)
     #: When the formal review was revealed, or NULL while it stays sealed.
@@ -193,6 +208,52 @@ class ReviewResponse(db.Base):
             f"review_cid={self.review_cid!r}>"
         )
 
+
+#: Columns added to ``review`` after it first shipped.  Each is nullable, since
+#: existing rows get NULL.  Their DDL types come from the model for whichever
+#: dialect runs.
+_ADDED_COLUMNS = ("ai_assisted",)
+
+
+def ensure_columns(bind: Engine) -> list[str]:
+    """Add any :data:`_ADDED_COLUMNS` a pre-existing ``review`` lacks.
+
+    ``Table.create(checkfirst=True)`` skips a table that already exists, so a
+    database created before a column was added would otherwise fail queries
+    with "no such column".  A missing table is left alone (the create is about
+    to build it whole).  Returns the names of the columns added; safe to call
+    repeatedly.
+    """
+    inspector = inspect(bind)
+    if not inspector.has_table(Review.__tablename__):
+        return []
+    present = {column["name"] for column in inspector.get_columns(Review.__tablename__)}
+    added = []
+    for name in _ADDED_COLUMNS:
+        if name in present:
+            continue
+        ddl_type = Review.__table__.c[name].type.compile(dialect=bind.dialect)
+        try:
+            with bind.begin() as connection:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {Review.__tablename__} "
+                        f"ADD COLUMN {name} {ddl_type}"
+                    )
+                )
+        except (OperationalError, ProgrammingError):
+            # Another process sharing the database may have added it between
+            # our inspection and the ALTER; only re-raise if it is still absent.
+            now_present = {
+                column["name"]
+                for column in inspect(bind).get_columns(Review.__tablename__)
+            }
+            if name not in now_present:
+                raise
+        added.append(name)
+    return added
+
+
 _table_lock = threading.Lock()
 _table_engine: Optional[Engine] = None
 
@@ -218,6 +279,9 @@ def ensure_table() -> None:
                     # second pytest-xdist worker) may have created it in between.
                     if not inspect(db.engine).has_table(table.name):
                         raise
+            # A database from before ``ai_assisted`` shipped has the table but
+            # not the column; add it rather than fail every review read.
+            ensure_columns(db.engine)
             _table_engine = db.engine
 
 

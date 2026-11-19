@@ -79,7 +79,9 @@ import {
 import { paperHref, reviewHref } from "./links";
 import {
   ReportPanel,
+  profilePath,
   reportPostFlag,
+  shortDid,
   signInPath,
   type ReportReason,
 } from "../paper-discussion";
@@ -634,7 +636,22 @@ function ReviewCard({
   const [reportOpen, setReportOpen] = useState(false);
   const [reported, setReported] = useState<ReportReason | null>(null);
 
-  const meta: ReactNode[] = ["Anonymous reviewer"];
+  // A review signed with a name is credited to that reviewer, with a link to
+  // their public profile.  The profile name is served beside the DID; when the
+  // profile was erased (or never saved) the short DID stands in for it.  An
+  // anonymous review keeps saying so -- that is the point of pseudonymous
+  // review -- and never shows a name the record does not carry.
+  const meta: ReactNode[] = [];
+  if (review.signedBy != null) {
+    meta.push(
+      <a className="pr-link" href={profilePath(review.signedBy)}>
+        {`Signed by ${review.signedByName ?? shortDid(review.signedBy)}`}
+      </a>,
+    );
+  } else {
+    meta.push("Anonymous reviewer");
+  }
+  if (review.aiAssisted) meta.push("AI assistance declared");
   if (review.committedAt !== null && formatDate(review.committedAt) !== null) {
     meta.push(
       <>

@@ -332,6 +332,30 @@ def reveal_review(
     }
 
 
+def _public_name(did: Optional[str]) -> Optional[str]:
+    """The public profile name of ``did``, or ``None`` when there is none.
+
+    A signed review is credited to the reviewer's DID; the card names them by
+    their public profile when they saved one (plugin: profiles).  An account
+    that never saved a profile, an erased profile and an unreadable one all
+    fall back to the DID-only display, and none of them may take the listing
+    down: this never raises.
+    """
+    if not isinstance(did, str) or not did.strip():
+        return None
+    try:
+        from app.modules.profiles import read_profile
+
+        data = read_profile(did)
+    except Exception:
+        # Profiles is a sibling plugin: absent tables, a corrupt blob or any
+        # other failure means "no name to show", never a failed listing.
+        return None
+    if data is None or not isinstance(data.name, str):
+        return None
+    return data.name.strip() or None
+
+
 def _response_provenance(response_cid: str) -> tuple[Optional[str], Optional[str]]:
     """Who signed the author response ``response_cid`` and when, as the log holds it.
 
@@ -357,7 +381,10 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
 
     Report bodies stay hidden until two reviews are committed on the version or
     21 days have passed since the first commit; anonymous reviewers are labelled
-    ``Reviewer A``, ``Reviewer B`` per paper.
+    ``Reviewer A``, ``Reviewer B`` per paper.  The reviewer's AI-assistance
+    declaration is served as ``ai_assisted``, and a review signed with a name
+    carries that DID in ``signed_by`` and its public profile name (when there is
+    one) in ``signed_by_name``.
 
     A reviewer who revised their review against a newer version (a
     ``review.formal`` whose ``prev`` names their earlier one) is one entry, not
@@ -487,6 +514,9 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
         index = label_index[row.review_cid]
         letter = chr(ord("A") + index) if index < 26 else str(index + 1)
         label = f"Reviewer {letter}"
+        # A signed review keeps its anonymous label and adds the name beside
+        # it; the card can then say "Signed by …" and link to the profile.
+        signed_by_name = _public_name(row.signed_by)
 
         item: dict[str, Any] = {
             "review_cid": row.review_cid,
@@ -505,6 +535,10 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
             "confidence": row.confidence,
             "report_cid": row.report_cid,
             "signed_by": row.signed_by,
+            "signed_by_name": signed_by_name,
+            "signedByName": signed_by_name,
+            "ai_assisted": bool(row.ai_assisted),
+            "aiAssisted": bool(row.ai_assisted),
             "version_cid": row.version_cid,
             "versionCid": row.version_cid,
             "version": visible.get(row.version_cid),
@@ -519,6 +553,8 @@ def get_paper_reviews(paper_id: str) -> dict[str, Any]:
                 "recommendation",
                 "confidence",
                 "report_cid",
+                "ai_assisted",
+                "aiAssisted",
                 "version_cid",
                 "versionCid",
                 "version",

@@ -75,8 +75,8 @@ The ``review`` row the commit created is filled in: ``scores`` (the six entries
 as given), ``recommendation`` (normalised, see :func:`normalise_recommendation`),
 ``confidence`` (an integer, see :data:`CONFIDENCE_LEVELS`), ``report_cid`` (only
 when the review carries a ``reportCid``; an inline ``report`` stays in the
-record, since the content store is public) and ``revealed_at`` (the record's
-``created``).
+record, since the content store is public), ``ai_assisted`` (the reviewer's
+declaration, if any) and ``revealed_at`` (the record's ``created``).
 
 Signing with a name (feature 111)
 ---------------------------------
@@ -415,6 +415,9 @@ class ReviewRevealFields:
     report_cid: Optional[str]
     #: Whether the reviewer asks for public credit under their own name.
     signed: bool
+    #: Whether the reviewer declared AI assistance in writing the review.  The
+    #: declaration is part of the signed body, so it travels with the review.
+    ai_assisted: bool
     #: The instant the record is dated (``created``), not when it arrived.
     revealed_at: datetime
 
@@ -521,6 +524,23 @@ def review_reveal_fields(record: Mapping[str, Any]) -> ReviewRevealFields:
         )
         signed = False
 
+    # The AI-assistance declaration is not named by the record schema, but the
+    # review form always sends it.  Absent means "not declared"; a value that
+    # is neither true nor false is refused, like ``signed``.
+    ai_assisted = body.get("aiAssisted")
+    if ai_assisted is None:
+        ai_assisted = False
+    elif not isinstance(ai_assisted, bool):
+        problems.append(
+            _problem(
+                ["body", "aiAssisted"],
+                "The 'aiAssisted' declaration must be true or false.",
+                "invalid_ai_assisted",
+                ai_assisted,
+            )
+        )
+        ai_assisted = False
+
     if problems:
         raise InvalidRecord(problems, detail=problems[0]["msg"])
 
@@ -545,6 +565,7 @@ def review_reveal_fields(record: Mapping[str, Any]) -> ReviewRevealFields:
         confidence=_confidence(body["confidence"]),  # type: ignore[arg-type]
         report_cid=report_cid if isinstance(report_cid, str) and report_cid else None,
         signed=signed,
+        ai_assisted=ai_assisted,
         revealed_at=_created_at(record, subject="review"),
     )
 
@@ -1045,6 +1066,7 @@ def apply_review_reveal(
         "confidence": fields.confidence,
         "report_cid": fields.report_cid,
         "revealed_at": fields.revealed_at,
+        "ai_assisted": fields.ai_assisted,
     }
     if signed_by is not None:
         values["signed_by"] = signed_by

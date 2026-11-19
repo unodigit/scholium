@@ -280,6 +280,64 @@ describe("a review card", () => {
   });
 });
 
+describe("what the reviewer signed", () => {
+  const REVIEWER = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+  const SHORT = "did:key:z6MkhaXg…ta2doK";
+
+  it("says so when the reviewer declared AI assistance", () => {
+    renderTab(dataOf(review({ revealed_at: "2027-03-02T05:00:00", ai_assisted: true })));
+
+    expect(screen.getByText(/AI assistance declared/)).toBeTruthy();
+  });
+
+  it("says nothing about AI assistance on a review without the declaration", () => {
+    renderTab(dataOf(review({ revealed_at: "2027-03-02T05:00:00" })));
+
+    expect(screen.queryByText(/AI assistance declared/)).toBeNull();
+  });
+
+  it("names a signed reviewer and links to their profile", () => {
+    renderTab(
+      dataOf(
+        review({
+          revealed_at: "2027-03-02T05:00:00",
+          signed_by: REVIEWER,
+          signed_by_name: "Ada Lovelace",
+        }),
+      ),
+    );
+
+    const link = screen.getByRole("link", { name: "Signed by Ada Lovelace" });
+    expect(link.getAttribute("href")).toBe(`/u/${encodeURIComponent(REVIEWER)}`);
+    expect(screen.queryByText(/Anonymous reviewer/)).toBeNull();
+    // The anonymous label still heads the card.
+    expect(screen.getByRole("heading", { name: "Reviewer A" })).toBeTruthy();
+  });
+
+  it("falls back to the short DID when the signed reviewer's profile is gone", () => {
+    renderTab(
+      dataOf(
+        review({
+          revealed_at: "2027-03-02T05:00:00",
+          signed_by: REVIEWER,
+          signed_by_name: null,
+        }),
+      ),
+    );
+
+    const link = screen.getByRole("link", { name: `Signed by ${SHORT}` });
+    expect(link.getAttribute("href")).toBe(`/u/${encodeURIComponent(REVIEWER)}`);
+    expect(screen.queryByText(/Anonymous reviewer/)).toBeNull();
+  });
+
+  it("keeps an anonymous review anonymous", () => {
+    renderTab(dataOf(review({ revealed_at: "2027-03-02T05:00:00" })));
+
+    expect(screen.getByText(/Anonymous reviewer/)).toBeTruthy();
+    expect(screen.queryByText(/Signed by/)).toBeNull();
+  });
+});
+
 describe("the actions on a revealed review card", () => {
   /** An unsigned JWT: the actions only read its claims. */
   function sessionToken(claims: unknown): string {

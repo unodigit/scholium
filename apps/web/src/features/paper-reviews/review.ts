@@ -164,6 +164,10 @@ export interface Review {
   readonly version: number | null;
   /** The reviewer's DID when they signed the review with their name, when named. */
   readonly signedBy?: string | null;
+  /** The signed reviewer's public profile name, when the API serves one. */
+  readonly signedByName: string | null;
+  /** Whether the reviewer declared AI assistance in writing the review. */
+  readonly aiAssisted: boolean;
   /** The cid of the `review.formal` the review stands on, when named. */
   readonly formalCid?: string | null;
 }
@@ -767,6 +771,8 @@ function reviewOf(value: unknown, index: number): Review {
     revealedAt: firstText(record.revealed_at, record.revealedAt),
     version: firstNumber(record.version, record.n),
     signedBy: firstText(record.signed_by, record.signedBy),
+    signedByName: firstText(record.signed_by_name, record.signedByName),
+    aiAssisted: booleanOf(record.ai_assisted ?? record.aiAssisted) ?? false,
     formalCid: firstText(
       record.formal_cid,
       record.formalCid,

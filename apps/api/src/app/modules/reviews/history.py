@@ -110,6 +110,7 @@ def _read(row: Review, revision: Revision) -> Optional[dict[str, Any]]:
             "recommendation": row.recommendation,
             "confidence": row.confidence,
             "report_cid": row.report_cid,
+            "ai_assisted": bool(row.ai_assisted),
             "revealed_at": row.revealed_at,
         }
     try:
@@ -121,6 +122,8 @@ def _read(row: Review, revision: Revision) -> Optional[dict[str, Any]]:
         "recommendation": fields.recommendation,
         "confidence": fields.confidence,
         "report_cid": fields.report_cid,
+        # An update writes no row: its declaration lives in its signed record.
+        "ai_assisted": fields.ai_assisted,
         "revealed_at": fields.revealed_at,
     }
 
@@ -190,6 +193,8 @@ def review_history(
             "scores": read["scores"],
             "recommendation": read["recommendation"],
             "confidence": read["confidence"],
+            "ai_assisted": read["ai_assisted"],
+            "aiAssisted": read["ai_assisted"],
             "report_cid": (
                 read["report_cid"]
                 or revision.body.get("reportCid")

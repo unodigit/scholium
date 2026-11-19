@@ -177,6 +177,34 @@ describe("parseReviews", () => {
     expect(parseReviews({ reviews: "nope" }).reviews).toEqual([]);
     expect(parseReviews({ reviews: [null, 3, []] }).reviews).toHaveLength(3);
   });
+
+  it("reads the AI-assistance declaration the reviewer signed", () => {
+    const data = parseReviews({
+      reviews: [{ review_cid: "a", ai_assisted: true }],
+    });
+    expect(data.reviews[0].aiAssisted).toBe(true);
+  });
+
+  it("defaults to no AI-assistance declaration", () => {
+    const data = parseReviews({ reviews: [{ review_cid: "a" }] });
+    expect(data.reviews[0].aiAssisted).toBe(false);
+  });
+
+  it("reads a signed reviewer's DID and public name", () => {
+    const data = parseReviews({
+      reviews: [
+        {
+          review_cid: "a",
+          signed_by: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          signed_by_name: "Ada Lovelace",
+        },
+      ],
+    });
+    expect(data.reviews[0].signedBy).toBe(
+      "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    );
+    expect(data.reviews[0].signedByName).toBe("Ada Lovelace");
+  });
 });
 
 describe("revealed reviews and their revision history", () => {
@@ -482,6 +510,8 @@ describe("medians", () => {
         replies: [],
         committedAt: null,
         version: null,
+        signedByName: null,
+        aiAssisted: false,
       },
     ]);
     expect(rows).toEqual([]);
