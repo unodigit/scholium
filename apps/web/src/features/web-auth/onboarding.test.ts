@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MemoryTokenStorage, apiErrorFrom } from "../../lib/api";
 
 import { isEd25519DidKey } from "./did-key";
+import { describeOnboardingError } from "./onboarding-messages";
 import { fromBase64Url } from "./encoding";
 import {
   GUARDIAN_COUNT,
@@ -642,5 +643,20 @@ describe("add your name", () => {
     });
 
     await expect(saveProfile(client, OWNER, PROFILE)).rejects.toBe(offline);
+  });
+});
+
+
+describe("onboarding 403 message", () => {
+  it("turns the unsigned guardian change 403 into plain words with a link", () => {
+    const error = apiErrorFrom(403, {
+      detail: "Changing recovery guardians requires a signature by the account's active key.",
+    });
+    const message = describeOnboardingError(error);
+    expect(message).toContain("/me/security");
+    expect(message).toContain("Change them on Security");
+    expect(message).not.toBe(
+      "Changing recovery guardians requires a signature by the account's active key.",
+    );
   });
 });

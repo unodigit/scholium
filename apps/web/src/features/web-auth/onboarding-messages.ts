@@ -153,6 +153,18 @@ export const GUARDIANS_SAVED_NOTE =
 export const GUARDIANS_REQUIRED_NOTE =
   "Strongly recommended: without guardians you cannot recover your account if you lose this device.";
 
+/** Link to Security for changing an already-saved guardian set. */
+export const GUARDIANS_CHANGE_ON_SECURITY_ACTION = "Change them on Security";
+export const GUARDIANS_CHANGE_ACTION = GUARDIANS_CHANGE_ON_SECURITY_ACTION;
+
+/** Plain-language explanation shown when a saved guardian set cannot be replaced here. */
+export const GUARDIANS_CHANGE_REQUIRES_SIGNATURE_MESSAGE =
+  "You've already saved guardians. Change them on Security (/me/security).";
+export const GUARDIANS_CHANGE_ON_SECURITY_MESSAGE =
+  GUARDIANS_CHANGE_REQUIRES_SIGNATURE_MESSAGE;
+export const GUARDIANS_ALREADY_SAVED_MESSAGE = GUARDIANS_CHANGE_REQUIRES_SIGNATURE_MESSAGE;
+
+
 /** The gentle nag next to the finish gate (design.md §6). */
 export const GUARDIANS_SKIP_NOTE =
   "You can skip this now and add guardians later from Security on your dashboard (/me/security) — without them, you cannot recover your account if you lose this device.";
@@ -190,6 +202,13 @@ export function describeOnboardingError(error: unknown): string {
     }
     if (error.isServerError) {
       return "Scholium is having trouble right now. Please try again in a moment.";
+    }
+    if (
+      error.isForbidden &&
+      (error.type === "urn:scholium:problem:unsigned-guardian-change" ||
+        /requires a signature by the account's active key/i.test(error.detail))
+    ) {
+      return GUARDIANS_CHANGE_REQUIRES_SIGNATURE_MESSAGE;
     }
     if (error.detail && error.detail !== error.title) {
       return error.detail;

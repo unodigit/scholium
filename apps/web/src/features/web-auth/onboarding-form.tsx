@@ -47,6 +47,7 @@ import {
   CATEGORY_INVALID_MESSAGE,
   GUARDIANS_REQUIRED_NOTE,
   GUARDIANS_SAVED_NOTE,
+  GUARDIANS_CHANGE_ON_SECURITY_ACTION,
   GUARDIANS_SAVE_ACTION,
   GUARDIANS_SAVING,
   GUARDIANS_SKIP_NOTE,
@@ -451,6 +452,33 @@ function CategoriesBody({
 /** Guardians step: five DID inputs and the save action. */
 function GuardiansBody({ onboarding }: { onboarding: ReturnType<typeof useOnboarding> }) {
   const { guardians, setGuardianValue, saveGuardiansAction } = onboarding;
+  const guardiansStepDone = onboarding.steps.some(
+    (step) => step.id === "guardians" && step.done,
+  );
+  const isSaved = guardians.saved !== null || guardiansStepDone;
+
+  if (isSaved) {
+    return (
+      <>
+        <p className="wa-note">{GUARDIANS_SAVED_NOTE}</p>
+        {guardians.saved !== null ? (
+          <ul className="wa-guardian-list">
+            {guardians.saved.map((value, index) => (
+              <li key={`${value}-${index}`} className="wa-note wa-input--mono">
+                {value}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <p className="wa-note">
+          <Link className="wa-link" href="/me/security">
+            {GUARDIANS_CHANGE_ON_SECURITY_ACTION}
+          </Link>
+        </p>
+      </>
+    );
+  }
+
   const listProblem = guardians.problems.find((problem) => problem.index === null);
   return (
     <>

@@ -745,6 +745,19 @@ export async function followCategories(
 /** How many guardians an account names (mirrors the API). */
 export const GUARDIAN_COUNT = 5;
 
+/** Problem type the API returns when replacing a saved guardian set without a signature. */
+export const UNSIGNED_GUARDIAN_CHANGE_TYPE = "urn:scholium:problem:unsigned-guardian-change";
+
+/** True when `error` is the API refusing to replace a saved guardian set unsigned. */
+export function isUnsignedGuardianChange(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    error.isForbidden &&
+    (error.type === UNSIGNED_GUARDIAN_CHANGE_TYPE ||
+      /requires a signature by the account's active key/i.test(error.detail))
+  );
+}
+
 /** One thing wrong with a guardian list, tied to an input when it can be. */
 export interface GuardianProblem {
   /** The guardian input (0-based) the problem belongs to; null for the list. */
