@@ -2,9 +2,10 @@
  * Plain-language copy for the `/onboarding` page.
  *
  * Wording follows `docs/design.md` §8: short sentences, no "token", "hash"
- * or "CID", and the guardians requirement is stated as a fact to act on
- * ("required before your first submission"), not an alarm. Step titles and
- * summaries live with the step model in `onboarding.ts`.
+ * or "CID", and guardians are stated as the strong recommendation they are
+ * ("without guardians you cannot recover your account"), not as a rule nothing
+ * enforces. Step titles and summaries live with the step model in
+ * `onboarding.ts`.
  */
 
 import { ApiError, NetworkError } from "../../lib/api";
@@ -142,14 +143,19 @@ export const GUARDIANS_SAVING = "Saving…";
 
 /** Guardians step, done. */
 export const GUARDIANS_SAVED_NOTE =
-  "Five guardians set. You can change them at any time from Settings.";
+  "Five guardians set. You can change them at any time from Security on your dashboard (/me/security).";
 
-/** The requirement, stated where the guardians step is. */
-export const GUARDIANS_REQUIRED_NOTE = "Required before your first submission.";
+/**
+ * What guardians are for, stated where the step is.
+ *
+ * They are recommended, not required — no submission is refused without them.
+ */
+export const GUARDIANS_REQUIRED_NOTE =
+  "Strongly recommended: without guardians you cannot recover your account if you lose this device.";
 
 /** The gentle nag next to the finish gate (design.md §6). */
 export const GUARDIANS_SKIP_NOTE =
-  "You can skip this now and add guardians later from Settings — but five guardians are required before your first submission.";
+  "You can skip this now and add guardians later from Security on your dashboard (/me/security) — without them, you cannot recover your account if you lose this device.";
 
 /** Primary action once the steps are done. */
 export const ONBOARDING_FINISH_ACTION = "Start reading Scholium";

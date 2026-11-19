@@ -34,11 +34,15 @@
  * - **set guardians** — `PUT /v1/me/guardians` (feature 36) saves exactly
  *   five guardian DIDs. The same rules the API enforces are checked here
  *   first, so most mistakes never leave the browser, and a 422 problem
- *   document's per-entry `errors` are mapped back onto the inputs.
+ *   document's per-entry `errors` are mapped back onto the inputs. The first
+ *   list goes in with the access token alone; *replacing* a saved list is a
+ *   recovery-critical change, so it is also signed by this device's key (see
+ *   {@link guardianChangeMessage} and {@link saveGuardians}).
  *
- * Guardians are **required before the first submission**: the API answers any
- * submission with 403 problem details until they are set, so the UI gates its
- * finish action on this step (see `use-onboarding.ts`).
+ * Guardians are **strongly recommended, not required**: nothing refuses a
+ * submission without them, but without guardians an account cannot be
+ * recovered if its device is lost, so the checklist nudges towards setting
+ * them before it finishes (see `use-onboarding.ts`).
  *
  * Progress is remembered per browser under
  * {@link ONBOARDING_STORAGE_KEY} so a reload — or coming back from ORCID —
@@ -51,6 +55,7 @@ import { ApiError, apiClient, browserTokenStorage } from "../../lib/api";
 import type { ApiClient, TokenStorage } from "../../lib/api";
 
 import { isEd25519DidKey } from "./did-key";
+import { toBase64Url, utf8Encode } from "./encoding";
 
 /** The five steps, in the order the design fixes for them. */
 export type OnboardingStepId = "passkey" | "profile" | "orcid" | "categories" | "guardians";
@@ -821,6 +826,44 @@ export function isGuardianSaveError(error: unknown): error is GuardianSaveError 
   return error instanceof GuardianSaveError;
 }
 
+/** The slice of the device key a guardian-change signature needs. */
+export interface GuardianSigner {
+  /** Prompt for the passkey, then sign `data` with the device key. */
+  signWithPasskey(
+    data: Uint8Array,
+    options?: { reason?: string; timeoutMs?: number },
+  ): Promise<Uint8Array>;
+}
+
+/** Passkey prompt reason shown when an existing guardian set is replaced. */
+export const GUARDIANS_CHANGE_REASON = "Change your recovery guardians";
+
+/**
+ * The bytes a guardian-change signature is made over.
+ *
+ * Compact, key-sorted JSON binding the account DID and the ordered guardian
+ * list — the canonical spelling of the API's `guardian_change_preimages`, so a
+ * replacement signed here verifies there. A signature over these exact values
+ * cannot authorize a different list, which is the point of requiring one.
+ */
+export function guardianChangeMessage(
+  ownerDid: string,
+  guardians: readonly string[],
+): Uint8Array {
+  return utf8Encode(JSON.stringify({ did: ownerDid, guardians: [...guardians] }));
+}
+
+/** How a guardian save proves it is the owner replacing a saved set. */
+export interface SaveGuardiansOptions {
+  /**
+   * Sign the replacement with this device's key (a passkey prompt). Omit for
+   * the first save, which the API accepts with the access token alone.
+   */
+  signer?: GuardianSigner;
+  /** Passkey prompt reason; {@link GUARDIANS_CHANGE_REASON} by default. */
+  reason?: string;
+}
+
 /** The guardian index a problem-details location points at, if any. */
 function guardianIndexFromLocation(fieldError: {
   loc?: Array<string | number>;
@@ -881,12 +924,18 @@ function guardiansFromResponse(payload: unknown, fallback: readonly string[]): s
  * once) are mapped onto the inputs the same way. Any other failure is
  * thrown as-is for the caller to describe.
  *
+ * With a {@link SaveGuardiansOptions.signer} the save is a *replacement* and
+ * is signed with this device's key over {@link guardianChangeMessage}, which
+ * the API demands before it will redirect a saved set. Without one — the
+ * first save, from onboarding — the list travels alone, exactly as before.
+ *
  * @returns the guardians as saved, in the order sent.
  */
 export async function saveGuardians(
   client: OnboardingClient = apiClient,
   ownerDid: string | null = null,
   values: readonly string[] = [],
+  options: SaveGuardiansOptions = {},
 ): Promise<string[]> {
   const trimmed = values.map((value) => (typeof value === "string" ? value.trim() : ""));
   const localProblems = validateGuardians(ownerDid, trimmed);
@@ -894,9 +943,26 @@ export async function saveGuardians(
     throw new GuardianSaveError(localProblems, "Check the highlighted guardians.");
   }
 
+  const body: { guardians: string[]; signature?: string } = { guardians: trimmed };
+  if (options.signer) {
+    if (ownerDid === null) {
+      // The signature binds the account DID; without it there is nothing the
+      // API would accept, so refuse before prompting for a passkey.
+      throw new GuardianSaveError(
+        [{ index: null, message: "Sign in again to change your recovery guardians." }],
+        "The account's DID is not known.",
+      );
+    }
+    const signature = await options.signer.signWithPasskey(
+      guardianChangeMessage(ownerDid, trimmed),
+      { reason: options.reason ?? GUARDIANS_CHANGE_REASON },
+    );
+    body.signature = toBase64Url(signature);
+  }
+
   let payload: unknown;
   try {
-    payload = await client.put<unknown>("/me/guardians", { guardians: trimmed });
+    payload = await client.put<unknown>("/me/guardians", body);
   } catch (error) {
     if (error instanceof ApiError && error.isValidationError) {
       throw new GuardianSaveError(

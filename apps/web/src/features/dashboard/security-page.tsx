@@ -2,9 +2,16 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 
-import { tokenStore } from "../../lib/api";
+import { ApiError, apiClient, tokenStore } from "../../lib/api";
 import { EmptyState, RecordLink } from "../ui-kit";
-import { RECOVER_PATH } from "../web-auth";
+import {
+  RECOVER_PATH,
+  deviceKey,
+  isGuardianSaveError,
+  isPasskeyCancellation,
+  saveGuardians as saveGuardiansSigned,
+  type GuardianProblem,
+} from "../web-auth";
 
 import { ME_PATH } from "./dashboard";
 import { Card } from "./dashboard-page";
@@ -42,6 +49,19 @@ import "./security-page.css";
 /** Loads the security screen; replaceable in tests. */
 export type LoadSecurity = () => Promise<SecurityData>;
 
+/**
+ * Saves a replacement guardian list, signed by this device's key.
+ *
+ * {@link GuardiansCard} calls this; the default prompts for the passkey and
+ * sends the detached signature the API needs to redirect a saved set.
+ */
+export type SaveGuardians = (did: string, values: readonly string[]) => Promise<string[]>;
+
+/** The default: sign the new list with this device's key, behind a passkey. */
+function saveGuardiansWithPasskey(did: string, values: readonly string[]): Promise<string[]> {
+  return saveGuardiansSigned(apiClient, did, values, { signer: deviceKey });
+}
+
 /** Props for {@link SecurityPage}. Everything is optional. */
 export interface SecurityPageProps {
   /** Security data already in hand (tests, or a server route that fetched it). */
@@ -52,6 +72,8 @@ export interface SecurityPageProps {
   rotate?: RotateKey;
   /** Replace the profile erasure, for tests. */
   eraseProfile?: (did: string) => Promise<void>;
+  /** Replace the signed guardian save, for tests. */
+  saveGuardians?: SaveGuardians;
   /**
    * Called once the key has changed. The default reloads the page: the app's
    * in-memory device key still holds the old key until it is read again.
@@ -82,6 +104,7 @@ export function SecurityPage({
   loadSecurity,
   rotate = defaultRotateKey,
   eraseProfile = defaultEraseProfile,
+  saveGuardians = saveGuardiansWithPasskey,
   onRotated = reloadPage,
   signedIn,
 }: SecurityPageProps = {}) {
@@ -157,8 +180,10 @@ export function SecurityPage({
           <div className="db-grid">
             <DevicesCard data={state.data} />
             <GuardiansCard
+              did={state.data.did}
               guardians={state.data.guardians}
               names={state.data.profileNames}
+              saveGuardians={saveGuardians}
             />
             <RecoveryRequestsCard
               requests={state.data.recoveryRequests ?? []}
@@ -241,14 +266,147 @@ function DeviceRow({ device }: { device: DeviceInfo }) {
 
 // ---- Recovery guardians ----------------------------------------------------
 
+type GuardiansPhase = "idle" | "editing" | "working";
+
+/** Five field values: the saved list, with blanks for the gaps. */
+function guardianFields(dids: readonly string[]): string[] {
+  return Array.from({ length: GUARDIAN_TOTAL }, (_, index) => dids[index] ?? "");
+}
+
+/** The page's words for a guardian change that did not go through. */
+function describeGuardiansChangeError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.isUnauthorized) {
+      return "Your session has ended. Sign in again to change your guardians.";
+    }
+    return error.detail || error.title;
+  }
+  if (isPasskeyCancellation(error)) {
+    return "Cancelled. Your guardians are unchanged.";
+  }
+  const detail =
+    error instanceof Error && error.message
+      ? error.message
+      : "Could not change your guardians.";
+  const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+  return `${sentence} Your guardians are unchanged.`;
+}
+
 function GuardiansCard({
+  did,
   guardians,
   names,
+  saveGuardians = saveGuardiansWithPasskey,
 }: {
+  did: string;
   guardians: GuardianState;
   names?: Readonly<Record<string, string>>;
+  saveGuardians?: SaveGuardians;
 }) {
-  const source = describeGuardianSource(guardians);
+  const [phase, setPhase] = useState<GuardiansPhase>("idle");
+  const [current, setCurrent] = useState<string[]>(() => [...guardians.dids]);
+  const [values, setValues] = useState<string[]>(() => guardianFields(guardians.dids));
+  const [problems, setProblems] = useState<GuardianProblem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const headingId = useId();
+  const fieldId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const fieldRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const pendingFocus = useRef<number | null>(null);
+  const previous = useRef<GuardiansPhase>("idle");
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  // A reload or retry replaced the loaded list: follow it.
+  useEffect(() => {
+    setCurrent([...guardians.dids]);
+    setValues(guardianFields(guardians.dids));
+  }, [guardians.dids]);
+
+  // Move focus with the interface, as Rotate key does: into the form when it
+  // opens, back to the button when it closes.
+  useEffect(() => {
+    if (phase === "editing" && previous.current === "idle") {
+      headingRef.current?.focus();
+    }
+    if (phase === "idle" && previous.current !== "idle") {
+      triggerRef.current?.focus();
+    }
+    // A rejected entry takes focus once the fields are enabled again, so its
+    // message is read, the way a failed native submit focuses the first
+    // invalid field.
+    if (phase === "editing" && pendingFocus.current !== null) {
+      const index = pendingFocus.current;
+      pendingFocus.current = null;
+      fieldRefs.current[index]?.focus();
+    }
+    previous.current = phase;
+  }, [phase]);
+
+  function open() {
+    setValues(guardianFields(current));
+    setProblems([]);
+    setError(null);
+    setSaved(null);
+    setPhase("editing");
+  }
+
+  function setValue(index: number, value: string) {
+    setValues((list) => list.map((entry, at) => (at === index ? value : entry)));
+    setProblems((list) => list.filter((problem) => problem.index !== index));
+  }
+
+  async function confirm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (phase === "working") {
+      return;
+    }
+    setPhase("working");
+    setProblems([]);
+    setError(null);
+    try {
+      const next = await saveGuardians(did, values);
+      if (!mounted.current) {
+        return;
+      }
+      setCurrent(next);
+      setValues(next);
+      setSaved("Guardians updated. Scholium has told you about the change.");
+      setPhase("idle");
+    } catch (failure) {
+      if (!mounted.current) {
+        return;
+      }
+      if (isGuardianSaveError(failure)) {
+        setProblems(failure.problems);
+        const first = failure.problems.find((problem) => problem.index !== null)?.index;
+        pendingFocus.current = first === undefined ? null : first;
+      } else {
+        pendingFocus.current = null;
+        setError(describeGuardiansChangeError(failure));
+      }
+      setPhase("editing");
+    }
+  }
+
+  // What the card shows after a save is the server's answer, not the old prop.
+  const shown: GuardianState =
+    saved === null
+      ? { ...guardians, dids: current }
+      : { ...guardians, dids: current, source: "server" };
+  const source = describeGuardianSource(shown);
+  const working = phase === "working";
+  const listProblem = problems.find((problem) => problem.index === null);
+
   return (
     <Card title="Recovery guardians" anchor="guardians">
       <p className="db-stat">
@@ -259,16 +417,16 @@ function GuardiansCard({
         If you lose your device, any {GUARDIAN_THRESHOLD} of your {GUARDIAN_TOTAL} guardians
         can approve a new key. A 72-hour safety window follows.
       </p>
-      <p className="db-guardian-status">{describeGuardians(guardians)}</p>
-      {guardians.dids.length > 0 ? (
+      <p className="db-guardian-status">{describeGuardians(shown)}</p>
+      {current.length > 0 ? (
         <ol className="db-guardians" aria-label="Your recovery guardians">
-          {guardians.dids.map((did) => {
-            const name = names?.[did];
+          {current.map((guardianDid) => {
+            const name = names?.[guardianDid];
             return (
-              <li className="db-guardian" key={did}>
+              <li className="db-guardian" key={guardianDid}>
                 {name ? <span className="db-guardian-name">{name}</span> : null}
-                <span className="db-cred-id mono-id db-guardian-did" title={did}>
-                  {shortDid(did)}
+                <span className="db-cred-id mono-id db-guardian-did" title={guardianDid}>
+                  {shortDid(guardianDid)}
                 </span>
               </li>
             );
@@ -276,10 +434,96 @@ function GuardiansCard({
         </ol>
       ) : null}
       {source ? <p className="db-cred-note meta">{source}</p> : null}
-      {guardiansComplete(guardians) ? null : (
+      {guardiansComplete(shown) ? null : (
         <a className="db-button" href={GUARDIANS_SETUP_HREF}>
           Set recovery guardians
         </a>
+      )}
+
+      {phase === "idle" ? (
+        current.length > 0 ? (
+          <div className="db-rotate-action">
+            <button type="button" className="db-button" ref={triggerRef} onClick={open}>
+              Change guardians
+            </button>
+            {saved ? (
+              <p className="db-note" role="status">
+                {saved}
+              </p>
+            ) : null}
+          </div>
+        ) : null
+      ) : (
+        <form className="db-rotate" aria-labelledby={headingId} onSubmit={confirm}>
+          <h3 className="db-rotate-title" id={headingId} tabIndex={-1} ref={headingRef}>
+            Change your recovery guardians?
+          </h3>
+          <p className="db-rotate-text">
+            Replace any of the five. Saving asks for your passkey: this device signs the new
+            list with your account&rsquo;s key, so a stolen session alone cannot redirect your
+            recovery. Scholium tells you about every change.
+          </p>
+          {values.map((value, index) => {
+            const problem = problems.find((entry) => entry.index === index);
+            const inputId = `${fieldId}-guardian-${index}`;
+            return (
+              <div className="db-field" key={inputId}>
+                <label className="db-field-label" htmlFor={inputId}>
+                  Guardian {index + 1}
+                </label>
+                <input
+                  id={inputId}
+                  className="db-input"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="did:key:z6Mk…"
+                  value={value}
+                  disabled={working}
+                  ref={(element) => {
+                    fieldRefs.current[index] = element;
+                  }}
+                  aria-invalid={problem ? true : undefined}
+                  aria-describedby={problem ? `${inputId}-problem` : undefined}
+                  onChange={(event) => setValue(index, event.target.value)}
+                />
+                {problem ? (
+                  <p className="db-error" id={`${inputId}-problem`}>
+                    {problem.message}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+          {listProblem ? (
+            <p className="db-error" role="alert">
+              {listProblem.message}
+            </p>
+          ) : null}
+          {error ? (
+            <p className="db-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {working ? (
+            <p className="db-note" role="status">
+              Waiting for your passkey…
+            </p>
+          ) : null}
+          <div className="db-actions">
+            <button type="submit" className="db-button" data-variant="primary" disabled={working}>
+              Save guardians
+            </button>
+            <button
+              type="button"
+              className="db-button"
+              disabled={working}
+              onClick={() => setPhase("idle")}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
       )}
     </Card>
   );
@@ -577,6 +821,35 @@ function RotateKeyAction({
 
 // ---- Erase profile ---------------------------------------------------------
 
+/**
+ * What erasure removes and what it leaves behind.
+ *
+ * Erasure drops the name, affiliation and email. The account is untouched, and
+ * the ORCID link is not removed either: the profile stops showing it and it is
+ * kept only so the account can still be recovered (profiles/views.py,
+ * recovery/opening.py). Saying so before the click is the point.
+ */
+export const ERASE_SCOPE_NOTE =
+  "Erase your name, affiliation and email from your profile. Your account, DID, trust tier and your signed papers and reviews stay. Your ORCID link stays too: your profile stops showing it, and Scholium keeps it only so you can recover your account.";
+
+/** The confirmation, in the same words as the note. */
+export const ERASE_CONFIRM_TEXT =
+  "This can't be undone. Scholium erases the name, affiliation and email on your profile and keeps none of them. Your account, DID, trust tier and signed papers and reviews stay. Your ORCID link stays too, hidden from your profile and used only if you need to recover your account.";
+
+type ErasePhase = "idle" | "confirming" | "working" | "done" | "error";
+
+function describeEraseError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.isUnauthorized) {
+      return "Your session has ended. Sign in again to erase your profile.";
+    }
+    return error.detail || error.title;
+  }
+  return error instanceof Error && error.message
+    ? error.message
+    : "Could not erase your profile.";
+}
+
 function EraseProfileCard({
   did,
   eraseProfile,
@@ -584,40 +857,118 @@ function EraseProfileCard({
   did: string;
   eraseProfile: (did: string) => Promise<void>;
 }) {
-  const [phase, setPhase] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [phase, setPhase] = useState<ErasePhase>("idle");
   const [message, setMessage] = useState<string | null>(null);
 
-  const handleErase = useCallback(async () => {
+  const headingId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const previous = useRef<ErasePhase>("idle");
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (phase === "confirming" && previous.current === "idle") {
+      headingRef.current?.focus();
+    }
+    if (phase === "idle" && previous.current !== "idle") {
+      triggerRef.current?.focus();
+    }
+    previous.current = phase;
+  }, [phase]);
+
+  async function confirm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (phase === "working") {
+      return;
+    }
     setPhase("working");
     setMessage(null);
     try {
       await eraseProfile(did);
+    } catch (error) {
+      if (mounted.current) {
+        setPhase("error");
+        setMessage(describeEraseError(error));
+      }
+      return;
+    }
+    if (mounted.current) {
       setPhase("done");
       setMessage("Your profile has been erased.");
-    } catch (error) {
-      setPhase("error");
-      setMessage(error instanceof Error ? error.message : "Could not erase your profile.");
     }
-  }, [did, eraseProfile]);
+  }
+
+  const working = phase === "working";
 
   return (
     <section className="db-card" aria-labelledby="erase-profile-heading">
-      <h2 className="db-card-heading" id="erase-profile-heading">
+      <h2 className="db-card-title" id="erase-profile-heading">
         Erase my profile
       </h2>
-      <p className="db-cred-note meta">
-        Remove your name, affiliation, email and ORCID from this profile. Your
-        signed reviews and trust tier remain.
-      </p>
-      <button
-        type="button"
-        className="db-button"
-        onClick={handleErase}
-        disabled={phase === "working" || phase === "done"}
-      >
-        {phase === "working" ? "Erasing…" : "Erase my profile"}
-      </button>
-      {message ? <p className="db-note" role="status">{message}</p> : null}
+      <p className="db-cred-note meta">{ERASE_SCOPE_NOTE}</p>
+
+      {phase === "done" ? (
+        <p className="db-note" role="status">
+          {message}
+        </p>
+      ) : phase === "idle" ? (
+        <div>
+          <button
+            type="button"
+            className="db-button"
+            ref={triggerRef}
+            onClick={() => {
+              setMessage(null);
+              setPhase("confirming");
+            }}
+          >
+            Erase my profile
+          </button>
+        </div>
+      ) : (
+        <form className="db-rotate" aria-labelledby={headingId} onSubmit={confirm}>
+          <h3 className="db-rotate-title" id={headingId} tabIndex={-1} ref={headingRef}>
+            Erase your profile?
+          </h3>
+          <p className="db-rotate-text">{ERASE_CONFIRM_TEXT}</p>
+
+          {working ? (
+            <p className="db-note" role="status">
+              Erasing…
+            </p>
+          ) : null}
+
+          {phase === "error" && message ? (
+            <p className="db-error" role="alert">
+              {message}
+            </p>
+          ) : null}
+
+          <div className="db-actions">
+            <button type="submit" className="db-button" data-variant="primary" disabled={working}>
+              Erase my profile
+            </button>
+            <button
+              type="button"
+              className="db-button"
+              disabled={working}
+              onClick={() => {
+                setMessage(null);
+                setPhase("idle");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
     </section>
   );
 }

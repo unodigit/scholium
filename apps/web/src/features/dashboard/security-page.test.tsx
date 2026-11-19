@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, NetworkError, tokenStore } from "../../lib/api";
 
+import { GuardianSaveError } from "../web-auth";
 import { RotationError, type RotateKey, type RotateKeyInput } from "./rotate-key";
 import { SecurityPage, shortDid } from "./security-page";
 import type { DeviceInfo, GuardianState, SecurityData } from "./security";
@@ -210,6 +211,120 @@ describe("Recovery guardians card", () => {
     expect(guardians.getByText(shortDid(GUARDIANS[0]!))).toBeTruthy();
     expect(guardians.getByText(shortDid(GUARDIANS[1]!))).toBeTruthy();
     expect(guardians.queryByText(GUARDIANS[0]!)).toBeNull();
+  });
+});
+
+describe("Changing recovery guardians", () => {
+  const NEW_GUARDIAN = "did:key:z6MkumbKX5ihxbcryNmmGzAWjjMfiMJzKRcdmyea8AKv6qS8";
+
+  it("fills the five fields from the saved list and saves a replacement", async () => {
+    const replaced = [NEW_GUARDIAN, ...GUARDIANS.slice(1)];
+    const save = vi.fn(async () => replaced);
+    ready({}, { saveGuardians: save });
+
+    const guardians = within(card("Recovery guardians"));
+    fireEvent.click(guardians.getByRole("button", { name: "Change guardians" }));
+
+    const fields = [1, 2, 3, 4, 5].map(
+      (n) => guardians.getByLabelText(`Guardian ${n}`) as HTMLInputElement,
+    );
+    expect(fields.map((field) => field.value)).toEqual(GUARDIANS);
+
+    fireEvent.change(fields[0]!, { target: { value: NEW_GUARDIAN } });
+    fireEvent.click(guardians.getByRole("button", { name: "Save guardians" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith(ACCOUNT, replaced));
+    expect(guardians.getByText(shortDid(NEW_GUARDIAN))).toBeTruthy();
+    expect(guardians.getByRole("status").textContent).toContain("Guardians updated.");
+  });
+
+  it("closes without saving on Cancel", () => {
+    const save = vi.fn(async () => GUARDIANS);
+    ready({}, { saveGuardians: save });
+
+    const guardians = within(card("Recovery guardians"));
+    fireEvent.click(guardians.getByRole("button", { name: "Change guardians" }));
+    fireEvent.click(guardians.getByRole("button", { name: "Cancel" }));
+
+    expect(save).not.toHaveBeenCalled();
+    expect(guardians.queryByLabelText("Guardian 1")).toBeNull();
+    expect(guardians.getByRole("button", { name: "Change guardians" })).toBeTruthy();
+  });
+
+  it("puts a rejected entry's problem on its own field", async () => {
+    const save = vi.fn(async () => {
+      throw new GuardianSaveError([
+        { index: 2, message: "That is not a DID Scholium recognizes." },
+      ]);
+    });
+    ready({}, { saveGuardians: save });
+
+    const guardians = within(card("Recovery guardians"));
+    fireEvent.click(guardians.getByRole("button", { name: "Change guardians" }));
+    fireEvent.click(guardians.getByRole("button", { name: "Save guardians" }));
+
+    await waitFor(() =>
+      expect(guardians.getByText("That is not a DID Scholium recognizes.")).toBeTruthy(),
+    );
+    const third = guardians.getByLabelText("Guardian 3") as HTMLInputElement;
+    expect(third.getAttribute("aria-invalid")).toBe("true");
+    expect(third.getAttribute("aria-describedby")).toBeTruthy();
+    // Focus moves to the first rejected entry, so its message is read out.
+    // The move is an effect after an async save, so wait for it.
+    await waitFor(() => expect(document.activeElement).toBe(third));
+  });
+
+  it("offers no change until there is a list to change", () => {
+    ready({ guardians: { ...FULL_GUARDIANS, dids: [] } });
+
+    const guardians = within(card("Recovery guardians"));
+    expect(guardians.queryByRole("button", { name: "Change guardians" })).toBeNull();
+    expect(guardians.getByRole("link", { name: "Set recovery guardians" })).toBeTruthy();
+  });
+});
+
+describe("Erasing the profile", () => {
+  const eraseCard = () => within(card("Erase my profile"));
+
+  it("asks before erasing, saying what is erased and what stays", () => {
+    const erase = vi.fn(async () => {});
+    ready({}, { eraseProfile: erase });
+
+    fireEvent.click(eraseCard().getByRole("button", { name: "Erase my profile" }));
+
+    expect(erase).not.toHaveBeenCalled();
+    const cardText = card("Erase my profile").textContent ?? "";
+    expect(cardText).toMatch(/name, affiliation and email/i);
+    expect(cardText).toMatch(/ORCID/);
+    expect(cardText).toMatch(/account, DID, trust tier/i);
+    expect(eraseCard().getByRole("button", { name: "Erase my profile" })).toBeTruthy();
+    expect(eraseCard().getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("erases on confirm", async () => {
+    const erase = vi.fn(async () => {});
+    ready({}, { eraseProfile: erase });
+
+    fireEvent.click(eraseCard().getByRole("button", { name: "Erase my profile" }));
+    fireEvent.click(eraseCard().getByRole("button", { name: "Erase my profile" }));
+
+    await waitFor(() => expect(erase).toHaveBeenCalledWith(ACCOUNT));
+    await waitFor(() =>
+      expect(eraseCard().getByRole("status").textContent).toContain(
+        "Your profile has been erased.",
+      ),
+    );
+  });
+
+  it("keeps the profile on Cancel", () => {
+    const erase = vi.fn(async () => {});
+    ready({}, { eraseProfile: erase });
+
+    fireEvent.click(eraseCard().getByRole("button", { name: "Erase my profile" }));
+    fireEvent.click(eraseCard().getByRole("button", { name: "Cancel" }));
+
+    expect(erase).not.toHaveBeenCalled();
+    expect(eraseCard().getByRole("button", { name: "Erase my profile" })).toBeTruthy();
   });
 });
 

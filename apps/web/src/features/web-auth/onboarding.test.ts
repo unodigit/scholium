@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MemoryTokenStorage, apiErrorFrom } from "../../lib/api";
 
 import { isEd25519DidKey } from "./did-key";
+import { fromBase64Url } from "./encoding";
 import {
   GUARDIAN_COUNT,
   ONBOARDING_CATEGORY_CHOICES,
@@ -48,6 +49,7 @@ const G2 = "did:key:z6MkkCCsRVKCouTLfDzdH3irfi2mkRyQLxPHYhkcWYbFvhrm";
 const G3 = "did:key:z6MkmHyqwywLHLJbfhudWDfonpRdQSzNzcRVjPDbHDijN5Yv";
 const G4 = "did:key:z6MkkyvRXrgTtxx4V1xncehSAnT66FATqQtKXsKkEFrHQ26n";
 const G5 = "did:key:z6MkfecoxWGf7w3UuW6NmoYSvUT9eERAgNUvKrDwTSgVHES7";
+const G6 = "did:key:z6MkumbKX5ihxbcryNmmGzAWjjMfiMJzKRcdmyea8AKv6qS8";
 const FIVE = [G1, G2, G3, G4, G5];
 
 /** A client whose every call is a mock the test asserts on. */
@@ -397,6 +399,79 @@ describe("set recovery guardians", () => {
   it("falls back to the sent list when the reply is bare", async () => {
     const client = fakeClient(undefined, () => undefined);
     await expect(saveGuardians(client, OWNER, FIVE)).resolves.toEqual(FIVE);
+  });
+
+  it("sends no signature on the first save, which the token alone may make", async () => {
+    const client = fakeClient(undefined, () => ({ guardians: FIVE }));
+    await saveGuardians(client, OWNER, FIVE);
+    expect(client.put).toHaveBeenCalledWith("/me/guardians", { guardians: FIVE });
+    const body = client.put.mock.calls[0][1] as Record<string, unknown>;
+    expect("signature" in body).toBe(false);
+  });
+
+  it("signs a replacement over the preimage the API verifies", async () => {
+    // A real Ed25519 key stands in for the device key behind the passkey.
+    const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+    const signedWith: Uint8Array[] = [];
+    const signer = {
+      async signWithPasskey(data: Uint8Array) {
+        signedWith.push(data);
+        const message = new Uint8Array(data);
+        return new Uint8Array(
+          await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey, message.buffer),
+        );
+      },
+    };
+    const replaced = [G6, G2, G3, G4, G5];
+    const client = fakeClient(undefined, () => ({ guardians: replaced }));
+
+    await expect(saveGuardians(client, OWNER, replaced, { signer })).resolves.toEqual(replaced);
+
+    // Exactly the canonical preimage the API accepts: compact, key-sorted JSON
+    // binding the account DID and the ordered guardian list.
+    const preimage = new TextEncoder().encode(
+      `{"did":"${OWNER}","guardians":${JSON.stringify(replaced)}}`,
+    );
+    expect(signedWith).toEqual([preimage]);
+
+    const body = client.put.mock.calls[0][1] as { guardians: string[]; signature?: string };
+    expect(body.guardians).toEqual(replaced);
+    expect(typeof body.signature).toBe("string");
+    await expect(
+      crypto.subtle.verify(
+        { name: "Ed25519" },
+        pair.publicKey,
+        fromBase64Url(body.signature ?? ""),
+        preimage.buffer as ArrayBuffer,
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it("saves nothing when the passkey prompt is dismissed", async () => {
+    const dismissed = new Error("The passkey prompt was dismissed.");
+    const client = fakeClient();
+    const signer = {
+      async signWithPasskey(): Promise<Uint8Array> {
+        throw dismissed;
+      },
+    };
+
+    await expect(saveGuardians(client, OWNER, FIVE, { signer })).rejects.toBe(dismissed);
+    expect(client.put).not.toHaveBeenCalled();
+  });
+
+  it("does not sign for a DID it does not know", async () => {
+    const client = fakeClient();
+    const signer = { signWithPasskey: vi.fn(async () => new Uint8Array(64)) };
+
+    await expect(saveGuardians(client, null, FIVE, { signer })).rejects.toBeInstanceOf(
+      GuardianSaveError,
+    );
+    expect(signer.signWithPasskey).not.toHaveBeenCalled();
+    expect(client.put).not.toHaveBeenCalled();
   });
 
   it("never sends a list the browser itself rejects", async () => {
