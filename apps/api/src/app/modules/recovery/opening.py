@@ -50,6 +50,7 @@ from sqlalchemy import Column, MetaData, Table, Text, func, inspect, select
 from app import db
 from app.modules.notifications import notify
 
+from .approvals import CONTEST_WINDOW
 from .models import REQUEST_PENDING, RecoveryRequest, ensure_requests_table
 from .rotation import InvalidNewKey, validate_new_key
 from .service import GUARDIAN_COUNT, get_guardians
@@ -68,8 +69,11 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: The ``kind`` of the notification each guardian receives.
+#: The ``kind`` of the notification each guardian and the account itself receives.
 NOTIFICATION_KIND = "recovery.request"
+
+#: The safety window's length in whole hours, for the notice the owner receives.
+SAFETY_WINDOW_HOURS = int(CONTEST_WINDOW.total_seconds() // 3600)
 
 #: A bare ORCID iD: four groups of four digits, the last character being the
 #: MOD 11-2 checksum, which may be ``X``.  The checksum itself is not verified:
@@ -239,6 +243,64 @@ def _validate_body(orcid: Any, new_public_key: Any) -> tuple[str, str]:
     return normalized, key
 
 
+def _account_profile(did: str) -> tuple[Any, Optional[str]]:
+    """Return ``(name, verified_email)`` for ``did``'s profile, best-effort.
+
+    The email is returned only when the profile's address has been verified, so
+    an unverified address never receives a recovery notice.
+    """
+    name = None
+    email = None
+    try:
+        from app.modules.profiles import email_verified, read_profile
+
+        profile = read_profile(did)
+        if profile is not None:
+            name = getattr(profile, "name", None)
+            if email_verified(did):
+                raw = getattr(profile, "email", None)
+                if isinstance(raw, str) and raw.strip():
+                    email = raw.strip()
+    except Exception:
+        name = None
+        email = None
+    return name, email
+
+
+def _notify_account_owner(
+    did: str, request_id: str, orcid: str, new_public_key: str
+) -> None:
+    """Tell the account itself that a recovery was started.
+
+    The owner may still hold their device, so this is the only way they learn
+    about a recovery they did not start within the safety window.  A failure
+    here is logged and never undoes the request or the guardian notifications.
+    """
+    account_name, account_email = _account_profile(did)
+    payload = {
+        "request_id": request_id,
+        "account_did": did,
+        "account_name": account_name,
+        "name": account_name,
+        "orcid": orcid,
+        "new_public_key": new_public_key,
+        "requested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "approvals_path": f"/v1/recovery/requests/{request_id}/approvals",
+        "security_path": "/me/security",
+        "cancel_path": "/me/security",
+        # The window opens when the third guardian approves, so its end cannot
+        # be named here; the owner is told how long it will last instead.
+        "safety_window_hours": SAFETY_WINDOW_HOURS,
+        "link": "/me/security",
+    }
+    if account_email is not None:
+        payload["email"] = account_email
+    try:
+        notify(did, NOTIFICATION_KIND, payload)
+    except Exception:
+        logger.exception("could not notify account %s of recovery request %s", did, request_id)
+
+
 def _notify_guardians(
     guardians: Sequence[str], request_id: str, did: str, orcid: str, new_public_key: str
 ) -> int:
@@ -248,15 +310,7 @@ def _notify_guardians(
     guardian's notification failing must neither undo it nor stop the others
     being told.
     """
-    account_name = None
-    try:
-        from app.modules.profiles import read_profile
-
-        profile = read_profile(did)
-        if profile is not None:
-            account_name = getattr(profile, "name", None)
-    except Exception:
-        account_name = None
+    account_name, _account_email = _account_profile(did)
     payload = {
         "request_id": request_id,
         "account_did": did,
@@ -311,6 +365,7 @@ def open_recovery_request(orcid: Any, new_public_key: Any) -> OpenedRequest:
         session.commit()
 
     notified = _notify_guardians(guardians, request_id, did, orcid, new_public_key)
+    _notify_account_owner(did, request_id, orcid, new_public_key)
     return OpenedRequest(
         request_id=request_id,
         did=did,

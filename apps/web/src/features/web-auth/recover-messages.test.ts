@@ -18,6 +18,7 @@ import {
   RECOVER_HOW_IT_WORKS,
   RECOVER_ORCID_INVALID_MESSAGE,
   RECOVER_SAFETY_WINDOW_HEADING,
+  RECOVER_SAFETY_WINDOW_PENDING_NOTE,
   RECOVER_STATUS_UNAVAILABLE_NOTE,
   RECOVER_WRONG_DEVICE_MESSAGE,
   describeRecoveryError,
@@ -42,6 +43,16 @@ describe("the page's copy", () => {
     expect(RECOVER_HOW_IT_WORKS).toContain("72-hour safety window");
     expect(RECOVER_SAFETY_WINDOW_HEADING).toBe("72-hour safety window");
     expect(RECOVER_STATUS_UNAVAILABLE_NOTE).toMatch(/guardians/);
+  });
+
+  it("says the account itself is told about a recovery, not only its guardians", () => {
+    expect(RECOVER_HOW_IT_WORKS).toContain("You and your guardians are notified");
+    expect(RECOVER_SAFETY_WINDOW_PENDING_NOTE).toContain("you and your guardians");
+  });
+
+  it("points an account without guardians at the page that sets them", () => {
+    expect(RECOVER_GUARDIANS_NOT_SET_MESSAGE).toContain("/me/security");
+    expect(RECOVER_GUARDIANS_NOT_SET_MESSAGE).not.toContain("Settings");
   });
 
   it("names each status in plain language", () => {

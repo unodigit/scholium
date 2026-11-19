@@ -150,7 +150,9 @@ def test_three_of_five_guardians_recover_the_account_and_the_old_key_is_refused(
     assert holder.did not in opened.text, "an open endpoint must not turn an ORCID iD into a DID"
 
     told = {m["did"] for m in get_outbox() if m.get("kind") == RECOVERY_NOTIFICATION}
-    assert told == {g.did for g in guardians}, "each of the five guardians is notified"
+    assert {g.did for g in guardians} <= told, "each of the five guardians is notified"
+    assert holder.did in told, "the account itself is told too, so it can cancel within the window"
+    assert told == {g.did for g in guardians} | {holder.did}, "nobody else is notified"
 
     # 3. Two approvals are not enough.  The same guardian approving again changes nothing.
     first = approve(client, request_id, guardians[0], holder.did, new_key_did)

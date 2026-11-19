@@ -12,9 +12,15 @@ from nacl.signing import SigningKey
 from sqlalchemy import inspect
 
 from app import db
-from app.modules.notifications import list_notifications
+from app.modules.notifications import get_outbox, list_notifications
 from app.modules.orcid import Credential, ensure_credential_tables, issue_orcid_credential
 from app.modules.orcid import models as orcid_models
+from app.modules.profiles import (
+    ProfileData,
+    issue_verification_token,
+    mark_email_verified,
+    save_profile,
+)
 from app.modules.recovery import (
     INVALID_RECOVERY_REQUEST_TYPE,
     RECOVERY_ACCOUNT_NOT_FOUND_TYPE,
@@ -164,14 +170,51 @@ def test_each_guardian_is_notified(client, account):
         assert notice.payload["approvals_path"] == f"{URL}/{request_id}/approvals"
 
 
-def test_only_the_guardians_are_notified(client, account):
+def test_the_account_owner_is_notified_too(client, account):
     orcid, did, _guardians = account
     bystander = new_did()
 
-    post(client, orcid, new_key())
+    request_id = post(client, orcid, new_key()).json()["request_id"]
 
     assert recovery_notifications(bystander) == []
-    assert recovery_notifications(did) == []
+    notices = recovery_notifications(did)
+    assert len(notices) == 1
+    assert notices[0].payload["request_id"] == request_id
+    assert notices[0].payload["security_path"] == "/me/security"
+    assert notices[0].payload["cancel_path"] == "/me/security"
+    assert notices[0].payload["safety_window_hours"] == 72
+
+
+def test_the_owner_with_a_verified_email_is_emailed(client, account):
+    orcid, did, _guardians = account
+    address = "owner@example.org"
+    save_profile(did, ProfileData(name="Mei Okafor", affiliation="", email=address))
+    mark_email_verified(did, issue_verification_token(did, address))
+
+    request_id = post(client, orcid, new_key()).json()["request_id"]
+
+    (mail,) = [
+        m for m in get_outbox() if m.get("did") == did and m.get("kind") == "recovery.request"
+    ]
+    assert mail["to"] == address
+    assert request_id in mail["body"]
+    assert "/me/security" in mail["body"]
+    assert "72" in mail["body"]
+
+
+def test_an_unverified_email_is_not_used_for_the_owner_notice(client, account):
+    orcid, did, _guardians = account
+    address = "unverified@example.org"
+    save_profile(did, ProfileData(name="Mei Okafor", affiliation="", email=address))
+
+    post(client, orcid, new_key())
+
+    notice = recovery_notifications(did)[0]
+    assert "email" not in notice.payload
+    (mail,) = [
+        m for m in get_outbox() if m.get("did") == did and m.get("kind") == "recovery.request"
+    ]
+    assert mail["to"] == did, "an unverified address is never used"
 
 
 def test_the_response_does_not_reveal_the_account_or_its_guardians(client, account):

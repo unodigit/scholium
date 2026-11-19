@@ -58,7 +58,7 @@ export const RECOVER_HOW_IT_WORKS_TITLE = "What happens next";
 
 /** The whole flow in one paragraph, using the design's "2 of 3 approvals". */
 export const RECOVER_HOW_IT_WORKS =
-  "Your guardians are notified straight away. This page shows their progress — 2 of 3 approvals, for example — then the 72-hour safety window with a cancel link before your new passkey takes over.";
+  "You and your guardians are notified straight away. This page shows their progress — 2 of 3 approvals, for example — then the 72-hour safety window with a cancel link before your new passkey takes over.";
 
 /** Link back to sign-in when recovery is not needed after all. */
 export const RECOVER_BACK_TO_SIGNIN = "Back to sign in";
@@ -71,7 +71,7 @@ export const RECOVER_SAFETY_WINDOW_HEADING = "72-hour safety window";
 
 /** Shown on a pending request, before the window opens. */
 export const RECOVER_SAFETY_WINDOW_PENDING_NOTE =
-  "When 3 of your 5 guardians approve, a 72-hour safety window opens before the new key takes over. A cancel link goes to all your known contacts.";
+  "When 3 of your 5 guardians approve, a 72-hour safety window opens before the new key takes over. A cancel link goes to you and your guardians.";
 
 /** Shown once the window is open but without a readable deadline. */
 export const RECOVER_SAFETY_WINDOW_OPEN_NOTE =
@@ -103,11 +103,11 @@ export const RECOVER_CANCELLING = "Cancelling…";
 
 /** Explanation next to the cancel link. */
 export const RECOVER_CANCEL_NOTE =
-  "Cancelling needs the passkey of the key still on your account. A cancel link is sent to all your known contacts.";
+  "Cancelling needs the passkey of the key still on your account. A cancel link is sent to you and your guardians.";
 
 /** Shown after a request is opened. */
 export const RECOVER_STARTED_NOTICE =
-  "Recovery started. Your guardians have been notified.";
+  "Recovery started. You and your guardians have been notified.";
 
 /** Shown after a cancellation succeeds. */
 export const RECOVER_CANCELLED_NOTICE =
@@ -164,7 +164,7 @@ export const RECOVER_ACCOUNT_NOT_FOUND_MESSAGE =
 
 /** The account has no guardians, so nobody can approve. */
 export const RECOVER_GUARDIANS_NOT_SET_MESSAGE =
-  "That account hasn't set recovery guardians yet, so nobody can approve a recovery. Sign in and set them from Settings first.";
+  "That account hasn't set recovery guardians yet, so nobody can approve a recovery. Sign in and set them from /me/security first.";
 
 /** One-word status shown beside the progress meter. */
 export function recoveryStatusLabel(status: RecoveryStatus): string {
