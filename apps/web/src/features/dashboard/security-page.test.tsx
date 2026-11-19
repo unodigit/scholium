@@ -338,6 +338,21 @@ describe("Recovery requests card", () => {
     newPublicKey: NEW_KEY,
   };
 
+  // The caller's own open recovery: role "owner" and the viewer's account DID.
+  const OWN_REQUEST = {
+    requestId: "rr-own",
+    accountDid: ACCOUNT,
+    status: "contest",
+    approvals: 3,
+    threshold: 3,
+    newPublicKey: NEW_KEY,
+    role: "owner",
+    requestedAt: "2026-11-16T12:00:00Z",
+    contestUntil: "2026-11-19T12:00:00Z",
+  };
+
+  const progress = () => within(card("Recovery in progress"));
+
   it("names the requester by their profile name, with the DID secondary", () => {
     ready({
       recoveryRequests: [REQUEST],
@@ -358,6 +373,69 @@ describe("Recovery requests card", () => {
     expect(
       requests.getByRole("link", { name: shortDid(GUARDIANS[0]!) }).getAttribute("href"),
     ).toBe(`/me/recovery/${encodeURIComponent("rr-1")}`);
+  });
+
+  it("shows the owner's own request only in Recovery in progress, never as a guardian request", () => {
+    ready({ recoveryRequests: [OWN_REQUEST, REQUEST] });
+
+    // The guardian card lists only the request the caller is a guardian of.
+    const requests = within(card("Recovery requests"));
+    expect(requests.queryByText(shortDid(ACCOUNT))).toBeNull();
+    expect(
+      requests
+        .queryAllByRole("link")
+        .some((link) => link.getAttribute("href") === "/me/recovery/rr-own"),
+    ).toBe(false);
+
+    // The owner's own request is on the owner's card, with a cancel control.
+    expect(progress().getByText(/Someone started a recovery of your account/)).toBeTruthy();
+    expect(progress().getByRole("button", { name: "Cancel this recovery" })).toBeTruthy();
+  });
+
+  it("treats a request on the viewer's own account as the owner's even without a role", () => {
+    const { role: _role, ...withoutRole } = OWN_REQUEST;
+    ready({ recoveryRequests: [withoutRole] });
+
+    expect(progress().getByRole("button", { name: "Cancel this recovery" })).toBeTruthy();
+    expect(
+      within(card("Recovery requests")).queryByText(shortDid(ACCOUNT)),
+    ).toBeNull();
+  });
+
+  it("shows when the recovery started and when it can complete, in local dates", () => {
+    ready({ recoveryRequests: [OWN_REQUEST] });
+
+    expect(progress().getByText(/Started 16 Nov 2026/)).toBeTruthy();
+    expect(progress().getByText(/can complete after 19 Nov 2026/)).toBeTruthy();
+  });
+
+  it("confirms a cancel and removes the card in the same render", async () => {
+    const cancel = vi.fn(async () => {});
+    ready({ recoveryRequests: [OWN_REQUEST] }, { cancelRecovery: cancel });
+
+    fireEvent.click(progress().getByRole("button", { name: "Cancel this recovery" }));
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("rr-own"));
+    expect(
+      await screen.findByText("Recovery cancelled. Your account stays with your current key."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Recovery in progress" })).toBeNull();
+  });
+
+  it("keeps the card and says why when the cancel fails", async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error("Only the account holder can cancel this recovery.");
+    });
+    ready({ recoveryRequests: [OWN_REQUEST] }, { cancelRecovery: cancel });
+
+    fireEvent.click(progress().getByRole("button", { name: "Cancel this recovery" }));
+
+    await waitFor(() =>
+      expect(progress().getByRole("alert").textContent).toContain(
+        "Only the account holder can cancel this recovery.",
+      ),
+    );
+    expect(progress().getByRole("button", { name: "Cancel this recovery" })).toBeTruthy();
   });
 });
 

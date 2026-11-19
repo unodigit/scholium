@@ -6,6 +6,7 @@ import { DeviceKeyError, PasskeyCancelledError } from "./errors";
 import { SignInError } from "./signin";
 import {
   SIGNIN_FALLBACK_MESSAGE,
+  SIGNIN_ROTATED_MESSAGE,
   SIGNIN_STAGE_MESSAGES,
   SIGNIN_UNSUPPORTED_MESSAGE,
   describeSignInError,
@@ -77,5 +78,13 @@ describe("describeSignInError", () => {
     for (const message of messages) {
       expect(message).not.toMatch(/secret internal detail|token|nonce|\bCID\b|hash|blockchain/i);
     }
+  });
+});
+
+describe("the rotated-key notice", () => {
+  it("tells the member their key was rotated and to sign in with this device", () => {
+    expect(SIGNIN_ROTATED_MESSAGE).toBe(
+      "Your key was rotated. Sign in with this device to continue.",
+    );
   });
 });

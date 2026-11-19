@@ -29,7 +29,7 @@ import {
   type DeviceKeySummary,
 } from "../web-auth";
 
-import { DashboardError, SECURITY_PATH, loadDashboard } from "./dashboard";
+import { DashboardError, SECURITY_PATH, loadDashboard, loadNotifications } from "./dashboard";
 
 export { SECURITY_PATH };
 
@@ -242,7 +242,21 @@ export function parseRecoveryRequests(payload: unknown): RecoveryRequestSummary[
     const threshold = typeof item.threshold === "number" ? item.threshold : GUARDIAN_THRESHOLD;
     const status = readText(item.status) ?? "pending";
     const role = readText(item.role) ?? undefined;
-    out.push({ requestId, accountDid, status, approvals, threshold, newPublicKey, role });
+    const requestedAt =
+      readText(item.requested_at) ?? readText(item.requestedAt) ?? null;
+    const contestUntil =
+      readText(item.contest_until) ?? readText(item.contestUntil) ?? null;
+    out.push({
+      requestId,
+      accountDid,
+      status,
+      approvals,
+      threshold,
+      newPublicKey,
+      role,
+      requestedAt,
+      contestUntil,
+    });
   }
   return out;
 }
@@ -255,6 +269,49 @@ export async function loadRecoveryRequests(
     return parseRecoveryRequests(payload);
   } catch {
     return [];
+  }
+}
+
+/**
+ * Add when the caller's own recovery was started.
+ *
+ * `GET /v1/recovery/requests` names an owner's open request but carries no
+ * creation time; the owner's own `recovery.request` notice does
+ * (`requested_at`), so it is read for that one fact. Best-effort: if the
+ * notices cannot be read, the card simply omits the start date.
+ */
+async function addOwnerRecoveryStarts(
+  requests: RecoveryRequestSummary[],
+  client: SecurityClient,
+): Promise<RecoveryRequestSummary[]> {
+  const missing = requests.some(
+    (request) => request.role === "owner" && request.requestedAt == null,
+  );
+  if (!missing) {
+    return requests;
+  }
+  try {
+    const notices = await loadNotifications(client);
+    const starts = new Map<string, string>();
+    for (const notice of notices) {
+      if (notice.kind !== "recovery.request") {
+        continue;
+      }
+      const requestId =
+        readText(notice.payload.request_id) ?? readText(notice.payload.requestId);
+      const requestedAt =
+        readText(notice.payload.requested_at) ?? readText(notice.payload.requestedAt);
+      if (requestId !== null && requestedAt !== null && !starts.has(requestId)) {
+        starts.set(requestId, requestedAt);
+      }
+    }
+    return requests.map((request) =>
+      request.role === "owner" && request.requestedAt == null
+        ? { ...request, requestedAt: starts.get(request.requestId) ?? null }
+        : request,
+    );
+  } catch {
+    return requests;
   }
 }
 
@@ -303,7 +360,12 @@ export interface RecoveryRequestSummary {
   readonly approvals: number;
   readonly threshold: number;
   readonly newPublicKey: string;
+  /** The caller's relationship to the request: `"owner"` or `"guardian"`. */
   readonly role?: string;
+  /** When the recovery was started, when the API records it. */
+  readonly requestedAt?: string | null;
+  /** When the new passkey can take over (the safety window's end), when open. */
+  readonly contestUntil?: string | null;
 }
 
 /** A key held by one of the member's devices. */
@@ -418,7 +480,10 @@ export interface SecurityData {
   /** The most recent rotation, or `null` when the key has never changed. */
   readonly lastRotation: KeyRotation | null;
   readonly guardians: GuardianState;
-  /** Recovery requests this guardian is asked to approve. */
+  /**
+   * Every open recovery request this caller can act on: a guardian's to
+   * approve (`role: "guardian"`) or the caller's own (`role: "owner"`).
+   */
   readonly recoveryRequests?: readonly RecoveryRequestSummary[];
   /**
    * Public profile names for the DIDs this screen lists (guardians and
@@ -451,11 +516,12 @@ export async function loadSecurity(options: LoadSecurityOptions = {}): Promise<S
   const client = options.client ?? api;
   const { did } = await loadDashboard(client);
 
-  const [key, guardians, recoveryRequests] = await Promise.all([
+  const [key, guardians, listedRecoveryRequests] = await Promise.all([
     client.get<unknown>(didEndpoint(did), { cache: "no-store" }).then(parseKeyState),
     loadGuardians(client, options.storage),
     loadRecoveryRequests(client),
   ]);
+  const recoveryRequests = await addOwnerRecoveryStarts(listedRecoveryRequests, client);
   const { devices, readable } = await loadDevices(options.device ?? deviceKey, key.activeKey);
   const profileNames = await loadProfileNames(
     [

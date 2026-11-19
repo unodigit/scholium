@@ -24,6 +24,7 @@ import {
   loadSecurity,
   parseGuardianList,
   parseKeyState,
+  parseRecoveryRequests,
   type GuardianState,
   type SecurityClient,
   type SecurityDevice,
@@ -219,6 +220,48 @@ describe("parseGuardianList", () => {
   });
 });
 
+describe("parseRecoveryRequests", () => {
+  it("reads the caller's role and the dates the owner's card shows", () => {
+    const parsed = parseRecoveryRequests({
+      requests: [
+        {
+          request_id: "rec_own",
+          did: ACCOUNT,
+          status: "contest",
+          approval_count: 3,
+          threshold: 3,
+          role: "owner",
+          requested_at: "2026-11-16T12:00:00Z",
+          contest_until: "2026-11-19T12:00:00Z",
+          new_public_key: NEW_KEY,
+        },
+      ],
+    });
+
+    expect(parsed[0]).toMatchObject({
+      requestId: "rec_own",
+      accountDid: ACCOUNT,
+      status: "contest",
+      approvals: 3,
+      threshold: 3,
+      role: "owner",
+      requestedAt: "2026-11-16T12:00:00Z",
+      contestUntil: "2026-11-19T12:00:00Z",
+      newPublicKey: NEW_KEY,
+    });
+  });
+
+  it("leaves the dates absent for a request that does not carry them", () => {
+    const parsed = parseRecoveryRequests([
+      { request_id: "rr-1", did: GUARDIANS[0], status: "pending" },
+    ]);
+
+    expect(parsed[0]?.requestedAt).toBeNull();
+    expect(parsed[0]?.contestUntil).toBeNull();
+    expect(parsed[0]?.role).toBeUndefined();
+  });
+});
+
 describe("loadGuardians", () => {
   it("uses the server's list when it can say", async () => {
     const state = await loadGuardians(client({ "/me/guardians": { guardians: GUARDIANS } }));
@@ -368,6 +411,64 @@ describe("loadSecurity", () => {
     expect(data.guardians.dids).toEqual(GUARDIANS);
     expect(data.devices.map((entry) => entry.holdsActiveKey)).toEqual([true]);
     expect(data.devicesReadable).toBe(true);
+  });
+
+  it("fills in when the owner's own recovery started from their notice", async () => {
+    const api = client({
+      "/me/dashboard": DASHBOARD,
+      [didPath]: NEVER_ROTATED_DOC,
+      "/recovery/requests": [
+        {
+          request_id: "rec_own",
+          did: ACCOUNT,
+          status: "pending",
+          approval_count: 0,
+          threshold: 3,
+          role: "owner",
+        },
+      ],
+      "/me/notifications": [
+        {
+          id: 1,
+          did: ACCOUNT,
+          kind: "recovery.request",
+          read: false,
+          payload: {
+            request_id: "rec_own",
+            account_did: ACCOUNT,
+            requested_at: "2026-11-16T12:00:00Z",
+            cancel_path: "/me/security",
+            safety_window_hours: 72,
+          },
+        },
+      ],
+    });
+
+    const data = await loadSecurity({
+      client: api,
+      device: device(ACCOUNT),
+      storage: new MemoryTokenStorage(),
+    });
+
+    expect(data.recoveryRequests?.[0]?.requestedAt).toBe("2026-11-16T12:00:00Z");
+  });
+
+  it("still loads when the owner's notice cannot be read", async () => {
+    const api = client({
+      "/me/dashboard": DASHBOARD,
+      [didPath]: NEVER_ROTATED_DOC,
+      "/recovery/requests": [
+        { request_id: "rec_own", did: ACCOUNT, status: "pending", role: "owner" },
+      ],
+    });
+
+    const data = await loadSecurity({
+      client: api,
+      device: device(ACCOUNT),
+      storage: new MemoryTokenStorage(),
+    });
+
+    expect(data.recoveryRequests?.[0]?.requestedAt).toBeNull();
   });
 
   it("asks the API who the caller is rather than trusting the device key", async () => {

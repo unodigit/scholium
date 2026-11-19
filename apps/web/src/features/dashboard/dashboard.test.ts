@@ -353,6 +353,54 @@ describe("loadDashboard", () => {
     expect(data.needs_attention.count).toBe(PAYLOAD.needs_attention.count + 1);
   });
 
+  it("leaves the owner's own recovery out of Needs your attention, keeping only guardians' requests", async () => {
+    // The list includes the caller's own request marked role "owner" (round 15)
+    // and a node may mark ownership only by the account DID. Neither is a
+    // guardian's to approve.
+    const viewer = PAYLOAD.did;
+    const requester = "did:key:z6MkRequesterRequesterRequesterRequester";
+    const recovery = [
+      {
+        request_id: "rec_own_role",
+        did: viewer,
+        role: "owner",
+        status: "pending",
+        approvals: [],
+        approval_count: 0,
+        threshold: 3,
+      },
+      {
+        request_id: "rec_own_by_did",
+        did: viewer,
+        status: "pending",
+        approvals: [],
+        approval_count: 0,
+        threshold: 3,
+      },
+      {
+        request_id: "rec_guard",
+        did: requester,
+        role: "guardian",
+        status: "pending",
+        approvals: [],
+        approval_count: 0,
+        threshold: 3,
+      },
+    ];
+    const get = vi.fn(async (path: string) =>
+      path === "/recovery/requests" ? recovery : PAYLOAD,
+    );
+    const client = { get: get as unknown as DashboardClient["get"] };
+
+    const data = await loadDashboard(client);
+
+    const added = data.needs_attention.items.filter(
+      (item) => item.kind === "recovery_request",
+    );
+    expect(added.map((item) => item.link)).toEqual(["/me/recovery/rec_guard"]);
+    expect(data.needs_attention.count).toBe(PAYLOAD.needs_attention.count + 1);
+  });
+
   it("still loads the dashboard when the recovery list cannot be read", async () => {
     const get = vi.fn(async (path: string) => {
       if (path === "/recovery/requests") {
@@ -763,6 +811,80 @@ describe("notification wording", () => {
     it("still asks an unanswered, unclosed request's guardian to approve", () => {
       expect(notificationSummary({ kind: "recovery.request", payload: HANNA })).toBe(
         "A recovery request from Hanna Varga needs your approval as a guardian.",
+      );
+    });
+  });
+
+  describe("the account owner's recovery notice", () => {
+    const OWNER = {
+      request_id: "rec_own",
+      account_did: "did:key:z6MkOwnerAccountOwnerAccountOwnerAccount",
+      account_name: "Marta Varga",
+      name: "Marta Varga",
+      requested_at: "2026-11-16T12:00:00Z",
+      safety_window_hours: 72,
+      security_path: "/me/security",
+      cancel_path: "/me/security",
+      link: "/me/security",
+    };
+
+    it("has its own label and tells the owner they can cancel it", () => {
+      expect(notificationKindLabel("recovery.request", OWNER)).toBe(
+        "Recovery of your account",
+      );
+      expect(notificationSummary({ kind: "recovery.request", payload: OWNER })).toBe(
+        "Someone started a recovery of your account. Unless you cancel it, it can complete after 19 Nov 2026.",
+      );
+    });
+
+    it("points at the owner's security page, not the guardian page", () => {
+      expect(notificationLink({ kind: "recovery.request", payload: OWNER })).toBe(
+        "/me/security",
+      );
+    });
+
+    it("stops inviting a cancel once the recovery was cancelled", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...OWNER, closed: "cancelled" },
+        }),
+      ).toBe("The recovery of your account was cancelled.");
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...OWNER, status: "cancelled" },
+        }),
+      ).toBe("The recovery of your account was cancelled.");
+    });
+
+    it("says so once the recovery completed", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...OWNER, closed: "finalized" },
+        }),
+      ).toBe("The recovery of your account was completed.");
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: { ...OWNER, status: "completed" },
+        }),
+      ).toBe("The recovery of your account was completed.");
+    });
+
+    it("still names the window's end once it is open", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          payload: { ...OWNER, contest_until: "2026-11-20T12:00:00Z" },
+        }),
+      ).toBe(
+        "Someone started a recovery of your account. Unless you cancel it, it can complete after 20 Nov 2026.",
       );
     });
   });

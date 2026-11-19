@@ -42,6 +42,7 @@ import {
   type DeviceInfo,
   type GuardianState,
   type KeyRotation,
+  type RecoveryRequestSummary,
   type SecurityData,
 } from "./security";
 import { eraseProfile as defaultEraseProfile } from "./profile";
@@ -206,13 +207,14 @@ export function SecurityPage({
               saveGuardians={saveGuardians}
             />
             <RecoveryRequestsCard
-              requests={state.data.recoveryRequests ?? []}
+              requests={(state.data.recoveryRequests ?? []).filter(
+                (request) => !isOwnRecovery(request, state.data.did),
+              )}
               names={state.data.profileNames}
             />
             <RecoveryInProgressCard
-              requests={(state.data.recoveryRequests ?? []).filter(
-                (request) =>
-                  request.role === "owner" || request.accountDid === state.data.did,
+              requests={(state.data.recoveryRequests ?? []).filter((request) =>
+                isOwnRecovery(request, state.data.did),
               )}
               cancelRecovery={cancelRecovery}
             />
@@ -568,30 +570,46 @@ function GuardiansCard({
 
 // ---- Recovery in progress (the account owner's own) -------------------------
 
+/**
+ * True when the caller is the account the request would recover.
+ *
+ * The list marks the caller's own request `role: "owner"` (round 15); a node
+ * that does not is still recognisable by its account DID. Such a request is
+ * never a guardian's to approve, so it is kept out of the guardian card and
+ * the dashboard's attention list.
+ */
+function isOwnRecovery(request: RecoveryRequestSummary, viewerDid: string): boolean {
+  return request.role === "owner" || (viewerDid !== "" && request.accountDid === viewerDid);
+}
+
+const RECOVERY_CANCELLED_MESSAGE =
+  "Recovery cancelled. Your account stays with your current key.";
+
 function RecoveryInProgressCard({
   requests,
   cancelRecovery,
 }: {
-  requests: readonly {
-    requestId: string;
-    accountDid: string;
-    status: string;
-    approvals: number;
-    threshold: number;
-    newPublicKey: string;
-  }[];
+  requests: readonly RecoveryRequestSummary[];
   cancelRecovery: (requestId: string) => Promise<void>;
 }) {
-  const [items, setItems] = useState<readonly typeof requests[number][]>(() => [...requests]);
+  const [items, setItems] = useState<readonly RecoveryRequestSummary[]>(() => [...requests]);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<string | null>(null);
 
   useEffect(() => {
     setItems([...requests]);
+    if (requests.length > 0) {
+      setConfirmation(null);
+    }
   }, [requests]);
 
   if (items.length === 0) {
-    return null;
+    return confirmation !== null ? (
+      <p className="db-note" role="status">
+        {confirmation}
+      </p>
+    ) : null;
   }
 
   async function cancel(requestId: string) {
@@ -600,6 +618,7 @@ function RecoveryInProgressCard({
     try {
       await cancelRecovery(requestId);
       setItems((prev) => prev.filter((item) => item.requestId !== requestId));
+      setConfirmation(RECOVERY_CANCELLED_MESSAGE);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not cancel this recovery.");
     } finally {
@@ -610,19 +629,27 @@ function RecoveryInProgressCard({
   return (
     <Card title="Recovery in progress" anchor="recovery-in-progress">
       <ul className="db-list">
-        {items.map((request) => (
-          <li key={request.requestId} className="db-requester">
-            <span>Someone started a recovery of your account.</span>
-            <button
-              type="button"
-              className="db-button"
-              disabled={cancelling === request.requestId}
-              onClick={() => cancel(request.requestId)}
-            >
-              {cancelling === request.requestId ? "Cancelling…" : "Cancel this recovery"}
-            </button>
-          </li>
-        ))}
+        {items.map((request) => {
+          const started = formatDay(request.requestedAt);
+          const completes = formatDay(request.contestUntil);
+          return (
+            <li key={request.requestId} className="db-requester">
+              <span>
+                Someone started a recovery of your account.
+                {started !== null ? ` Started ${started}.` : null}
+                {completes !== null ? ` It can complete after ${completes}.` : null}
+              </span>
+              <button
+                type="button"
+                className="db-button"
+                disabled={cancelling === request.requestId}
+                onClick={() => cancel(request.requestId)}
+              >
+                {cancelling === request.requestId ? "Cancelling…" : "Cancel this recovery"}
+              </button>
+            </li>
+          );
+        })}
       </ul>
       {error ? <p className="db-error" role="alert">{error}</p> : null}
     </Card>

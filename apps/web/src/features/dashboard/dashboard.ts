@@ -446,6 +446,15 @@ export function parseRecoveryAttention(
     if (status !== "pending") {
       continue;
     }
+    const accountDid =
+      readText(row.did) ?? readText(row.account_did) ?? readText(row.accountDid) ?? "";
+    // The owner's own request is not a guardian's to approve: the list marks it
+    // "owner" (round 15), and a node that does not can still be recognised by
+    // its account DID. It lives on /me/security's "Recovery in progress" card.
+    const role = readText(row.role);
+    if (role === "owner" || (viewer !== "" && accountDid === viewer)) {
+      continue;
+    }
     const approvals = Array.isArray(row.approvals) ? row.approvals : [];
     const answered = approvals.flatMap(approvalDids);
     if (viewer !== "" && answered.includes(viewer)) {
@@ -461,8 +470,6 @@ export function parseRecoveryAttention(
     if (threshold > 0 && approvalCount >= threshold) {
       continue;
     }
-    const accountDid =
-      readText(row.did) ?? readText(row.account_did) ?? readText(row.accountDid) ?? "";
     const requesterName =
       readText(row.name) ??
       readText(row.account_name) ??
@@ -1055,9 +1062,13 @@ function recoverySummary(payload: Readonly<Record<string, unknown>>): string | n
 /** One plain sentence for what happened, never the payload's keys. */
 export function notificationSummary({ kind, payload, read }: NotificationLike): string {
   if (kind === "recovery.request" && isOwnerRecoveryNotice(kind, payload)) {
-    const closed = readText(payload.closed);
-    if (closed === "cancelled") {
+    // A closed recovery is history: it no longer invites a cancel.
+    const closure = readText(payload.closed) ?? readText(payload.status);
+    if (closure === "cancelled" || closure === "canceled") {
       return "The recovery of your account was cancelled.";
+    }
+    if (closure === "finalized" || closure === "completed") {
+      return "The recovery of your account was completed.";
     }
     const contestUntil = readText(payload.contest_until) ?? readText(payload.contestUntil);
     let date: string | null = contestUntil !== null ? formatDate(contestUntil) : null;
