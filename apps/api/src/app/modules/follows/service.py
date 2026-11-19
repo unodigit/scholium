@@ -18,7 +18,9 @@ stored object straight back to ``GET /v1/search``.
 
 Following is idempotent: the table's ``(did, category)`` primary key makes a
 repeat ``PUT`` -- including one that races another -- the same row, not a
-conflict.  Saving a search is additive: each ``POST`` is its own row.
+conflict.  Saving a search is additive: each ``POST`` is its own row, and
+:func:`delete_saved_search` (``DELETE /v1/me/saved-searches/{id}``) removes the
+caller's own row, so a deleted search is no longer read by the daily digest.
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ __all__ = [
     "InvalidSearchQuery",
     "MAX_CATEGORY_LENGTH",
     "MAX_QUERY_CHARS",
+    "SavedSearchNotOwned",
+    "delete_saved_search",
     "follow_category",
     "followed_categories",
     "is_following",
@@ -229,6 +233,37 @@ def save_search(did: str, query: object) -> SavedSearch:
         session.refresh(search)
         session.expunge(search)
     return search
+
+
+class SavedSearchNotOwned(LookupError):
+    """The saved search exists but belongs to another reader."""
+
+
+def delete_saved_search(did: str, search_id: str) -> bool:
+    """Remove ``did``'s saved search ``search_id``; return whether a row was removed.
+
+    Idempotent: an id that is already gone (or never existed) removes nothing
+    and returns ``False``.  An id that belongs to another reader is left alone
+    and raises :class:`SavedSearchNotOwned`, so a reader can never delete
+    someone else's save.  The delete is scoped to the caller's own rows, so it
+    cannot remove another reader's row even when a request races another.
+    """
+    ensure_tables()
+    with db.SessionLocal() as session:
+        result = session.execute(
+            delete(SavedSearch).where(
+                SavedSearch.id == search_id, SavedSearch.did == did
+            )
+        )
+        session.commit()
+        if result.rowcount:
+            return True
+        owner = session.execute(
+            select(SavedSearch.did).where(SavedSearch.id == search_id)
+        ).scalar_one_or_none()
+    if owner is not None:
+        raise SavedSearchNotOwned(search_id)
+    return False
 
 
 def saved_searches(did: str) -> list[SavedSearch]:

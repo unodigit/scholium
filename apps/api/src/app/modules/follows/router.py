@@ -8,6 +8,7 @@ The module loader mounts ``router`` under ``/v1``, so this package serves::
     GET    /v1/papers?tab=following      -- listed papers in followed categories
     GET    /v1/me/saved-searches         -- the caller's saved searches (200)
     POST   /v1/me/saved-searches         -- save a search to re-run later (201)
+    DELETE /v1/me/saved-searches/{id}    -- delete one of the caller's saves (204)
 
 ``PUT`` and ``DELETE`` authenticate with the caller's access token; any trust
 tier may manage its own follows.  Both are idempotent: repeating either is
@@ -24,6 +25,12 @@ produces so the save can be re-run as entered.  Each save is its own row and
 answers ``201`` with ``{"id": ..., "did": ..., "query": {...}}``; a query that
 could never be re-run (unknown keys, a blank ``q``, no filter at all) is
 ``422`` problem details.
+
+``DELETE /v1/me/saved-searches/{id}`` removes the caller's own save and is
+idempotent like the follow routes: an id that is already gone is ``204``.  An
+id that belongs to another reader is ``404`` problem details and the save is
+left alone.  The daily digest (feature 181) reads the table, so it stops
+matching a deleted search.
 
 ``GET /v1/papers?tab=following`` is the follows plugin's contribution to the
 catalog listing (feature 82).  The catalog router is mounted before this one
@@ -68,6 +75,7 @@ __all__ = [
     "FollowsOut",
     "SavedSearchOut",
     "SavedSearchListOut",
+    "delete_saved_search",
     "list_follows",
     "list_papers",
     "list_saved_searches",
@@ -257,6 +265,32 @@ def list_saved_searches(
             for search in searches
         ]
     )
+
+
+@_me_router.delete(
+    "/saved-searches/{search_id}",
+    status_code=204,
+    response_class=Response,
+    summary="Delete a saved search",
+)
+def delete_saved_search(
+    search_id: str = Path(
+        ...,
+        min_length=1,
+        description="the saved search's id, as POST and GET return it (ss_...)",
+    ),
+    principal: Principal = Depends(get_current_principal),
+) -> Response:
+    """Remove the caller's own saved search; ``204`` even if it is already gone.
+
+    Another reader's saved search is ``404`` problem details and is not
+    deleted, so a caller cannot remove (or probe) searches that are not theirs.
+    """
+    try:
+        service.delete_saved_search(principal.did, search_id)
+    except service.SavedSearchNotOwned:
+        raise _problem(404, "Saved search not found.") from None
+    return Response(status_code=204)
 
 
 router.include_router(_me_router)
