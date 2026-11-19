@@ -214,6 +214,19 @@ export const UPDATE_REPORT_HINT =
 /** Signs and sends the review; replaceable in tests. */
 export type CommitReview = (input: ReviewCommitInput) => Promise<ReviewCommitResult>;
 
+/** Reads one stored record envelope; `/records/{cid}` by default. */
+export type LoadReviewRecord = (
+  cid: string,
+  signal?: AbortSignal,
+) => Promise<unknown>;
+
+const loadReviewRecord: LoadReviewRecord = (cid, signal) =>
+  api.get<unknown>(`/records/${encodeURIComponent(cid)}`, {
+    auth: false,
+    cache: "no-store",
+    signal,
+  });
+
 export interface ReviewFormProps {
   /**
    * Start from a draft other than a blank one. Its `signed` choice is used only
@@ -248,6 +261,8 @@ export interface ReviewFormProps {
   loadOwnReviews?: LoadMyReviews;
   /** Replace the read of the reviewer's own review from the public listing. */
   loadOwnReview?: LoadOwnReview;
+  /** Replace the read of the record an update revises, for tests. */
+  loadRecord?: LoadReviewRecord;
   /** Replace what writes and reads the encrypted review key file, for tests. */
   keyFile?: KeyFileSeams;
 }
@@ -295,6 +310,7 @@ function ReviewFormBody({
   loadGate,
   loadOwnReviews,
   loadOwnReview,
+  loadRecord,
   keyFile,
   session,
 }: ReviewFormProps & { session: ReviewSession }) {
@@ -303,6 +319,7 @@ function ReviewFormBody({
   const signInHref = signInHrefOverride ?? reviewSignInHref(paperId);
   const {
     signed,
+    adoptSignedReview,
     attachForm,
     setPhase: reportPhase,
     setFormActive: reportFormActive,
@@ -419,6 +436,18 @@ function ReviewFormBody({
     setPhase("editing");
   }, [revealedElsewhere, paperId, phase]);
 
+  // The page starts with the identity the review already has. A review signed
+  // with the reviewer's name must not have the page say "anonymous" after a
+  // reload or in another browser, contradicting the published byline. The
+  // dashboard's answer and a sealed copy left on this device both carry it; the
+  // record an update revises says so in the prefill below.
+  useEffect(() => {
+    if (ownReview !== null && ownReview.signedBy !== null) adoptSignedReview();
+  }, [ownReview, adoptSignedReview]);
+  useEffect(() => {
+    if (sealed !== null && sealed.revealBody.signed === true) adoptSignedReview();
+  }, [sealed, adoptSignedReview]);
+
   // The editable form is the page's one surface that uses the identity choice
   // and can cite; a card in its place must not offer either.
   // An update page is only reached from a review the server already revealed
@@ -452,8 +481,8 @@ function ReviewFormBody({
     if (initialDraft !== undefined) return;
     if (typeof prev !== "string" || prev.trim() === "") return;
     let cancelled = false;
-    api
-      .get<unknown>(`/records/${encodeURIComponent(prev.trim())}`, { auth: false, cache: "no-store" })
+    const controller = new AbortController();
+    (loadRecord ?? loadReviewRecord)(prev.trim(), controller.signal)
       .then((payload) => {
         if (cancelled) return;
         const body =
@@ -495,6 +524,10 @@ function ReviewFormBody({
         if (typeof record.signed === "boolean") {
           next.signed = record.signed;
         }
+        if (record.signed === true) {
+          // The review being revised carries a name, so the page must too.
+          adoptSignedReview();
+        }
         if (typeof record.report === "string") {
           next.report = record.report;
         }
@@ -505,8 +538,9 @@ function ReviewFormBody({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [prev, initialDraft]);
+  }, [prev, initialDraft, loadRecord, adoptSignedReview]);
 
   const problems = validateDraft(draft);
   const progress = progressOf(draft);

@@ -3,11 +3,25 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ANONYMITY_DETAIL, ANONYMITY_HEADLINE } from "./anonymity-notice";
+import {
+  SIGN_WITH_NAME_LABEL,
+  SIGNED_DETAIL,
+  SIGNED_HEADLINE,
+  SIGNED_SEALED_DETAIL,
+  STAY_ANONYMOUS_LABEL,
+} from "./identity";
+import type { MyReview } from "./my-reviews";
 import type { PaperFailure, ReviewPaper } from "./paper";
 import { PaperPane } from "./paper-pane";
+import { OWN_REVIEW_HEADLINE } from "./review-form";
 import { ReviewNotice, ReviewPage } from "./review-page";
+import { saveSealedReview } from "./sealed-review";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A committed review that has not been revealed is kept on the device.
+  window.localStorage.clear();
+});
 
 const PAPER: ReviewPaper = {
   shortId: "sch:6sel-2dio-orm6",
@@ -81,6 +95,123 @@ describe("ReviewPage", () => {
   it("has exactly one h1", () => {
     render(<ReviewPage paper={PAPER} />);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+  });
+});
+
+describe("ReviewPage and the reviewer's existing review", () => {
+  /** The dashboard's answer for a review the signed-in reviewer already has. */
+  function ownReview(overrides: Partial<MyReview> = {}): MyReview {
+    return {
+      reviewCid: "bafycommit",
+      paper: PAPER.shortId,
+      versionCid: "bafyversion",
+      sealed: false,
+      revealed: true,
+      version: 2,
+      recommendation: "sound_as_is",
+      confidence: "high",
+      scores: null,
+      revealedAt: "2026-11-18T04:53:41",
+      signedBy: "did:key:z6MkfZrSgCZ1XFdNnVFY1cGM",
+      ...overrides,
+    };
+  }
+
+  it("starts signed when the review the reviewer already revealed carries their name", async () => {
+    // A reload (or a fresh browser) must not contradict the published byline:
+    // the review page says what the review card says.
+    render(
+      <ReviewPage
+        paper={PAPER}
+        signedIn
+        loadOwnReviews={async () => [ownReview()]}
+        loadOwnReview={async () => null}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: OWN_REVIEW_HEADLINE });
+    const notice = await screen.findByRole("note", { name: "Signed review" });
+    expect(notice.textContent).toBe(`${SIGNED_HEADLINE} ${SIGNED_DETAIL}`);
+    expect(screen.queryByText(ANONYMITY_HEADLINE)).toBeNull();
+  });
+
+  it("still starts anonymous when the reviewer's existing review is unsigned", async () => {
+    render(
+      <ReviewPage
+        paper={PAPER}
+        signedIn
+        loadOwnReviews={async () => [ownReview({ signedBy: null })]}
+        loadOwnReview={async () => null}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: OWN_REVIEW_HEADLINE });
+    const notice = screen.getByRole("note", { name: "Anonymity" });
+    expect(notice.textContent).toBe(`${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`);
+  });
+
+  it("starts the update form signed when the review it revises was signed", async () => {
+    render(
+      <ReviewPage
+        paper={PAPER}
+        signedIn
+        prev="bafyformal"
+        loadRecord={async () => ({
+          body: {
+            target: "bafyversion",
+            signed: true,
+            confidence: "high",
+            recommendation: "sound_as_is",
+          },
+        })}
+      />,
+    );
+
+    await screen.findByRole("button", { name: STAY_ANONYMOUS_LABEL });
+    const notice = screen.getByRole("note", { name: "Signed review" });
+    expect(notice.textContent).toBe(`${SIGNED_HEADLINE} ${SIGNED_DETAIL}`);
+    expect(screen.queryByText(ANONYMITY_HEADLINE)).toBeNull();
+  });
+
+  it("keeps an unsigned update form anonymous", async () => {
+    render(
+      <ReviewPage
+        paper={PAPER}
+        signedIn
+        prev="bafyformal"
+        loadRecord={async () => ({
+          body: {
+            target: "bafyversion",
+            confidence: "high",
+            recommendation: "sound_as_is",
+            scores: { soundness: { score: 4, justification: "Prefilled." } },
+          },
+        })}
+      />,
+    );
+
+    // The record has been read, so the page has had its chance to learn a name.
+    await screen.findByDisplayValue("Prefilled.");
+    const notice = screen.getByRole("note", { name: "Anonymity" });
+    expect(notice.textContent).toBe(`${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`);
+    expect(screen.getByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeTruthy();
+  });
+
+  it("starts signed when this device holds a signed review that is still sealed", async () => {
+    saveSealedReview({
+      paperId: PAPER.shortId,
+      versionCid: "bafyversion",
+      reviewCid: "bafycommit",
+      revealAt: "2026-12-14T00:00:00.000Z",
+      commitment: "00",
+      revealBody: { target: "bafyversion", signed: true },
+    });
+
+    render(<ReviewPage paper={PAPER} />);
+
+    await screen.findByRole("heading", { name: "Your review is sealed" });
+    const notice = screen.getByRole("note", { name: "Signed review" });
+    expect(notice.textContent).toBe(`${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`);
   });
 });
 

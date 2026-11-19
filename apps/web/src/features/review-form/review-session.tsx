@@ -49,6 +49,14 @@ export interface ReviewSession {
   readonly signed: boolean;
   /** Choose; ignored once the form is signing or sealed. */
   readonly setSigned: (signed: boolean) => void;
+  /**
+   * The reviewer's existing review of this paper is signed with their name.
+   * The form calls it once it has read that review — from the dashboard, a
+   * sealed copy on this device, or the record an update revises. The page then
+   * starts in the signed state, so it never contradicts the published byline,
+   * unless the reviewer has already chosen on this page.
+   */
+  readonly adoptSignedReview: () => void;
   /** The choice is fixed: the commit is being signed or is sealed. */
   readonly locked: boolean;
   /** A form is on the page and still takes a citation. */
@@ -110,6 +118,10 @@ export function ReviewSessionProvider({
   // Read by callbacks that must not change identity, or go stale, with state.
   const phaseRef = useRef<FormPhase>("editing");
   const handlerRef = useRef<CiteHandler | null>(null);
+  // The reviewer made the choice here; a review read later must not override
+  // it. And the review's identity, once adopted, need not be adopted again.
+  const chosenRef = useRef(false);
+  const adoptedRef = useRef(initialSigned);
 
   const setPhase = useCallback((next: FormPhase) => {
     phaseRef.current = next;
@@ -119,7 +131,18 @@ export function ReviewSessionProvider({
   const setSigned = useCallback((next: boolean) => {
     // What the page says must be what the commitment covers.
     if (phaseRef.current !== "editing") return;
+    chosenRef.current = true;
     setSignedState(next);
+  }, []);
+
+  const adoptSignedReview = useCallback(() => {
+    // A choice already made here wins, and so does a commit already being
+    // signed: its commitment covers what the page said when it started.
+    // Unsigned needs no adoption — anonymous is where the page starts.
+    if (chosenRef.current || adoptedRef.current) return;
+    if (phaseRef.current === "signing") return;
+    adoptedRef.current = true;
+    setSignedState(true);
   }, []);
 
   const attachForm = useCallback((handler: CiteHandler) => {
@@ -143,6 +166,7 @@ export function ReviewSessionProvider({
     () => ({
       signed,
       setSigned,
+      adoptSignedReview,
       locked: phase !== "editing",
       canCite: attached && phase === "editing",
       cite,
@@ -156,6 +180,7 @@ export function ReviewSessionProvider({
     [
       signed,
       setSigned,
+      adoptSignedReview,
       phase,
       attached,
       cite,

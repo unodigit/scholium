@@ -20,6 +20,7 @@ const REVIEW: MyReview = {
   confidence: null,
   scores: null,
   revealedAt: null,
+  signedBy: null,
 };
 
 describe("useMyReviews", () => {

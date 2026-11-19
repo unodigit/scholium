@@ -43,6 +43,12 @@ export interface MyReview {
   readonly scores: unknown;
   /** When the review was revealed, when it has been. */
   readonly revealedAt: string | null;
+  /**
+   * The account DID the review is credited to, when the reviewer revealed it
+   * with their name (`signed: true`); `null` for an anonymous review, and for
+   * one still sealed — the node cannot read the name inside a commitment.
+   */
+  readonly signedBy: string | null;
 }
 
 /** Reads the signed-in reviewer's reviews; {@link loadMyReviews} by default. */
@@ -93,6 +99,7 @@ export function parseMyReviews(raw: unknown): MyReview[] {
       confidence: readConfidence(row.confidence),
       scores: isRecord(row.scores) || Array.isArray(row.scores) ? row.scores : null,
       revealedAt: readText(row.revealedAt) ?? readText(row.revealed_at),
+      signedBy: readText(row.signedBy) ?? readText(row.signed_by),
     });
   }
   return reviews;

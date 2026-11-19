@@ -17,9 +17,10 @@
 import { AnonymityNotice } from "./anonymity-notice";
 import type { ConflictReport } from "./conflict";
 import { ConflictCheck } from "./conflict-check";
+import type { LoadMyReviews, LoadOwnReview } from "./my-reviews";
 import type { PaperFailure, ReviewPaper } from "./paper";
 import { PaperPane } from "./paper-pane";
-import { ReviewForm, type CommitReview } from "./review-form";
+import { ReviewForm, type CommitReview, type LoadReviewRecord } from "./review-form";
 import { ReviewSessionProvider } from "./review-session";
 import "./review-form.css";
 
@@ -37,6 +38,12 @@ interface ReviewPageExtras {
   signedIn?: boolean;
   /** Where "Sign in" goes; defaults to sign-in, then back to this review. */
   signInHref?: string;
+  /** Replace the read of the reviewer's own reviews, for tests. */
+  loadOwnReviews?: LoadMyReviews;
+  /** Replace the read of the reviewer's own review from the listing, for tests. */
+  loadOwnReview?: LoadOwnReview;
+  /** Replace the read of the earlier record an update revises, for tests. */
+  loadRecord?: LoadReviewRecord;
 }
 
 export type ReviewPageProps = ReviewPageExtras &
@@ -91,6 +98,9 @@ export function ReviewPage(props: ReviewPageProps) {
               commit={props.commit}
               prev={props.prev}
               latestVersion={paper.version}
+              loadOwnReviews={props.loadOwnReviews}
+              loadOwnReview={props.loadOwnReview}
+              loadRecord={props.loadRecord}
             />
           </div>
         </div>

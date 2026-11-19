@@ -45,6 +45,7 @@ describe("parseMyReviews", () => {
         confidence: null,
         scores: null,
         revealedAt: null,
+        signedBy: null,
       },
     ]);
   });
@@ -74,6 +75,19 @@ describe("parseMyReviews", () => {
       scores: { soundness: { score: 4, justification: "Sound." } },
       revealedAt: "2027-03-02T05:00:00",
     });
+  });
+
+  it("reads the byline a review was revealed under, in either spelling", () => {
+    const did = "did:key:z6MkfZrSgCZ1XFdNnVFY1cGM";
+    const [camel] = parseMyReviews({
+      my_reviews: [{ ...ROW, revealed: true, sealed: false, signedBy: did }],
+    });
+    const [snake] = parseMyReviews({
+      my_reviews: [{ ...ROW, revealed: true, sealed: false, signed_by: did }],
+    });
+
+    expect(camel.signedBy).toBe(did);
+    expect(snake.signedBy).toBe(did);
   });
 
   it("tells a revealed review from a sealed one", () => {
@@ -159,6 +173,7 @@ describe("sealedReviewOf", () => {
     confidence: null,
     scores: null,
     revealedAt: null,
+    signedBy: null,
   };
   const revealed: MyReview = { ...sealed, reviewCid: "b", sealed: false, revealed: true };
   const other: MyReview = { ...sealed, reviewCid: "c", paper: "sch:6sel-2dio-orm6" };
@@ -191,6 +206,7 @@ describe("ownReviewOf", () => {
     confidence: "high",
     scores: null,
     revealedAt: "2027-03-02T05:00:00",
+    signedBy: null,
   };
 
   it("finds a revealed review of the paper, so the form never shows a blank Commit form", () => {

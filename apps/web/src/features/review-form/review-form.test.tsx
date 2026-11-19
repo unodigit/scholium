@@ -671,6 +671,7 @@ describe("ReviewForm own revealed review", () => {
       confidence: "high",
       scores: { soundness: { score: 4, justification: "Fine." } },
       revealedAt,
+      signedBy: null,
     };
   }
 
