@@ -68,13 +68,20 @@ test.describe("verify manifest loop", () => {
     const paper = await seededPaper(request, META_AGENT_TITLE);
     const paperId = paper.shortId.replace(/^sch:/i, "");
 
+    const versionId = `${paper.shortId}/v1`;
+
     const routes = [
       "/",
       `/p/${paperId}`,
+      `/p/${paperId}/v1`,
       `/reviews/${paperId}`,
+      `/reviews/${paperId}/v1`,
       `/discussion/${paperId}`,
+      `/discussion/${paperId}/v1`,
       `/proof/${paperId}`,
+      `/proof/${paperId}/v1`,
       "/verify",
+      `/verify?id=${encodeURIComponent(versionId)}`,
       "/network",
       "/search?q=reward",
       "/c/cs.AI",
@@ -90,7 +97,10 @@ test.describe("verify manifest loop", () => {
       };
       page.on("request", listener);
 
-      await page.goto(route, { waitUntil: "networkidle" });
+      // Count over a fixed 3 s window starting at the load event: a looping
+      // page never reaches networkidle, so waiting for it would hide the loop.
+      await page.goto(route, { waitUntil: "load" });
+      counts.clear();
       await page.waitForTimeout(3000);
 
       page.off("request", listener);
