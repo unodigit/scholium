@@ -153,9 +153,9 @@ When anyone starts a recovery of your account, you get a notification, and an em
 2. On the device that holds your passkey, open **/recover?request={request id}**.
 3. Choose **Cancel this recovery**. Cancelling asks for your passkey.
 
-You can cancel until the 72-hour safety window ends. Tell your guardians not to approve.
+You can cancel until the 72-hour safety window ends. Also tell your guardians not to approve: without three approvals the recovery never completes.
 
-> **Known issue:** the notice is worded like a guardian's request ("…needs your approval as a guardian") and its link opens the guardian page. `/me/security` has no cancel button for it. Use the steps above.
+> **Known issues:** the notice is worded like a guardian's request ("…needs your approval as a guardian") and its link opens the guardian page, and `/me/security` has no cancel button for it. Use the steps above. If you have rotated your key, the cancel can fail with "Not authorized to cancel this recovery request." In that case ask your guardians not to approve, and contact the node operator.
 
 ### If you are someone's guardian
 
