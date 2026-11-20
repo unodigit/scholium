@@ -56,22 +56,23 @@ afterEach(() => {
 });
 
 describe("useSignOut", () => {
-  it("navigates to / and scrolls to the top after the navigation", async () => {
+  it("lands on / at the top: instant scroll first, then a navigation that does not scroll", async () => {
     const { result } = renderHook(() => useSignOut());
 
     await act(async () => {
       await result.current.signOut();
     });
 
-    expect(replace).toHaveBeenCalledWith("/");
-    expect(scrollTo).toHaveBeenCalled();
-    // The scroll must come after the navigation, not before it.
-    expect(replace.mock.invocationCallOrder[0]).toBeLessThan(
-      scrollTo.mock.invocationCallOrder[0],
-    );
-    // Bypasses smooth scrolling.
+    // Next.js's post-navigation scroll is what glided the smooth-scrolling
+    // homepage down to "Why Scholium", so the navigation must opt out of it.
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith("/", { scroll: false });
+    // The page being left goes to the top instantly, before the navigation.
     expect(scrollTo).toHaveBeenCalledWith(
-      expect.objectContaining({ behavior: expect.stringMatching(/instant|auto/) }),
+      expect.objectContaining({ top: 0, behavior: "instant" }),
+    );
+    expect(scrollTo.mock.invocationCallOrder[0]).toBeLessThan(
+      replace.mock.invocationCallOrder[0],
     );
   });
 });

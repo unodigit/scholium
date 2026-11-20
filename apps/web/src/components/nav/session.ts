@@ -89,15 +89,13 @@ export function useSignOut(): SignOutState {
       // "signed in" answer this page load bootstrapped.
       resetSessionBootstrap();
       forgetSignedInHint();
-      router.replace("/");
-      // The homepage is long; land at its top instead of at the offset the
-      // page we are leaving happened to have.  Scroll only after the
-      // navigation has been requested, and bypass the homepage's
-      // `scroll-behavior: smooth` so the move is instant rather than a
-      // 700 ms glide to "Why Scholium".
-      window.scrollTo(0, 0);
+      // The homepage is long and sets `scroll-behavior: smooth`; Next.js's own
+      // post-navigation scroll then glides it down to "Why Scholium".  So move
+      // the page being left to the top instantly (it has no smooth scrolling)
+      // and navigate with `scroll: false`: the homepage opens at offset 0 and
+      // nothing scrolls afterwards.
       window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      router.replace("/", { scroll: false });
     }
   }, [router]);
 

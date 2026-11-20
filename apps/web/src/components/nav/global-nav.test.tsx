@@ -704,7 +704,7 @@ describe("GlobalNav after the session ends", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]!);
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/", { scroll: false }));
     expect(screen.queryByRole("link", { name: /unread/ })).toBeNull();
     expect(document.querySelectorAll(".gn-badge")).toHaveLength(0);
   });
@@ -798,7 +798,7 @@ describe("GlobalNav sign out", () => {
     render(<GlobalNav signedIn unreadCount={0} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]!);
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/", { scroll: false }));
     expect(tokenStore.isAuthenticated).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -824,8 +824,8 @@ describe("GlobalNav sign out", () => {
     render(<GlobalNav signedIn unreadCount={0} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]!);
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
-    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/", { scroll: false }));
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0, behavior: "instant" }));
     scrollTo.mockRestore();
   });
 });
