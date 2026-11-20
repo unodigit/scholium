@@ -133,7 +133,7 @@ _RELEASE_STATES = frozenset(
     {_LISTED_STATE, _MODERATION_STATE, _HELD_STATE, _REJECTED_STATE}
 )
 
-#: The state of a paper whose newest version no moderator has listed (or held,
+#: The state of a paper no version of which a moderator has listed (or held,
 #: rejected, ...): it is in the moderation queue, and the node serves no page
 #: for it.
 _AWAITING_MODERATION = "awaiting moderation"
@@ -517,45 +517,18 @@ def _held_in_force(archive: Archive, paper_id: str) -> bool:
     return _HELD_STATE in states.values()
 
 
-def _newest_version_id(archive: Archive, paper_id: str) -> str | None:
-    """The record id of the paper's newest posted version, if it has one.
+def _any_version_listed(archive: Archive, paper_id: str) -> bool:
+    """Whether any of the paper's versions is listed.
 
-    ``body.n`` is the version number; a fork may hold two records with the same
-    number, so ``created`` and the record id break the tie the way the rest of
-    the summary orders decisions.
+    The node's catalog serves a paper while at least one of its versions is
+    listed: a paper ``sch:`` id resolves to the newest *listed* version (so a
+    queued newer version does not hide the listed one), and the node counts a
+    paper with at least one listed version.  Only a ``list`` decision (or a
+    ``release`` naming ``listed``) puts a version in the catalog; a version no
+    moderator has decided on, or one held or rejected, is not listed.
     """
-    newest: str | None = None
-    newest_key: tuple[int, datetime, str] | None = None
-    for record in archive.records:
-        if record.get("type") != "paper.version":
-            continue
-        body = record.get("body")
-        if not isinstance(body, Mapping) or body.get("paper") != paper_id:
-            continue
-        record_id = record.get("id")
-        if not isinstance(record_id, str):
-            continue
-        number = body.get("n")
-        if not isinstance(number, int) or isinstance(number, bool):
-            number = 0
-        key = (number, _created(record.get("created")), record_id)
-        if newest_key is None or key > newest_key:
-            newest, newest_key = record_id, key
-    return newest
-
-
-def _newest_version_listed(archive: Archive, paper_id: str) -> bool:
-    """Whether the paper's newest version is listed.
-
-    Only a ``list`` decision (or a ``release`` naming ``listed``) puts a version
-    in the catalog; a version no moderator has decided on, or one held or
-    rejected, is not listed.  The node serves no page for the paper until its
-    newest version is.
-    """
-    newest = _newest_version_id(archive, paper_id)
-    if newest is None:
-        return False
-    return _states_in_force(archive, {newest}).get(newest) == _LISTED_STATE
+    targets = _version_record_ids(archive, paper_id)
+    return _LISTED_STATE in _states_in_force(archive, targets).values()
 
 
 def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) -> PaperVerdict:
@@ -579,10 +552,10 @@ def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) 
     elif (
         not failed
         and status == "verified"
-        and not _newest_version_listed(archive, paper_id)
+        and not _any_version_listed(archive, paper_id)
     ):
-        # Verified history, but no moderator has listed its newest version: the
-        # paper is in the queue, and the node serves no page for it.
+        # Verified history, but no moderator has listed any of its versions:
+        # the paper is in the queue, and the node serves no page for it.
         status = _AWAITING_MODERATION
     return PaperVerdict(
         label=verdict.version or report.short_id or label,
