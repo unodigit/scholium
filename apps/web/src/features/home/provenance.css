@@ -148,6 +148,7 @@ html[data-home-js] #signed .demo.in .link .lk {
 }
 html[data-home-js] #signed .demo[data-state="bad"] .block.v2 {
   animation: prov-shake 0.42s var(--ease-out) 1 both;
+  opacity: 1;
 }
 #signed .demo[data-state="bad"] .cid .ok { opacity: 0; transform: translateY(-8px); }
 #signed .demo[data-state="bad"] .cid .bad { opacity: 1; transform: none; }
@@ -173,11 +174,11 @@ html[data-home-js] #signed .demo[data-state="bad"] .link.brk .lk {
 }
 @keyframes prov-draw { to { stroke-dashoffset: 0; } }
 @keyframes prov-shake {
-  0%, 100% { transform: none; }
-  20% { transform: translateX(-6px); }
-  40% { transform: translateX(5px); }
-  60% { transform: translateX(-3px); }
-  80% { transform: translateX(2px); }
+  0%, 100% { transform: none; opacity: 1; }
+  20% { transform: translateX(-6px); opacity: 1; }
+  40% { transform: translateX(5px); opacity: 1; }
+  60% { transform: translateX(-3px); opacity: 1; }
+  80% { transform: translateX(2px); opacity: 1; }
 }
 
 /* Verdict + the one control. */
@@ -269,7 +270,7 @@ html[data-home-js] #signed .chips.in .chip {
 
 /* Reduced motion: keep every state change, drop the spatial movement. */
 @media (prefers-reduced-motion: reduce) {
-  html[data-home-js] #signed .demo[data-state="bad"] .block.v2 { animation: none; }
+  html[data-home-js] #signed .demo[data-state="bad"] .block.v2 { animation: none; opacity: 1; transform: none; }
   html[data-home-js] #signed .demo .block { transform: none; }
   html[data-home-js] #signed .demo .link .lk { animation: none; stroke-dashoffset: 0; }
   html[data-home-js] #signed .chips .chip { animation: none; opacity: 1; transform: none; }

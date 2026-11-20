@@ -178,6 +178,10 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
   opacity: 0; transition: opacity 0.35s var(--ease-out);
 }
 .nav.scrolled::before { opacity: 1; }
+/* Without JavaScript the scroll listener never runs, so the bar keeps a solid
+   background instead of letting page text show through the transparent nav. */
+html:not([data-home-js]) .nav { background: var(--bg); }
+html:not([data-home-js]) .nav::before { opacity: 1; }
 .nav-inner { position: relative; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 /* The logo never shrinks: its mark keeps the delivered proportions at any width. */
 .nav-logo { display: inline-flex; align-items: center; flex: none; min-height: 44px; border-radius: 8px; }
@@ -249,6 +253,7 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
 .stage {
   display: grid; grid-template-columns: minmax(0, 1fr) 316px; gap: 0 26px; align-items: start;
   transform-origin: 50% 40%; will-change: transform;
+  max-width: 100%;
 }
 .paper {
   position: relative; background: var(--surface); border-radius: 24px;
@@ -346,9 +351,15 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
   .paper-body .fig { display: none; }
 }
 @media (max-width: 900px) {
-  .stage { grid-template-columns: 1fr; }
+  .stage { grid-template-columns: minmax(0, 1fr); max-width: 100%; }
+  .paper, .margin-col { min-width: 0; max-width: 100%; }
   .margin-col { padding: 0 14px; margin-top: -44px; translate: none; }
   .note { margin-left: 0; }
+}
+@media (max-width: 414px) {
+  .stage { max-width: 100%; }
+  .stage-wrap { max-width: 100%; }
+  .paper { max-width: 100%; }
 }
 
 /* Hero entrance (JS only, so crawlers and no-JS readers see everything). */
