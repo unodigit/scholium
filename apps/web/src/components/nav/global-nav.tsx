@@ -11,6 +11,9 @@
  *   Sign out while signed in. The Home tab carries the brand's tile mark
  *   because the wordmark does not fit at phone widths.
  *
+ * The lockup and the Home tab point at the feed (`/papers`): `/` is the
+ * homepage, which brings its own navigation.
+ *
  * Mount it once in a route-group layout and keep auth screens bare:
  *
  * ```tsx
@@ -57,6 +60,13 @@ import "./nav.css";
 
 /** Where the notifications card lives (design.md §4: Dashboard → Notifications). */
 export const NOTIFICATIONS_PATH = "/me#notifications";
+
+/**
+ * The feed's address. `components/` keeps to `features/ui-kit`, so this mirrors
+ * `FEED_PATH` in `features/feed/feed.ts` rather than importing the feed module
+ * into the nav every route group mounts.
+ */
+const FEED_PATH = "/papers";
 
 /** Placeholder from the feed header mock (design.md §5.1). */
 const SEARCH_PLACEHOLDER = "Search papers, authors, sch: IDs…";
@@ -290,7 +300,7 @@ function DesktopHeader({
 
   return (
     <header className="gn-header material-chrome hidden sm:flex">
-      <Link href="/" className="gn-brand" aria-label="Scholium home">
+      <Link href={FEED_PATH} className="gn-brand" aria-label="Scholium home">
         <BrandLogo size="sm" />
       </Link>
 
@@ -494,9 +504,9 @@ function MobileTabBar({
     {
       key: "home",
       label: "Home",
-      href: "/",
+      href: FEED_PATH,
       brandMark: true,
-      current: pathname === "/",
+      current: pathname === FEED_PATH,
     },
     {
       key: "search",

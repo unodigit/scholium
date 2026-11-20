@@ -65,11 +65,11 @@ afterEach(() => {
    ------------------------------------------------------------------------- */
 
 describe("GlobalNav desktop header", () => {
-  it("shows the brand lockup linking home, named Scholium home", () => {
+  it("shows the brand lockup linking the feed, named Scholium home", () => {
     render(<GlobalNav />);
 
     const logo = screen.getByRole("link", { name: "Scholium home" });
-    expect(logo.getAttribute("href")).toBe("/");
+    expect(logo.getAttribute("href")).toBe("/papers");
 
     // BrandLogo size="sm": inline SVG mark + serif wordmark at a fixed 20px
     // height. No <img>, so nothing loads in after paint and shifts the row.
@@ -323,7 +323,7 @@ describe("GlobalNav mobile tab bar", () => {
     expect(bar.className).toContain("sm:hidden");
 
     const expected: Record<string, string> = {
-      Home: "/",
+      Home: "/papers",
       Search: "/search",
       Submit: "/submit",
       Inbox: "/me#notifications",
@@ -364,6 +364,37 @@ describe("GlobalNav mobile tab bar", () => {
     ).toBeNull();
     expect(
       within(bar).getByRole("link", { name: "Me" }).getAttribute("aria-current"),
+    ).toBeNull();
+  });
+
+  it("marks Home current on /papers, where the logo and the tab both point", () => {
+    pathnameValue = "/papers";
+    render(<GlobalNav />);
+
+    expect(
+      screen.getByRole("link", { name: "Scholium home" }).getAttribute("href"),
+    ).toBe("/papers");
+
+    const bar = screen.getByRole("navigation", { name: "Primary" });
+    const home = within(bar).getByRole("link", { name: "Home" });
+    expect(home.getAttribute("href")).toBe("/papers");
+    expect(home.getAttribute("aria-current")).toBe("page");
+
+    // The feed is Home's page, not every other tab's.
+    for (const name of ["Search", "Submit", "Me"]) {
+      expect(
+        within(bar).getByRole("link", { name }).getAttribute("aria-current"),
+      ).toBeNull();
+    }
+  });
+
+  it("leaves Home unmarked on the homepage at /", () => {
+    pathnameValue = "/";
+    render(<GlobalNav />);
+
+    const bar = screen.getByRole("navigation", { name: "Primary" });
+    expect(
+      within(bar).getByRole("link", { name: "Home" }).getAttribute("aria-current"),
     ).toBeNull();
   });
 
