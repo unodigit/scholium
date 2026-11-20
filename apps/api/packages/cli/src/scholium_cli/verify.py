@@ -68,7 +68,12 @@ from .checklist import (
     build_verdict,
     unreadable_verdict,
 )
-from .rebuild import _chain_problems, _log_binding_problems, _parse_entry
+from .rebuild import (
+    _chain_problems,
+    _legacy_unsigned_erasure,
+    _log_binding_problems,
+    _parse_entry,
+)
 
 __all__ = [
     "EXIT_NOT_VERIFIED",
@@ -336,9 +341,11 @@ def _records_item(archive: Archive) -> Item:
     records = archive.records
     if not records:
         return Item("records", PASS, "The archive carries no records")
+    legacy = sum(1 for record in records if _legacy_unsigned_erasure(record))
     details = [
         f"{_record_label(record)}: {problem}"
         for record in records
+        if not _legacy_unsigned_erasure(record)
         if (problem := record_problem(record)) is not None
     ]
     if details:
@@ -348,10 +355,35 @@ def _records_item(archive: Archive) -> Item:
             f"{_plural(len(details), 'record')} failed authentication: {details[0]}",
             tuple(details),
         )
+    if legacy:
+        return Item(
+            "records",
+            PASS,
+            f"{len(records) - legacy} of {len(records)} records carry a valid "
+            "signature from their author",
+        )
     return Item(
         "records",
         PASS,
         f"All {len(records)} records carry a valid signature from their author",
+    )
+
+
+def _legacy_item(archive: Archive) -> Item | None:
+    """Unsigned erasure requests a pre-D1 log holds, accepted as legacy (D1).
+
+    A member's profile erasure used to be appended unsigned; the node signs
+    them now, but a log written before that keeps its unsigned ones forever.
+    They can never authenticate, so they are reported here, on their own line,
+    and do not fail the archive.
+    """
+    count = sum(1 for record in archive.records if _legacy_unsigned_erasure(record))
+    if not count:
+        return None
+    return Item(
+        "legacy",
+        WARN,
+        f"{_plural(count, 'legacy erasure record')} without a signature (accepted)",
     )
 
 
@@ -393,6 +425,11 @@ def _log_records_item(archive: Archive) -> Item | None:
             f"The log does not match the records: {problems[0]}",
             tuple(problems),
         )
+    if any(record_problem(record) is not None for record in archive.records):
+        # A record did not authenticate (the records line already reports it,
+        # and an accepted legacy erasure did not authenticate either), so the
+        # tick below would contradict it.
+        return None
     return Item(
         "log-records",
         PASS,
@@ -575,6 +612,7 @@ def _whole_node_verdict(
         _log_chain_item(archive),
         _head_item(archive),
         _records_item(archive),
+        _legacy_item(archive),
         _log_records_item(archive),
     ):
         if item is not None:

@@ -408,6 +408,24 @@ def whole_node_archive(
     return write_car(blocks, roots=[blocks[0][0]] if blocks else [])
 
 
+def unsigned(record):
+    """``record`` with its signature removed: its id still hashes its content."""
+    record = copy.deepcopy(record)
+    del record["sig"]
+    return record
+
+
+def legacy_erasure(name="alice"):
+    """An ``erasure.request`` a pre-D1 log holds unsigned (the member signed none)."""
+    return unsigned(
+        signed(
+            name,
+            "erasure.request",
+            {"basis": "data-subject-request", "content": "bafyreiexample"},
+        )
+    )
+
+
 def test_a_whole_node_archive_verifies_every_paper(car_file, capsys):
     one, two = make_paper(seed="one"), make_paper(seed="two", versions=2)
     data = whole_node_archive(
@@ -643,6 +661,84 @@ def test_a_bad_signature_in_a_log_entry_fails_the_whole_node(car_file, capsys):
     code, out, _ = verify(car_file, data, capsys=capsys)
     assert code == 1, out
     assert "signature that does not verify" in out
+
+
+def test_a_legacy_unsigned_erasure_request_still_verifies(car_file, capsys):
+    """A log written before the node signed erasures keeps verifying (D1).
+
+    The erasure request of a pre-fix log carries no signature at all, so it
+    can never authenticate; verify accepts it as a legacy record and says so
+    on its own line instead of failing the whole archive forever.
+    """
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    data = whole_node_archive(
+        [[*one.records(), legacy_erasure()], two.records()]
+    )
+
+    code, out, err = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert err == ""
+    assert "1 legacy erasure record without a signature (accepted)" in out
+    assert "failed authentication" not in out
+    assert "Result: VERIFIED" in out
+
+
+def test_the_signature_tick_is_absent_when_a_record_is_not_authenticated(
+    car_file, capsys
+):
+    """The log-records tick must not contradict the records line (D1)."""
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    forged = unsigned(
+        signed("carol", "discussion.post", {"target": one.paper_id, "text": "hi"})
+    )
+    data = whole_node_archive([[*one.records(), forged], two.records()])
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 1, out
+    assert "failed authentication" in out
+    assert "Every log entry carries its record and the author's signature" not in out
+
+
+def test_a_legacy_unsigned_erasure_does_not_tick_every_signature(car_file, capsys):
+    """An accepted legacy record did not authenticate, so the tick is not shown."""
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    data = whole_node_archive([[legacy_erasure()], one.records(), two.records()])
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert "Every log entry carries its record and the author's signature" not in out
+
+
+def test_an_unsigned_record_of_another_type_still_fails(car_file, capsys):
+    """Only an erasure request may be unsigned; a discussion post may not."""
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    forged = unsigned(
+        signed("carol", "discussion.post", {"target": one.paper_id, "text": "hi"})
+    )
+    data = whole_node_archive([[*one.records(), forged], two.records()])
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 1, out
+    assert "has no signature" in out
+    assert "legacy erasure record" not in out
+
+
+def test_a_tampered_legacy_erasure_request_still_fails(car_file, capsys):
+    """Only the missing signature is tolerated; an altered one is not."""
+    one, two = make_paper(seed="one"), make_paper(seed="two")
+    erasure = legacy_erasure()
+    erasure["body"]["content"] = "bafyreitampered"  # id no longer hashes it
+    data = whole_node_archive([[erasure], one.records(), two.records()])
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 1, out
+    assert "id does not match the hash of its content" in out
+    assert "legacy erasure record" not in out
 
 
 def test_bad_authorities_are_a_usage_error_not_a_paper_failure():

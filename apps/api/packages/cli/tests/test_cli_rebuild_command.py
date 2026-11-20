@@ -518,6 +518,64 @@ def test_no_single_byte_flip_in_the_archive_rebuilds(tmp_path):
 # --- record verification: exit 1 -------------------------------------------
 
 
+def unsigned(record):
+    """``record`` with its signature removed: its id still hashes its content."""
+    record = copy.deepcopy(record)
+    del record["sig"]
+    return record
+
+
+def legacy_erasure(name="alice"):
+    """An ``erasure.request`` a pre-D1 log holds unsigned (the member signed none)."""
+    return unsigned(
+        signed(
+            name,
+            "erasure.request",
+            {"basis": "data-subject-request", "content": "bafyreiexample"},
+        )
+    )
+
+
+def test_a_legacy_unsigned_erasure_request_rebuilds(car_file, db_path, capsys):
+    """A log written before the node signed erasures still rebuilds (D1)."""
+    paper = make_paper()
+    code, out, err = rebuild(
+        car_file, archive_car([paper, [legacy_erasure()]]), db_path, capsys
+    )
+
+    assert code == 0, out
+    assert err == ""
+    assert "1 legacy erasure record without a signature (accepted)" in out
+    assert "Result: REBUILT (1 paper)" in out
+    assert len(query(db_path, "SELECT * FROM paper")) == 1
+
+
+def test_an_unsigned_record_of_another_type_still_fails(car_file, db_path, capsys):
+    """Only an erasure request may be unsigned; a discussion post may not."""
+    paper = make_paper()
+    forged = unsigned(
+        signed("carol", "discussion.post", {"target": paper.paper_id, "text": "hi"})
+    )
+    code, out, _ = rebuild(car_file, archive_car([paper, [forged]]), db_path, capsys)
+
+    assert code == 1, out
+    assert "has no signature" in out
+    assert "legacy erasure record" not in out
+    assert not os.path.exists(db_path)
+
+
+def test_a_tampered_legacy_erasure_request_still_fails(car_file, db_path, capsys):
+    """Only the missing signature is tolerated; an altered one is not."""
+    paper = make_paper()
+    erasure = legacy_erasure()
+    erasure["body"]["content"] = "bafyreitampered"  # id no longer hashes it
+    code, out, _ = rebuild(car_file, archive_car([paper, [erasure]]), db_path, capsys)
+
+    assert code == 1, out
+    assert "id does not match the hash of its content" in out
+    assert not os.path.exists(db_path)
+
+
 def test_a_forged_signature_fails(car_file, db_path, capsys):
     paper = make_paper()
     forged = copy.deepcopy(paper.consents[0][1])

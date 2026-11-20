@@ -237,15 +237,30 @@ def _chain_problems(entries: Sequence[LogEntry]) -> list[str]:
 
 # --- the records ------------------------------------------------------------
 
+#: Record type whose missing signature is tolerated.  A member's profile
+#: erasure used to be appended unsigned (the member asks through the API and
+#: signs nothing); the node now signs the request itself.  Logs written before
+#: that keep their unsigned erasure requests forever, so verify and rebuild
+#: accept them as legacy records (D1).
+LEGACY_UNSIGNED_TYPE = "erasure.request"
 
-def _authentication_problem(record: Mapping[str, Any]) -> str | None:
-    """Why ``record`` is not authentic, or ``None`` when it is."""
+
+def _content_problem(record: Mapping[str, Any]) -> str | None:
+    """Why ``record``'s id does not hash its content, or ``None`` when it does."""
     try:
         recomputed = compute_record_id(record)
     except (ValueError, KeyError, TypeError):
         return "is not a well-formed record"
     if record.get("id") != recomputed:
         return "id does not match the hash of its content"
+    return None
+
+
+def _authentication_problem(record: Mapping[str, Any]) -> str | None:
+    """Why ``record`` is not authentic, or ``None`` when it is."""
+    problem = _content_problem(record)
+    if problem is not None:
+        return problem
     signature = record.get("sig")
     if not isinstance(signature, (str, bytes, bytearray)):
         return "has no signature"
@@ -254,9 +269,30 @@ def _authentication_problem(record: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _legacy_unsigned_erasure(record: Mapping[str, Any]) -> bool:
+    """An ``erasure.request`` a pre-D1 log holds without any signature.
+
+    Only the missing signature is tolerated, and only for an erasure request:
+    its id must still hash its content (an altered one fails like any other
+    record), and one that carries a signature must authenticate as usual.
+    """
+    if record.get("type") != LEGACY_UNSIGNED_TYPE:
+        return False
+    if isinstance(record.get("sig"), (str, bytes, bytearray)):
+        return False
+    return _content_problem(record) is None
+
+
+def _legacy_erasure_count(records: Sequence[Mapping[str, Any]]) -> int:
+    """How many records are accepted only as unsigned legacy erasures."""
+    return sum(1 for record in records if _legacy_unsigned_erasure(record))
+
+
 def _record_problems(records: Sequence[Mapping[str, Any]]) -> list[str]:
     problems = []
     for record in records:
+        if _legacy_unsigned_erasure(record):
+            continue  # accepted, and reported on its own line
         problem = _authentication_problem(record)
         if problem is not None:
             problems.append(f"{record.get('type')} {record.get('id')}: {problem}")
@@ -635,6 +671,8 @@ class RebuildResult:
     paper_count: int = 0
     version_count: int = 0
     db_path: str | None = None
+    legacy_count: int = 0
+    """Unsigned ``erasure.request`` records accepted as legacy (D1)."""
 
 
 def rebuild_car_bytes(data: bytes, db_path: str | Path) -> RebuildResult:
@@ -689,6 +727,7 @@ def rebuild_car_bytes(data: bytes, db_path: str | Path) -> RebuildResult:
         paper_count=len(papers),
         version_count=len(versions),
         db_path=str(db_path),
+        legacy_count=_legacy_erasure_count(archive.records),
     )
 
 
@@ -714,12 +753,22 @@ def render(result: RebuildResult) -> list[str]:
     files = f", {_plural(result.file_count, 'file')}" if result.file_count else ""
     lines = [
         f"Log chain intact: {_plural(result.entry_count, 'entry')}{span}",
-        f"{_plural(result.record_count, 'record')} authenticated{files}",
-        f"Rebuilt {_plural(result.paper_count, 'paper')} "
-        f"({_plural(result.version_count, 'version')}) into {result.db_path}",
-        "",
-        f"Result: REBUILT ({_plural(result.paper_count, 'paper')})",
+        f"{_plural(result.record_count - result.legacy_count, 'record')} "
+        f"authenticated{files}",
     ]
+    if result.legacy_count:
+        lines.append(
+            f"{_plural(result.legacy_count, 'legacy erasure record')} "
+            "without a signature (accepted)"
+        )
+    lines.extend(
+        [
+            f"Rebuilt {_plural(result.paper_count, 'paper')} "
+            f"({_plural(result.version_count, 'version')}) into {result.db_path}",
+            "",
+            f"Result: REBUILT ({_plural(result.paper_count, 'paper')})",
+        ]
+    )
     return lines
 
 
