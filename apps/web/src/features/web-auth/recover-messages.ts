@@ -71,7 +71,7 @@ export const RECOVER_SAFETY_WINDOW_HEADING = "72-hour safety window";
 
 /** Shown on a pending request, before the window opens. */
 export const RECOVER_SAFETY_WINDOW_PENDING_NOTE =
-  "When 3 of your 5 guardians approve, a 72-hour safety window opens before the new key takes over. A cancel link goes to you and your guardians.";
+  "When 3 of your 5 guardians approve, a 72-hour safety window opens before the new key takes over, and you and your guardians are notified. Only the account holder can use the cancel link, from Security; your guardians are told how it ends.";
 
 /** Shown once the window is open but without a readable deadline. */
 export const RECOVER_SAFETY_WINDOW_OPEN_NOTE =
@@ -103,7 +103,7 @@ export const RECOVER_CANCELLING = "Cancelling…";
 
 /** Explanation next to the cancel link. */
 export const RECOVER_CANCEL_NOTE =
-  "Cancelling needs the passkey of the key still on your account. A cancel link is sent to you and your guardians.";
+  "Cancelling needs the passkey of the key still on your account. Only the account holder can cancel; your guardians are told how it ends.";
 
 /** Shown after a request is opened. */
 export const RECOVER_STARTED_NOTICE =

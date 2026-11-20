@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { NetworkError, apiErrorFrom } from "../../lib/api";
 
 import { DeviceKeyError, PasskeyCancelledError } from "./errors";
+import * as recoveryMessages from "./recover-messages";
 import {
   RECOVERY_ACCOUNT_NOT_FOUND_TYPE,
   RECOVERY_GUARDIANS_NOT_SET_TYPE,
@@ -13,6 +14,7 @@ import {
 } from "./recover";
 import {
   RECOVER_ACCOUNT_NOT_FOUND_MESSAGE,
+  RECOVER_CANCEL_NOTE,
   RECOVER_FALLBACK_MESSAGE,
   RECOVER_GUARDIANS_NOT_SET_MESSAGE,
   RECOVER_HOW_IT_WORKS,
@@ -164,6 +166,47 @@ describe("safety-window copy", () => {
     expect(safetyWindowNote(snapshot({ status: "finalized" }), NOW)).toContain(
       "safety window has closed",
     );
+  });
+});
+
+describe("who can cancel", () => {
+  /** Every string of recovery copy the page can show. */
+  function everyRecoveryMessage(): string[] {
+    const constants = Object.entries(recoveryMessages)
+      .filter(
+        ([name, value]) =>
+          name.startsWith("RECOVER_") && typeof value === "string",
+      )
+      .map(([, value]) => value as string);
+    const notes = (["pending", "contest", "finalized", "cancelled"] as const).flatMap(
+      (status) => [
+        recoveryProgressNote(snapshot({ status })),
+        safetyWindowNote(
+          snapshot({ status, contestUntil: "2026-11-18T00:00:00Z" }),
+          NOW,
+          { timeZone: "UTC" },
+        ),
+      ],
+    );
+    return [...constants, ...notes];
+  }
+
+  it("never sends a guardian a cancel link or the right to cancel", () => {
+    // Only the account holder can cancel a recovery; a guardian's cancel is
+    // refused with 403 (round 16 D1). No copy may say otherwise.
+    for (const text of everyRecoveryMessage()) {
+      expect(text).not.toMatch(/guardians?[^.]*\bcan cancel\b/i);
+      expect(text).not.toMatch(/cancel link (goes|is sent|reaches)[^.]*guardians?/i);
+    }
+  });
+
+  it("says the account holder cancels and the guardians hear the outcome", () => {
+    expect(RECOVER_SAFETY_WINDOW_PENDING_NOTE).toContain(
+      "Only the account holder can use the cancel link",
+    );
+    expect(RECOVER_SAFETY_WINDOW_PENDING_NOTE).toContain("how it ends");
+    expect(RECOVER_CANCEL_NOTE).toContain("Only the account holder can cancel");
+    expect(RECOVER_CANCEL_NOTE).toContain("how it ends");
   });
 });
 
