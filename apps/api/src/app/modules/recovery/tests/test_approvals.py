@@ -407,7 +407,7 @@ def test_a_guardian_who_never_answered_is_told_it_closed_not_that_they_approved(
         assert "closed" not in answered.payload
 
 
-def test_cancelling_a_request_tells_the_guardians_who_never_answered_it_was_cancelled(recovery):
+def test_cancelling_a_request_tells_every_guardian_it_was_cancelled(recovery):
     assert approve(recovery, recovery.guardians[0]).status_code == 200
 
     response = recovery.client.post(
@@ -419,10 +419,11 @@ def test_cancelling_a_request_tells_the_guardians_who_never_answered_it_was_canc
     assert silent.read is True
     assert silent.payload["closed"] == "cancelled"
     assert "answer" not in silent.payload
-    # Their own answer is still theirs, even though the request was cancelled.
+    # A guardian who had approved is told too, and their own answer is kept
+    # beside the closure rather than replaced by it.
     answered = guardian_notice(recovery, recovery.guardians[0])
     assert answered.payload["answer"] == "approved"
-    assert "closed" not in answered.payload
+    assert answered.payload["closed"] == "cancelled"
 
 
 def test_finalizing_a_request_records_how_many_guardians_approved(recovery, monkeypatch):

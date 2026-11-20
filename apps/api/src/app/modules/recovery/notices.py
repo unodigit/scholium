@@ -15,7 +15,13 @@ notice merely being read:
   cancelled it), ``closed_at``, and how many of the account's guardians had
   approved (``approval_count`` of ``guardian_count``).
 
-A guardian's own answer is never replaced by a closure.
+A guardian's own answer is never replaced by a closure.  A cancel is the one
+closure recorded beside it: every guardian of the account is told, whether or
+not they had approved.
+
+The account's own notice (sent to the account holder when the request is
+opened) is resolved when the request closes, by cancel or completion: it gets
+the same ``closed`` facts plus ``status``, so the client stops inviting a cancel.
 """
 
 from __future__ import annotations
@@ -74,7 +80,13 @@ def record_closure(
     *,
     contest_until: Any = None,
 ) -> None:
-    """Resolve the notice of every guardian who never answered the request.
+    """Resolve the notices a request's closing settles.
+
+    Guardians who never answered the request are told how it closed.  A
+    cancel is told to every guardian, the ones who approved included: the
+    closure is recorded beside their own answer, which it never replaces.
+    When the request closes (``closed`` is not ``None``) the account's own
+    notice is resolved too, so it stops inviting a cancel.
 
     ``closed`` is the reason the request closed (``quorum`` is no longer used
     during the safety window: pass ``None`` to record an approval instead);
@@ -95,9 +107,16 @@ def record_closure(
         else:
             facts["contest_until"] = contest_until
     for guardian in guardians:
-        if guardian in answered:
+        if guardian in answered and closed != "cancelled":
             continue
         try:
             resolve_for_subject(guardian, NOTIFICATION_KIND, request_id, facts)
         except Exception:
             logger.exception("could not resolve %s's notice of recovery request %s", guardian, request_id)
+    if closed is not None:
+        # The account's own notice names the request the same way a guardian's
+        # does; ``status`` is the request's status, for a client that reads that.
+        try:
+            resolve_for_subject(account_did, NOTIFICATION_KIND, request_id, {**facts, "status": closed})
+        except Exception:
+            logger.exception("could not resolve %s's notice of recovery request %s", account_did, request_id)
