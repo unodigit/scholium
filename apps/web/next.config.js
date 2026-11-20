@@ -216,6 +216,45 @@ function getSiteOrigin() {
 }
 
 /**
+ * Where the feed lives. Same value as `FEED_PATH` in src/features/feed/feed.ts
+ * (this file is plain ESM and cannot import TypeScript; next.config.test.ts
+ * asserts the two agree).
+ */
+const FEED_PATH = "/papers";
+
+/**
+ * The query parameters the feed reads (`tab`, `category`, `sort`), the keys of
+ * `FeedState` in src/features/feed/feed.ts. Before the homepage took `/`, the
+ * feed lived there and these were its URL state, so they are in bookmarks,
+ * shared links and old emails.
+ */
+const LEGACY_FEED_QUERY_PARAMS = ["tab", "category", "sort"];
+
+/**
+ * Permanent (308) redirects from the feed's old home to its new one.
+ *
+ * `GET /?tab=reviewed` answers `308` with `Location: /papers?tab=reviewed`.
+ * Next appends the request's whole query string to a redirect's destination,
+ * so `?category=cs.AI&sort=newest&cursor=…` arrives intact and the feed's
+ * behaviour is unchanged apart from its path.
+ *
+ * `has` conditions are ANDed within one rule, so each parameter gets its own
+ * rule: a link carrying any one of them is a legacy feed link. A bare `/`
+ * matches none of them and is not redirected; it belongs to the homepage. A
+ * parameter with an empty value (`/?tab=`) does not count as carried (Next
+ * matches `has: query` on a non-empty value), so it also stays on the
+ * homepage; the feed reads an empty value as its default view anyway.
+ */
+function legacyFeedRedirects() {
+  return LEGACY_FEED_QUERY_PARAMS.map((key) => ({
+    source: "/",
+    has: [{ type: "query", key }],
+    destination: FEED_PATH,
+    permanent: true,
+  }));
+}
+
+/**
  * The npm workspace root (this file lives in apps/web).
  *
  * Pinned instead of letting Next infer it: inference walks up until it finds a
@@ -238,6 +277,9 @@ const nextConfig = {
   outputFileTracingRoot: WORKSPACE_ROOT,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders() }];
+  },
+  async redirects() {
+    return legacyFeedRedirects();
   },
 };
 

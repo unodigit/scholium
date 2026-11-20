@@ -1,7 +1,12 @@
 // @vitest-environment node
+import { parse as parseQuery, stringify as stringifyQuery } from "node:querystring";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getRedirectStatus } from "next/dist/lib/redirect-status";
+import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
+import { matchHas, prepareDestination } from "next/dist/shared/lib/router/utils/prepare-destination";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_FEED_STATE, FEED_PATH, feedHref } from "./src/features/feed/feed";
 import { DEFAULT_API_BASE_URL, resolveApiBaseUrl } from "./src/lib/api/client";
 import nextConfig from "./next.config.js";
 
@@ -239,6 +244,189 @@ describe("a bad API URL", () => {
     ]) {
       production(apiUrl);
       await expect(rules(), apiUrl).rejects.toThrow(/NEXT_PUBLIC_API_URL/);
+    }
+  });
+});
+
+/**
+ * The feed's legacy links.
+ *
+ * The feed used to live at `/`, so `/?tab=reviewed`, `/?category=cs.AI` and
+ * `/?sort=recently_updated` are in bookmarks and shared links. The homepage now
+ * owns `/`, and `next.config.js` sends any request for `/` that carries one of
+ * the feed's query parameters to `/papers` with the same query string, with a
+ * permanent (308) redirect. A bare `/` is not redirected.
+ *
+ * `redirects()` is resolved the way Next's router resolves a request: the
+ * rule's `source` against the pathname, its `has` conditions against the
+ * query, then the destination prepared with the request's query merged in and
+ * the status read from `permanent`. Those are Next's own functions, so the
+ * assertions are about what a browser receives, not about the shape of the
+ * config object.
+ */
+
+type RedirectRule = {
+  source: string;
+  destination: string;
+  permanent?: boolean;
+  statusCode?: number;
+  has?: { type: "query"; key: string; value?: string }[];
+  missing?: { type: "query"; key: string; value?: string }[];
+};
+
+async function redirectRules(): Promise<RedirectRule[]> {
+  expect(nextConfig.redirects, "next.config.js must define redirects()").toBeTypeOf("function");
+  return (await nextConfig.redirects!()) as RedirectRule[];
+}
+
+/** What `GET <url>` answers, or `null` when no redirect rule applies. */
+async function redirectFor(url: string): Promise<{ status: number; location: string } | null> {
+  const { pathname, search } = new URL(url, "http://scholium.test");
+  const query = parseQuery(search.replace(/^\?/, ""));
+  for (const rule of await redirectRules()) {
+    const params = getPathMatch(rule.source)(pathname);
+    if (!params) continue;
+    const hasParams = matchHas({ headers: {} } as never, query, rule.has, rule.missing);
+    if (!hasParams) continue;
+    const { parsedDestination } = prepareDestination({
+      appendParamsToQuery: false,
+      destination: rule.destination,
+      params: { ...params, ...hasParams },
+      query,
+    });
+    const search = stringifyQuery(parsedDestination.query);
+    return {
+      status: getRedirectStatus(rule),
+      location: `${parsedDestination.pathname}${search === "" ? "" : `?${search}`}`,
+    };
+  }
+  return null;
+}
+
+describe("legacy feed links", () => {
+  it("redirect GET /?tab=reviewed to /papers?tab=reviewed with a 308", async () => {
+    expect(await redirectFor("/?tab=reviewed")).toEqual({
+      status: 308,
+      location: "/papers?tab=reviewed",
+    });
+  });
+
+  it("redirect /?tab=… for every tab the feed has", async () => {
+    for (const tab of ["latest", "reviewed", "following"]) {
+      expect(await redirectFor(`/?tab=${tab}`), tab).toEqual({
+        status: 308,
+        location: `/papers?tab=${tab}`,
+      });
+    }
+  });
+
+  it("redirect /?category=… with the category intact", async () => {
+    expect(await redirectFor("/?category=cs.AI")).toEqual({
+      status: 308,
+      location: "/papers?category=cs.AI",
+    });
+    // A category the URL had to escape stays escaped.
+    expect(await redirectFor("/?category=math%20ph")).toEqual({
+      status: 308,
+      location: "/papers?category=math%20ph",
+    });
+  });
+
+  it("redirect /?sort=… for every sort the feed has", async () => {
+    for (const sort of ["newest", "recently_reviewed", "recently_updated"]) {
+      expect(await redirectFor(`/?sort=${sort}`), sort).toEqual({
+        status: 308,
+        location: `/papers?sort=${sort}`,
+      });
+    }
+  });
+
+  it("carry every parameter across, not only the one that matched", async () => {
+    expect(await redirectFor("/?tab=reviewed&category=cs.AI&sort=recently_reviewed")).toEqual({
+      status: 308,
+      location: "/papers?tab=reviewed&category=cs.AI&sort=recently_reviewed",
+    });
+    expect(await redirectFor("/?sort=recently_updated&category=cs.LG")).toEqual({
+      status: 308,
+      location: "/papers?sort=recently_updated&category=cs.LG",
+    });
+  });
+
+  it("redirect when the feed's parameter comes with one the feed does not know", async () => {
+    expect(await redirectFor("/?utm_source=mail&tab=reviewed")).toEqual({
+      status: 308,
+      location: "/papers?utm_source=mail&tab=reviewed",
+    });
+  });
+
+  it("redirect to the URL the feed itself builds for the same view", async () => {
+    const views = [
+      { tab: "reviewed" as const, category: "", sort: "newest" as const },
+      { tab: "latest" as const, category: "cs.AI", sort: "newest" as const },
+      { tab: "latest" as const, category: "", sort: "recently_updated" as const },
+      { tab: "following" as const, category: "stat.ML", sort: "recently_reviewed" as const },
+    ];
+    for (const view of views) {
+      const legacy = feedHref(view, "/");
+      expect(legacy.startsWith("/?"), legacy).toBe(true);
+      expect(await redirectFor(legacy), legacy).toEqual({
+        status: 308,
+        location: feedHref(view),
+      });
+    }
+  });
+
+  it("are permanent redirects, and say so with 308 rather than 301", async () => {
+    const legacy = (await redirectRules()).filter((rule) => rule.source === "/");
+    expect(legacy.length).toBeGreaterThan(0);
+    for (const rule of legacy) {
+      expect(rule.permanent).toBe(true);
+      expect(rule.statusCode).toBeUndefined();
+      expect(getRedirectStatus(rule)).toBe(308);
+    }
+  });
+
+  it("cover exactly the feed's own query parameters, and send them to the feed's path", async () => {
+    const keys = Object.keys(DEFAULT_FEED_STATE).sort();
+    expect(keys).toEqual(["category", "sort", "tab"]);
+
+    const rules = (await redirectRules()).filter((rule) => rule.source === "/");
+    const covered = rules.flatMap((rule) => (rule.has ?? []).map((condition) => condition.key));
+    expect(covered.sort()).toEqual(keys);
+    for (const rule of rules) {
+      expect(rule.destination).toBe(FEED_PATH);
+      expect(rule.destination).toBe("/papers");
+      expect(rule.missing ?? []).toEqual([]);
+    }
+  });
+
+  it("leave the bare / alone for the homepage", async () => {
+    expect(await redirectFor("/")).toBeNull();
+  });
+
+  it("leave / alone when its query carries none of the feed's parameters", async () => {
+    for (const url of ["/?", "/?utm_source=mail", "/?ref=home&utm_campaign=x", "/?cursor=abc", "/?Tab=reviewed"]) {
+      expect(await redirectFor(url), url).toBeNull();
+    }
+  });
+
+  it("leave / alone when a feed parameter is present but empty", async () => {
+    // Next matches `has: query` on a non-empty value, and the feed reads an
+    // empty value as its default view, so the homepage serves these.
+    for (const url of ["/?tab=", "/?category=", "/?sort="]) {
+      expect(await redirectFor(url), url).toBeNull();
+    }
+  });
+
+  it("do not redirect the feed itself, so /papers?tab=… is served rather than looped", async () => {
+    for (const url of ["/papers", "/papers?tab=reviewed", "/papers?category=cs.AI&sort=newest"]) {
+      expect(await redirectFor(url), url).toBeNull();
+    }
+  });
+
+  it("only apply to /, not to other pages that happen to use the same parameters", async () => {
+    for (const url of ["/search?sort=newest", "/c/cs.AI?tab=reviewed", "/paper/x?category=cs.AI"]) {
+      expect(await redirectFor(url), url).toBeNull();
     }
   });
 });
