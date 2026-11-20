@@ -39,7 +39,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { BrandLogo } from "../../features/ui-kit/brand-logo";
 import { BrandMark } from "../../features/ui-kit/brand-mark";
-import { api } from "../../lib/api";
+import { api, tokenStore } from "../../lib/api";
 import {
   categoryHref,
   DEFAULT_CATEGORIES,
@@ -137,14 +137,38 @@ function useHash(): string {
   return hash;
 }
 
+/**
+ * True while the shared token store holds an access token.
+ *
+ * `useSignedIn` is also true from the localStorage hint, which is there on a
+ * full page load before `POST /v1/auth/refresh` has restored the token. That
+ * is enough to pick the nav's actions but not to authorize a request, so the
+ * unread count follows this instead: it turns true when the restored token
+ * arrives (no token → token) and false when the session's token goes. A
+ * rotated token keeps it true, so a refresh does not cause another read.
+ * Like `useSignedIn` it starts false, so the first client render matches the
+ * server's.
+ */
+function useHoldsAccessToken(): boolean {
+  const [holds, setHolds] = useState(false);
+  useEffect(() => {
+    const update = (): void => setHolds(tokenStore.isAuthenticated);
+    update();
+    return tokenStore.subscribe(update);
+  }, []);
+  return holds;
+}
+
 /** Props for {@link GlobalNav}. Everything is optional. */
 export interface GlobalNavProps {
   /** Categories for the desktop menu; defaults to the launch set. */
   categories?: readonly NavCategory[];
   /**
    * Unread notifications for the badge. When omitted and signed in, the count
-   * is fetched once from `GET /v1/me/notifications` (failures are silent —
-   * the badge is a courtesy, not a gate).
+   * is fetched from `GET /v1/me/notifications` once an access token is held —
+   * after a full page load that is when the session is restored, not when the
+   * signed-in hint is read — and again if the token goes and comes back
+   * (failures are silent — the badge is a courtesy, not a gate).
    */
   unreadCount?: number;
   /**
@@ -175,6 +199,15 @@ export function GlobalNav({
 }: GlobalNavProps) {
   const storeSignedIn = useSignedIn(signedIn);
   const effectiveSignedIn = signedIn ?? storeSignedIn;
+  const holdsToken = useHoldsAccessToken();
+  // Which actions show follows the sign-in state, hint included. The count is
+  // a request, so it also needs the access token to be in memory: on a full
+  // page load the hint is true well before the token is restored, and a read
+  // made in that gap is refused with a 401 the client cannot refresh (it sent
+  // no credentials) and nothing would ever repeat it. A shell that pins
+  // `signedIn` has made that call itself and is taken at its word.
+  const hasSession =
+    effectiveSignedIn && (signedIn !== undefined || holdsToken);
   const { signingOut, signOut } = useSignOut();
 
   const load =
@@ -187,17 +220,20 @@ export function GlobalNav({
   // The fetched count belongs to the account that was signed in when it was
   // read. When that session ends (Sign out, or a 401 the client could not
   // refresh) forget it, so the next account on this document never sees it.
-  // The badge below is also derived from `effectiveSignedIn`, which is what
-  // makes the signed-out bell appear in the same render as the session ends
-  // rather than one effect later.
+  // The badge below is also derived from `hasSession`, which is what makes the
+  // signed-out bell appear in the same render as the session ends rather than
+  // one effect later.
   useEffect(() => {
-    if (!effectiveSignedIn) {
+    if (!hasSession) {
       setFetchedUnread(null);
     }
-  }, [effectiveSignedIn]);
+  }, [hasSession]);
 
+  // Runs when the session first has a token (a restored one included) and
+  // again each time it goes away and comes back; a token that is merely
+  // rotated leaves `hasSession` as it was.
   useEffect(() => {
-    if (unreadCount !== undefined || !effectiveSignedIn || !load) {
+    if (unreadCount !== undefined || !hasSession || !load) {
       return;
     }
     let active = true;
@@ -213,12 +249,12 @@ export function GlobalNav({
     return () => {
       active = false;
     };
-  }, [unreadCount, effectiveSignedIn, load]);
+  }, [unreadCount, hasSession, load]);
 
   // The notifications card marks rows read; this is how the bell hears about
   // it. `detail.unread` is authoritative, so rapid marks do not race the badge.
   useEffect(() => {
-    if (unreadCount !== undefined || !effectiveSignedIn) {
+    if (unreadCount !== undefined || !hasSession) {
       return;
     }
     const onChanged = (event: Event): void => {
@@ -232,11 +268,11 @@ export function GlobalNav({
     return () => {
       window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
     };
-  }, [unreadCount, effectiveSignedIn]);
+  }, [unreadCount, hasSession]);
 
   // A pinned `unreadCount` is the shell's to decide. Otherwise only a signed-in
   // visitor has a count; a signed-out one has no notifications to be told of.
-  const unread = unreadCount ?? (effectiveSignedIn ? (fetchedUnread ?? 0) : 0);
+  const unread = unreadCount ?? (hasSession ? (fetchedUnread ?? 0) : 0);
 
   return (
     <>

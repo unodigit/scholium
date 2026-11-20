@@ -541,6 +541,124 @@ describe("GlobalNav unread loading", () => {
 });
 
 /* ---------------------------------------------------------------------------
+   A full page load: the hint is there, the access token is not yet
+
+   `useSignedIn` is true from the localStorage hint before the refresh cookie
+   has been exchanged, so the nav already shows the signed-in actions while the
+   token store is still empty. The unread count needs the token, not the hint.
+   ------------------------------------------------------------------------- */
+
+describe("GlobalNav unread count on a full page load", () => {
+  const twoUnread = async () => [
+    { id: 1, read: false },
+    { id: 2, read: false },
+  ];
+
+  /** Stands in for the API: no access token in memory means a 401. */
+  function apiLikeLoad() {
+    return vi.fn(async () => {
+      if (!tokenStore.isAuthenticated) {
+        throw new Error("401 Unauthorized");
+      }
+      return twoUnread();
+    });
+  }
+
+  it("shows the signed-in actions from the hint but does not fetch without a token", async () => {
+    window.localStorage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+    const load = vi.fn(twoUnread);
+
+    render(<GlobalNav loadNotifications={load} />);
+
+    // The hint decides which actions show...
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Your dashboard" })).toBeTruthy(),
+    );
+    expect(screen.getAllByRole("button", { name: "Sign out" })).toHaveLength(2);
+    // ...but there is nothing to authorize a request with yet.
+    expect(load).not.toHaveBeenCalled();
+    expect(document.querySelectorAll(".gn-badge")).toHaveLength(0);
+  });
+
+  it("fetches and badges the count when the restored token arrives", async () => {
+    window.localStorage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+    const load = apiLikeLoad();
+    render(<GlobalNav loadNotifications={load} />);
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Your dashboard" })).toBeTruthy(),
+    );
+    expect(load).not.toHaveBeenCalled();
+
+    // The session bootstrap's refresh lands.
+    act(() => {
+      tokenStore.set({ accessToken: "restored" });
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Notifications, 2 unread" }),
+      ).toBeTruthy(),
+    );
+    expect(load).toHaveBeenCalledTimes(1);
+    // Bell and Inbox tab both show it.
+    expect(document.querySelectorAll(".gn-badge")).toHaveLength(2);
+  });
+
+  it("does not fetch again when a held token is only rotated", async () => {
+    tokenStore.set({ accessToken: "first" });
+    const load = apiLikeLoad();
+    render(<GlobalNav loadNotifications={load} />);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      tokenStore.set({ accessToken: "second" });
+    });
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers from a first 401 once the session is restored", async () => {
+    // The first read happens before the session is back and is refused.
+    window.localStorage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+    const load = apiLikeLoad();
+    render(<GlobalNav loadNotifications={load} />);
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Your dashboard" })).toBeTruthy(),
+    );
+    expect(screen.queryByRole("link", { name: /unread/ })).toBeNull();
+
+    act(() => {
+      tokenStore.set({ accessToken: "restored" });
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Notifications, 2 unread" }),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("drops a fetched count when the token goes while the hint stays", async () => {
+    window.localStorage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+    tokenStore.set({ accessToken: "a" });
+    render(<GlobalNav loadNotifications={apiLikeLoad()} />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Notifications, 2 unread" }),
+      ).toBeTruthy(),
+    );
+
+    act(() => {
+      tokenStore.clear();
+    });
+
+    // Still "signed in" by the hint, but the count belonged to that token.
+    expect(screen.queryByRole("link", { name: /unread/ })).toBeNull();
+    expect(document.querySelectorAll(".gn-badge")).toHaveLength(0);
+  });
+});
+
+/* ---------------------------------------------------------------------------
    The session ending takes the previous account's badge with it
    ------------------------------------------------------------------------- */
 
