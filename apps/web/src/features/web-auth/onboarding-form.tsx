@@ -171,7 +171,7 @@ export function OnboardingForm({ services }: OnboardingFormProps = {}) {
         <button
           type="button"
           className="wa-button"
-          onClick={() => router.replace("/")}
+          onClick={() => router.replace("/papers")}
           disabled={!onboarding.ready || !onboarding.canFinish}
           aria-describedby={onboarding.canFinish ? undefined : "onboarding-finish-note"}
         >
@@ -180,7 +180,7 @@ export function OnboardingForm({ services }: OnboardingFormProps = {}) {
         {!onboarding.canFinish ? (
           <p className="wa-meta" id="onboarding-finish-note">
             {GUARDIANS_SKIP_NOTE}{" "}
-            <Link className="wa-skip" href="/">
+            <Link className="wa-skip" href="/papers">
               {ONBOARDING_SKIP_ACTION}
             </Link>
           </p>

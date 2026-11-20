@@ -173,7 +173,7 @@ test.describe("the session survives a page load", () => {
     await page.getByRole("link", { name: "Continue setting up" }).click();
     await expect(page).toHaveURL(/\/onboarding$/);
     await page.getByRole("link", { name: "Skip for now" }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/papers$/);
 
     await visit(page, "/me");
     await expect(page.getByRole("heading", { name: "Me", level: 1 })).toBeVisible();
@@ -202,7 +202,7 @@ test.describe("the session survives a page load", () => {
     await expect(page).toHaveURL(/\/onboarding$/);
 
     await page.getByRole("link", { name: "Skip for now" }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/papers$/);
 
     await visit(page, "/me");
     await expect(page.getByRole("heading", { name: "Me", level: 1 })).toBeVisible();
