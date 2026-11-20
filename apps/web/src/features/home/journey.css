@@ -133,6 +133,12 @@ html:not([data-home-js]) .roles .seg-ind { display: none; }
   border-radius: 999px; cursor: pointer; font-size: 0.9375rem; font-weight: 500; color: var(--ink-2);
   -webkit-tap-highlight-color: transparent;
 }
+.roles .seg button { min-width: 0; }
+/* On the narrowest phones the four labels must still fit the track, or the
+   last tab ("Libraries") runs past the screen and the page scrolls sideways. */
+@media (max-width: 360px) {
+  .roles .seg button { padding: 0 2px; font-size: 0.8125rem; letter-spacing: -0.01em; }
+}
 .roles .seg button[aria-selected="true"] { color: var(--ink); font-weight: 600; }
 .roles .seg button:focus-visible { outline-offset: 1px; }
 @media (hover: hover) {
