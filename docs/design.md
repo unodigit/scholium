@@ -25,7 +25,7 @@ The name sets the visual idea: a *scholium* is a note in the margin of a text. T
 
 ## 2. Brand
 
-Summary: delivered assets (each file in docs/brand and where it is used in the app); construction of the mark (page block, text lines, bracket, margin-note strip); light and dark lockups; minimum sizes (mark 16px, lockup 20px tall); clear space (half the mark height); colour usage (accent, paper, ink, dark-mode equivalents from §3); wordmark typography (Source Serif 4 semibold, always lowercase); do/don't (no recolouring, no stretching, no effects, never put the tile on a busy background); keep the existing clearance note.
+Summary: delivered assets (each file in docs/brand and where it is used in the app); construction of the mark (page block, text lines, bracket, margin-note strip); light and dark lockups; minimum sizes (mark 16px, lockup 20px tall); clear space (half the mark height); colour usage (accent, paper, ink, dark-mode equivalents from §3); wordmark typography (Source Serif 4 semibold, always lowercase); do/don't (no recolouring, no stretching, no effects, never put the tile on a busy background); the clearance note.
 
 ### Name and voice
 
@@ -136,7 +136,7 @@ Don't:
 - **Never put the tile on a busy background** — the tile needs a calm, solid surface.
 - Do not separate the margin-note strip from the mark or recolour it independently.
 
-Clearance note: the name passed a web search for conflicting publishing products, but trademark and domain clearance are still required before the brand is used publicly.
+Clearance note: the name and the domain were confirmed clear on 20 November 2026, so the brand can be used publicly.
 
 ## 3. Design tokens
 

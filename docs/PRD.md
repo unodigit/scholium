@@ -15,7 +15,7 @@
 - Why the old name was dropped: "OpenResearch" is already used by a nonprofit research lab, by an open-source research-agent workspace from alphaXiv, and by a City of Amsterdam research platform. "OpenSearch" is an existing search engine project and is also a component in our own stack, so it cannot be a product name.
 - Why Scholium: a *scholium* is an explanatory note written in the margin of a scholarly text. The product's core idea is that a paper lives together with its reviews, annotations and corrections.
 - Identifier prefix: `sch:` (for example `sch:k3f9-q2xz-7mwd/v3`).
-- Clearance status: a web search found no publishing or DeSci product using the name. This is **not** a trademark or domain clearance. Before public launch: trademark search (IP Australia, USPTO, EUIPO, classes 9, 41, 42) and domain purchase. Fallback names if clearance fails: *Scholium Commons*, *Marginalia Network*, *Peerfolio*.
+- Clearance status: the name and the domain were confirmed clear on 20 November 2026, so the brand can be used publicly. (Earlier, a web search had found no publishing or DeSci product using the name. The fallback names kept in reserve were *Scholium Commons*, *Marginalia Network* and *Peerfolio*.)
 
 ## 1. Summary
 
@@ -247,7 +247,7 @@ North-star metric: **number of paper versions that received at least two substan
 | Key loss | Lost identity | Passkeys, social recovery, institutional custody option |
 | ZK review complexity | Delay or flaw | Escrow model in Phase 1; audited library; external review |
 | Legal takedown vs permanence | Liability | Quarantine before permanent storage; permanence opt-in |
-| Name clearance fails | Rebrand cost | Clear trademark and domains before public launch; fallbacks listed in section 0 |
+| Name clearance fails | Rebrand cost | Closed: name and domain confirmed clear on 20 November 2026 (section 0) |
 
 ## 12. Open questions
 
