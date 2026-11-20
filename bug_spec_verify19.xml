@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 19: findings of verify sweep 19 (2026-11-20, worktree @ ee764d7 = main incl. round 18, next 16.4.6).
+  16/17 journeys pass; 03 fails at step 7 (sign-out lands mid-page). Journey 09 passes again: after a profile erasure
+  the /network export verifies (66 records, exit 0) and rebuilds, and the erasure record is node-signed and names its
+  subject. Round-18 fixes confirmed in the browser: sign-in without next= lands on /papers; a signed-in member reloading
+  / sees Browse papers and Your dashboard with no API request; the earlier-version sentence follows the committed
+  identity; the tampered v2 card stays visible; the no-JS nav is solid; cancelled recovery pages are past tense with no
+  "Check for approvals"; onboarding guardian names in the body font and saved categories preselected.
+  npm test (API 6128, web 5936) and e2e 56/56 green at ee764d7.
+  Decision (recorded here):
+  D1  A paper is "listed" in the whole-archive summary when the node serves it, i.e. when any of its versions is listed
+      and none is under a hold in force; a newer version still in the moderation queue does not make it "awaiting
+      moderation" (the summary may add "1 newer version awaiting moderation").
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/web/src/components/nav/global-nav.tsx,apps/web/src/components/nav/global-nav.test.tsx">
+    <title>On a full page load of a public page, a signed-in member's bell shows no unread count: the count is fetched once before the session is restored, gets a 401 and is never retried</title>
+    <symptoms>
+      On a full load of /papers, /c/…, /search, /p/…, /discussion/… or /u/… the bell has no badge although the member has unread notifications; GET /v1/me/notifications returns 401 right after /v1/auth/refresh returns 200, and is not retried; /me (its card reports the count), /me/* and client-side navigation show the badge
+      Since d36625b useSignedIn (components/nav/session.ts) is true from the localStorage signed-in hint before the access token is in memory; the fetch effect in global-nav.tsx keyed on effectiveSignedIn runs once, without a token, and its failure is swallowed
+    </symptoms>
+    <reproduction_steps>
+      Journeys 03 steps 4/7 and 05 step 4 (screenshots/03-new-member-onboarding/40a-*.png, 40b-*.png; screenshots/05-follow-search-notify/40-*.png)
+    </reproduction_steps>
+    <expected>The unread count is fetched only once an access token is actually held (tokenStore.isAuthenticated), and again whenever the token store changes from no token to a token, so a full load of any public page shows the badge as soon as the session is restored; the signed-in hint still decides which nav actions show. A 401 never leaves a stale or missing badge once the session is restored. Tests: hint set and no token → no fetch; token arrives → fetch and badge; a first 401 followed by a restored token → badge</expected>
+    <actual>Members can't see they have notifications on most pages they open directly</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       creates="apps/web/src/components/nav/session.test.ts"
+       touches_files="apps/web/src/components/nav/session.ts">
+    <title>Sign-out still lands on the homepage smooth-scrolled down to "Why Scholium" instead of at the top</title>
+    <symptoms>
+      After Sign out from /me, /me/security or /papers (scrollY 0) the homepage opens and smooth-scrolls to y≈1586 over about 700 ms; useSignOut calls window.scrollTo(0, 0) immediately after router.replace("/") (session.ts ~L92-95), before the homepage renders, and the homepage sets scroll-behavior: smooth and scroll-padding-top on html
+    </symptoms>
+    <reproduction_steps>
+      Journeys 03 step 7, 06 step 8, 17 step 6 (screenshots/03-new-member-onboarding/07b-*-FAIL.png, 06-key-recovery/20i-*-FAIL.png, 17-homepage/06g-*-FAIL.png)
+    </reproduction_steps>
+    <expected>After sign-out the homepage is shown at scrollY 0 with no visible scroll movement, from any page and any starting offset (for example a full navigation to /, or a scroll to the top once the homepage has rendered that bypasses smooth scrolling). Tests (new session.test.ts): sign-out navigates to / and the scroll to the top happens after the navigation with behavior "instant"/"auto", not before it</expected>
+    <actual>Sign-out drops the visitor mid-page</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/home/home.css,apps/web/src/features/home/home.css.test.ts">
+    <title>At 320-390 px the hero card's "Verified · signed by both authors · history intact" pill doesn't wrap and runs past the card and the screen</title>
+    <symptoms>
+      At 375 px the pill's right edge is at 387 px (cut by the screen edge); at 320 px the page is 336 px wide (16 px horizontal scroll) and the text is cut at "histor"
+    </symptoms>
+    <reproduction_steps>
+      Journey 17 step 7 (screenshots/17-homepage/07a4-mobile-375-verified-pill-overflows-card.png, 07a5-mobile-320-verified-pill-past-viewport.png)
+    </reproduction_steps>
+    <expected>At 320-414 px the verified pill wraps (or shortens) inside the card with no clipped text and no horizontal page scroll; a CSS test asserts the pill can wrap (no nowrap at narrow widths, max-width 100%)</expected>
+    <actual>Overflowing pill and horizontal scroll on small phones</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/src/scholium_cli/verify.py,apps/api/packages/cli/tests/test_cli_verify_api_export.py">
+    <title>`scholium verify` counts a listed paper as "awaiting moderation" when only its newer version is in the queue</title>
+    <symptoms>
+      With sch:pzhn-vanl-24rr v1 listed (public on /papers, counted listed on /network) and its v2 queued, the export summary reads "4 papers (2 listed, 2 awaiting moderation)"; _newest_version_listed in scholium_cli/verify.py looks only at the newest version and its docstring says the node serves no page until the newest version is listed, which is not what the node does
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 5 (screenshots/09-preserve-and-transparency/05b-export-cli-verify-and-rebuild.png)
+    </reproduction_steps>
+    <expected>Per D1, a paper with any listed version and no hold in force is "listed" in the summary (optionally noting "1 newer version awaiting moderation"); a paper with no listed version stays "awaiting moderation"; held, corrected and retracted are unchanged. Tests: listed v1 + queued v2 counts as listed; only a queued v1 counts as awaiting moderation</expected>
+    <actual>The summary disagrees with the node</actual>
+  </bug>
+
+</bug_spec>
