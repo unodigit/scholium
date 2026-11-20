@@ -1,0 +1,231 @@
+/* ==========================================================================
+   Journey sections — Verify band (#verify), Who it's for (#who) and
+   How it works (#how).
+
+   Colour comes from apps/web/src/styles/tokens.css only (no hex literals).
+   Hidden animation start states apply under html[data-home-js], the attribute
+   the home layout's inline script sets, so crawlers and no-JS readers see every
+   word. Selectors are scoped under each section's own root class, so they win
+   over the bare :focus-visible rule in home.css regardless of bundle order.
+   Keyframes are prefixed "journey-".
+   ========================================================================== */
+
+
+/* ==========================================================================
+   Verify band — a dark band that scopes the dark tokens to itself.
+   The section carries data-theme="dark" (tokens.css), so every token below
+   resolves to its dark value in both themes.
+   ========================================================================== */
+.band-dark {
+  /* Card fill between the band and --surface; shade deepens --bg-2 so the band
+     still reads as a band when the page itself is dark. */
+  --band-card: color-mix(in srgb, var(--bg-2) 45%, var(--surface));
+  --band-shade: color-mix(in srgb, var(--scrim) 50%, transparent);
+  background-color: var(--bg-2);
+  background-image: linear-gradient(var(--band-shade), var(--band-shade));
+  color: var(--ink);
+}
+
+/* The terminal. Its container holds the reveal; the card inside is the image. */
+.band-dark .term-wrap { max-width: 780px; margin-inline: auto; }
+.band-dark .term {
+  border-radius: 22px; overflow: hidden; text-align: left;
+  background: var(--band-card);
+  box-shadow: 0 0 0 1px var(--hairline), var(--shadow-float);
+}
+.band-dark .term-bar {
+  display: flex; align-items: center; justify-content: space-between; padding: 12px 18px;
+  border-bottom: 1px solid var(--hairline); font-size: 0.8125rem; color: var(--ink-2);
+}
+.band-dark .term-bar span:first-child { font-family: var(--mono); font-size: 0.75rem; }
+.band-dark .term pre {
+  margin: 0; padding: clamp(18px, 3vw, 30px); font-family: var(--mono);
+  font-size: clamp(0.78rem, 0.7rem + 0.35vw, 0.95rem); line-height: 1.85; color: var(--ink); overflow-x: auto;
+}
+.band-dark .t-line { display: block; }
+.band-dark .t-prompt { color: var(--accent); }
+.band-dark .t-ok { color: var(--verified); }
+.band-dark .t-pend { color: var(--pending); }
+.band-dark .t-dim { color: var(--ink-2); }
+.band-dark .t-final { color: var(--verified); font-weight: 500; }
+.band-dark .typed { display: inline-block; vertical-align: bottom; white-space: nowrap; overflow: hidden; }
+.band-dark .caret {
+  display: inline-block; width: 0.55em; height: 1.1em; vertical-align: -0.2em; margin-left: 2px;
+  background: var(--accent); opacity: 0;
+}
+
+/* The command types in with a stepped width (one step per character: the command
+   is 38 characters long) and the caret blinks; the checklist fades in line by
+   line. The command's width is the one deliberate non-transform animation here:
+   it is what makes the text appear a character at a time. */
+html[data-home-js] .band-dark .typed { width: 0; }
+html[data-home-js] .band-dark .term-wrap.in .typed { animation: journey-type 1.5s steps(38, end) 0.35s both; }
+html[data-home-js] .band-dark .term-wrap.in .caret { animation: journey-caret 0.9s steps(1) 4 both; }
+html[data-home-js] .band-dark .t-out { opacity: 0; }
+html[data-home-js] .band-dark .term-wrap.in .t-out {
+  animation: journey-fade 0.35s var(--ease-out) both;
+  animation-delay: calc(2050ms + var(--k, 0) * 220ms);
+}
+@keyframes journey-type { from { width: 0; } to { width: 38ch; } }
+@keyframes journey-caret { 0% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes journey-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Link cards. The reveal sits on the wrapper, so the card's own transform and
+   transition are free for hover and press: no stagger delay on feedback. */
+.band-dark .vlinks {
+  margin: clamp(36px, 5vw, 56px) auto 0; max-width: 980px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+}
+.band-dark .vlink-cell { display: grid; }
+.band-dark .vlink {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 22px;
+  border-radius: 20px; text-align: left; background: var(--band-card);
+  box-shadow: 0 0 0 1px var(--hairline);
+  transition: transform 0.4s var(--spring);
+  -webkit-tap-highlight-color: transparent;
+}
+/* The hover ring is an accent outline that fades in on opacity. */
+.band-dark .vlink::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 1px var(--accent); opacity: 0; transition: opacity 0.3s var(--ease-out);
+}
+@media (hover: hover) {
+  .band-dark .vlink:hover { transform: translateY(-3px); }
+  .band-dark .vlink:hover::after { opacity: 0.4; }
+}
+/* Pointer-down: press in at once; release springs back on the base transition. */
+.band-dark .vlink:active { transform: scale(0.98); transition: transform 0.12s var(--ease-out); }
+.band-dark .vlink .ico { font-size: 24px; color: var(--accent); margin-bottom: 8px; }
+.band-dark .vlink b { font-weight: 600; }
+.band-dark .vlink span { font-size: 0.9375rem; color: var(--ink-2); }
+
+.band-dark .roadmap { margin-top: 28px; text-align: center; font-size: 0.875rem; color: var(--ink-2); }
+.band-dark .roadmap .tag {
+  display: inline-block; margin-right: 4px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--rule); font-size: 0.75rem; font-weight: 600; color: var(--pending);
+}
+@media (max-width: 860px) { .band-dark .vlinks { grid-template-columns: 1fr; } }
+
+
+/* ==========================================================================
+   Who it's for — segmented control (WAI-ARIA tabs) with a spring indicator.
+   The indicator slides and resizes with transform only: translateX for the
+   position, scaleX for the width, both driven by the Spring class.
+   ========================================================================== */
+.roles .seg-wrap { display: flex; justify-content: center; margin-bottom: clamp(28px, 4vw, 44px); }
+.roles .seg {
+  --seg-pad: 4px;
+  position: relative; display: flex; width: 100%; max-width: 560px; padding: var(--seg-pad);
+  border-radius: 999px; background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+/* Before the script measures the tabs the indicator already sits under the first
+   one: the four tabs share the track equally. */
+.roles .seg-ind {
+  position: absolute; top: var(--seg-pad); bottom: var(--seg-pad); left: 0;
+  width: calc((100% - 2 * var(--seg-pad)) / 4); border-radius: 999px; pointer-events: none;
+  background: var(--surface);
+  box-shadow: 0 0 0 0.5px var(--hairline), 0 1px 2px var(--hairline), 0 3px 8px -2px var(--hairline);
+  transform: translateX(var(--seg-pad)); transform-origin: 0 50%; will-change: transform;
+}
+html:not([data-home-js]) .roles .seg-ind { display: none; }
+.roles .seg button {
+  position: relative; z-index: 1; flex: 1; min-height: 44px; padding: 0 8px; border: 0; background: none;
+  border-radius: 999px; cursor: pointer; font-size: 0.9375rem; font-weight: 500; color: var(--ink-2);
+  -webkit-tap-highlight-color: transparent;
+}
+.roles .seg button[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+.roles .seg button:focus-visible { outline-offset: 1px; }
+@media (hover: hover) {
+  .roles .seg button:hover { color: var(--ink); }
+}
+
+.roles .panel {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: clamp(28px, 5vw, 72px); align-items: start;
+  background: var(--surface); border-radius: 30px; padding: clamp(26px, 4.5vw, 56px);
+  box-shadow: 0 0 0 0.5px var(--hairline), var(--shadow-card);
+}
+/* Without script the four panels stack. With it, the inactive three are hidden:
+   by the hidden attribute once React has hydrated, and until then by data-active,
+   so the page does not jump when it hydrates. */
+html:not([data-home-js]) .roles .panel + .panel { margin-top: 18px; }
+html[data-home-js] .roles .panel[data-active="false"] { display: none; }
+.roles .panel[hidden] { display: none; }
+.roles .panel h3 { font-size: clamp(1.625rem, 1.1rem + 1.6vw, 2.5rem); line-height: 1.12; letter-spacing: -0.022em; }
+.roles .panel .p-lead { margin-top: 16px; color: var(--ink-2); font-size: 1.125rem; line-height: 1.5; }
+.roles .panel .btn { margin-top: 28px; }
+/* home.css reads --on-accent for filled buttons; tokens.css names it --accent-ink. */
+.roles .panel .btn-filled { color: var(--accent-ink); }
+.roles .panel ul { display: grid; gap: 4px; }
+.roles .panel li {
+  display: flex; gap: 14px; align-items: flex-start; padding: 14px 0;
+  border-bottom: 1px solid var(--rule); font-size: 1rem; line-height: 1.5;
+}
+.roles .panel li:last-child { border-bottom: 0; }
+.roles .panel li .ico { font-size: 20px; color: var(--accent); margin-top: 2px; }
+.roles .panel li code { font-size: 0.85em; color: var(--ink); background: var(--bg-2); padding: 1px 6px; border-radius: 6px; }
+.roles .panel.entering { animation: journey-panel-in 0.55s var(--spring-soft) both; }
+@keyframes journey-panel-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@media (max-width: 860px) { .roles .panel { grid-template-columns: 1fr; } }
+
+
+/* ==========================================================================
+   How it works — four numbered steps joined by connector lines that draw on
+   reveal: horizontal on desktop, vertical under 900px.
+   ========================================================================== */
+.how .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; }
+.how .step { position: relative; }
+.how .step-n {
+  position: relative; z-index: 1; display: inline-grid; place-items: center; width: 46px; height: 46px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); font-family: var(--serif); font-weight: 600; font-size: 1.25rem;
+}
+.how .step-line {
+  position: absolute; top: 22px; left: 62px; right: -18px; height: 2px;
+  background: var(--rule); overflow: hidden; border-radius: 2px;
+}
+.how .step-line::after { content: ""; position: absolute; inset: 0; background: var(--accent); transform-origin: left; }
+.how .step:last-child .step-line { display: none; }
+.how .step h3 { margin-top: 22px; font-size: 1.375rem; }
+.how .step p { margin-top: 10px; color: var(--ink-2); font-size: 1rem; line-height: 1.5; }
+
+html[data-home-js] .how .step-n { transform: scale(0.5); opacity: 0; }
+html[data-home-js] .how .step-line::after { transform: scaleX(0); }
+html[data-home-js] .how .reveal.in .step-n { animation: journey-pop 0.6s var(--spring) both; animation-delay: calc(var(--k, 0) * 260ms); }
+html[data-home-js] .how .reveal.in .step-line::after {
+  transform: none;
+  transition: transform 0.6s var(--ease-out) calc(var(--k, 0) * 260ms + 180ms);
+}
+@keyframes journey-pop { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 900px) {
+  .how .steps { grid-template-columns: 1fr; gap: 0; }
+  .how .step { display: grid; grid-template-columns: 46px minmax(0, 1fr); column-gap: 20px; padding-bottom: 32px; }
+  .how .step-n { grid-row: 1 / span 2; }
+  .how .step h3 { margin-top: 8px; }
+  .how .step-line { top: 54px; bottom: 4px; left: 22px; right: auto; width: 2px; height: auto; }
+  .how .step-line::after { transform-origin: top; }
+  html[data-home-js] .how .step-line::after { transform: scaleY(0); }
+  html[data-home-js] .how .reveal.in .step-line::after { transform: none; }
+}
+
+
+/* ==========================================================================
+   Accessibility preferences. The global reduced-motion rule in home.css already
+   collapses every animation and transition; these keep the rest in step.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  /* No lift on hover; the ring and the instant press feedback stay. */
+  .band-dark .vlink:hover { transform: none; }
+}
+@media (prefers-contrast: more) {
+  .band-dark .term, .band-dark .vlink { box-shadow: 0 0 0 1px var(--ink); }
+  .band-dark .vlink::after { display: none; }
+  .roles .seg { box-shadow: inset 0 0 0 1px var(--ink-2); }
+  .roles .seg-ind { box-shadow: 0 0 0 1px var(--ink); }
+  .how .step-line { background: var(--ink-2); }
+}
+@media (forced-colors: active) {
+  .roles .seg-ind { outline: 2px solid Highlight; outline-offset: -2px; }
+  .how .step-n { border: 2px solid CanvasText; }
+  .how .step-line, .how .step-line::after { background: CanvasText; }
+  .band-dark .term, .band-dark .vlink { border: 1px solid CanvasText; }
+}
