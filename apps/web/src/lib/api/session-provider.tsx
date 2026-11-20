@@ -22,17 +22,70 @@
  * The homepage (`/`) is the one page that does not restore the session. It is
  * a static, self-contained page that makes no API call and no request to
  * another origin (docs/design.md section 5.9), so loading it asks the API for
- * nothing. Its navigation bar shows the signed-in actions only when a session
- * is already in memory (after signing in, or after a move from another page);
- * on a fresh load it shows the signed-out ones. The restore runs as soon as the
- * visitor moves to any other page.
+ * nothing. Its navigation bar shows the signed-in actions when a session is
+ * already in memory (after signing in, or after a move from another page) or
+ * when the non-secret signed-in hint says this browser held one (`useSignedIn`
+ * reads it): the hint is set when a sign-in or refresh establishes a session
+ * and cleared on sign-out or when a refresh is refused. On a browser that has
+ * never held a session it shows the signed-out ones. The restore runs as soon
+ * as the visitor moves to any other page.
  */
 
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { bootstrapSession, isProtectedPath, resetSessionBootstrap } from "./session";
-import { tokenStore } from "./tokens";
+import { browserTokenStorage, tokenStore } from "./tokens";
+import type { TokenStorage } from "./tokens";
+
+/**
+ * Browser-storage key for the non-secret "this browser held a session" hint.
+ *
+ * The access token is memory-only, so a full page load starts signed out until
+ * the refresh cookie restores it. The homepage deliberately makes no API call,
+ * so it cannot run that restore; this marker is the one thing it reads to show
+ * the signed-in actions. It is not a credential: it grants nothing and is
+ * cleared whenever a refresh is refused or the user signs out.
+ */
+export const SIGNED_IN_HINT_STORAGE_KEY = "scholium.session.signed-in";
+
+/** Fired on `window` whenever the hint is set or cleared. */
+export const SIGNED_IN_HINT_EVENT = "scholium:signed-in-hint";
+
+/** True when the browser remembers holding a session. */
+export function hasSignedInHint(storage: TokenStorage = browserTokenStorage): boolean {
+  try {
+    return storage.getItem(SIGNED_IN_HINT_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** Record that a session was established (sign-in) or restored (refresh). */
+export function rememberSignedInHint(storage: TokenStorage = browserTokenStorage): void {
+  try {
+    storage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+  } catch {
+    // Storage can be blocked; the nav keeps the in-memory answer meanwhile.
+  }
+  announceSignedInHint();
+}
+
+/** Forget the hint after a sign-out or a refused refresh. */
+export function forgetSignedInHint(storage: TokenStorage = browserTokenStorage): void {
+  try {
+    storage.removeItem(SIGNED_IN_HINT_STORAGE_KEY);
+  } catch {
+    // Nothing to clean up if storage is unavailable.
+  }
+  announceSignedInHint();
+}
+
+function announceSignedInHint(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SIGNED_IN_HINT_EVENT));
+  }
+}
 
 /** What a protected page shows while the cookie is being exchanged. */
 function RestoringSession() {
@@ -90,17 +143,42 @@ export function SessionProvider({ children }: SessionProviderProps) {
     setSettled(false);
     // Runs on every page load, public or private.  `bootstrapSession` shares
     // one refresh between every caller in the document.
-    void bootstrapSession().finally(() => {
-      if (active) {
-        setSettled(true);
-      }
-    });
+    void bootstrapSession()
+      .then((tokens) => {
+        // A restored session is worth remembering for pages that never ask
+        // the API; a refused refresh means the hint is stale. A sign-in that
+        // raced this refresh keeps its own answer.
+        if (tokens || tokenStore.isAuthenticated) {
+          rememberSignedInHint();
+        } else {
+          forgetSignedInHint();
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setSettled(true);
+        }
+      });
     return () => {
       active = false;
     };
   }, []);
 
   useEffect(() => (onHomepage ? undefined : restore()), [onHomepage, restore]);
+
+  // Keep the non-secret hint in step with the in-memory session: a sign-in, a
+  // refreshed token or an explicit sign-out anywhere in the app updates it.
+  useEffect(
+    () =>
+      tokenStore.subscribe((tokens) => {
+        if (tokens) {
+          rememberSignedInHint();
+        } else {
+          forgetSignedInHint();
+        }
+      }),
+    [],
+  );
 
   // Leaving the site and coming back (the ORCID detour is the common one) can
   // restore this document from the back-forward cache, or bring a tab that was

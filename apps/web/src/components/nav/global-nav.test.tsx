@@ -14,6 +14,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStore } from "../../lib/api";
+import { SIGNED_IN_HINT_STORAGE_KEY } from "../../lib/api/session-provider";
+import { HomeNav } from "../../features/home/home-nav";
 import { DEFAULT_CATEGORIES } from "./categories";
 import { GlobalNav, NavTabBarSpacer } from "./global-nav";
 import { NOTIFICATIONS_CHANGED_EVENT } from "./notifications";
@@ -58,6 +60,7 @@ afterEach(() => {
   cleanup();
   tokenStore.clear();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 /* ---------------------------------------------------------------------------
@@ -688,6 +691,71 @@ describe("GlobalNav sign out", () => {
     expect(new Headers(init.headers).get("Authorization")).toBe(
       "Bearer access-1",
     );
+  });
+
+  it("lands at the top of the homepage rather than keeping the old scroll", async () => {
+    tokenStore.set({ accessToken: "access-1" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 204 })),
+    );
+    const scrollTo = vi
+      .spyOn(window, "scrollTo")
+      .mockImplementation(() => undefined);
+
+    render(<GlobalNav signedIn unreadCount={0} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]!);
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    scrollTo.mockRestore();
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   HomeNav on a fresh load of the homepage
+
+   The homepage makes no API call, so its bar cannot restore the session. It
+   reads the non-secret signed-in hint the session layer keeps in localStorage
+   instead, and still fetches nothing.
+   ------------------------------------------------------------------------- */
+
+describe("HomeNav on a fresh load of the homepage", () => {
+  it("shows the signed-in actions from the hint without asking the API", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    window.localStorage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+
+    render(<HomeNav />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Your dashboard" })).toBeTruthy(),
+    );
+    expect(
+      screen.getByRole("link", { name: "Browse papers" }).getAttribute("href"),
+    ).toBe("/papers");
+    expect(screen.getByRole("link", { name: "Your dashboard" }).getAttribute("href")).toBe(
+      "/me",
+    );
+    expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Submit a paper" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the signed-out actions when the browser holds no hint", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<HomeNav />);
+
+    expect(screen.getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe(
+      "/signin",
+    );
+    expect(
+      screen.getByRole("link", { name: "Submit a paper" }).getAttribute("href"),
+    ).toBe("/submit");
+    expect(screen.queryByRole("link", { name: "Your dashboard" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

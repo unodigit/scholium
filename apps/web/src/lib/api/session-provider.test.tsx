@@ -19,7 +19,7 @@ vi.mock("./session", async (importOriginal) => {
 });
 
 import { bootstrapSession } from "./session";
-import { SessionProvider } from "./session-provider";
+import { SIGNED_IN_HINT_STORAGE_KEY, SessionProvider } from "./session-provider";
 import { tokenStore } from "./tokens";
 
 const bootstrapMock = vi.mocked(bootstrapSession);
@@ -33,6 +33,7 @@ beforeEach(() => {
   replace.mockReset();
   pathnameValue = "/me";
   window.history.replaceState(null, "", "/me");
+  window.localStorage.clear();
   tokenStore.clear();
   bootstrapMock.mockReset();
   bootstrapMock.mockResolvedValue(null);
@@ -180,5 +181,78 @@ describe("SessionProvider", () => {
     await waitFor(() => expect(bootstrapMock).toHaveBeenCalledTimes(2));
     expect(tokenStore.isAuthenticated).toBe(true);
     expect(replace).not.toHaveBeenCalled();
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   The non-secret signed-in hint
+
+   The access token is memory-only, so a page that cannot ask the API (the
+   homepage) has no other way to know the browser held a session. The hint is
+   that memory: a marker, never a credential, kept in localStorage.
+   ------------------------------------------------------------------------- */
+
+describe("the signed-in hint", () => {
+  function publicPage(): void {
+    pathnameValue = "/papers";
+    window.history.replaceState(null, "", "/papers");
+  }
+
+  it("is remembered when the refresh restores a session", async () => {
+    publicPage();
+    bootstrapMock.mockResolvedValue({ accessToken: "restored" });
+
+    render(page("public feed"));
+
+    await waitFor(() =>
+      expect(window.localStorage.getItem(SIGNED_IN_HINT_STORAGE_KEY)).toBe("1"),
+    );
+  });
+
+  it("is forgotten when the refresh is refused", async () => {
+    publicPage();
+    window.localStorage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+    bootstrapMock.mockResolvedValue(null);
+
+    render(page("public feed"));
+
+    await waitFor(() =>
+      expect(window.localStorage.getItem(SIGNED_IN_HINT_STORAGE_KEY)).toBeNull(),
+    );
+  });
+
+  it("follows the token store, so a sign-out clears it", async () => {
+    publicPage();
+    bootstrapMock.mockResolvedValue({ accessToken: "restored" });
+
+    render(page("public feed"));
+    await waitFor(() =>
+      expect(window.localStorage.getItem(SIGNED_IN_HINT_STORAGE_KEY)).toBe("1"),
+    );
+
+    act(() => {
+      tokenStore.clear();
+    });
+    expect(window.localStorage.getItem(SIGNED_IN_HINT_STORAGE_KEY)).toBeNull();
+
+    // A later sign-in on the same document sets it again.
+    act(() => {
+      tokenStore.set({ accessToken: "next-account" });
+    });
+    expect(window.localStorage.getItem(SIGNED_IN_HINT_STORAGE_KEY)).toBe("1");
+  });
+
+  it("survives a fresh load of the homepage, which asks the API nothing", async () => {
+    pathnameValue = "/";
+    window.history.replaceState(null, "", "/");
+    window.localStorage.setItem(SIGNED_IN_HINT_STORAGE_KEY, "1");
+
+    render(page("homepage"));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(bootstrapMock).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(SIGNED_IN_HINT_STORAGE_KEY)).toBe("1");
   });
 });

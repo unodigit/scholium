@@ -60,7 +60,7 @@ export const SIGNIN_PATH = "/signin";
 export const ONBOARDING_PATH = "/onboarding";
 
 /** Where a returning user goes when no (valid) `next` target was given. */
-export const DEFAULT_SIGNIN_REDIRECT = "/";
+export const DEFAULT_SIGNIN_REDIRECT = "/papers";
 
 /** Browser-storage key for the "device key created, first sign-in pending" marker. */
 export const NEW_ACCOUNT_STORAGE_KEY = "scholium.web-auth.new-account";

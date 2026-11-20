@@ -22,6 +22,7 @@ import type {
 } from "./passkey";
 import {
   DEFAULT_PASSKEY_USER_NAME,
+  DEFAULT_SIGNIN_REDIRECT,
   NEW_ACCOUNT_STORAGE_KEY,
   SignInError,
   hasPendingNewAccount,
@@ -324,7 +325,7 @@ describe("signIn: returning account", () => {
     return { ...h, fresh };
   }
 
-  it("asks for the passkey, signs the nonce and goes to /", async () => {
+  it("asks for the passkey, signs the nonce and goes to the feed", async () => {
     const h = await returningHarness();
 
     const result = await h.run({ deviceKey: h.fresh });
@@ -334,7 +335,7 @@ describe("signIn: returning account", () => {
     expect(result).toMatchObject({
       did: await h.fresh.didKey(),
       isNewAccount: false,
-      redirectTo: "/",
+      redirectTo: "/papers",
     });
     expect(h.stages).toEqual(["requesting-challenge", "waiting-for-passkey", "verifying"]);
     expect(h.tokenStore.get()?.accessToken).toBe("access-jwt");
@@ -358,7 +359,7 @@ describe("signIn: returning account", () => {
   it("ignores a next target that leaves the site", async () => {
     const h = await returningHarness();
     const result = await h.run({ deviceKey: h.fresh, next: "https://evil.example/" });
-    expect(result.redirectTo).toBe("/");
+    expect(result.redirectTo).toBe("/papers");
   });
 
   it("signs nothing when the passkey prompt is dismissed", async () => {
@@ -433,7 +434,7 @@ describe("signIn: after a key rotation or a recovery", () => {
     expect(h.server.signedInAs).toEqual([accountDid]);
     expect(result.did).toBe(accountDid);
     expect(result.isNewAccount).toBe(false);
-    expect(result.redirectTo).toBe("/");
+    expect(result.redirectTo).toBe("/papers");
   });
 
   it("signs in as the same account every time, never as a new one", async () => {
@@ -459,7 +460,7 @@ describe("signIn: after a key rotation or a recovery", () => {
     expect(h.server.signedInAs).toEqual([accountDid]);
     expect(result.did).toBe(accountDid);
     expect(result.isNewAccount).toBe(false);
-    expect(result.redirectTo).toBe("/");
+    expect(result.redirectTo).toBe("/papers");
   });
 
   it("remembers the account it was told about, so the next sign-in asks for it directly", async () => {
@@ -671,13 +672,17 @@ describe("safeRedirectPath", () => {
 });
 
 describe("signInDestination", () => {
+  it("sends a returning user with no target to the feed, not the marketing homepage", () => {
+    expect(DEFAULT_SIGNIN_REDIRECT).toBe("/papers");
+  });
+
   it("always sends a new account to onboarding", () => {
     expect(signInDestination(true, "/submit")).toBe("/onboarding");
   });
 
-  it("sends a returning user to next, or home", () => {
+  it("sends a returning user to next, or the feed", () => {
     expect(signInDestination(false, "/submit")).toBe("/submit");
-    expect(signInDestination(false, "//evil.example")).toBe("/");
-    expect(signInDestination(false)).toBe("/");
+    expect(signInDestination(false, "//evil.example")).toBe("/papers");
+    expect(signInDestination(false)).toBe("/papers");
   });
 });
