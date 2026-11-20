@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ANONYMITY_DETAIL, ANONYMITY_HEADLINE } from "./anonymity-notice";
 import {
   SIGN_WITH_NAME_LABEL,
-  SIGNED_DETAIL,
   SIGNED_HEADLINE,
   SIGNED_SEALED_DETAIL,
   STAY_ANONYMOUS_LABEL,
@@ -131,7 +130,11 @@ describe("ReviewPage and the reviewer's existing review", () => {
 
     await screen.findByRole("heading", { name: OWN_REVIEW_HEADLINE });
     const notice = await screen.findByRole("note", { name: "Signed review" });
-    expect(notice.textContent).toBe(`${SIGNED_HEADLINE} ${SIGNED_DETAIL}`);
+    // The review is already committed: the choice was sealed with it, so the
+    // page says so in the past tense, not "make it before you commit".
+    expect(notice.textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`,
+    );
     expect(screen.queryByText(ANONYMITY_HEADLINE)).toBeNull();
   });
 
@@ -169,7 +172,11 @@ describe("ReviewPage and the reviewer's existing review", () => {
 
     await screen.findByRole("button", { name: STAY_ANONYMOUS_LABEL });
     const notice = screen.getByRole("note", { name: "Signed review" });
-    expect(notice.textContent).toBe(`${SIGNED_HEADLINE} ${SIGNED_DETAIL}`);
+    // Updating revises a review that is already committed, so the identity
+    // choice it carries was sealed then: past tense, not a pre-commit order.
+    expect(notice.textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`,
+    );
     expect(screen.queryByText(ANONYMITY_HEADLINE)).toBeNull();
   });
 

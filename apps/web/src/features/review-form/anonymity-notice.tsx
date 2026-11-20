@@ -16,7 +16,10 @@
  * reviewer by name — and offers **Stay anonymous instead** to go back. It is
  * one button whose words change, so keyboard focus stays on it. The notice is
  * a polite live region, so the change is read out. Once the form is signing or
- * sealed the choice is fixed and the button goes.
+ * sealed the choice is fixed and the button goes. A reviewer who already
+ * committed a review of this paper — on a revisit, from another browser, or on
+ * the form that updates it — reads the past tense too: "make it before you
+ * commit" is only said while a first commit is still ahead.
  *
  * Without a {@link ReviewSessionProvider} the notice is the plain anonymous
  * one, with no button: there is nothing for the choice to reach.
@@ -46,11 +49,15 @@ export function AnonymityNotice() {
   // The choice belongs to a form that will seal it into the commit. A sealed
   // or revealed card replaces the form, so there is nothing for it to reach.
   const formActive = session?.formActive === true;
+  // The reviewer already has a committed review of this paper — sealed or
+  // revealed, committed in this visit or an earlier one. The choice is behind
+  // them either way: a pre-commit instruction would be advice after the fact.
+  const committed = locked || session?.ownReviewState != null;
 
   const headline = signed ? SIGNED_HEADLINE : ANONYMITY_HEADLINE;
   const detail = !signed
     ? ANONYMITY_DETAIL
-    : locked
+    : committed
       ? SIGNED_SEALED_DETAIL
       : SIGNED_DETAIL;
 

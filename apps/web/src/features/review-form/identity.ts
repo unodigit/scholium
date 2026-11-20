@@ -25,6 +25,8 @@ export const SIGNED_HEADLINE = "You are signing this review with your name.";
 /**
  * What signing does, while the choice can still be changed. "Credited" is the
  * API's word for it: the review is listed on the reviewer's public profile.
+ * Said only while a first commit is still ahead; once the reviewer has a
+ * committed review of the paper, {@link SIGNED_SEALED_DETAIL} takes over.
  */
 export const SIGNED_DETAIL =
   "When the review is revealed it will be credited to you by name and listed " +

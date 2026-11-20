@@ -419,8 +419,9 @@ describe("a revealed review by this reviewer that this browser does not hold", (
     ).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Your review is sealed" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reveal review" })).toBeNull();
-    // The stale entry is forgotten, so a reload cannot fall back into it.
-    expect(loadSealedReview(PAPER)).toBeNull();
+    // The stale entry is forgotten, so a reload cannot fall back into it. The
+    // form forgets it from an effect, a render after the card appears.
+    await waitFor(() => expect(loadSealedReview(PAPER)).toBeNull());
   });
 
   it("opens the update form after a key was imported for an already-revealed review", async () => {

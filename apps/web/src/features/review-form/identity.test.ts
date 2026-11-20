@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { createElement, useEffect } from "react";
+import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  ANONYMITY_DETAIL,
+  ANONYMITY_HEADLINE,
+  AnonymityNotice,
+} from "./anonymity-notice";
 import {
   COMMIT_NOTE_ANONYMOUS,
   COMMIT_NOTE_SIGNED,
@@ -11,6 +18,13 @@ import {
   STAY_ANONYMOUS_LABEL,
   STYLOMETRY_TIP,
 } from "./identity";
+import {
+  ReviewSessionProvider,
+  useReviewSession,
+  type OwnReviewState,
+} from "./review-session";
+
+afterEach(cleanup);
 
 describe("the design's words (docs/design.md §5.5)", () => {
   it("names the option exactly as the design does", () => {
@@ -50,5 +64,73 @@ describe("what signing means", () => {
     expect(COMMIT_NOTE_SIGNED.startsWith(COMMIT_NOTE_ANONYMOUS)).toBe(true);
     expect(COMMIT_NOTE_SIGNED).toMatch(/carry your name/);
     expect(SEALED_SIGNED_NOTE).toMatch(/carry your name/);
+  });
+});
+
+/**
+ * The notice as a reviewer sees it when the page already knows about a review
+ * of theirs. `ownReviewState` is what the form reports once it has read that
+ * review (from the dashboard, from this device, or from the record an update
+ * revises); it arrives before any commit happens in this visit.
+ */
+function noticeForOwnReview(
+  state: OwnReviewState,
+  { signed }: { signed: boolean },
+) {
+  /** Stands in for the form: reports the review it found, and the byline. */
+  function ReportOwnReview() {
+    const session = useReviewSession();
+    const setOwnReviewState = session?.setOwnReviewState;
+    const setSigned = session?.setSigned;
+    useEffect(() => {
+      setOwnReviewState?.(state);
+      // Choosing to sign would already be the page's choice, as the form's
+      // adoption of a signed byline is.
+      if (signed) setSigned?.(true);
+    }, [setOwnReviewState, setSigned]);
+    return null;
+  }
+
+  return createElement(
+    ReviewSessionProvider,
+    null,
+    createElement(ReportOwnReview),
+    createElement(AnonymityNotice),
+  );
+}
+
+describe("the words for a reviewer who already committed", () => {
+  it("stays in the imperative only while a first commit is still ahead", () => {
+    render(noticeForOwnReview(null, { signed: true }));
+
+    expect(screen.getByRole("note", { name: "Signed review" }).textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_DETAIL}`,
+    );
+  });
+
+  it("says the choice was sealed for a signed review on a revisit after committing", () => {
+    render(noticeForOwnReview("revealed", { signed: true }));
+
+    expect(screen.getByRole("note", { name: "Signed review" }).textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`,
+    );
+    expect(screen.queryByText(/make it before you commit/)).toBeNull();
+  });
+
+  it("says it for a review that is still sealed elsewhere too", () => {
+    render(noticeForOwnReview("sealed", { signed: true }));
+
+    expect(screen.getByRole("note", { name: "Signed review" }).textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`,
+    );
+  });
+
+  it("keeps the anonymous notice, which never asked for a choice before a commit", () => {
+    render(noticeForOwnReview("revealed", { signed: false }));
+
+    expect(screen.getByRole("note", { name: "Anonymity" }).textContent).toBe(
+      `${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`,
+    );
+    expect(ANONYMITY_DETAIL).not.toMatch(/before you commit/i);
   });
 });
