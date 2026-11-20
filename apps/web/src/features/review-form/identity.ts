@@ -38,8 +38,31 @@ export const SIGNED_SEALED_DETAIL =
   "When the review is revealed it will be credited to you by name and listed " +
   "on your public profile. The choice was sealed with your review.";
 
-export const SIGNED_UPDATE_DETAIL =
-  "Your earlier version stays signed. This update is sealed with the choice you make here.";
+/**
+ * The first sentence of the update form's notice: how the version being
+ * revised was committed. It never follows the identity toggle — the earlier
+ * version was sealed with the identity it was committed under — so the two
+ * possible sentences are fixed, and {@link updateDetail} picks one.
+ */
+export const EARLIER_STAYS_SIGNED = "Your earlier version stays signed.";
+export const EARLIER_STAYS_ANONYMOUS = "Your earlier version stays anonymous.";
+
+/** The second sentence of the update form's notice: this update's own choice. */
+export const UPDATE_SEALED_SENTENCE =
+  "This update is sealed with the choice you make here.";
+
+/**
+ * What the update form says about the earlier version and this update. The
+ * first sentence is the earlier review's, the second this form's, so a
+ * reviewer who moves the toggle reads that the past is unchanged.
+ */
+export function updateDetail(earlierSigned: boolean): string {
+  return `${
+    earlierSigned ? EARLIER_STAYS_SIGNED : EARLIER_STAYS_ANONYMOUS
+  } ${UPDATE_SEALED_SENTENCE}`;
+}
+
+export const SIGNED_UPDATE_DETAIL = updateDetail(true);
 
 export const SIGNED_UPDATE_SEALED_DETAIL = SIGNED_UPDATE_DETAIL;
 export const UPDATE_SIGNED_DETAIL = SIGNED_UPDATE_DETAIL;

@@ -19,19 +19,25 @@
  * sealed the choice is fixed and the button goes. A reviewer who already
  * committed a review of this paper — on a revisit, from another browser, or on
  * the form that updates it — reads the past tense too: "make it before you
- * commit" is only said while a first commit is still ahead.
+ * commit" is only said while a first commit is still ahead. On the update form
+ * the sentence about the earlier version says how *it* was committed and stays
+ * put when the toggle moves; only this update's own choice follows the toggle.
  *
  * Without a {@link ReviewSessionProvider} the notice is the plain anonymous
  * one, with no button: there is nothing for the choice to reach.
  */
 
+import { useEffect, useState } from "react";
+
 import {
+  EARLIER_STAYS_ANONYMOUS,
   SIGNED_DETAIL,
   SIGNED_HEADLINE,
   SIGNED_SEALED_DETAIL,
-  SIGNED_UPDATE_DETAIL,
   SIGN_WITH_NAME_LABEL,
   STAY_ANONYMOUS_LABEL,
+  UPDATE_SEALED_SENTENCE,
+  updateDetail,
 } from "./identity";
 import { useReviewSession } from "./review-session";
 
@@ -44,8 +50,7 @@ export const ANONYMITY_DETAIL =
   "It is held in escrow under the integrity committee’s key and can be opened only in a misconduct case.";
 
 /** What anonymity means on the form that updates an already committed review. */
-export const ANONYMITY_UPDATE_DETAIL =
-  "Your earlier version stays anonymous. This update is sealed with the choice you make here.";
+export const ANONYMITY_UPDATE_DETAIL = `${EARLIER_STAYS_ANONYMOUS} ${UPDATE_SEALED_SENTENCE}`;
 
 export const ANONYMOUS_UPDATE_DETAIL = ANONYMITY_UPDATE_DETAIL;
 export const ANONYMITY_REVISED_DETAIL = ANONYMITY_UPDATE_DETAIL;
@@ -76,13 +81,23 @@ export function AnonymityNotice() {
   // and this update is sealed with the choice made here.
   const updateForm = formActive && !locked && session?.ownReviewState === "revealed";
 
+  // How the earlier version was committed. The form adopts that identity when
+  // it reads the earlier record, so until the reviewer moves the choice the
+  // session's identity is still the committed one. The update form's own
+  // toggle is this notice's button, so its first press keeps the identity that
+  // was there: the sentence about the past must not follow the choice for this
+  // update.
+  const [earlierChoice, setEarlierChoice] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!updateForm) setEarlierChoice(null);
+  }, [updateForm]);
+  const earlierSigned = earlierChoice ?? signed;
+
   const headline = signed ? SIGNED_HEADLINE : ANONYMITY_HEADLINE;
-  const detail = !signed
-    ? updateForm
-      ? ANONYMITY_UPDATE_DETAIL
-      : ANONYMITY_DETAIL
-    : updateForm
-      ? SIGNED_UPDATE_DETAIL
+  const detail = updateForm
+    ? updateDetail(earlierSigned)
+    : !signed
+      ? ANONYMITY_DETAIL
       : committed
         ? SIGNED_SEALED_DETAIL
         : SIGNED_DETAIL;
@@ -104,7 +119,12 @@ export function AnonymityNotice() {
         <button
           type="button"
           className="rf-button rf-button--quiet rf-identity-toggle"
-          onClick={() => session.setSigned(!signed)}
+          onClick={() => {
+            // The past does not move with this choice: keep the identity the
+            // earlier version was committed with on the first press.
+            if (updateForm) setEarlierChoice((kept) => kept ?? signed);
+            session.setSigned(!signed);
+          }}
         >
           {signed ? STAY_ANONYMOUS_LABEL : SIGN_WITH_NAME_LABEL}
         </button>

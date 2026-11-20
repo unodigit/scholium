@@ -1,10 +1,11 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement, useEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ANONYMITY_DETAIL,
   ANONYMITY_HEADLINE,
+  ANONYMITY_UPDATE_DETAIL,
   AnonymityNotice,
 } from "./anonymity-notice";
 import {
@@ -14,6 +15,7 @@ import {
   SIGNED_DETAIL,
   SIGNED_HEADLINE,
   SIGNED_SEALED_DETAIL,
+  SIGNED_UPDATE_DETAIL,
   SIGN_WITH_NAME_LABEL,
   STAY_ANONYMOUS_LABEL,
   STYLOMETRY_TIP,
@@ -135,5 +137,65 @@ describe("the words for a reviewer who already committed", () => {
       `${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`,
     );
     expect(ANONYMITY_DETAIL).not.toMatch(/before you commit/i);
+  });
+});
+
+/**
+ * The update form revises a review that is already committed. The sentence
+ * about the earlier version must say how that version was committed, whatever
+ * the reviewer chooses for this update: the toggle decides the headline and
+ * this update's sealing, not the past.
+ */
+describe("the update form's sentence about the earlier version", () => {
+  it("says an earlier signed version stays signed before the toggle moves", () => {
+    render(noticeForOwnReview("revealed", { signed: true }));
+
+    expect(screen.getByRole("note", { name: "Signed review" }).textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_UPDATE_DETAIL}`,
+    );
+  });
+
+  it("says an earlier anonymous version stays anonymous before the toggle moves", () => {
+    render(noticeForOwnReview("revealed", { signed: false }));
+
+    expect(screen.getByRole("note", { name: "Anonymity" }).textContent).toBe(
+      `${ANONYMITY_HEADLINE} ${ANONYMITY_UPDATE_DETAIL}`,
+    );
+  });
+
+  it("keeps an earlier signed version signed when the reviewer stays anonymous", () => {
+    render(noticeForOwnReview("revealed", { signed: true }));
+
+    fireEvent.click(screen.getByRole("button", { name: STAY_ANONYMOUS_LABEL }));
+
+    // The headline follows the choice for this update; the earlier version
+    // keeps the identity it was committed with.
+    const notice = screen.getByRole("note", { name: "Anonymity" });
+    expect(notice.textContent).toBe(`${ANONYMITY_HEADLINE} ${SIGNED_UPDATE_DETAIL}`);
+    expect(notice.textContent).not.toMatch(/earlier version stays anonymous/);
+  });
+
+  it("keeps an earlier anonymous version anonymous when the reviewer signs", () => {
+    render(noticeForOwnReview("revealed", { signed: false }));
+
+    fireEvent.click(screen.getByRole("button", { name: SIGN_WITH_NAME_LABEL }));
+
+    const notice = screen.getByRole("note", { name: "Signed review" });
+    expect(notice.textContent).toBe(`${SIGNED_HEADLINE} ${ANONYMITY_UPDATE_DETAIL}`);
+    expect(notice.textContent).not.toMatch(/earlier version stays signed/);
+  });
+
+  it("does not rewrite the past when the toggle moves back and forth", () => {
+    render(noticeForOwnReview("revealed", { signed: true }));
+
+    fireEvent.click(screen.getByRole("button", { name: STAY_ANONYMOUS_LABEL }));
+    expect(screen.getByRole("note", { name: "Anonymity" }).textContent).toBe(
+      `${ANONYMITY_HEADLINE} ${SIGNED_UPDATE_DETAIL}`,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: SIGN_WITH_NAME_LABEL }));
+    expect(screen.getByRole("note", { name: "Signed review" }).textContent).toBe(
+      `${SIGNED_HEADLINE} ${SIGNED_UPDATE_DETAIL}`,
+    );
   });
 });
