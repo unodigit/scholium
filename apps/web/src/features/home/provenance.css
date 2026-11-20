@@ -1,0 +1,279 @@
+/* ==========================================================================
+   Provenance (#signed) — the tamper demo, the three promises and the chips.
+   Colour comes from apps/web/src/styles/tokens.css; this file adds layout,
+   type, the signed-chain states and the spring motion. Every rule is scoped
+   to #signed so its generic parts (.demo, .block, .link, .chips) cannot leak
+   into other sections.
+   ========================================================================== */
+
+#signed .demo {
+  background: var(--surface);
+  border-radius: 30px;
+  padding: clamp(20px, 4vw, 48px);
+  box-shadow: 0 0 0 0.5px var(--hairline), var(--shadow-card);
+}
+
+#signed .chain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px minmax(0, 1fr) 56px minmax(0, 1fr);
+  align-items: center;
+}
+
+#signed .block {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  padding: 18px 18px 16px;
+  background: var(--bg);
+  transition: border-color 0.3s var(--ease-out), background-color 0.3s var(--ease-out);
+}
+#signed .block-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+#signed .vtag {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.375rem;
+  letter-spacing: -0.01em;
+}
+#signed .block-top time { font-size: 0.8125rem; color: var(--ink-2); }
+#signed .block dl {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  font-size: 0.8125rem;
+}
+#signed .block dt { color: var(--ink-2); }
+#signed .block dd {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The fingerprint crossfade — one byte changed, the old id springs out. */
+#signed .cid { display: inline-grid; }
+#signed .cid > span {
+  grid-area: 1 / 1;
+  transition: opacity 0.25s var(--ease-out), transform 0.5s var(--spring);
+}
+#signed .cid .bad {
+  opacity: 0;
+  transform: translateY(8px);
+  color: var(--critical);
+}
+
+#signed .prev { border-radius: 4px; transition: color 0.3s, background-color 0.3s; }
+#signed .neq {
+  display: inline-block;
+  margin-left: 4px;
+  color: var(--critical);
+  font-weight: 600;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.25s, transform 0.45s var(--spring);
+}
+
+#signed .signer {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--verified);
+  font-weight: 500;
+  transition: color 0.3s;
+}
+#signed .signer .bad-t { display: none; }
+
+/* Links between versions — drawn in, and broken on demand. */
+#signed .link { position: relative; height: 24px; color: var(--accent); }
+#signed .link svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#signed .link .lk {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  transition: stroke 0.3s;
+}
+#signed .link-x {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--critical);
+  color: var(--surface);
+  font-size: 14px;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.2s, transform 0.5s var(--spring);
+}
+
+/* Entrance: blocks rise and links draw in, only where the home layout has
+   declared JavaScript (so a no-JS reader sees the finished chain). */
+html[data-home-js] #signed .demo .block { opacity: 0; transform: translateY(16px); }
+html[data-home-js] #signed .demo.in .block {
+  animation: prov-fade-up 0.8s var(--spring-soft) both;
+  animation-delay: calc(var(--k, 0) * 350ms);
+}
+html[data-home-js] #signed .demo .link .lk { stroke-dashoffset: 1; }
+html[data-home-js] #signed .demo.in .link .lk {
+  animation: prov-draw 0.7s var(--ease-out) both;
+  animation-delay: calc(300ms + var(--k, 0) * 350ms);
+}
+
+/* Tampered: v2 is outlined and shakes once, its signer line flips, the
+   v2 → v3 arrow turns dashed in --critical with an ✕ badge, and v3's
+   previous value is marked as no longer equal. */
+#signed .demo[data-state="bad"] .block.v2 {
+  border-color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 6%, var(--bg));
+}
+html[data-home-js] #signed .demo[data-state="bad"] .block.v2 {
+  animation: prov-shake 0.42s var(--ease-out) 1 both;
+}
+#signed .demo[data-state="bad"] .cid .ok { opacity: 0; transform: translateY(-8px); }
+#signed .demo[data-state="bad"] .cid .bad { opacity: 1; transform: none; }
+#signed .demo[data-state="bad"] .block.v2 .signer { color: var(--critical); }
+#signed .demo[data-state="bad"] .block.v2 .signer .ok-t { display: none; }
+#signed .demo[data-state="bad"] .block.v2 .signer .bad-t { display: inline; }
+#signed .demo[data-state="bad"] .link.brk { color: var(--critical); }
+html[data-home-js] #signed .demo[data-state="bad"] .link.brk .lk {
+  stroke-dasharray: 0.06 0.06;
+  stroke-dashoffset: 0;
+  animation: none;
+}
+#signed .demo[data-state="bad"] .link.brk .link-x { opacity: 1; transform: none; }
+#signed .demo[data-state="bad"] .prev {
+  color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 10%, transparent);
+}
+#signed .demo[data-state="bad"] .neq { opacity: 1; transform: none; }
+
+@keyframes prov-fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes prov-draw { to { stroke-dashoffset: 0; } }
+@keyframes prov-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+/* Verdict + the one control. */
+#signed .demo-bar {
+  margin-top: clamp(24px, 3vw, 36px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+#signed .verdict { font-size: 1rem; font-weight: 500; }
+#signed .verdict > span { display: inline-flex; align-items: center; gap: 8px; }
+#signed .verdict .ico { font-size: 20px; }
+#signed .verdict .v-ok { color: var(--verified); }
+#signed .verdict .v-bad { color: var(--critical); }
+#signed .verdict [hidden] { display: none; }
+
+/* The three promises. */
+#signed .trio {
+  margin-top: clamp(40px, 6vw, 64px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 32px;
+}
+#signed .trio li { font-size: 1rem; color: var(--ink-2); line-height: 1.5; }
+#signed .trio b {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-size: 1.0625rem;
+}
+#signed .trio .ico {
+  display: block;
+  font-size: 28px;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+
+/* Corrections row and its status chips. */
+#signed .chips-row {
+  margin-top: clamp(48px, 7vw, 80px);
+  padding-top: clamp(32px, 5vw, 48px);
+  border-top: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px 48px;
+  align-items: center;
+}
+#signed .chips-row h3 { font-size: 1.5rem; }
+#signed .chips-row p { margin-top: 8px; color: var(--ink-2); max-width: 36em; }
+#signed .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 600px;
+  justify-content: flex-end;
+}
+html[data-home-js] #signed .chips .chip {
+  opacity: 0;
+  transform: translateY(10px) scale(0.96);
+}
+html[data-home-js] #signed .chips.in .chip {
+  animation: prov-chip-in 0.6s var(--spring) both;
+  animation-delay: calc(var(--k, 0) * 70ms);
+}
+@keyframes prov-chip-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Stack the chain, with the arrows turning downward. */
+@media (max-width: 860px) {
+  #signed .chain { grid-template-columns: 1fr; }
+  #signed .link { height: 40px; width: 24px; margin-inline: auto; }
+  #signed .link > svg {
+    transform: rotate(90deg);
+    width: 40px;
+    height: 24px;
+    position: absolute;
+    left: -8px;
+    top: 8px;
+  }
+  #signed .trio { grid-template-columns: 1fr; gap: 28px; }
+  #signed .chips-row { grid-template-columns: 1fr; }
+  #signed .chips { justify-content: flex-start; }
+}
+
+/* Reduced motion: keep every state change, drop the spatial movement. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-home-js] #signed .demo[data-state="bad"] .block.v2 { animation: none; }
+  html[data-home-js] #signed .demo .block { transform: none; }
+  html[data-home-js] #signed .demo .link .lk { animation: none; stroke-dashoffset: 0; }
+  html[data-home-js] #signed .chips .chip { animation: none; opacity: 1; transform: none; }
+  #signed .cid > span,
+  #signed .neq,
+  #signed .link-x { transition-property: opacity, color, background-color; }
+}
