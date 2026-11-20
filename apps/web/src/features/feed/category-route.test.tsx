@@ -200,7 +200,7 @@ describe("category route (server render)", () => {
     const html = await render();
 
     expect(html).toContain("No papers are listed in cs.AI yet.");
-    expect(html).toContain('href="/"');
+    expect(html).toContain('href="/papers"');
     expect(html).toContain("See the latest papers");
   });
 

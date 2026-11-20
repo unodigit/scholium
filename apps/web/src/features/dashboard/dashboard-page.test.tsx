@@ -309,7 +309,7 @@ describe("DashboardPage with server data", () => {
     ).toHaveProperty("href", "http://localhost:3000/submit");
     expect(
       within(card("My reviews")).getByRole("link", { name: "Find a paper to review" }),
-    ).toBeTruthy();
+    ).toHaveProperty("href", "http://localhost:3000/papers");
   });
 
   it("refreshes from an empty card", async () => {

@@ -30,7 +30,7 @@ import {
   categoryFeedHref,
   categoryLede,
 } from "./category";
-import { itemKey, type FeedItem } from "./feed";
+import { itemKey, FEED_PATH, type FeedItem } from "./feed";
 import { FeedRow } from "./feed-row";
 import "./feed.css";
 
@@ -100,7 +100,7 @@ export function CategoryPage({
           <EmptyState
             className="fd-empty"
             sentence={categoryEmptySentence(category)}
-            action={{ label: "See the latest papers", href: "/" }}
+            action={{ label: "See the latest papers", href: FEED_PATH }}
           />
         ) : (
           <ol className="fd-list">

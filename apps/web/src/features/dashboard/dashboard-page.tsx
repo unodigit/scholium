@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { tokenStore, api } from "../../lib/api";
+import { FEED_PATH } from "../feed/feed";
 import { filedAppeal } from "../paper-page/appeal-dialog";
 import { latestDecision, loadPaperRecords } from "../paper-page/unlisted-paper";
 import { EmptyState, StatusChip, isPaperStatus } from "../ui-kit";
@@ -569,7 +570,7 @@ function MyReviewsCard({ reviews }: { reviews: readonly MyReview[] }) {
       {reviews.length === 0 ? (
         <EmptyState
           sentence="You have not written any reviews yet."
-          action={{ label: "Find a paper to review", href: "/" }}
+          action={{ label: "Find a paper to review", href: FEED_PATH }}
         />
       ) : (
         <ul className="db-list">
