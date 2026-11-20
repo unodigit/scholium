@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 18: findings of verify sweep 18 (2026-11-20, worktree @ f6de31b = main incl. round 17 and the homepage run,
+  next 16.4.6). 16/17 journeys pass; 09 fails at step 5 (the public export no longer verifies after a profile erasure).
+  Round-17 fixes confirmed in the browser: approving and non-answering guardians get one unread "cancelled" notice,
+  the guardian page reads "Cancelled by the account holder on {date}.", /recover says only the account holder can
+  cancel, the owner's notice reads cancelled and is not re-alerted, the review update form no longer says "was sealed"
+  beside the identity toggle. Journey 06 passes for the first time since sweep 14. 17-homepage (new) passes
+  functionally; its visual defects are bug 5. Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png.
+  Decisions (recorded here):
+  D1  An erasure.request is a node attestation, not the data subject's own signed record (the member asks through an
+      authenticated DELETE and signs nothing): the node signs it with its key, author = the node's did:key, and
+      body.subject = the erased member's DID. erasure.request records already in a log without a signature (written
+      before this fix) are accepted by verify and rebuild as legacy and reported on their own line; any other unsigned
+      record still fails.
+  D2  Signing in with no ?next= target lands on the paper feed /papers (where the feed used to be, and where onboarding
+      already sends people); signing out lands on the homepage / scrolled to the top.
+  D3  The homepage still makes no API request (homepage_spec.xml load budget). It learns whether the visitor is signed
+      in from a non-secret hint kept in the browser (set when a session is established or restored, cleared on sign-out
+      or when a refresh is refused); the hint only chooses which nav actions show and never grants access.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="high"
+       creates="apps/api/src/app/modules/profiles/tests/test_erasure_record.py"
+       touches_files="apps/api/src/app/modules/profiles/service.py,apps/api/src/app/modules/profiles/views.py">
+    <title>A profile erasure appends an unsigned erasure.request to the public log, so the node's own export fails `scholium verify` and `scholium rebuild`</title>
+    <symptoms>
+      After any member erases their profile (DELETE /v1/profiles/{did}, 202), `scholium verify` on the untouched /network export prints "✗ 1 record failed authentication: erasure.request bafyrei…: has no signature" and "NOT VERIFIED" (exit 1); `scholium rebuild` prints "NOT REBUILT" (exit 1) and writes no database
+      erase_profile() in profiles/service.py appends the record with "proofs": [] and no "sig", authored by the member, who signed nothing
+    </symptoms>
+    <reproduction_steps>
+      Journey 03 erases a profile; then journey 09 step 5 (screenshots/09-preserve-and-transparency/05b-export-cli-verify-and-rebuild-FAIL.png; CLI output in the sweep notes)
+    </reproduction_steps>
+    <expected>Per D1, erase_profile appends an erasure.request authored by the node's did:key (ledger.node_signing_key(), as the ORCID credential is issued), body {"subject": "{member did}", "basis": "data-subject-request"}, signed so that record-core's authentication accepts it; with no node signing key the erasure still shreds the key and the route still answers 202, but appends no unsigned record (logged). _erasure_requested finds both the new form (body.subject == did, node-authored) and the legacy form (author_did == did). Tests (new test_erasure_record.py): the appended record authenticates with scholium_record_core's verifier, names the subject, the profile reads erased afterwards for both forms, and an export taken after an erasure passes `scholium verify` and `scholium rebuild` (exit 0)</expected>
+    <actual>The node's own export fails verification after any erasure</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/api/packages/cli/src/scholium_cli/verify.py,apps/api/packages/cli/src/scholium_cli/rebuild.py,apps/api/packages/cli/tests/test_cli_verify_command.py,apps/api/packages/cli/tests/test_cli_rebuild_command.py">
+    <title>Exports that already hold an unsigned legacy erasure.request can never verify again, and verify prints "✓ Every log entry carries its record and the author's signature" while failing on that record</title>
+    <symptoms>
+      Logs written before bug 1 is fixed keep their unsigned erasure.request forever; verify and rebuild reject any unsigned record (rebuild.py ~L251 "has no signature")
+      The same verify run reports the record as failing authentication and also ticks "Every log entry carries its record and the author's signature" (verify.py ~L399)
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 5 (screenshots/09-preserve-and-transparency/05b-export-cli-verify-and-rebuild-FAIL.png)
+    </reproduction_steps>
+    <expected>Per D1, verify and rebuild accept an unsigned record only when its type is erasure.request (any other unsigned record still fails exactly as now), report them on their own line ("1 legacy erasure record without a signature (accepted)"), and rebuild applies them; the "Every log entry … signature" tick only prints when every record actually authenticated. Tests: an export with a legacy unsigned erasure.request verifies and rebuilds with the legacy line; an unsigned record of any other type still fails; the contradictory tick is absent when a record fails authentication</expected>
+    <actual>Existing logs are permanently unverifiable; the summary contradicts itself</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/web-auth/signin.ts,apps/web/src/components/nav/session.ts,apps/web/src/components/nav/global-nav.test.tsx,apps/web/src/features/home/home-nav.tsx,apps/web/src/lib/api/session-provider.tsx,apps/web/src/lib/api/session-provider.test.tsx">
+    <title>Sign-in with no target lands on the marketing homepage; sign-out lands on it scrolled to the middle; a signed-in member who loads / is shown "Sign in"</title>
+    <symptoms>
+      DEFAULT_SIGNIN_REDIRECT is "/" (features/web-auth/signin.ts L63), which is now the homepage, not the feed
+      Sign-out (useSignOut in components/nav/session.ts, router.replace("/")) opens the homepage scrolled to about y=1586 ("Why Scholium") instead of the top; its comment still says "the public home feed"
+      On a fresh load or reload of / a signed-in member sees "Sign in" and "Submit a paper" in HomeNav: SessionProvider skips the session bootstrap on the homepage (onHomepage, lib/api/session-provider.tsx), so useSignedIn reads signed out until they navigate elsewhere and back
+    </symptoms>
+    <reproduction_steps>
+      Journeys 03 step 7, 06 step 8, 17 step 6 (screenshots/03-new-member-onboarding/07b-*.png, 06-key-recovery/20h-*.png, 17-homepage/06b-nav-signed-in.png vs 06c-nav-after-reload-shows-signed-out.png)
+    </reproduction_steps>
+    <expected>Per D2, sign-in with no next= goes to /papers, and sign-out goes to / at scroll position 0 (comment updated). Per D3, the session layer keeps a non-secret signed-in hint in localStorage (set when a session is established or restored, cleared on sign-out and when a refresh is refused); HomeNav shows Browse papers and Your dashboard on a fresh load of / when the hint is set, and the homepage still makes no API request. Tests: default sign-in target, sign-out target and scroll, the hint set and cleared, HomeNav signed-in actions from the hint with no fetch</expected>
+    <actual>Members are dropped on the marketing page and told to sign in again</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/review-form/anonymity-notice.tsx,apps/web/src/features/review-form/identity.ts,apps/web/src/features/review-form/identity.test.ts">
+    <title>The update form's "Your earlier version stays signed/anonymous" follows the toggle, not how the earlier version was committed</title>
+    <symptoms>
+      A reviewer whose v1 review is signed (solheim) presses "Stay anonymous instead" and reads "Your earlier version stays anonymous."; an anonymous reviewer (okafor) presses "Sign with my name instead" and reads "Your earlier version stays signed." (anonymity-notice.tsx picks the sentence from the live signed toggle)
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 step 9 (screenshots/13-new-version-and-review-update/23a-*.png, 23b-*.png)
+    </reproduction_steps>
+    <expected>The "earlier version" sentence is chosen from the identity the earlier review was committed with and never changes when the toggle moves; the second sentence about this update may follow the toggle. Tests: signed earlier + toggled anonymous, anonymous earlier + toggled signed, both untoggled</expected>
+    <actual>The form misstates how the earlier review was sealed</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       creates="apps/web/src/features/home/home.css.test.ts"
+       touches_files="apps/web/src/features/home/provenance.css,apps/web/src/features/home/home.css,apps/web/src/features/home/provenance.test.tsx">
+    <title>Homepage: the tampered v2 card vanishes in the Provenance demo; the hero paper card overflows a 375 px screen; with JavaScript off the nav overlaps the page text</title>
+    <symptoms>
+      After "Change one byte in v2" the v2 block disappears (also with reduced motion) instead of showing its red outline, "bafy…9e7c" and "Signature no longer matches": blocks start at opacity 0 under html[data-home-js] (provenance.css ~L131) and the shake animation (~L149-151, "both") replaces the fade-up and never sets opacity
+      At 375 px the hero mock paper card's right edge is at 409 px and its text is cut mid-word ("calibratio")
+      With JavaScript off the nav never gets its glass background, so page text scrolls under the transparent nav and overlaps the logo and links
+    </symptoms>
+    <reproduction_steps>
+      Journey 17 steps 3 and 7 (screenshots/17-homepage/03a-tampered.png, 07a2-mobile-light-scroll.png, 07d4-no-js-all-role-panels.png)
+    </reproduction_steps>
+    <expected>The tampered v2 block stays visible (opacity 1) with its critical outline, the changed fingerprint and the mismatch line, with and without reduced motion; at 320-414 px the hero stage fits the viewport with no clipped text and no horizontal scroll; without data-home-js the nav has a solid background (or glass) so nothing shows through it. CSS tests assert the shake keyframes or rule keep opacity 1, the stage's max-width at narrow widths, and the no-JS nav background</expected>
+    <actual>Broken tampered state, clipped mobile hero, overlapping no-JS nav</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/guardian-approval.tsx,apps/web/src/features/dashboard/guardian-approval.test.tsx,apps/web/src/features/web-auth/recover-form.tsx,apps/web/src/features/web-auth/recover-form.test.tsx">
+    <title>A cancelled recovery page still says "{name} is asking to recover their account", and the requester's cancelled request still offers "Check for approvals"</title>
+    <symptoms>
+      /me/recovery/{id} for a cancelled request keeps the present-tense lead "{name} is asking to recover their account." (guardian-approval.tsx ~L400) above "Cancelled by the account holder on …"
+      The requester's /recover page shows "Check for approvals" (RECOVER_REFRESH_ACTION) on a cancelled request, which can never gain approvals
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 step 10 (screenshots/06-key-recovery/31a-*.png, 30k-*.png, 33d-*.png)
+    </reproduction_steps>
+    <expected>A cancelled (or completed) request's lead is past tense ("{name} asked to recover their account."); the requester's page for a cancelled or completed request shows no "Check for approvals" and says what happened. Tests cover both for cancelled and completed</expected>
+    <actual>Stale wording and a dead action</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/web/src/features/web-auth/onboarding-form.tsx,apps/web/src/features/web-auth/use-onboarding.ts,apps/web/src/features/web-auth/use-onboarding.test.ts">
+    <title>/onboarding shows saved guardians' names in the monospace DID font, and chosen categories are not shown as selected after a reload</title>
+    <symptoms>
+      Saved guardians shown by name ("Ada Okafor") are set in the mono-id DID font
+      After choosing categories and reloading /onboarding, the category chips all read unselected although the choice was saved
+    </symptoms>
+    <reproduction_steps>
+      Journey 03 (screenshots/03-new-member-onboarding/31-*.png, 03b-*.png)
+    </reproduction_steps>
+    <expected>Guardian names use the body font and only a shortened DID fallback uses the mono font; on load the form reads the member's saved categories and shows those chips selected. Tests: the saved categories preselect; a named guardian carries no mono class</expected>
+    <actual>DID styling on names; saved choice not reflected</actual>
+  </bug>
+
+</bug_spec>
