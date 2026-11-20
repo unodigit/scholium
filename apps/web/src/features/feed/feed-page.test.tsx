@@ -129,6 +129,42 @@ describe("FeedPage layout", () => {
     expect(reviewed.getAttribute("href")).toBe("/papers?tab=reviewed&category=cs.AI&sort=recently_updated");
   });
 
+  it("submits the selectors form to /papers with GET, carrying tab, category and sort", () => {
+    renderFeed({
+      initialState: { tab: "reviewed", category: "cs.LG", sort: "recently_reviewed" },
+    });
+
+    const form = screen.getByRole("combobox", { name: "Sort" }).closest("form") as HTMLFormElement;
+    expect(form.getAttribute("action")).toBe("/papers");
+    expect(form.getAttribute("method")).toBe("get");
+
+    // What the browser would send for a no-JavaScript submit: `/papers?tab=…&category=…&sort=…`.
+    const query = new URLSearchParams(new FormData(form) as unknown as Record<string, string>);
+    expect(`${form.getAttribute("action")}?${query.toString()}`).toBe(
+      "/papers?tab=reviewed&category=cs.LG&sort=recently_reviewed",
+    );
+  });
+
+  it("renders the no-JavaScript Apply button inside the /papers form in the server HTML", () => {
+    // `<noscript>` content exists only in the server HTML; the browser render skips it.
+    const html = renderToString(
+      <FeedPage
+        initialState={DEFAULT_FEED_STATE}
+        initialPage={page([REVIEWED])}
+        signedIn={false}
+        load={vi.fn()}
+        now={NOW}
+      />,
+    );
+
+    const form = html.match(/<form\b[^>]*>[\s\S]*?<\/form>/)?.[0] ?? "";
+    expect(form).toContain('action="/papers"');
+    expect(form).toContain('method="get"');
+    expect(form).toMatch(/<noscript>\s*<button[^>]*type="submit"[^>]*>Apply<\/button>/);
+    expect(html).toContain('href="/papers?tab=reviewed"');
+    expect(html).toContain('href="/papers?tab=following"');
+  });
+
   it("has a category selector and a sort selector with every option", () => {
     renderFeed();
 
@@ -487,7 +523,7 @@ describe("FeedPage tabs and selectors", () => {
     fireEvent.click(screen.getByRole("link", { name: "Reviewed" }));
     await screen.findByRole("heading", { level: 2, name: PREPRINT.title });
 
-    // …then follows a "Home" link: the server answers `/` again, with new objects
+    // …then follows a link to `/papers`: the server answers it again, with new objects
     // but the very same state as the first render.
     rerender(
       <FeedPage

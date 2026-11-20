@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * `/` — the home feed (docs/design.md §5.1).
+ * `/papers` — the paper feed (docs/design.md §5.1).
  *
  * ```text
  * Latest | Reviewed | Following            Category: cs.AI ▾   Sort ▾
@@ -13,12 +13,13 @@
  * ```
  *
  * The three tabs are real links, so the page works without JavaScript: each
- * one is a plain `/?tab=…` request the server route answers. With JavaScript
+ * one is a plain `/papers?tab=…` request the server route answers. With JavaScript
  * this component takes over the same transitions — it rewrites the URL with
  * the native History API (a shallow update Next.js supports), fetches the new
  * list itself, and a `popstate` listener adopts whatever state the browser
  * returns to. The category and sort selectors work the same way, and sit in a
- * GET form with an **Apply** button for visitors without JavaScript.
+ * GET form to `/papers` with an **Apply** button for visitors without
+ * JavaScript.
  *
  * The first page of `latest` and `reviewed` arrives from the server route as
  * `initialPage`, so the first HTML already has the rows. **Following** is
@@ -45,6 +46,7 @@ import { EmptyState } from "../ui-kit";
 import {
   DEFAULT_FEED_STATE,
   FEED_HEADINGS,
+  FEED_PATH,
   FEED_SORTS,
   FEED_SORT_LABELS,
   FEED_TABS,
@@ -192,7 +194,7 @@ function isPlainClick(event: MouseEvent<HTMLElement>): boolean {
   );
 }
 
-/** The home feed: tabs, selectors and the rows. */
+/** The paper feed: tabs, selectors and the rows. */
 export function FeedPage({
   initialState = DEFAULT_FEED_STATE,
   initialPage,
@@ -236,10 +238,10 @@ export function FeedPage({
     [navigate],
   );
 
-  // The global nav (and a link to `/`) can change the route's search params
-  // without remounting this component, and the server then hands down a new
-  // `initialState` and page. Adopt them whenever they arrive — by identity,
-  // not by value: a link back to `/` carries the same state as before while
+  // The global nav (and a link to `/papers`) can change the route's search
+  // params without remounting this component, and the server then hands down a
+  // new `initialState` and page. Adopt them whenever they arrive — by identity,
+  // not by value: a link back to `/papers` carries the same state as before while
   // the address bar has since moved on. Client-side changes never replace
   // these props, so this runs only for a navigation the server answered.
   const adoptedRoute = useRef(false);
@@ -413,7 +415,7 @@ export function FeedPage({
           })}
         </nav>
 
-        <form className="fd-selectors" action="/" method="get" onSubmit={onSubmit}>
+        <form className="fd-selectors" action={FEED_PATH} method="get" onSubmit={onSubmit}>
           <input type="hidden" name="tab" value={state.tab} />
 
           <label className="fd-select">
