@@ -225,32 +225,41 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
         ) : null}
 
         {post.hidden === true ? (
-          isOwn && appeal !== null ? (
-            <p className="pd-post__text pd-post__text--hidden" data-hidden="true" data-appeal-filed="true">
-              {appealFiledLabel(appeal)}
-            </p>
-          ) : isOwn ? (
+          isOwn ? (
             <>
-              <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
-                {hiddenOwnNotice(post.hiddenReason)}{" "}
-                {actions.appeal !== undefined ? (
-                  <button
-                    type="button"
-                    className="pd-action"
-                    data-action="appeal"
-                    ref={appealButton}
-                    aria-expanded={appealOpen}
-                    aria-controls={appealOpen ? appealId : undefined}
-                    onClick={() => setAppealOpen((current) => !current)}
-                  >
-                    Appeal
-                  </button>
-                ) : (
-                  <a className="pd-action" href={actions.signInHref}>
-                    Appeal
-                  </a>
-                )}
-              </p>
+              {appeal !== null ? (
+                <p
+                  className="pd-post__text pd-post__text--hidden"
+                  data-hidden="true"
+                  data-appeal-filed="true"
+                >
+                  {appealFiledLabel(appeal)}
+                </p>
+              ) : (
+                <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
+                  {hiddenOwnNotice(post.hiddenReason)}{" "}
+                  {actions.appeal !== undefined ? (
+                    <button
+                      type="button"
+                      className="pd-action"
+                      data-action="appeal"
+                      ref={appealButton}
+                      aria-expanded={appealOpen}
+                      aria-controls={appealOpen ? appealId : undefined}
+                      onClick={() => setAppealOpen((current) => !current)}
+                    >
+                      Appeal
+                    </button>
+                  ) : (
+                    <a className="pd-action" href={actions.signInHref}>
+                      Appeal
+                    </a>
+                  )}
+                </p>
+              )}
+              {/* The author's own words stay on the row in every appeal state
+                  (bug_spec_verify16 bug 4): the label says where the appeal got
+                  to, the excerpt says which of their posts it is about. */}
               {own !== null ? (
                 <>
                   <p className="pd-post__text" id={ownId} data-own-text="true">
@@ -271,7 +280,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
                   ) : null}
                 </>
               ) : null}
-              {appealOpen && actions.appeal !== undefined ? (
+              {appeal === null && appealOpen && actions.appeal !== undefined ? (
                 <div id={appealId}>
                   <AppealForm
                     signInHref={actions.signInHref}

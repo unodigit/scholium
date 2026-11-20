@@ -1202,6 +1202,182 @@ describe("DiscussionTab: the author's hidden post", () => {
     expect(within(card("mine")).queryByRole("button", { name: /Show my post/ })).toBeNull();
   });
 
+  it("keeps the author's own excerpt after they file an appeal", async () => {
+    // The reported defect: filing replaced the row's body with the appeal label,
+    // so two appealed posts by the same author read identically again.
+    const text = "The lemma's case n = 0 is missing from the proof. ".repeat(8).trim();
+    const { actions } = seams();
+    const fetched = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("{}", { status: 201, headers: { "content-type": "application/json" } }),
+    );
+    try {
+      renderTab({ viewerDid: ME, actions }, ownHiddenBody(text));
+      fireEvent.click(within(card("mine")).getByRole("button", { name: "Appeal" }));
+      typeInto(screen.getByLabelText("Why should this decision be reconsidered?"), "Context was missing.");
+      fireEvent.click(screen.getByRole("button", { name: "Sign and file appeal" }));
+
+      await waitFor(() =>
+        expect(notice().textContent).toMatch(/^Appeal filed on .* — awaiting panel$/),
+      );
+      const excerpt = within(card("mine")).getByText(/^The lemma's case n = 0 is missing/);
+      expect(excerpt.textContent?.endsWith("…")).toBe(true);
+      const show = within(card("mine")).getByRole("button", { name: /Show my post/ });
+      fireEvent.click(show);
+      expect(within(card("mine")).getByText(text)).toBeTruthy();
+    } finally {
+      fetched.mockRestore();
+    }
+  });
+
+  it.each<[string, NonNullable<DiscussionPost["appeal"]>, string]>([
+    [
+      "awaiting a panel",
+      {
+        cid: "bafyrei-appeal",
+        filedAt: "2026-11-18T00:00:00Z",
+        status: "awaiting_panel",
+        outcome: null,
+        decidedAt: null,
+      },
+      "Appeal filed on 18 Nov 2026 — awaiting panel",
+    ],
+    [
+      "with no panel formed",
+      {
+        cid: "bafyrei-appeal",
+        filedAt: "2026-11-18T00:00:00Z",
+        status: "not_formed",
+        outcome: null,
+        decidedAt: null,
+      },
+      "Appeal filed on 18 Nov 2026 — panel not yet formed",
+    ],
+    [
+      "decided",
+      {
+        cid: "bafyrei-appeal",
+        filedAt: "2026-11-18T00:00:00Z",
+        status: "decided",
+        outcome: "overturned",
+        decidedAt: "2026-11-25T00:00:00Z",
+      },
+      "Appeal filed on 18 Nov 2026 — decided: overturned the decision",
+    ],
+    [
+      "decided without a panel",
+      {
+        cid: "bafyrei-appeal",
+        filedAt: "2026-11-18T00:00:00Z",
+        status: "decided",
+        outcome: "upheld",
+        decidedAt: "2026-12-02T00:00:00Z",
+        decidedWithoutPanel: true,
+      },
+      "Appeal filed on 18 Nov 2026 — decided without a panel: upheld the decision",
+    ],
+  ])("keeps the author's own excerpt while the appeal is %s", (_state, appeal, label) => {
+    renderTab(
+      { viewerDid: ME },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("mine", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision",
+            text: null,
+            ownText: "The dataset licence is incompatible.",
+            appeal,
+          }),
+          post("visible"),
+        ],
+      },
+    );
+
+    expect(notice().textContent).toBe(label);
+    expect(within(card("mine")).getByText("The dataset licence is incompatible.")).toBeTruthy();
+  });
+
+  it("tells two appealed posts apart by their own words", () => {
+    renderTab(
+      { viewerDid: ME },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("one", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision-1",
+            text: null,
+            ownText: "The lemma's case n = 0 is missing.",
+            appeal: {
+              cid: "bafyrei-appeal-1",
+              filedAt: "2026-11-18T00:00:00Z",
+              status: "awaiting_panel",
+              outcome: null,
+              decidedAt: null,
+            },
+          }),
+          post("two", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision-2",
+            text: null,
+            ownText: "The dataset licence is incompatible.",
+            appeal: {
+              cid: "bafyrei-appeal-2",
+              filedAt: "2026-11-18T00:00:00Z",
+              status: "awaiting_panel",
+              outcome: null,
+              decidedAt: null,
+            },
+          }),
+          post("visible"),
+        ],
+      },
+    );
+
+    expect(within(card("one")).getByText("The lemma's case n = 0 is missing.")).toBeTruthy();
+    expect(within(card("two")).getByText("The dataset licence is incompatible.")).toBeTruthy();
+  });
+
+  it("shows another reader no body once the author's appeal is filed", () => {
+    renderTab(
+      { viewerDid: BOB },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("mine", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision",
+            text: null,
+            ownText: "My private words.",
+            appeal: {
+              cid: "bafyrei-appeal",
+              filedAt: "2026-11-18T00:00:00Z",
+              status: "not_formed",
+              outcome: null,
+              decidedAt: null,
+            },
+          }),
+          post("visible"),
+        ],
+      },
+    );
+
+    expect(within(card("mine")).getByText("Hidden by moderation: Off topic.")).toBeTruthy();
+    expect(within(card("mine")).queryByText("My private words.")).toBeNull();
+    expect(within(card("mine")).queryByRole("button", { name: /Show my post/ })).toBeNull();
+  });
+
   it("ends the reason sentence with one full stop, not two", () => {
     renderTab({ viewerDid: ME }, ownHidden("Needs the claim clarified."));
 
