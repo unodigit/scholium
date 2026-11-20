@@ -135,6 +135,53 @@ describe("GuardianApprovalPage", () => {
     expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
   });
 
+  describe("the lead over the request", () => {
+    it("keeps the present tense while the request waits for guardians", () => {
+      renderPage(request());
+
+      expect(
+        screen.getByText("Ada Lovelace is asking to recover their account."),
+      ).toBeTruthy();
+    });
+
+    it("keeps the present tense while the safety window is open", () => {
+      renderPage(
+        request({ status: "contest", approvals: 3, contestUntil: "2026-11-20T12:00:00Z" }),
+      );
+
+      expect(
+        screen.getByText("Ada Lovelace is asking to recover their account."),
+      ).toBeTruthy();
+    });
+
+    it("reads in the past tense on a cancelled request", () => {
+      renderPage(request({ status: "cancelled", closedAt: "2026-11-18T09:30:00Z" }));
+
+      expect(screen.getByText("Ada Lovelace asked to recover their account.")).toBeTruthy();
+      expect(
+        screen.queryByText("Ada Lovelace is asking to recover their account."),
+      ).toBeNull();
+    });
+
+    it("reads in the past tense on a completed request", () => {
+      renderPage(request({ status: "finalized", approvals: 3 }));
+
+      expect(screen.getByText("Ada Lovelace asked to recover their account.")).toBeTruthy();
+      expect(
+        screen.queryByText("Ada Lovelace is asking to recover their account."),
+      ).toBeNull();
+    });
+
+    it("says a member asked when no name is known", () => {
+      renderPage(request({ status: "cancelled", accountName: null }));
+
+      expect(screen.getByText("A member asked to recover their account.")).toBeTruthy();
+      expect(
+        screen.queryByText("A member is asking to recover their account."),
+      ).toBeNull();
+    });
+  });
+
   describe("loaded from the API", () => {
     // What GET /v1/recovery/requests/{id} returns for a cancelled request: the
     // page words the date from the `closed_at` the API gives it.

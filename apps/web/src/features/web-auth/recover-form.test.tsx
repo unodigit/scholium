@@ -104,3 +104,51 @@ describe("the account on the recovery progress page", () => {
     expect(screen.queryByText(/Recovering the account you identified/)).toBeNull();
   });
 });
+
+describe("a closed request on the recovery progress page", () => {
+  // The status read reports nothing new: a closed request has nothing left to
+  // gain from a re-read, which is exactly when the refresh action is dead.
+  function closedServices(overrides: Partial<RecoverySnapshot>) {
+    return services(() => ({}), overrides);
+  }
+
+  it("offers no Check for approvals once the request was cancelled", async () => {
+    render(
+      createElement(RecoverForm, {
+        services: closedServices({ status: "cancelled" }),
+      }),
+    );
+
+    expect(
+      await screen.findByText("This recovery was cancelled. Your current key stays active."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check for approvals" })).toBeNull();
+  });
+
+  it("offers no Check for approvals once the recovery is complete", async () => {
+    render(
+      createElement(RecoverForm, {
+        services: closedServices({ status: "finalized", approvals: 3 }),
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        "All approvals are in and the recovery is complete. Your new passkey now signs for this account.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check for approvals" })).toBeNull();
+  });
+
+  it("keeps Check for approvals while the request is still open", async () => {
+    render(
+      createElement(RecoverForm, {
+        services: closedServices({ status: "pending" }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Check for approvals" }),
+    ).toBeTruthy();
+  });
+});

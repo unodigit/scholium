@@ -390,16 +390,17 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
   const canAct = !youAnswered && !atThreshold && !closed;
   const answerDate = formatApprovedOn(answeredAt ?? data.requestedAt);
   const closedOn = formatApprovedOn(data.closedAt);
+  // A closed request is history, so its lead reads in the past tense.
+  const asking = closed ? "asked" : "is asking";
+  const lead = data.accountName
+    ? `${data.accountName} ${asking} to recover their account.`
+    : `A member ${asking} to recover their account.`;
   return (
     <div className="db-page">
       <header className="db-header">
         <p className="db-kicker mono-id">scholium / me / recovery</p>
         <h1 className="db-title">Recovery request</h1>
-        <p className="db-lede">
-          {data.accountName
-            ? `${data.accountName} is asking to recover their account.`
-            : "A member is asking to recover their account."}
-        </p>
+        <p className="db-lede">{lead}</p>
       </header>
 
       <Card title="Request details" anchor="request">

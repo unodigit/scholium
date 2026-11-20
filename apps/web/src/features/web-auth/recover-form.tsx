@@ -204,6 +204,9 @@ function ProgressBody({
   const done = Math.max(0, Math.min(snapshot.approvals, threshold));
   const percent = Math.round((done / threshold) * 100);
   const cancellable = isCancellable(snapshot);
+  // A closed request (cancelled or complete) can gain nothing from a re-read,
+  // so only an open one offers "Check for approvals".
+  const open = snapshot.status === "pending" || snapshot.status === "contest";
 
   // The public profile name of the account being recovered. The status route
   // names its DID; when this browser's snapshot predates that reply (or was
@@ -296,17 +299,19 @@ function ProgressBody({
         </div>
         <p className="wa-note">{recoveryProgressNote(snapshot)}</p>
 
-        <div className="wa-recover-actions">
-          <button
-            type="button"
-            className="wa-button wa-button--small wa-button--quiet"
-            onClick={() => void recover.refresh()}
-            disabled={recover.refreshing || recover.busy}
-            aria-busy={recover.refreshing}
-          >
-            {recover.refreshing ? RECOVER_REFRESHING : RECOVER_REFRESH_ACTION}
-          </button>
-        </div>
+        {open ? (
+          <div className="wa-recover-actions">
+            <button
+              type="button"
+              className="wa-button wa-button--small wa-button--quiet"
+              onClick={() => void recover.refresh()}
+              disabled={recover.refreshing || recover.busy}
+              aria-busy={recover.refreshing}
+            >
+              {recover.refreshing ? RECOVER_REFRESHING : RECOVER_REFRESH_ACTION}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="wa-recover-panel">
