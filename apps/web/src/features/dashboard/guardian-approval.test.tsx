@@ -91,6 +91,64 @@ describe("GuardianApprovalPage", () => {
     expect(screen.getByText(/3 of 3/)).toBeTruthy();
   });
 
+  it("tells a guardian who approved that the account holder cancelled it", () => {
+    renderPage(
+      request({
+        status: "cancelled",
+        approvals: 3,
+        approvalDids: [VIEWER, OTHER, "did:key:z6MkThirdThirdThirdThirdThirdThirdThird5"],
+        approvalTimes: { [VIEWER]: "2026-11-17T12:00:00Z" },
+        closedAt: "2026-11-18T09:30:00Z",
+      }),
+    );
+
+    expect(screen.getByText(/Cancelled by the account holder on 18 Nov 2026/)).toBeTruthy();
+    expect(screen.queryByText(/You approved/)).toBeNull();
+    expect(screen.queryByText(/No further action is needed/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+    expect(screen.queryByText(/3 of 3/)).toBeNull();
+  });
+
+  it("tells a guardian who did not answer that it was cancelled, not that enough approved", () => {
+    renderPage(
+      request({
+        status: "cancelled",
+        approvals: 3,
+        approvalDids: [OTHER, ACCOUNT, "did:key:z6MkThirdThirdThirdThirdThirdThirdThird5"],
+        closedAt: "2026-11-18T09:30:00Z",
+      }),
+    );
+
+    expect(screen.getByText(/Cancelled by the account holder on 18 Nov 2026/)).toBeTruthy();
+    expect(screen.queryByText(/Enough guardians have approved/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+  });
+
+  it("tells every guardian of a cancellation nobody approved, without counting approvals", () => {
+    renderPage(request({ status: "cancelled", approvals: 0, approvalDids: [] }));
+
+    expect(screen.getByText("Cancelled by the account holder.")).toBeTruthy();
+    expect(screen.queryByText(/0 of 3/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+  });
+
+  it("says a completed recovery is complete", () => {
+    renderPage(
+      request({
+        status: "finalized",
+        approvals: 3,
+        approvalDids: [VIEWER, OTHER, "did:key:z6MkThirdThirdThirdThirdThirdThirdThird5"],
+      }),
+    );
+
+    expect(screen.getByText(/recovery is complete/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+  });
+
   it("records the date on the guardian's answer after they approve", async () => {
     const approve = vi.fn(async () => undefined);
     renderPage(request(), { approve });

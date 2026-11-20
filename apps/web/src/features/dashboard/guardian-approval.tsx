@@ -20,6 +20,8 @@ export interface GuardianApprovalData {
   readonly threshold: number;
   readonly contestUntil: string | null;
   readonly requestedAt: string | null;
+  /** When the request closed (cancelled or finalized), when a time is recorded. */
+  readonly closedAt?: string | null;
   /** The guardians who have already answered this request. */
   readonly approvalDids?: readonly string[];
   /** When a guardian answered, by DID, when the server records a time. */
@@ -174,6 +176,12 @@ async function defaultLoadRecoveryRequest(requestId: string): Promise<GuardianAp
       : typeof payload.requestedAt === "string"
         ? payload.requestedAt
         : null;
+  const closedAt =
+    (typeof payload.closed_at === "string" && payload.closed_at) ||
+    (typeof payload.closedAt === "string" && payload.closedAt) ||
+    (typeof payload.cancelled_at === "string" && payload.cancelled_at) ||
+    (typeof payload.cancelledAt === "string" && payload.cancelledAt) ||
+    null;
   return {
     requestId,
     status: typeof payload.status === "string" ? payload.status : "pending",
@@ -184,6 +192,7 @@ async function defaultLoadRecoveryRequest(requestId: string): Promise<GuardianAp
     threshold,
     contestUntil,
     requestedAt,
+    closedAt,
     approvalDids: approvals.dids,
     approvalTimes: approvals.times,
   };
@@ -375,9 +384,12 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
   const youAnswered = viewerDid !== "" && approvedDids.includes(viewerDid);
   const answeredAt = youAnswered ? data.approvalTimes?.[viewerDid] ?? null : null;
   const atThreshold = data.threshold > 0 && data.approvals >= data.threshold;
+  const isCancelled = data.status === "cancelled";
+  const isFinalized = data.status === "finalized";
   const closed = data.status !== "pending" && data.status !== "contest";
   const canAct = !youAnswered && !atThreshold && !closed;
   const answerDate = formatApprovedOn(answeredAt ?? data.requestedAt);
+  const closedOn = formatApprovedOn(data.closedAt);
   return (
     <div className="db-page">
       <header className="db-header">
@@ -406,12 +418,14 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
             <dt className="meta">New key</dt>
             <dd className="db-cred-id mono-id">{fingerprint(data.newPublicKey)}</dd>
           </div>
-          <div className="db-fact">
-            <dt className="meta">Approvals</dt>
-            <dd>
-              {data.approvals} of {data.threshold}
-            </dd>
-          </div>
+          {!isCancelled ? (
+            <div className="db-fact">
+              <dt className="meta">Approvals</dt>
+              <dd>
+                {data.approvals} of {data.threshold}
+              </dd>
+            </div>
+          ) : null}
           {data.requestedAt ? (
             <div className="db-fact">
               <dt className="meta">Requested</dt>
@@ -422,7 +436,19 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
 
         {error ? <p className="db-error" role="alert">{error}</p> : null}
 
-        {youAnswered ? (
+        {isCancelled ? (
+          <p className="db-note" role="status">
+            {closedOn
+              ? `Cancelled by the account holder on ${closedOn}.`
+              : "Cancelled by the account holder."}
+          </p>
+        ) : isFinalized ? (
+          <p className="db-note" role="status">
+            This recovery is complete. The new passkey has taken over.
+          </p>
+        ) : null}
+
+        {!isCancelled && youAnswered ? (
           <p className="db-note" role="status">
             {answerDate
               ? `You approved on ${answerDate}.`
@@ -431,7 +457,7 @@ export function GuardianApprovalPage(props: GuardianApprovalPageProps = {}) {
           </p>
         ) : null}
 
-        {!youAnswered && atThreshold ? (
+        {!isCancelled && !isFinalized && !youAnswered && atThreshold ? (
           <p className="db-note" role="status">
             Enough guardians have approved. No further action is needed.
           </p>

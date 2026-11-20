@@ -158,6 +158,10 @@ export const RECOVER_UNSUPPORTED_MESSAGE =
 export const RECOVER_WRONG_DEVICE_MESSAGE =
   "This device doesn't hold the key that opened the account, so it can't cancel the recovery. Open the cancel link on a device that still has your old passkey.";
 
+/** Someone other than the account holder tried to cancel the recovery. */
+export const RECOVER_CANCEL_FORBIDDEN_MESSAGE =
+  "Only the account holder can cancel this recovery.";
+
 /** The ORCID iD names no account. */
 export const RECOVER_ACCOUNT_NOT_FOUND_MESSAGE =
   "We couldn't find an account linked to that ORCID iD. Check the iD and try again.";
@@ -223,7 +227,7 @@ export function safetyWindowNote(
         return (
           `Approved by ${approved} of ${RECOVERY_GUARDIAN_COUNT} guardians. ` +
           `Your new passkey takes over on ${deadline}; until then your old key ` +
-          "still works and any guardian or you can cancel."
+          "still works and only you can cancel."
         );
       }
       return RECOVER_SAFETY_WINDOW_OPEN_NOTE;
@@ -300,6 +304,9 @@ export function describeRecoveryError(error: unknown): string {
     }
     if (error.status === 401) {
       return RECOVER_WRONG_DEVICE_MESSAGE;
+    }
+    if (error.status === 403) {
+      return RECOVER_CANCEL_FORBIDDEN_MESSAGE;
     }
     if (error.status === 429) {
       return "Too many attempts. Wait a moment and try again.";

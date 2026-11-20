@@ -131,7 +131,22 @@ describe("safety-window copy", () => {
     expect(note).toContain("Approved by 3 of 5 guardians.");
     expect(note).toContain("Your new passkey takes over on 18 Nov 2026, 00:00 UTC");
     expect(note).toContain("until then your old key still works");
-    expect(note).toContain("any guardian or you can cancel");
+    expect(note).toContain("only you can cancel");
+  });
+
+  it("says only the account holder can cancel during the window", () => {
+    const note = safetyWindowNote(
+      snapshot({
+        status: "contest",
+        approvals: 3,
+        threshold: 3,
+        contestUntil: "2026-11-18T00:00:00Z",
+      }),
+      NOW,
+      { timeZone: "UTC" },
+    );
+    expect(note).toContain("only you can cancel");
+    expect(note).not.toContain("any guardian");
   });
 
   it("still explains the window when no deadline came back", () => {
@@ -192,6 +207,14 @@ describe("describeRecoveryError", () => {
     expect(describeRecoveryError(apiErrorFrom(401, { detail: "no" }))).toBe(
       RECOVER_WRONG_DEVICE_MESSAGE,
     );
+  });
+
+  it("tells a refused guardian that only the account holder can cancel", () => {
+    expect(
+      describeRecoveryError(
+        apiErrorFrom(403, { detail: "Not authorized to cancel this recovery request." }),
+      ),
+    ).toBe("Only the account holder can cancel this recovery.");
   });
 
   it("explains an ORCID iD that names no account", () => {
