@@ -44,11 +44,11 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from app import db
 from app.security import Principal, get_current_principal
-from .notices import record_closure
+from .notices import record_closure, recorded_closing_time
 from . import problems
 from . import approvals as _approvals
 from .opening import InvalidRecoveryRequest, NoGuardians, UnknownAccount, open_recovery_request
-from .models import RecoveryRequest, ensure_requests_table
+from .models import RecoveryRequest, ensure_requests_table, mark_closed
 from .service import GUARDIAN_COUNT, get_guardians
 
 __all__ = ["RecoveryRequestCreated", "RecoveryRequestIn", "requests_router"]
@@ -179,6 +179,19 @@ async def post_recovery_approval(
     }
 
 
+def _closed_at(row: RecoveryRequest) -> Optional[str]:
+    """When a cancelled or finalized request closed, or ``None`` while it is open.
+
+    The request's own ``closed_at``.  A request that closed before that column
+    existed still has the time its closure left on the account holder's notice.
+    """
+    if row.closed_at is not None:
+        return row.closed_at.isoformat() + "Z"
+    if row.status in ("cancelled", "finalized"):
+        return recorded_closing_time(row.id, row.did)
+    return None
+
+
 @requests_router.get("/requests/{request_id}")
 def get_recovery_request(request_id: str):
     ensure_requests_table()
@@ -191,6 +204,7 @@ def get_recovery_request(request_id: str):
         contest_until = (
             row.contest_until.isoformat() + "Z" if row.contest_until is not None else None
         )
+        closed_at = _closed_at(row)
         return {
             "request_id": row.id,
             "id": row.id,
@@ -208,6 +222,8 @@ def get_recovery_request(request_id: str):
             "count": count,
             "contest_until": contest_until,
             "contestUntil": contest_until,
+            "closed_at": closed_at,
+            "closedAt": closed_at,
             "threshold": _approvals.APPROVAL_THRESHOLD,
         }
 
@@ -337,6 +353,9 @@ async def cancel_recovery_request(request_id: str, request: Request, authorizati
         row = session.get(RecoveryRequest, row_id)
         if row is not None:
             row.status = "cancelled"
+            # The time goes on the request in the same commit as the status, so
+            # no reader sees it cancelled without one.
+            mark_closed(row)
             approvals = list(row.approvals or [])
             session.commit()
 

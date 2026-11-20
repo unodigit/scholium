@@ -16,15 +16,28 @@ same guardian twice.
   account being recovered, ``new_public_key`` the key it should end up with,
   ``approvals`` a JSON list of the guardian approvals gathered so far (empty
   when opened), ``contest_until`` the end of the contest window (``NULL`` until
-  enough guardians have approved) and ``status`` where the request is in its
-  life (one of :data:`REQUEST_STATUSES`).
+  enough guardians have approved), ``status`` where the request is in its
+  life (one of :data:`REQUEST_STATUSES`) and ``closed_at`` when it was
+  cancelled or finalized (``NULL`` while it is open, and for a request that
+  closed before the column existed).
 """
 
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, Integer, PrimaryKeyConstraint, Text, UniqueConstraint, inspect
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Integer,
+    PrimaryKeyConstraint,
+    Text,
+    UniqueConstraint,
+    inspect,
+    text,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
@@ -37,6 +50,7 @@ __all__ = [
     "RecoveryRequest",
     "ensure_requests_table",
     "ensure_table",
+    "mark_closed",
 ]
 
 #: A freshly opened request, still gathering guardian approvals.
@@ -76,9 +90,24 @@ class RecoveryRequest(db.Base):
     approvals = Column(JSON, nullable=False)
     contest_until = Column(DateTime)
     status = Column(Text, nullable=False)
+    #: When the request was cancelled or finalized: UTC, to the second, stored
+    #: the way ``contest_until`` is.  ``NULL`` while it is open.
+    closed_at = Column(DateTime)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<RecoveryRequest id={self.id!r} did={self.did!r} status={self.status!r}>"
+
+
+def mark_closed(row: RecoveryRequest) -> datetime:
+    """Record on ``row`` when it closed, unless it already says; return the time on record.
+
+    A request closes once.  Cancelling a cancelled request again (or a closure
+    recorded twice) keeps the first time, so what the guardians were told and
+    what the request says never drift apart.
+    """
+    if row.closed_at is None:
+        row.closed_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    return row.closed_at
 
 
 # Self-healing table creation, mirroring the other modules: each table is
@@ -86,9 +115,42 @@ class RecoveryRequest(db.Base):
 _table_lock = threading.Lock()
 _table_engines: dict[str, Engine] = {}
 
+#: Columns added to a table after it first shipped, by table name.  Every one is
+#: nullable, since the rows that exist already get NULL.  ``Table.create`` skips
+#: a table that exists, so :func:`_ensure` adds what an older database lacks.
+_ADDED_COLUMNS = {"recovery_requests": ("closed_at",)}
+
+
+def _add_missing_columns(model: type, engine: Engine) -> None:
+    """Add any :data:`_ADDED_COLUMNS` that ``model``'s existing table lacks.
+
+    The DDL type comes from the model for whichever dialect runs (SQLite's
+    ``DATETIME`` is not a PostgreSQL type).  Existing rows are untouched.
+    """
+    name = model.__tablename__
+    wanted = _ADDED_COLUMNS.get(name, ())
+    if not wanted:
+        return
+    present = {column["name"] for column in inspect(engine).get_columns(name)}
+    for column in wanted:
+        if column in present:
+            continue
+        ddl_type = model.__table__.c[column].type.compile(dialect=engine.dialect)
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE {name} ADD COLUMN {column} {ddl_type}"))
+        except (OperationalError, ProgrammingError):
+            # Another worker sharing the database may have added it between our
+            # inspection and the ALTER; only re-raise if it is still absent.
+            if column not in {c["name"] for c in inspect(engine).get_columns(name)}:
+                raise
+
 
 def _ensure(model: type) -> None:
-    """Create ``model``'s table if it does not exist yet on the current engine."""
+    """Create ``model``'s table if it does not exist yet on the current engine.
+
+    A table an older release created gains the columns added since, in place.
+    """
     name = model.__tablename__
     engine = db.engine
     if _table_engines.get(name) is engine:
@@ -101,6 +163,7 @@ def _ensure(model: type) -> None:
                 # Another worker may have created it between the check and the create.
                 if not inspect(engine).has_table(name):
                     raise
+            _add_missing_columns(model, engine)
             _table_engines[name] = engine
 
 

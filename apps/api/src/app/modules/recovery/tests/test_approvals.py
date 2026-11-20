@@ -416,7 +416,7 @@ def test_cancelling_a_request_tells_every_guardian_it_was_cancelled(recovery):
     assert response.status_code == 200, response.text
 
     silent = guardian_notice(recovery, recovery.guardians[3])
-    assert silent.read is True
+    assert silent.read is False
     assert silent.payload["closed"] == "cancelled"
     assert "answer" not in silent.payload
     # A guardian who had approved is told too, and their own answer is kept

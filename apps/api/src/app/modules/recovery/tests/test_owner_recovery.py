@@ -18,20 +18,22 @@ guardians to recover it.  What the owner can do about that:
 from __future__ import annotations
 
 import random
+import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from nacl.signing import SigningKey
 from scholium_record_core import did_key_from_signing_key, encode_signature
-from sqlalchemy import inspect
+from sqlalchemy import create_engine, inspect, text
 
 from app import db
-from app.modules.notifications import list_notifications
+from app.modules.notifications import list_notifications, mark_read
 from app.modules.orcid import Credential, ensure_credential_tables, issue_orcid_credential
 from app.modules.orcid import models as orcid_models
 from app.modules.recovery import RecoveryRequest, apply_rotation, set_guardians
 from app.modules.recovery import finalize
+from app.modules.recovery import models as recovery_models
 from app.modules.recovery.approvals import approval_message
 from app.settings import settings
 
@@ -280,7 +282,9 @@ def test_a_cancel_tells_the_guardians_who_approved_and_the_ones_who_did_not(reco
 
     for guardian in approvers + silent:
         notice = only_notice(recovery, did_key_from_signing_key(guardian))
-        assert notice.read is True
+        # Unread: a cancel is news to the guardian, not history (this asserted
+        # ``read is True``, which was the bug).
+        assert notice.read is False
         assert notice.payload["closed"] == "cancelled"
         assert notice.payload["approval_count"] == 2
         assert notice.payload["guardian_count"] == 5
@@ -412,3 +416,208 @@ def test_reaching_quorum_leaves_the_owners_notice_open(recovery):
     assert owner.read is False
     assert "closed" not in owner.payload
     assert "status" not in owner.payload
+
+
+# --- a cancel alerts the guardians, and the request says when it closed ----------
+
+
+def unread_notices(recovery, did: str) -> list:
+    """``did``'s still-unread notices about this request."""
+    return [n for n in notices_of(recovery, did) if n.read is False]
+
+
+def open_notice(recovery, did: str) -> None:
+    """``did`` opens the notice of this request, which reads it."""
+    for notice in notices_of(recovery, did):
+        assert mark_read(did, notice.id) is not None
+
+
+def detail(recovery) -> dict:
+    """``GET /v1/recovery/requests/{id}`` -- what the guardian page loads."""
+    response = recovery.client.get(f"{URL}/{recovery.request_id}")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def set_stored_closed_at(recovery, value: datetime | None) -> None:
+    with db.SessionLocal() as session:
+        session.get(RecoveryRequest, recovery.request_id).closed_at = value
+        session.commit()
+
+
+ISO_SECONDS_Z = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
+
+
+@pytest.mark.parametrize("opened_first", [False, True], ids=["unopened", "already-opened"])
+def test_a_cancel_alerts_the_guardians_who_approved_and_the_ones_who_did_not(recovery, opened_first):
+    approvers, silent = recovery.guardians[:2], recovery.guardians[2:]
+    for guardian in approvers:
+        approve(recovery, guardian)
+    if opened_first:
+        for guardian in silent:
+            open_notice(recovery, did_key_from_signing_key(guardian))
+
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    for guardian in approvers + silent:
+        did = did_key_from_signing_key(guardian)
+        # One notice, unread again, saying the request was cancelled: exactly
+        # one unread item for the guardian, so the bell counts it once.
+        assert len(notices_of(recovery, did)) == 1
+        [alert] = unread_notices(recovery, did)
+        assert alert.payload["closed"] == "cancelled"
+    for guardian in approvers:
+        assert only_notice(recovery, did_key_from_signing_key(guardian)).payload["answer"] == "approved"
+
+
+def test_a_signed_cancel_alerts_the_guardians_too(recovery):
+    approve(recovery, recovery.guardians[0])
+    open_notice(recovery, did_key_from_signing_key(recovery.guardians[1]))
+
+    assert signed_cancel(recovery, recovery.account_seed).status_code == 200
+
+    for guardian in recovery.guardians:
+        assert len(unread_notices(recovery, did_key_from_signing_key(guardian))) == 1
+
+
+def test_a_cancel_does_not_alert_the_owner_who_cancelled(recovery):
+    assert len(unread_notices(recovery, recovery.did)) == 1
+
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    assert unread_notices(recovery, recovery.did) == []
+    assert only_notice(recovery, recovery.did).payload["status"] == "cancelled"
+
+
+def test_cancelling_twice_still_leaves_one_unread_item_per_guardian(recovery):
+    approve(recovery, recovery.guardians[0])
+
+    for _ in range(2):
+        assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    for guardian in recovery.guardians:
+        assert len(unread_notices(recovery, did_key_from_signing_key(guardian))) == 1
+    assert unread_notices(recovery, recovery.did) == []
+
+
+def test_a_refused_cancel_alerts_nobody(recovery):
+    for guardian in recovery.guardians:
+        open_notice(recovery, did_key_from_signing_key(guardian))
+
+    stranger = new_did()
+    assert recovery.client.post(cancel_url(recovery), headers=auth(stranger)).status_code == 403
+
+    for guardian in recovery.guardians:
+        assert unread_notices(recovery, did_key_from_signing_key(guardian)) == []
+
+
+def test_an_open_request_has_no_closing_time(recovery):
+    body = detail(recovery)
+
+    assert body["status"] == "pending"
+    assert body["closed_at"] is None
+
+
+def test_a_cancelled_request_says_when_it_was_cancelled(recovery):
+    approve(recovery, recovery.guardians[0])
+    before = datetime.now(timezone.utc).replace(microsecond=0)
+
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    body = detail(recovery)
+    assert body["status"] == "cancelled"
+    assert re.match(ISO_SECONDS_Z, body["closed_at"]), body["closed_at"]
+    closed = datetime.strptime(body["closed_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    assert before <= closed <= datetime.now(timezone.utc)
+    # The notices carry the very same time.
+    for guardian in recovery.guardians:
+        assert only_notice(recovery, did_key_from_signing_key(guardian)).payload["closed_at"] == body["closed_at"]
+    assert only_notice(recovery, recovery.did).payload["closed_at"] == body["closed_at"]
+
+
+def test_a_signed_cancel_says_when_it_was_cancelled(recovery):
+    assert signed_cancel(recovery, recovery.account_seed).status_code == 200
+
+    assert re.match(ISO_SECONDS_Z, detail(recovery)["closed_at"])
+
+
+def test_cancelling_again_keeps_the_first_closing_time(recovery):
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+    first = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0) - timedelta(hours=3)
+    set_stored_closed_at(recovery, first)
+
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    assert detail(recovery)["closed_at"] == first.strftime("%Y-%m-%dT%H:%M:%SZ")
+    for guardian in recovery.guardians:
+        notice = only_notice(recovery, did_key_from_signing_key(guardian))
+        assert notice.payload["closed_at"] == first.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_finalized_request_says_when_it_was_finalized(recovery, monkeypatch):
+    for guardian in recovery.guardians[:3]:
+        approve(recovery, guardian)
+    with db.SessionLocal() as session:
+        row = session.get(RecoveryRequest, recovery.request_id)
+        row.contest_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        session.commit()
+    monkeypatch.setattr(finalize, "apply_rotation", lambda *_args, **_kwargs: None)
+
+    assert finalize.finalize_recovery_request(recovery.request_id) is True
+
+    body = detail(recovery)
+    assert body["status"] == "finalized"
+    assert re.match(ISO_SECONDS_Z, body["closed_at"]), body["closed_at"]
+
+
+def test_a_request_closed_before_the_column_existed_takes_its_time_from_the_notice(recovery):
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+    on_notice = only_notice(recovery, recovery.did).payload["closed_at"]
+    set_stored_closed_at(recovery, None)
+
+    assert detail(recovery)["closed_at"] == on_notice
+
+
+def test_a_request_with_no_record_of_closing_has_no_time(recovery):
+    # Closed by hand, the way no code path does: neither the column nor a notice has a time.
+    with db.SessionLocal() as session:
+        session.get(RecoveryRequest, recovery.request_id).status = "cancelled"
+        session.commit()
+
+    body = detail(recovery)
+    assert body["status"] == "cancelled"
+    assert body["closed_at"] is None
+
+
+def test_an_existing_database_gains_closed_at_in_place(tmp_path, monkeypatch):
+    # ``recovery_requests`` as it was before the column: ``create_all`` skips a
+    # table that exists, so only the self-healing ensure can add it.
+    engine = create_engine(f"sqlite:///{tmp_path / 'before.db'}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE recovery_requests (id TEXT PRIMARY KEY, did TEXT NOT NULL, "
+                "new_public_key TEXT NOT NULL, approvals JSON NOT NULL, "
+                "contest_until DATETIME, status TEXT NOT NULL)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO recovery_requests VALUES "
+                "('rec_before', 'did:key:zAccount', 'did:key:zNew', '[]', NULL, 'cancelled')"
+            )
+        )
+    monkeypatch.setattr(db, "engine", engine)
+    monkeypatch.setattr(recovery_models, "_table_engines", {})
+
+    recovery_models.ensure_requests_table()
+
+    assert "closed_at" in {c["name"] for c in inspect(engine).get_columns("recovery_requests")}
+    with engine.connect() as connection:
+        rows = connection.execute(text("SELECT id, status, closed_at FROM recovery_requests")).all()
+    assert [tuple(row) for row in rows] == [("rec_before", "cancelled", None)]
+
+    # Running it again, as the next process will, changes nothing and does not fail.
+    monkeypatch.setattr(recovery_models, "_table_engines", {})
+    recovery_models.ensure_requests_table()
+    engine.dispose()

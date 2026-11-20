@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { tokenStore } from "../../lib/api";
+import { api, tokenStore } from "../../lib/api";
 
 import { NOTIFICATIONS_CHANGED_EVENT, type NotificationItem } from "./dashboard";
 import { GuardianApprovalPage, type GuardianApprovalData } from "./guardian-approval";
@@ -133,6 +133,58 @@ describe("GuardianApprovalPage", () => {
     expect(screen.queryByText(/0 of 3/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+  });
+
+  describe("loaded from the API", () => {
+    // What GET /v1/recovery/requests/{id} returns for a cancelled request: the
+    // page words the date from the `closed_at` the API gives it.
+    function serve(detail: Record<string, unknown>) {
+      return vi.spyOn(api, "get").mockImplementation(async (path: string) => {
+        if (path.startsWith("/recovery/requests/")) return detail;
+        return { name: "Ada Lovelace" };
+      });
+    }
+    const cancelled = {
+      request_id: "rec_1",
+      status: "cancelled",
+      did: ACCOUNT,
+      new_public_key: NEW_KEY,
+      approvals: [],
+      approval_count: 0,
+      contest_until: null,
+      threshold: 3,
+    };
+
+    it("dates the cancellation from the closed_at the API returns", async () => {
+      serve({ ...cancelled, closed_at: "2026-11-18T09:30:00Z" });
+
+      render(<GuardianApprovalPage requestId="rec_1" signedIn viewerDid={VIEWER} />);
+
+      expect(await screen.findByText("Cancelled by the account holder on 18 Nov 2026.")).toBeTruthy();
+      expect(screen.queryByText("Cancelled by the account holder.")).toBeNull();
+    });
+
+    it("dates it for a guardian who had approved too", async () => {
+      serve({
+        ...cancelled,
+        approvals: [{ guardian: VIEWER, approved_at: "2026-11-17T12:00:00Z" }],
+        approval_count: 1,
+        closed_at: "2026-11-18T09:30:00Z",
+      });
+
+      render(<GuardianApprovalPage requestId="rec_1" signedIn viewerDid={VIEWER} />);
+
+      expect(await screen.findByText("Cancelled by the account holder on 18 Nov 2026.")).toBeTruthy();
+      expect(screen.queryByText(/You approved/)).toBeNull();
+    });
+
+    it("says it without a date when the API has no time for it", async () => {
+      serve({ ...cancelled, closed_at: null });
+
+      render(<GuardianApprovalPage requestId="rec_1" signedIn viewerDid={VIEWER} />);
+
+      expect(await screen.findByText("Cancelled by the account holder.")).toBeTruthy();
+    });
   });
 
   it("says a completed recovery is complete", () => {
