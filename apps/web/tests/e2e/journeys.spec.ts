@@ -213,7 +213,7 @@ function pdfWithText(lines: string[]): Buffer {
 
 test.describe("reading", () => {
   test("the home feed lists the seeded papers with their authors", async ({ page }) => {
-    await visit(page, "/");
+    await visit(page, "/papers");
 
     await expect(page.getByRole("link", { name: META_AGENT.title })).toBeVisible();
     await expect(page.getByText(META_AGENT.authors.join(", "), { exact: true })).toBeVisible();
@@ -225,7 +225,7 @@ test.describe("reading", () => {
   });
 
   test("a paper's Proof tab shows that it is Verified and Signed", async ({ page }) => {
-    await visit(page, "/");
+    await visit(page, "/papers");
     await page.getByRole("link", { name: META_AGENT.title }).click();
     await expect(page.getByRole("heading", { name: META_AGENT.title, level: 1 })).toBeVisible();
 
@@ -247,7 +247,7 @@ test.describe("reading", () => {
   });
 
   test("a paper's AI tab shows the advisory banner", async ({ page }) => {
-    await visit(page, "/");
+    await visit(page, "/papers");
     await page.getByRole("link", { name: META_AGENT.title }).click();
     await expect(page.getByRole("heading", { name: META_AGENT.title, level: 1 })).toBeVisible();
 
@@ -283,7 +283,7 @@ test.describe("signing in", () => {
     // access token carries the tier the endorsement just granted — no second
     // sign-in is needed.  `#discussion` is a tab address, so landing on it
     // opens Discussion directly.
-    await visit(page, "/");
+    await visit(page, "/papers");
     const paperHref = await page
       .getByRole("link", { name: META_AGENT.title })
       .getAttribute("href");

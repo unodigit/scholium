@@ -230,11 +230,11 @@ test.describe("the delivered icon set", () => {
   test("every page links the icons and the manifest, and names itself once", async ({
     page,
   }) => {
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/papers", { waitUntil: "networkidle" });
 
-    // The root template composes the page name exactly once ("Home · Scholium",
-    // never "Home · Scholium · Scholium").
-    await expect(page).toHaveTitle("Home · Scholium");
+    // The root template composes the page name exactly once ("Papers · Scholium",
+    // never "Papers · Scholium · Scholium").
+    await expect(page).toHaveTitle("Papers · Scholium");
 
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
       "href",
@@ -264,7 +264,7 @@ test.describe("the brand lockup in the navigation", () => {
   test("the desktop header shows the logo link, not a bare wordmark", async ({
     page,
   }) => {
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/papers", { waitUntil: "networkidle" });
 
     const home = page.getByRole("link", { name: "Scholium home" });
     await expect(home).toBeVisible();
@@ -304,7 +304,7 @@ test.describe("the brand lockup in the navigation", () => {
 
   test("phone widths show the tile mark in the bottom bar", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/papers", { waitUntil: "networkidle" });
 
     // The header (and its wordmark) is for `sm` and up; the bottom bar is for
     // phones and its Home tab carries the tile where the wordmark cannot fit.
@@ -399,7 +399,7 @@ test.describe("the branded share cards", () => {
     expect(siteCard.length).toBeGreaterThan(1_000);
     await expectShareCard(await request.get("/twitter-image"));
 
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/papers", { waitUntil: "networkidle" });
     const image = page.locator('meta[property="og:image"]');
     await expect(image).toHaveAttribute("content", /\/opengraph-image/);
     await expect(page.locator('meta[property="og:image:width"]')).toHaveAttribute(

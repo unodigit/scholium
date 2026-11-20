@@ -57,7 +57,7 @@ def web(nodes):
         cwd=WEB_DIR, log_path=node.root / "logs" / "web.log",
     )
     node.extra.append(server)
-    server.wait_for_http(f"{web_origin}/")
+    server.wait_for_http(f"{web_origin}/papers")
     with node.client() as http:
         paper = publish_listed_paper(node, http, title="Seen from the web")
         yield web_origin, node, http, paper
@@ -65,7 +65,7 @@ def web(nodes):
 
 def test_every_page_carries_the_security_headers(web):
     origin, node, *_ = web
-    for path in ("/", "/policies", "/network", "/search", "/does-not-exist"):
+    for path in ("/", "/papers", "/policies", "/network", "/search", "/does-not-exist"):
         response = httpx.get(f"{origin}{path}", follow_redirects=False)
         headers = response.headers
         csp = headers["content-security-policy"]
