@@ -127,3 +127,95 @@
   letter-spacing: 0;
   white-space: nowrap;
 }
+
+/* ----------------------------------------------------------------------------
+   Animated glyph parts (BrandMark `animated`).
+   The `animated` prop only adds the part class names — page, line, strip,
+   bracket — to the glyph's shapes; everything the classes do lives here.
+   The parts stay at their delivered geometry until an ancestor the reveal
+   observer has marked `.in` (the homepage's reveal convention; hidden start
+   states exist only under the home layout's html[data-home-js], so with
+   JavaScript off the mark is simply there). Motion is transform/opacity only:
+   the page fades and scales in, the text lines grow from the left with a
+   stagger, the margin strip grows downward, and the bracket slides in on a
+   spring. The easings come from the homepage's CSS linear() spring curves,
+   with the same cubic-bezier fallback home.css declares where linear() is
+   unsupported.
+   ---------------------------------------------------------------------------- */
+
+.sch-brand-mark .page,
+.sch-brand-mark .line,
+.sch-brand-mark .strip,
+.sch-brand-mark .bracket {
+  transform-box: fill-box;
+}
+
+.sch-brand-mark .page {
+  transform-origin: center;
+}
+
+.sch-brand-mark .line {
+  transform-origin: left center;
+}
+
+.sch-brand-mark .strip {
+  transform-origin: center top;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-home-js] .sch-brand-mark .page {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  html[data-home-js] .sch-brand-mark .line {
+    transform: scaleX(0);
+  }
+  html[data-home-js] .sch-brand-mark .strip {
+    transform: scaleY(0);
+  }
+  html[data-home-js] .sch-brand-mark .bracket {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+
+  html[data-home-js] .in .sch-brand-mark .page {
+    animation: sch-mark-pop 0.8s var(--spring-soft, cubic-bezier(0.23, 1, 0.32, 1)) both;
+  }
+  html[data-home-js] .in .sch-brand-mark .line {
+    animation: sch-mark-grow-x 0.7s var(--spring-soft, cubic-bezier(0.23, 1, 0.32, 1)) both;
+  }
+  /* The five lines are svg children 2–6; each starts 90ms after the last. */
+  html[data-home-js] .in .sch-brand-mark .line:nth-child(2) { animation-delay: 350ms; }
+  html[data-home-js] .in .sch-brand-mark .line:nth-child(3) { animation-delay: 440ms; }
+  html[data-home-js] .in .sch-brand-mark .line:nth-child(4) { animation-delay: 530ms; }
+  html[data-home-js] .in .sch-brand-mark .line:nth-child(5) { animation-delay: 620ms; }
+  html[data-home-js] .in .sch-brand-mark .line:nth-child(6) { animation-delay: 710ms; }
+  html[data-home-js] .in .sch-brand-mark .strip {
+    animation: sch-mark-grow-y 0.7s var(--spring-soft, cubic-bezier(0.23, 1, 0.32, 1)) both;
+    animation-delay: 950ms;
+  }
+  html[data-home-js] .in .sch-brand-mark .bracket {
+    animation: sch-mark-bracket 0.8s var(--spring, cubic-bezier(0.23, 1, 0.32, 1)) both;
+    animation-delay: 1150ms;
+  }
+}
+
+@keyframes sch-mark-pop {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes sch-mark-grow-x {
+  from { transform: scaleX(0); }
+  to { transform: none; }
+}
+
+@keyframes sch-mark-grow-y {
+  from { transform: scaleY(0); }
+  to { transform: none; }
+}
+
+@keyframes sch-mark-bracket {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}

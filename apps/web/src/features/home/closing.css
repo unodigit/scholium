@@ -1,0 +1,223 @@
+/* ==========================================================================
+   Home — the closing sections: Compare, Principles, Name, FAQ.
+   (docs/homepage/index.html; shared type, layout, easings and the reveal
+   convention come from home.css; colour comes only from tokens.css, so no
+   hex literal lives in this file.)
+   ========================================================================== */
+
+/* ==========================================================================
+   Compare table
+   ========================================================================== */
+.compare-wrap {
+  max-width: 980px;
+  margin: 0 auto;
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: 0 0 0 0.5px var(--hairline), var(--shadow-card);
+  overflow: hidden;
+}
+.compare { width: 100%; border-collapse: collapse; font-size: 1rem; }
+.compare th, .compare td {
+  padding: 18px 24px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--rule);
+  line-height: 1.45;
+}
+.compare tr:last-child th, .compare tr:last-child td { border-bottom: 0; }
+.compare thead th {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding-block: 16px;
+}
+.compare tbody th { font-weight: 600; width: 28%; }
+.compare td { color: var(--ink-2); }
+.compare .us {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--ink);
+}
+.compare thead .us { color: var(--accent); }
+.compare td.us .ico { color: var(--verified); margin-right: 8px; }
+
+/* Under 720px the columns become two labelled cells per row; the thead is
+   display: none, so its headers leave the accessibility tree too, and each
+   td names its column through the ::before label. */
+@media (max-width: 720px) {
+  .compare thead { display: none; }
+  .compare tr { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--rule); }
+  .compare tr:last-child { border-bottom: 0; }
+  .compare th, .compare td { border-bottom: 0; padding: 14px 16px; font-size: 0.9375rem; }
+  .compare tbody th { grid-column: 1 / -1; width: auto; padding-bottom: 0; }
+  .compare td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin-bottom: 4px;
+  }
+  .compare td.us .ico { display: none; }
+}
+
+/* ==========================================================================
+   Principles
+   ========================================================================== */
+.principles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.principle {
+  padding: clamp(26px, 3.5vw, 40px);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: 0 0 0 0.5px var(--hairline), var(--shadow-card);
+}
+.principle h3 {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: clamp(1.75rem, 1.2rem + 1.6vw, 2.5rem);
+  letter-spacing: -0.024em;
+}
+.principle h3 .ico { font-size: 0.75em; color: var(--critical); stroke-width: 2.1; }
+.principle p { margin-top: 12px; color: var(--ink-2); font-size: 1.0625rem; line-height: 1.5; max-width: 30em; }
+@media (max-width: 760px) { .principles { grid-template-columns: 1fr; } }
+
+/* ==========================================================================
+   The name
+   ========================================================================== */
+.name-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: clamp(36px, 7vw, 110px);
+  align-items: center;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+/* The glyph is the ui-kit BrandMark (`animated`), scaled up from its nav
+   size: the width is clamped here and the svg keeps its 52:54 ratio. The
+   part animations themselves live in ui-kit/brand.css. */
+.name-glyph { width: clamp(150px, 22vw, 240px); }
+/* The mark's span fills the clamped wrapper so the svg's width: 100% has a
+   definite width to resolve against (a shrink-to-fit span would collapse the
+   chain back to the svg's 52-unit attribute size). */
+.name-glyph .sch-brand-mark { display: block; width: 100%; margin: 0; height: auto; }
+.name-glyph .sch-brand-mark svg { width: 100%; height: auto; overflow: visible; }
+.dict-word {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: clamp(3rem, 1.6rem + 5vw, 5.5rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+.dict-word dfn { font-style: normal; }
+.pron { margin-top: 14px; font-size: 1.0625rem; color: var(--ink-2); }
+.pron i { font-family: var(--serif); }
+.def {
+  margin-top: 22px;
+  padding-left: 18px;
+  border-left: 4px solid var(--margin-note-strong);
+  font-family: var(--serif);
+  font-size: clamp(1.375rem, 1rem + 1.2vw, 1.875rem);
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+}
+.name-grid .lead { margin-top: 24px; }
+@media (max-width: 760px) {
+  .name-grid { grid-template-columns: 1fr; }
+  .name-glyph { width: 132px; }
+}
+
+/* ==========================================================================
+   FAQ + at a glance
+   ========================================================================== */
+.faq-grid {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: clamp(32px, 5vw, 72px);
+  align-items: start;
+}
+.glance {
+  position: sticky;
+  top: 92px;
+  padding: 26px;
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: 0 0 0 0.5px var(--hairline), var(--shadow-card);
+}
+.glance h3 { font-size: 1.25rem; }
+.glance dl { margin-top: 14px; display: grid; gap: 0; }
+.glance dl > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+  padding: 11px 0;
+  border-top: 1px solid var(--rule);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+.glance dt { color: var(--ink-2); }
+.glance dd { color: var(--ink); font-weight: 500; }
+.glance code { font-size: 0.82em; }
+
+.faq details { border-bottom: 1px solid var(--rule); }
+.faq details:first-child { border-top: 1px solid var(--rule); }
+.faq summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 4px;
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary h3 { font-size: clamp(1.1875rem, 1rem + 0.5vw, 1.375rem); letter-spacing: -0.012em; }
+.faq summary .pm {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink-2);
+  font-size: 16px;
+  transition: transform 0.45s var(--spring), background-color 0.2s;
+}
+.faq summary:hover .pm {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.faq details[open] .pm { transform: rotate(45deg); }
+.faq .ans { padding: 0 52px 24px 4px; color: var(--ink-2); font-size: 1.0625rem; line-height: 1.6; }
+.faq .ans p + p { margin-top: 10px; }
+
+/* Animated opening where the platform can do it: interpolate-size lets
+   block-size transition to `auto`, and the discrete content-visibility
+   transition keeps the answer rendered until the collapse finishes.
+   Everywhere else, details open and close instantly. */
+@supports (interpolate-size: allow-keywords) {
+  .faq { interpolate-size: allow-keywords; }
+  .faq details::details-content {
+    block-size: 0;
+    overflow: clip;
+    contain: layout;
+    transition: block-size 0.45s var(--ease-out), content-visibility 0.45s allow-discrete;
+  }
+  .faq details[open]::details-content { block-size: auto; }
+}
+@media (max-width: 980px) {
+  .faq-grid { grid-template-columns: 1fr; }
+  .glance { position: static; }
+}
+
+/* Real borders for the cards when more contrast is asked for, alongside the
+   surfaces home.css already covers. */
+@media (prefers-contrast: more) {
+  .compare-wrap, .glance { box-shadow: 0 0 0 1px var(--ink); }
+}

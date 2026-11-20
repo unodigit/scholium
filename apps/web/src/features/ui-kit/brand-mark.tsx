@@ -10,6 +10,15 @@ export interface BrandMarkProps extends Omit<ComponentPropsWithoutRef<"span">, "
   size?: BrandSize;
   decorative?: boolean;
   markOnly?: boolean;
+  /**
+   * Adds the part class names — `page`, `line`, `strip`, `bracket` — to the
+   * glyph's shapes so CSS can assemble it on reveal (the homepage's name
+   * section; the timings live in brand.css behind the reveal's `.in` class).
+   * That is all it does: no shape, attribute or style changes, so the default
+   * output and the geometry are byte-for-byte the same. The tile variant is
+   * the delivered favicon and takes no part classes.
+   */
+  animated?: boolean;
 }
 
 const SIZE_PX: Record<BrandSize, number> = { sm: 20, md: 28, lg: 48 };
@@ -53,6 +62,7 @@ export function BrandMark({
   size = "md",
   decorative = false,
   markOnly: _markOnly,
+  animated = false,
   className,
   style,
   ...rest
@@ -103,6 +113,7 @@ export function BrandMark({
             height={GLYPH.page.height}
             y={GLYPH.page.y}
             fill="var(--accent)"
+            className={animated ? "page" : undefined}
             aria-hidden="true"
           />
           {GLYPH.line.tops.map((top, index) => (
@@ -114,6 +125,7 @@ export function BrandMark({
               height={GLYPH.line.thickness}
               rx={GLYPH.line.thickness / 2}
               fill="var(--bg)"
+              className={animated ? "line" : undefined}
               aria-hidden="true"
             />
           ))}
@@ -123,9 +135,15 @@ export function BrandMark({
             width={GLYPH.strip.width}
             height={GLYPH.page.height}
             fill="var(--margin-note)"
+            className={animated ? "strip" : undefined}
             aria-hidden="true"
           />
-          <path fill="var(--accent)" d={GLYPH.bracket} aria-hidden="true" />
+          <path
+            fill="var(--accent)"
+            d={GLYPH.bracket}
+            className={animated ? "bracket" : undefined}
+            aria-hidden="true"
+          />
         </svg>
       )}
     </span>

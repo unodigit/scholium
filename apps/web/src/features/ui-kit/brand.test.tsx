@@ -36,6 +36,41 @@ describe("BrandMark", () => {
     expect(root.getAttribute("data-size")).toBe("lg");
     expect(root.style.height).toBe("48px");
   });
+
+  it("leaves the default output unchanged: no part classes on any shape", () => {
+    const { container: glyph } = render(createElement(BrandMark, { variant: "glyph" }));
+    const svg = glyph.querySelector("svg") as SVGSVGElement;
+    expect(svg.querySelectorAll("[class]")).toHaveLength(0);
+
+    // The tile is the delivered favicon; `animated` does nothing to it.
+    const { container: tile } = render(createElement(BrandMark, { variant: "tile", animated: true }));
+    const tileSvg = tile.querySelector("svg") as SVGSVGElement;
+    expect(tileSvg.querySelectorAll("[class]")).toHaveLength(0);
+  });
+
+  it("animated adds only the part class names — the geometry is untouched", () => {
+    const { container: plain } = render(createElement(BrandMark, { variant: "glyph" }));
+    const { container: animated } = render(createElement(BrandMark, { variant: "glyph", animated: true }));
+
+    const shapes = (root: HTMLElement) => Array.from(root.querySelector("svg")!.querySelectorAll("rect, path"));
+    const geometry = (el: Element) =>
+      ["fill", "x", "y", "width", "height", "rx", "d"]
+        .map((name) => el.getAttribute(name))
+        .join(" ");
+
+    expect(shapes(animated).map((el) => el.getAttribute("class"))).toEqual([
+      "page",
+      "line",
+      "line",
+      "line",
+      "line",
+      "line",
+      "strip",
+      "bracket",
+    ]);
+    expect(shapes(plain).map((el) => el.getAttribute("class"))).toEqual(Array.from({ length: 8 }, () => null));
+    expect(shapes(animated).map(geometry)).toEqual(shapes(plain).map(geometry));
+  });
 });
 
 describe("BrandLogo", () => {
