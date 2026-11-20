@@ -434,7 +434,7 @@ The homepage has its own bar (`HomeNav`), not the global navigation or the mobil
 | Signed out | Sign in (`/signin`) and a filled Submit a paper (`/submit`) |
 | Signed in | Browse papers (`/papers`) and Your dashboard (`/me`) |
 
-The session token lives in browser storage, so the server cannot know who is signed in. The server renders the signed-out actions and the browser swaps them after it has read the session. The bar is transparent at the top of the page and becomes glass once the page has scrolled more than 8 px.
+The server cannot know who is signed in, so it renders the signed-out actions and the browser swaps them when it holds a session. The homepage makes no API call, so it does not restore a session on a fresh load (the root layout's session provider skips `/`): the signed-in actions appear when a session is already in memory, after signing in or after a move from another page, and the session is restored as soon as the visitor goes to any other page. The bar is transparent at the top of the page and becomes glass once the page has scrolled more than 8 px.
 
 #### Content and scope rules
 
@@ -460,7 +460,7 @@ The homepage is a presentation page, so it moves more than the app does. The 150
 - **`prefers-reduced-motion: reduce`.** All motion becomes an instant change or a short crossfade of opacity (0.3 s at most). Scroll reveals lose their translation; the "Checking signatures…" state is skipped and the badge reads Verified at once; every headline line is visible immediately; the statement is fully inked; the stage does not tilt.
 - **`prefers-reduced-transparency: reduce`.** Glass becomes solid `--surface`: no tint, no blur.
 - **`prefers-contrast: more`.** Glass, cards, tiles, panels, the tamper demo and the illustrated paper get a 1 px `--ink` border, and the statement is fully inked. Browsers without `backdrop-filter` get a near-opaque `--surface` instead of glass.
-- **Contrast.** Text meets 4.5:1 (§3), including text on glass, whatever scrolls beneath it; a glass tint too thin to guarantee that is not acceptable. The Verify band sets `data-theme="dark"` on its own element, so it uses the dark tokens in both themes.
+- **Contrast.** Text meets 4.5:1 (§3), including text on glass, whatever scrolls beneath it; a glass tint too thin to guarantee that is not acceptable. The navigation bar, which glides over everything including the dark Verify band, is therefore 92% of `--bg` (about 5:1 for its links over black in light mode), not the thinner `--glass-tint`. The Verify band sets `data-theme="dark"` on its own element, so it uses the dark tokens in both themes.
 - **Controls.** Every control has a visible 2 px `--accent` focus ring and, on touch, a target of at least 44 px (§9). The Who it's for tabs follow the WAI-ARIA tabs pattern: Left and Right arrows, Home and End move focus and selection, and only the selected tab is in the tab order. The tamper button reports `aria-pressed` and the verdict is a live region.
 - **Illustrations have text equivalents.** The hero stage is `aria-hidden` and described by a screen-reader-only caption; the example rubric and the example terminal are `role="img"` with a full text label.
 - **Structure.** One `h1`; each section is labelled by its heading; the compare table is a real table with a caption and row headers.

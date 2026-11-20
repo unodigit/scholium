@@ -187,7 +187,7 @@ describe("feed route (server render)", () => {
 
     const html = await render({ tab: "reviewed" });
 
-    expect(html).toMatch(/<form[^>]*action="\/"[^>]*method="get"/);
+    expect(html).toMatch(/<form[^>]*action="\/papers"[^>]*method="get"/);
     expect(html).toContain('<input type="hidden" name="tab" value="reviewed"/>');
     expect(html).toContain("<noscript><button");
     expect(html).toContain("Apply");

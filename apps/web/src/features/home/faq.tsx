@@ -2,7 +2,11 @@
 
 import { type ReactNode } from "react";
 
-import { FAQ_ENTRIES } from "./faq";
+// Explicit extension: a bare "./faq" resolves to this very file under Next's
+// bundler (Vite picks faq.ts), which made the production build fail. The
+// ts-expect-error silences TS5097, which fires for any import ending in ".ts".
+// @ts-expect-error "./faq.ts" needs its extension to be unambiguous
+import { FAQ_ENTRIES } from "./faq.ts";
 import { useReveal } from "./reveal";
 import { Icon } from "./icons";
 import "./home.css";

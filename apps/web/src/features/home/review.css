@@ -38,7 +38,7 @@ html[data-home-js] .rubric.in .dots i.f::after { transition: transform 0.55s var
 .rep-state > em { grid-area: 1 / 1; font-style: normal; transition: opacity 0.3s; }
 .rep-state .s2 { opacity: 0; color: var(--verified); font-weight: 600; }
 .rep-lines { margin-top: 10px; display: grid; gap: 6px; }
-.rep-lines b { height: 6px; border-radius: 3px; background: var(--ink-3); opacity: 0.35; transition: opacity 0.5s var(--ease-out), background-color 0.5s; }
+.rep-lines b { height: 6px; border-radius: 3px; background: var(--ink-2); opacity: 0.35; transition: opacity 0.5s var(--ease-out), background-color 0.5s; }
 .rep-lines b:nth-child(2) { width: 82%; }
 .rep-lines b:nth-child(3) { width: 58%; }
 .sealed.open .shackle { transform: translateY(-3.5px) rotate(-24deg); }

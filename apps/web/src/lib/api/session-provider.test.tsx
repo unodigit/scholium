@@ -81,14 +81,53 @@ describe("SessionProvider", () => {
   });
 
   it("does not hold up a public page", async () => {
-    pathnameValue = "/";
-    window.history.replaceState(null, "", "/");
+    pathnameValue = "/papers";
+    window.history.replaceState(null, "", "/papers");
 
     render(page("public feed"));
 
     expect(screen.getByText("public feed")).toBeTruthy();
     await waitFor(() => expect(bootstrapMock).toHaveBeenCalledTimes(1));
     expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("makes no API call on the homepage, which is static and self-contained", async () => {
+    pathnameValue = "/";
+    window.history.replaceState(null, "", "/");
+
+    render(page("homepage"));
+
+    // Not held up, and nothing was asked of the API after the effects ran...
+    expect(screen.getByText("homepage")).toBeTruthy();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(bootstrapMock).not.toHaveBeenCalled();
+
+    // ...nor when the browser restores the page from the back-forward cache.
+    const restored = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(restored, "persisted", { value: true });
+    await act(async () => {
+      window.dispatchEvent(restored);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(bootstrapMock).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("restores the session as soon as the visitor moves from the homepage to another page", async () => {
+    pathnameValue = "/";
+    window.history.replaceState(null, "", "/");
+    const view = render(page("anywhere"));
+    expect(bootstrapMock).not.toHaveBeenCalled();
+
+    pathnameValue = "/me";
+    window.history.replaceState(null, "", "/me");
+    view.rerender(page("anywhere"));
+
+    await waitFor(() => expect(bootstrapMock).toHaveBeenCalledTimes(1));
+    // A protected page waits for that answer instead of showing its content.
+    expect(screen.queryByText("anywhere")).toBeNull();
   });
 
   it("redirects to sign-in when the session dies while a protected page is open", async () => {

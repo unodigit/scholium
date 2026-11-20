@@ -18,6 +18,14 @@
  *
  * Public pages render immediately: the bootstrap still runs (so the nav can
  * show the signed-in state), but nothing waits on it.
+ *
+ * The homepage (`/`) is the one page that does not restore the session. It is
+ * a static, self-contained page that makes no API call and no request to
+ * another origin (docs/design.md section 5.9), so loading it asks the API for
+ * nothing. Its navigation bar shows the signed-in actions only when a session
+ * is already in memory (after signing in, or after a move from another page);
+ * on a fresh load it shows the signed-out ones. The restore runs as soon as the
+ * visitor moves to any other page.
  */
 
 import { usePathname, useRouter } from "next/navigation";
@@ -45,6 +53,9 @@ function RestoringSession() {
   );
 }
 
+/** The homepage: static, and it makes no API call, the session restore included. */
+const HOMEPAGE_PATH = "/";
+
 /** The current address, as a `?next=` target for sign-in. */
 function currentTarget(): string {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -60,6 +71,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const protectedRoute = isProtectedPath(pathname);
+  const onHomepage = pathname === HOMEPAGE_PATH;
   // False on the server and on the first client render, so the fallback
   // hydrates exactly as it was rendered.
   const [settled, setSettled] = useState(false);
@@ -88,7 +100,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
     };
   }, []);
 
-  useEffect(() => restore(), [restore]);
+  useEffect(() => (onHomepage ? undefined : restore()), [onHomepage, restore]);
 
   // Leaving the site and coming back (the ORCID detour is the common one) can
   // restore this document from the back-forward cache, or bring a tab that was
@@ -96,6 +108,9 @@ export function SessionProvider({ children }: SessionProviderProps) {
   // the access token is no longer in memory, ask the refresh cookie again
   // instead of deciding the visitor is signed out.
   useEffect(() => {
+    if (onHomepage) {
+      return;
+    }
     const recheck = (): void => {
       if (tokenStore.isAuthenticated) {
         return;
@@ -119,7 +134,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
       window.removeEventListener("pageshow", onPageShow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [restore]);
+  }, [onHomepage, restore]);
 
   // A protected page without a session is not shown; sign-in brings the
   // visitor back to exactly this address.

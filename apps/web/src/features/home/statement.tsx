@@ -58,7 +58,11 @@ export function Statement() {
     <section className="section" aria-labelledby="why-title">
       <div className="wrap narrow">
         <h2 id="why-title" className="eyebrow">Why Scholium</h2>
-        <p className="statement-text" ref={paraRef} data-words="" />
+        {/* The words are in the server-rendered HTML, plain and fully inked, so
+            the paragraph reads with scripts off and to crawlers. Once mounted,
+            the effect above swaps the text for one span per word, which ink in
+            as the paragraph scrolls through the viewport. */}
+        <p className="statement-text" ref={paraRef} data-words="">{STATEMENT}</p>
       </div>
     </section>
   );

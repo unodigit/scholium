@@ -1,12 +1,24 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import { Icon } from "./icons";
 import { HeroStage } from "./hero-stage";
 import "./home.css";
 
 export function Hero() {
+  // The entrance plays from the first frame after mount, as in the reference.
+  // Under `html[data-home-js]` the hero's pieces start hidden, and `.play` is
+  // what releases them; the server renders without it, so with scripts off
+  // nothing waits for it (the hidden start states are not armed either).
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setPlaying(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return (
-    <section className="hero" id="top" aria-labelledby="hero-title">
+    <section className={playing ? "hero play" : "hero"} id="top" aria-labelledby="hero-title">
       <div className="hero-ruling" aria-hidden="true"></div>
       <div className="wrap hero-copy">
         <p className="hero-eyebrow h-in" style={{ ["--t" as string]: 0 }}>

@@ -58,7 +58,7 @@ code, kbd { font-family: var(--mono); font-size: 0.92em; }
 }
 .skip {
   position: absolute; left: 12px; top: -60px; z-index: 100;
-  padding: 10px 16px; border-radius: 999px; background: var(--accent); color: var(--on-accent);
+  padding: 10px 16px; border-radius: 999px; background: var(--accent); color: var(--accent-ink);
   font-weight: 600; transition: top 0.2s var(--ease-out);
 }
 .skip:focus { top: 12px; }
@@ -110,7 +110,7 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
   transition: transform 0.12s var(--ease-out), background-color 0.2s var(--ease-out), filter 0.12s var(--ease-out);
 }
 .btn:active { transform: scale(0.97); }
-.btn-filled { background: var(--accent); color: var(--on-accent); }
+.btn-filled { background: var(--accent); color: var(--accent-ink); }
 .btn-filled:hover { filter: brightness(1.1); }
 .btn-filled:active { filter: brightness(0.94); }
 .btn-tinted { background: color-mix(in srgb, var(--accent) 11%, transparent); color: var(--accent); }
@@ -164,9 +164,14 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
    Navigation — Liquid Glass bar that materialises once you scroll.
    ========================================================================== */
 .nav { position: sticky; top: 0; z-index: 50; height: 60px; }
+/* The bar glides over whatever scrolls beneath it, the near-black Verify band
+   included, so its tint must be dense enough to hold 4.5:1 for the links on top
+   (docs/design.md section 5.9): 92% of the themed page colour gives about 5:1 over
+   black in light mode and better in dark. The shared --glass-tint is thinner and
+   is for surfaces that sit on a known background. */
 .nav::before {
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: var(--glass-tint);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
           backdrop-filter: blur(20px) saturate(180%);
   box-shadow: inset 0 1px 0 var(--glass-hi), inset 0 -0.5px 0 var(--hairline), 0 6px 24px -14px rgba(0, 0, 0, 0.25);
@@ -174,7 +179,8 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
 }
 .nav.scrolled::before { opacity: 1; }
 .nav-inner { position: relative; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.nav-logo { display: inline-flex; align-items: center; min-height: 44px; border-radius: 8px; }
+/* The logo never shrinks: its mark keeps the delivered proportions at any width. */
+.nav-logo { display: inline-flex; align-items: center; flex: none; min-height: 44px; border-radius: 8px; }
 .nav-links { display: flex; gap: 4px; }
 .nav-links a {
   display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: 999px;
@@ -187,8 +193,18 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
   font-size: 0.9375rem; font-weight: 500; color: var(--ink-2);
 }
 .nav-signin:hover { color: var(--ink); }
-@media (max-width: 920px) { .nav-links { display: none; } }
-@media (max-width: 420px) { .nav-signin { display: none; } }
+/* Under 920px the links are hidden; their <nav> wrapper goes too, so it adds no empty flex gap. */
+@media (max-width: 920px) { .nav-links, .nav-inner > nav { display: none; } }
+@media (max-width: 420px) { .nav-signin { display: none; } .nav-inner { gap: 12px; } }
+/* Touch: every control in the bar is at least 44px tall (docs/design.md section 9). */
+@media (pointer: coarse) { .btn-sm, .nav-signin, .nav-links a { min-height: 44px; } }
+/* Down to 320px the bar still fits on one row: the logo gives back its outer margin
+   (the glyph and wordmark keep their proportions) and the button some padding. */
+@media (max-width: 360px) {
+  .nav-inner { gap: 8px; }
+  .nav-logo .sch-brand-logo { margin-inline: 0; }
+  .nav-cta .btn-sm { padding-inline: 12px; }
+}
 
 
 
@@ -311,7 +327,7 @@ h3 { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height
 }
 .avatar {
   display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
-  background: var(--accent); color: var(--on-accent); font-size: 0.625rem; font-weight: 700; letter-spacing: 0.02em;
+  background: var(--accent); color: var(--accent-ink); font-size: 0.625rem; font-weight: 700; letter-spacing: 0.02em;
 }
 .rmini { margin-top: 10px; display: grid; gap: 7px; }
 .rmini div { display: grid; grid-template-columns: 1fr auto; align-items: center; font-size: 0.8125rem; color: var(--ink-2); }
@@ -401,7 +417,7 @@ html[data-home-js] .hero.play .verify-ok path { stroke-dasharray: 1; stroke-dash
   font-size: clamp(1.625rem, 0.9rem + 2.7vw, 3.125rem);
   line-height: 1.22; letter-spacing: -0.02em; text-wrap: pretty;
 }
-.statement-text .w { color: var(--ink-3); transition: color 0.35s var(--ease-out); }
+.statement-text .w { color: var(--ink-2); transition: color 0.35s var(--ease-out); }
 .statement-text .w.on { color: var(--ink); }
 
 

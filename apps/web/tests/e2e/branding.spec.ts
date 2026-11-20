@@ -204,7 +204,7 @@ test.describe("the delivered icon set", () => {
       name: "Scholium",
       short_name: "scholium",
       description: BRAND_TAGLINE,
-      start_url: "/",
+      start_url: "/papers",
       display: "standalone",
       background_color: "#FBFAF7",
       theme_color: "#2F4BA0",
@@ -268,7 +268,7 @@ test.describe("the brand lockup in the navigation", () => {
 
     const home = page.getByRole("link", { name: "Scholium home" });
     await expect(home).toBeVisible();
-    await expect(home).toHaveAttribute("href", "/");
+    await expect(home).toHaveAttribute("href", "/papers");
 
     // The lockup is the glyph (accent page, text lines, margin note, bracket)
     // plus the lowercase serif wordmark.
@@ -384,7 +384,8 @@ test.describe("the branded entry and fallback screens", () => {
 
     await home.click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page).toHaveTitle("Home · Scholium");
+    // `/` is the homepage, which carries its own absolute title.
+    await expect(page).toHaveTitle("Scholium — signed, open preprints and peer review");
   });
 });
 
