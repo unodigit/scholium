@@ -37,6 +37,8 @@ from the three-phase outline below rather than abandoning the route:
    not), each step carrying its own expectation.
 2. **Browser verification** — browser-harness, screenshot before and after
    every action, evidence saved under `.claw-forge/journeys/screenshots/`.
+   One reused tab per persona: open pages only through `persona(name)` from
+   `qa_tabs.py` in this folder, never `new_tab`, and `prune_tabs()` at sweep end.
    Verdicts are `pass` / `fail` / `blocked` — **a journey a real user
    cannot reach is `blocked`, never `pass`**, no matter what state-seeding
    diagnostics show.

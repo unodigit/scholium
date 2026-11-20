@@ -103,8 +103,20 @@ Ground rules:
 - Start the app the project's own way (`npm run dev`, `uv run …`, whatever
   the README says) and record the command + URL in `_run-log.md`. If it
   cannot start, that is finding #1 — stop and report.
-- First navigation is `new_tab(url)`, never `goto_url` (that clobbers the
-  user's active tab).
+- One tab per persona, reused. Verify in a dedicated QA browser
+  (`BU_CDP_URL`), one verifier per browser. In every browser-harness call,
+  after the project's own helpers, load
+  `exec(open("<repo>/.claude/skills/claw-forge-verify/qa_tabs.py").read())`
+  and reach every page through `persona(name)`: it gives a persona its own
+  browser context and tab the first time, then returns that same tab in every
+  later call, sweep and session. Navigate inside it with `goto_url`. Never
+  call `new_tab`, `Target.createTarget` or `Target.createBrowserContext`
+  yourself, and never write your own `persona()`: per-sweep copies of it
+  opened a new context per persona every sweep and never closed them (one
+  QA Chrome reached 337 renderers and 8.6 GB after five sweeps).
+- Set `QA_SWEEP` to the sweep label (`s21`, …) so each persona's first use in
+  a sweep starts it signed out. When the sweep ends, call `prune_tabs()` and
+  record `tab_report()` in `_run-log.md`.
 - Screenshot-first: capture, act, capture again to verify the action took.
   Save every step's screenshot to `screenshots/<journey-id>/<NN>-<label>.png`
   — the after-shot is the evidence the journey file cites.
