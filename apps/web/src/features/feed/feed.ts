@@ -1,6 +1,7 @@
 /**
- * The home feed: the wire shape of `GET /v1/papers`, the `/?tab=&category=&sort=`
- * URL state, and the words and formats a feed row uses.
+ * The home feed: the wire shape of `GET /v1/papers`, the
+ * `/papers?tab=&category=&sort=` URL state, and the words and formats a feed
+ * row uses.
  *
  * The API (plugin: catalog, feature 82) lists papers that have a listed
  * version, narrowed by a `tab` and a `category` and ordered by a `sort`:
@@ -31,7 +32,7 @@ import { DEFAULT_CATEGORIES, type NavCategory } from "../../components/nav/categ
 import { formatDate as formatReaderDate } from "../ui-kit/format-date";
 
 /** The route path (docs/design.md §4). */
-export const FEED_PATH = "/";
+export const FEED_PATH = "/papers";
 
 /** Listing endpoint, relative to `/v1`. */
 export const FEED_ENDPOINT = "/papers";
@@ -112,7 +113,7 @@ function oneOf<T extends string>(list: readonly T[], text: string): T | undefine
 }
 
 /**
- * Read `/?tab=…&category=…&sort=…`.
+ * Read `/papers?tab=…&category=…&sort=…`.
  *
  * Anything the page does not understand falls back to its default instead of
  * becoming a request the API would answer with a `422`: an unknown tab or
@@ -129,9 +130,9 @@ export function parseFeedParams(input: FeedParamsInput = {}): FeedState {
 }
 
 /**
- * `/?tab=…` for a state — the one place the feed URL is built.
+ * `/papers?tab=…` for a state — the one place the feed URL is built.
  *
- * Defaults are left out, so the first visit is the bare `/` and a link
+ * Defaults are left out, so the first visit is the bare `/papers` and a link
  * reads as short as it can.
  */
 export function feedHref(state: FeedState, path: string = FEED_PATH): string {
@@ -649,7 +650,8 @@ export interface CategoryChoice {
  * The category selector's options: the launch taxonomy first (the same list
  * the nav's Categories menu offers), then every other category seen in a
  * paper or chosen in the URL, in alphabetical order. A chosen category is
- * always present, so a link to `/?category=astro-ph.HE` shows what it filters.
+ * always present, so a link to `/papers?category=astro-ph.HE` shows what it
+ * filters.
  */
 export function categoryChoices(
   seen: readonly string[] = [],

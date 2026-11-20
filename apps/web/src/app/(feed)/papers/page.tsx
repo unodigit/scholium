@@ -8,10 +8,10 @@ import {
   type FeedPageData,
   type FeedParamsInput,
   type FeedState,
-} from "../../features/feed";
+} from "../../../features/feed";
 
 export const metadata: Metadata = {
-  title: "Home",
+  title: "Papers",
   description:
     "The latest and reviewed preprints on Scholium, by category, newest first and with no vote counts.",
 };
@@ -30,8 +30,8 @@ interface FeedRouteProps {
 }
 
 /**
- * `/?tab=…&category=…&sort=…` — the first page of the feed, rendered on the
- * server.
+ * `/papers?tab=…&category=…&sort=…` — the first page of the feed, rendered on
+ * the server.
  *
  * The route reads the same `searchParams` the client component writes and
  * fetches once, so the first HTML response already contains the rows and works

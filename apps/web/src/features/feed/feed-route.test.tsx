@@ -3,13 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import FeedLayout from "../../app/(feed)/layout";
-import FeedRoutePage, { dynamic, metadata } from "../../app/(feed)/page";
+import FeedRoutePage, { dynamic, metadata } from "../../app/(feed)/papers/page";
 
 // The layout mounts the global nav, which needs Next's app router. Rendering a
 // layout outside Next has none, so stand in for the two modules that want it.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  usePathname: () => "/",
+  usePathname: () => "/papers",
 }));
 
 vi.mock("next/link", async () => {
@@ -26,8 +26,8 @@ vi.mock("next/link", async () => {
 });
 
 /**
- * `/` is server-rendered: the first HTML response must already contain the
- * papers, so the home page works before any JavaScript runs. These tests
+ * `/papers` is server-rendered: the first HTML response must already contain
+ * the papers, so the feed works before any JavaScript runs. These tests
  * render the route with a stubbed `fetch`, the way `GET /v1/papers` answers.
  */
 
@@ -171,7 +171,7 @@ describe("feed route (server render)", () => {
 
     const html = await render();
 
-    expect(html).toMatch(/<a[^>]*href="\/"[^>]*aria-current="page"[^>]*>Latest<\/a>/);
+    expect(html).toMatch(/<a[^>]*href="\/papers"[^>]*aria-current="page"[^>]*>Latest<\/a>/);
     expect(html).toContain(">Reviewed</a>");
     expect(html).toContain(">Following</a>");
     expect(html).toContain("Category");
@@ -315,7 +315,7 @@ describe("feed route (server render)", () => {
   });
 
   it("has a title and a description", () => {
-    expect(metadata.title).toBe("Home");
+    expect(metadata.title).toBe("Papers");
     expect(String(metadata.description)).toContain("no vote counts");
   });
 });

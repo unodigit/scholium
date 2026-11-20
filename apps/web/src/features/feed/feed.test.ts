@@ -115,17 +115,19 @@ describe("parseFeedParams", () => {
 });
 
 describe("feedHref", () => {
-  it("is the bare root for the default view", () => {
-    expect(feedHref(DEFAULT_FEED_STATE)).toBe("/");
+  it("is the bare feed path for the default view", () => {
+    expect(feedHref(DEFAULT_FEED_STATE)).toBe("/papers");
   });
 
   it("carries only what differs from the default", () => {
-    expect(feedHref({ tab: "reviewed", category: "", sort: "newest" })).toBe("/?tab=reviewed");
+    expect(feedHref({ tab: "reviewed", category: "", sort: "newest" })).toBe(
+      "/papers?tab=reviewed",
+    );
     expect(feedHref({ tab: "latest", category: "cs.AI", sort: "newest" })).toBe(
-      "/?category=cs.AI",
+      "/papers?category=cs.AI",
     );
     expect(feedHref({ tab: "latest", category: "", sort: "recently_reviewed" })).toBe(
-      "/?sort=recently_reviewed",
+      "/papers?sort=recently_reviewed",
     );
   });
 
@@ -145,7 +147,7 @@ describe("feedHref", () => {
 
   it("encodes a category that holds reserved characters", () => {
     expect(feedHref({ tab: "latest", category: "a&b", sort: "newest" })).toBe(
-      "/?category=a%26b",
+      "/papers?category=a%26b",
     );
   });
 });
@@ -655,7 +657,7 @@ describe("categoriesOf", () => {
 describe("signInHref", () => {
   it("returns to the feed view the visitor was on", () => {
     expect(signInHref({ tab: "following", category: "", sort: "newest" })).toBe(
-      "/signin?next=%2F%3Ftab%3Dfollowing",
+      "/signin?next=%2Fpapers%3Ftab%3Dfollowing",
     );
   });
 });

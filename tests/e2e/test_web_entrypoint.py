@@ -81,7 +81,7 @@ def test_every_page_carries_the_security_headers(web):
 
 def test_the_feed_shows_the_papers_the_api_lists(web):
     origin, _, _, paper = web
-    page = httpx.get(f"{origin}/")
+    page = httpx.get(f"{origin}/papers")
     assert page.status_code == 200
     assert "text/html" in page.headers["content-type"]
     # Server-rendered, or fetched by the page: either way it ends up on the screen,

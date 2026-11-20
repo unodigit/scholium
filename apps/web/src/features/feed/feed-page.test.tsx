@@ -102,7 +102,7 @@ function renderFeed(props: Partial<React.ComponentProps<typeof FeedPage>> = {}) 
 afterEach(() => {
   cleanup();
   tokenStore.clear();
-  window.history.replaceState(null, "", "/");
+  window.history.replaceState(null, "", "/papers");
 });
 
 describe("FeedPage layout", () => {
@@ -112,9 +112,9 @@ describe("FeedPage layout", () => {
     const tabs = within(screen.getByRole("navigation", { name: "Feed" })).getAllByRole("link");
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Latest", "Reviewed", "Following"]);
     expect(tabs.map((tab) => tab.getAttribute("href"))).toEqual([
-      "/",
-      "/?tab=reviewed",
-      "/?tab=following",
+      "/papers",
+      "/papers?tab=reviewed",
+      "/papers?tab=following",
     ]);
     expect(tabs[0].getAttribute("aria-current")).toBe("page");
     expect(tabs[1].getAttribute("aria-current")).toBeNull();
@@ -126,7 +126,7 @@ describe("FeedPage layout", () => {
     });
 
     const reviewed = screen.getByRole("link", { name: "Reviewed" });
-    expect(reviewed.getAttribute("href")).toBe("/?tab=reviewed&category=cs.AI&sort=recently_updated");
+    expect(reviewed.getAttribute("href")).toBe("/papers?tab=reviewed&category=cs.AI&sort=recently_updated");
   });
 
   it("has a category selector and a sort selector with every option", () => {
@@ -314,7 +314,7 @@ describe("FeedPage tabs and selectors", () => {
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
     expect(load).toHaveBeenCalledWith({ tab: "reviewed", category: "", sort: "newest" });
-    expect(updateUrl).toHaveBeenCalledWith("/?tab=reviewed", "push");
+    expect(updateUrl).toHaveBeenCalledWith("/papers?tab=reviewed", "push");
 
     await screen.findByRole("heading", { level: 2, name: PREPRINT.title });
     expect(screen.queryByRole("heading", { level: 2, name: REVIEWED.title })).toBeNull();
@@ -390,7 +390,7 @@ describe("FeedPage tabs and selectors", () => {
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
     expect(load).toHaveBeenCalledWith({ tab: "latest", category: "cs.LG", sort: "newest" });
-    expect(updateUrl).toHaveBeenCalledWith("/?category=cs.LG", "push");
+    expect(updateUrl).toHaveBeenCalledWith("/papers?category=cs.LG", "push");
   });
 
   it("returns to every category", async () => {
@@ -404,7 +404,7 @@ describe("FeedPage tabs and selectors", () => {
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
     expect(load).toHaveBeenCalledWith(DEFAULT_FEED_STATE);
-    expect(updateUrl).toHaveBeenCalledWith("/", "push");
+    expect(updateUrl).toHaveBeenCalledWith("/papers", "push");
   });
 
   it("re-sorts when the sort selector changes", async () => {
@@ -416,7 +416,7 @@ describe("FeedPage tabs and selectors", () => {
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
     expect(load).toHaveBeenCalledWith({ tab: "latest", category: "", sort: "recently_reviewed" });
-    expect(updateUrl).toHaveBeenCalledWith("/?sort=recently_reviewed", "push");
+    expect(updateUrl).toHaveBeenCalledWith("/papers?sort=recently_reviewed", "push");
   });
 
   it("does not reload the page when Enter is pressed in a selector", () => {
@@ -453,7 +453,7 @@ describe("FeedPage tabs and selectors", () => {
 
   it("follows the browser's back button", async () => {
     const { load } = renderFeed();
-    window.history.pushState(null, "", "/?tab=reviewed&sort=recently_updated");
+    window.history.pushState(null, "", "/papers?tab=reviewed&sort=recently_updated");
 
     await act(async () => {
       window.dispatchEvent(new PopStateEvent("popstate"));
@@ -607,7 +607,7 @@ describe("FeedPage following tab", () => {
       screen.getByText("Sign in to follow categories and see their new papers here."),
     ).toBeTruthy();
     const signIn = screen.getByRole("link", { name: "Sign in" });
-    expect(signIn.getAttribute("href")).toBe("/signin?next=%2F%3Ftab%3Dfollowing");
+    expect(signIn.getAttribute("href")).toBe("/signin?next=%2Fpapers%3Ftab%3Dfollowing");
     expect(load).not.toHaveBeenCalled();
     expect(screen.queryByRole("status")).toBeNull();
   });
@@ -742,7 +742,7 @@ describe("FeedPage errors and empty states", () => {
     fireEvent.click(screen.getByRole("link", { name: "Show all categories" }));
 
     await waitFor(() => expect(load).toHaveBeenCalledWith(DEFAULT_FEED_STATE));
-    expect(updateUrl).toHaveBeenCalledWith("/", "push");
+    expect(updateUrl).toHaveBeenCalledWith("/papers", "push");
   });
 
   it("sends an empty Reviewed tab to the latest papers", async () => {
