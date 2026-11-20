@@ -360,6 +360,15 @@ html:not([data-home-js]) .nav::before { opacity: 1; }
   .stage { max-width: 100%; }
   .stage-wrap { max-width: 100%; }
   .paper { max-width: 100%; }
+  /* "Verified · signed by both authors · history intact" is ~348px on one
+     line, wider than the card below 415px: let it wrap inside the paper
+     rather than run past the card and the screen edge. */
+  .verify { min-width: 0; max-width: 100%; }
+  .verify > span {
+    max-width: 100%; white-space: normal; text-wrap: balance;
+    align-items: flex-start; border-radius: var(--corner-card);
+  }
+  .verify-ok svg { flex: 0 0 auto; margin-top: 1px; }
 }
 
 /* Hero entrance (JS only, so crawlers and no-JS readers see everything). */
