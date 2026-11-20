@@ -71,6 +71,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
+from scholium_record_core import did_key_from_signing_key
 from sqlalchemy import (
     Column,
     DateTime,
@@ -159,6 +160,8 @@ event_log_table = Table(
     Column("record_cid", Text, nullable=False),
     Column("record_type", Text, nullable=False),
     Column("author_did", Text, nullable=False),
+    # Decoded per row below, like credentials.vc above.
+    Column("body", Text),
 )
 
 review_table = Table(
@@ -467,18 +470,45 @@ def _erasure_requested(did: str) -> bool:
 
     The erasure route (feature 30) appends the record and deletes the key; a
     deployment that also deletes the ``profile`` row leaves this record as the
-    only trace, so it is what the row-less case is decided on.  Only records
-    the DID itself signed count (``author_did``): the MVP erasure flow is the
-    data subject's own request.
+    only trace, so it is what the row-less case is decided on.  Two forms
+    count, and nothing else does:
+
+    * the current one, which the node authors and signs: ``author_did`` is the
+      node's own ``did:key`` and ``body.subject`` is ``did``.  Anyone can sign
+      a record that names someone, so a record another key authored never
+      erases the DID it names.
+    * the legacy one, which the route appended before the node signed it:
+      ``author_did`` is ``did`` itself.
     """
     if not _table_exists("event_log"):
         return False
-    query = select(event_log_table.c.seq).where(
+    legacy = select(event_log_table.c.seq).where(
         event_log_table.c.author_did == did,
         event_log_table.c.record_type == ERASURE_RECORD_TYPE,
     )
     with db.engine.connect() as conn:
-        return conn.execute(query).first() is not None
+        if conn.execute(legacy).first() is not None:
+            return True
+        node_did = _node_did()
+        if node_did is None:
+            return False
+        node_authored = select(event_log_table.c.body).where(
+            event_log_table.c.author_did == node_did,
+            event_log_table.c.record_type == ERASURE_RECORD_TYPE,
+        )
+        for (cell,) in conn.execute(node_authored):
+            body = _decode_json_cell(cell)
+            if isinstance(body, dict) and body.get("subject") == did:
+                return True
+    return False
+
+
+def _node_did() -> Optional[str]:
+    """The ``did:key`` this node signs its records with, ``None`` without a key."""
+    from app.modules import ledger
+
+    key = ledger.node_signing_key()
+    return None if key is None else did_key_from_signing_key(key)
 
 
 def public_profile(did: str, *, viewer_did: Optional[str] = None) -> PublicProfile:

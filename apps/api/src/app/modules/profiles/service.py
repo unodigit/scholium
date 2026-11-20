@@ -36,6 +36,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from scholium_record_core import did_key_from_signing_key, sign_record
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -204,8 +205,14 @@ def erase_profile(did: str) -> None:
 
     Deletes the per-object key that opens ``profile.enc_blob`` (the blob itself
     is left in place, permanently unreadable) and the email-verification row,
-    then appends an ``erasure.request`` record authored by ``did``.  A later
-    :func:`save_profile` starts over under a fresh key, unverified, which
+    then appends an ``erasure.request`` record naming ``did`` in
+    ``body.subject``.  The node authors and signs the record with its own
+    ``did:key`` (as it does every record it issues on a member's behalf): the
+    member holds no key here and signs nothing, and an unsigned record would
+    make the node's own export fail ``scholium verify`` and ``scholium
+    rebuild``.  A node with no signing key still shreds the profile, but
+    appends no record -- never an unsigned one -- and says so in the log.  A
+    later :func:`save_profile` starts over under a fresh key, unverified, which
     un-erases.
     """
     _require_did(did)
@@ -227,16 +234,28 @@ def erase_profile(did: str) -> None:
 
     from app.modules import ledger
 
+    key = ledger.node_signing_key()
+    if key is None:
+        logger.warning(
+            "the node has no signing key: erased the profile of %s but appended no "
+            "erasure.request, because an unsigned record would fail verification",
+            did,
+        )
+        return
+
     ledger.append(
-        {
-            "v": 1,
-            "type": ERASURE_RECORD_TYPE,
-            "author": did,
-            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "prev": None,
-            "body": {"basis": "data-subject-request"},
-            "proofs": [],
-        }
+        sign_record(
+            {
+                "v": 1,
+                "type": ERASURE_RECORD_TYPE,
+                "author": did_key_from_signing_key(key),
+                "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "prev": None,
+                "body": {"subject": did, "basis": "data-subject-request"},
+                "proofs": [],
+            },
+            key,
+        )
     )
 
 
