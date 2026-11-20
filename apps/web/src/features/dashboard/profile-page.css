@@ -380,7 +380,6 @@ a.pp-chip:focus-visible {
   font-size: var(--type-ui);
   font-weight: 500;
   line-height: var(--leading-ui);
-  text-transform: capitalize;
 }
 
 .pp-review-id {

@@ -74,4 +74,8 @@ describe("profile-page.css", () => {
     expect(rules).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     expect(rules).toMatch(/transition:\s*none/);
   });
+
+  it("does not title-case the recommendation label", () => {
+    expect(rules).not.toMatch(/\.pp-review-rec[^{]*\{[^}]*text-transform/);
+  });
 });
