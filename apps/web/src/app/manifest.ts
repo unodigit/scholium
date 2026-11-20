@@ -4,6 +4,9 @@ import type { MetadataRoute } from "next";
  * The web app manifest, served by Next at `/manifest.webmanifest` and linked
  * from every page's `<head>`.
  *
+ * An installed app opens on the paper feed (`/papers`), not the homepage at
+ * `/`: someone who installed it is a returning reader who wants the papers.
+ *
  * The icons are the PNG renditions under `public/brand`, made from the
  * delivered brand files in `docs/brand`: the plain 192 and 512 tiles for
  * launchers that show the icon as-is, and a full-bleed 512 with the mark kept
@@ -16,7 +19,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Scholium",
     short_name: "scholium",
     description: "Signed, open preprints and peer review",
-    start_url: "/",
+    start_url: "/papers",
     display: "standalone",
     background_color: "#FBFAF7",
     theme_color: "#2F4BA0",

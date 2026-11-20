@@ -95,8 +95,8 @@ describe("the web app manifest", () => {
     expect(app.description).toBe("Signed, open preprints and peer review");
   });
 
-  it("opens the site root as a standalone app in the brand colours", () => {
-    expect(app.start_url).toBe("/");
+  it("opens the paper feed as a standalone app in the brand colours", () => {
+    expect(app.start_url).toBe("/papers");
     expect(app.display).toBe("standalone");
     expect(app.background_color).toBe("#FBFAF7");
     expect(app.theme_color).toBe("#2F4BA0");
