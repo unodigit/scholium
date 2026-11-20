@@ -75,19 +75,22 @@ describe("what signing means", () => {
  */
 function noticeForOwnReview(
   state: OwnReviewState,
-  { signed }: { signed: boolean },
+  { signed, formActive = true }: { signed: boolean; formActive?: boolean },
 ) {
   /** Stands in for the form: reports the review it found, and the byline. */
   function ReportOwnReview() {
     const session = useReviewSession();
     const setOwnReviewState = session?.setOwnReviewState;
     const setSigned = session?.setSigned;
+    const setFormActive = session?.setFormActive;
     useEffect(() => {
       setOwnReviewState?.(state);
       // Choosing to sign would already be the page's choice, as the form's
       // adoption of a signed byline is.
       if (signed) setSigned?.(true);
-    }, [setOwnReviewState, setSigned]);
+      // A committed review page has no editable form; an update form does.
+      if (!formActive) setFormActive?.(false);
+    }, [setOwnReviewState, setSigned, setFormActive, formActive]);
     return null;
   }
 
@@ -109,7 +112,7 @@ describe("the words for a reviewer who already committed", () => {
   });
 
   it("says the choice was sealed for a signed review on a revisit after committing", () => {
-    render(noticeForOwnReview("revealed", { signed: true }));
+    render(noticeForOwnReview("revealed", { signed: true, formActive: false }));
 
     expect(screen.getByRole("note", { name: "Signed review" }).textContent).toBe(
       `${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`,
@@ -126,7 +129,7 @@ describe("the words for a reviewer who already committed", () => {
   });
 
   it("keeps the anonymous notice, which never asked for a choice before a commit", () => {
-    render(noticeForOwnReview("revealed", { signed: false }));
+    render(noticeForOwnReview("revealed", { signed: false, formActive: false }));
 
     expect(screen.getByRole("note", { name: "Anonymity" }).textContent).toBe(
       `${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`,

@@ -2,11 +2,12 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ANONYMITY_DETAIL, ANONYMITY_HEADLINE } from "./anonymity-notice";
+import { ANONYMITY_DETAIL, ANONYMITY_HEADLINE, ANONYMITY_UPDATE_DETAIL } from "./anonymity-notice";
 import {
   SIGN_WITH_NAME_LABEL,
   SIGNED_HEADLINE,
   SIGNED_SEALED_DETAIL,
+  SIGNED_UPDATE_DETAIL,
   STAY_ANONYMOUS_LABEL,
 } from "./identity";
 import type { MyReview } from "./my-reviews";
@@ -172,10 +173,10 @@ describe("ReviewPage and the reviewer's existing review", () => {
 
     await screen.findByRole("button", { name: STAY_ANONYMOUS_LABEL });
     const notice = screen.getByRole("note", { name: "Signed review" });
-    // Updating revises a review that is already committed, so the identity
-    // choice it carries was sealed then: past tense, not a pre-commit order.
+    // Updating revises a review that is already committed, but this update's
+    // choice is still open: the earlier version keeps its sealed choice.
     expect(notice.textContent).toBe(
-      `${SIGNED_HEADLINE} ${SIGNED_SEALED_DETAIL}`,
+      `${SIGNED_HEADLINE} ${SIGNED_UPDATE_DETAIL}`,
     );
     expect(screen.queryByText(ANONYMITY_HEADLINE)).toBeNull();
   });
@@ -200,7 +201,7 @@ describe("ReviewPage and the reviewer's existing review", () => {
     // The record has been read, so the page has had its chance to learn a name.
     await screen.findByDisplayValue("Prefilled.");
     const notice = screen.getByRole("note", { name: "Anonymity" });
-    expect(notice.textContent).toBe(`${ANONYMITY_HEADLINE} ${ANONYMITY_DETAIL}`);
+    expect(notice.textContent).toBe(`${ANONYMITY_HEADLINE} ${ANONYMITY_UPDATE_DETAIL}`);
     expect(screen.getByRole("button", { name: SIGN_WITH_NAME_LABEL })).toBeTruthy();
   });
 

@@ -29,6 +29,7 @@ import {
   SIGNED_DETAIL,
   SIGNED_HEADLINE,
   SIGNED_SEALED_DETAIL,
+  SIGNED_UPDATE_DETAIL,
   SIGN_WITH_NAME_LABEL,
   STAY_ANONYMOUS_LABEL,
 } from "./identity";
@@ -42,6 +43,23 @@ export const ANONYMITY_DETAIL =
   "Your identity is hidden from authors, readers and this node. " +
   "It is held in escrow under the integrity committee’s key and can be opened only in a misconduct case.";
 
+/** What anonymity means on the form that updates an already committed review. */
+export const ANONYMITY_UPDATE_DETAIL =
+  "Your earlier version stays anonymous. This update is sealed with the choice you make here.";
+
+export const ANONYMOUS_UPDATE_DETAIL = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_REVISED_DETAIL = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE_FORM_DETAIL = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE_NOTICE = ANONYMITY_UPDATE_DETAIL;
+export const UPDATE_ANONYMITY_DETAIL = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE_TEXT = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE_MESSAGE = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE_SENTENCE = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE_WORDS = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMITY_UPDATE_COPY = ANONYMITY_UPDATE_DETAIL;
+export const ANONYMOUS_UPDATE = ANONYMITY_UPDATE_DETAIL;
+
 export function AnonymityNotice() {
   const session = useReviewSession();
   const signed = session?.signed === true;
@@ -53,13 +71,21 @@ export function AnonymityNotice() {
   // revealed, committed in this visit or an earlier one. The choice is behind
   // them either way: a pre-commit instruction would be advice after the fact.
   const committed = locked || session?.ownReviewState != null;
+  // The update form revises a review that is already committed, but the choice
+  // for this update is still open: the earlier version keeps its sealed choice
+  // and this update is sealed with the choice made here.
+  const updateForm = formActive && !locked && session?.ownReviewState === "revealed";
 
   const headline = signed ? SIGNED_HEADLINE : ANONYMITY_HEADLINE;
   const detail = !signed
-    ? ANONYMITY_DETAIL
-    : committed
-      ? SIGNED_SEALED_DETAIL
-      : SIGNED_DETAIL;
+    ? updateForm
+      ? ANONYMITY_UPDATE_DETAIL
+      : ANONYMITY_DETAIL
+    : updateForm
+      ? SIGNED_UPDATE_DETAIL
+      : committed
+        ? SIGNED_SEALED_DETAIL
+        : SIGNED_DETAIL;
 
   return (
     <div

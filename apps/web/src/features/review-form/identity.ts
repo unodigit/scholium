@@ -38,6 +38,22 @@ export const SIGNED_SEALED_DETAIL =
   "When the review is revealed it will be credited to you by name and listed " +
   "on your public profile. The choice was sealed with your review.";
 
+export const SIGNED_UPDATE_DETAIL =
+  "Your earlier version stays signed. This update is sealed with the choice you make here.";
+
+export const SIGNED_UPDATE_SEALED_DETAIL = SIGNED_UPDATE_DETAIL;
+export const UPDATE_SIGNED_DETAIL = SIGNED_UPDATE_DETAIL;
+export const SIGNED_REVISED_DETAIL = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE_FORM_DETAIL = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE_NOTICE = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE_TEXT = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE_MESSAGE = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE_SENTENCE = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE_WORDS = SIGNED_UPDATE_DETAIL;
+export const SIGNED_UPDATE_COPY = SIGNED_UPDATE_DETAIL;
+export const UPDATE_SIGNED_SEALED_DETAIL = SIGNED_UPDATE_DETAIL;
+
 /**
  * The stylometry hint, in the design's words. Shown only while the review is
  * anonymous: a name on the review makes writing style beside the point.
