@@ -564,10 +564,11 @@ function GuardiansBody({
           <ul className="wa-guardian-list">
             {savedList.map((value, index) => {
               const label = names[value] ?? shortDid(value);
+              const named = Boolean(names[value]);
               return (
                 <li
                   key={`${value}-${index}`}
-                  className="wa-note wa-input--mono"
+                  className={named ? "wa-note" : "wa-note wa-input--mono"}
                   title={value}
                   style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                 >

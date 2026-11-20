@@ -338,6 +338,13 @@ describe("useOnboarding", () => {
       expect(result.current.error).toBe(ONBOARDING_SESSION_EXPIRED_MESSAGE);
       expect(result.current.steps.find((step) => step.id === "categories")?.done).toBe(false);
     });
+
+    it("preselects saved categories after a reload", async () => {
+      const { services, storage } = makeServices();
+      seed(storage, { categories: ["cs.AI", "cs.LG"] });
+      const { result } = await renderOnboarding(services);
+      expect(result.current.categories.selected).toEqual(["cs.AI", "cs.LG"]);
+    });
   });
 
   describe("set guardians (required before the first submission)", () => {

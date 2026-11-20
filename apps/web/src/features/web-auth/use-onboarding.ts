@@ -324,6 +324,21 @@ export function useOnboarding(options: UseOnboardingOptions = {}): UseOnboarding
         // until a new attempt starts, so the user sees why nothing was linked.
         error: next.orcidError,
       });
+      // Reload must reflect what was saved: the picked categories come back as
+      // selected chips, and any saved pick that is not a preset becomes a chip.
+      setCategories((current) => {
+        const choices = [...ONBOARDING_CATEGORY_CHOICES];
+        for (const category of next.categories) {
+          if (!choices.includes(category)) {
+            choices.push(category);
+          }
+        }
+        return {
+          ...current,
+          choices,
+          selected: [...next.categories],
+        };
+      });
       setPasskeyReady(keyReady);
       setDid(accountDid);
       setReady(true);
