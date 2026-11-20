@@ -19,7 +19,12 @@
  *       notice and hydrates the same retry in place.
  *   A read that failed for any other reason is a message with a way back to
  *   search.
- * - {@link paperRouteMetadata} titles the page with the paper's title.
+ * - {@link paperRouteMetadata} titles the page with the paper's title and,
+ *   for a listed paper, adds its canonical URL and Highwire citation tags
+ *   ({@link paperCitationMetadata}). A listed page also renders one
+ *   schema.org `ScholarlyArticle` in JSON-LD
+ *   ({@link ScholarlyArticleJsonLd}); every other outcome emits neither and
+ *   stays out of indexes.
  *
  * **A tombstone is a `200` here, not a `451`.** Next.js lets a page choose
  * only 404, 403 and 401 (`notFound()`, `forbidden()`, `unauthorized()`); a
@@ -47,6 +52,10 @@ import {
   type PaperPageData,
 } from "./paper-page-data";
 import { PaperPageNotice, PaperPageView } from "./paper-page-view";
+import {
+  ScholarlyArticleJsonLd,
+  paperCitationMetadata,
+} from "./scholarly-metadata";
 import {
   loadPaperRecords,
   tombstoneOf,
@@ -130,7 +139,17 @@ export async function renderPaperRoute(
     }
     return <PaperPageNotice message={read.message} />;
   }
-  return <PaperPageView data={read.data} />;
+  return (
+    <>
+      {/* A listed paper publishes one ScholarlyArticle for search and answer
+          engines. The other outcomes above render no JSON-LD at all. */}
+      <ScholarlyArticleJsonLd
+        data={read.data}
+        versionPage={address.version !== null}
+      />
+      <PaperPageView data={read.data} />
+    </>
+  );
 }
 
 /** The longest description a search result or link preview needs. */
@@ -153,20 +172,34 @@ function describe(abstract: string): string {
   return `${lastSpace > 0 ? cut.slice(0, lastSpace) : cut}…`;
 }
 
-/** The page's `<title>` and description. A page with no paper is not indexed. */
+/**
+ * The page's `<title>`, description and scholarly metadata.
+ *
+ * A listed paper is citable: the canonical URL names the page the reader is
+ * on (`/p/{id}` for the newest version, `/p/{id}/v{n}` for a version page),
+ * and the Highwire citation tags name its title, authors, dates, abstract,
+ * PDF and publisher. Every other outcome — a bad address, a paper this node
+ * does not list, a held or tombstoned version, a failed read — adds none of
+ * it and is kept out of indexes.
+ */
 export async function paperRouteMetadata(
   segments: readonly string[],
 ): Promise<Metadata> {
   const address = parsePaperAddress(segments);
-  const read =
-    address === null ? null : await readPaper(address.id, address.version);
-  if (read !== null && !read.ok && read.tombstone !== null) {
+  if (address === null) {
     return {
-      title: "Content removed",
+      title: "Paper unavailable",
       robots: { index: false },
     };
   }
-  if (read === null || !read.ok) {
+  const read = await readPaper(address.id, address.version);
+  if (!read.ok) {
+    if (read.tombstone !== null) {
+      return {
+        title: "Content removed",
+        robots: { index: false },
+      };
+    }
     return {
       title: "Paper unavailable",
       robots: { index: false },
@@ -176,5 +209,8 @@ export async function paperRouteMetadata(
   return {
     title: `${paper.title} · ${versionOfTotal(version, totalVersions)}`,
     description: describe(paper.abstract),
+    ...paperCitationMetadata(read.data, {
+      versionPage: address.version !== null,
+    }),
   };
 }

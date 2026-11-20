@@ -37,6 +37,7 @@ import {
  */
 
 const NODE = "http://localhost:8000";
+const SITE = "https://scholium.example";
 
 /** Server-render an element and put its HTML in the document to query it. */
 function mount(element: ReactElement): void {
@@ -53,10 +54,19 @@ const byVersion: Routes["paper"] = (path) => {
   return json({ ...PAPER_BODY, n, version: n });
 };
 
+/** The page's one schema.org record, parsed from its script element. */
+function scholarlyJsonLd(): Record<string, unknown> | null {
+  const script = document.querySelector('script[type="application/ld+json"]');
+  return script === null
+    ? null
+    : (JSON.parse(script.textContent ?? "") as Record<string, unknown>);
+}
+
 afterEach(() => {
   cleanup();
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("the route files", () => {
@@ -535,6 +545,110 @@ describe("one part failing does not take the page down", () => {
   });
 });
 
+describe("/p/{id}: the ScholarlyArticle", () => {
+  it("renders exactly one application/ld+json ScholarlyArticle for a listed paper", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", SITE);
+    stubApi();
+    mount(await page(BARE_ID));
+
+    expect(document.querySelectorAll('script[type="application/ld+json"]')).toHaveLength(1);
+    const article = scholarlyJsonLd();
+    expect(article).toMatchObject({
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      headline: "Can a Meta-Agent Choose the Safer Branch?",
+      name: "Can a Meta-Agent Choose the Safer Branch?",
+      abstract: expect.stringMatching(/evaluation framework investigating/),
+      url: `${SITE}/p/${BARE_ID}`,
+      license: "CC-BY-4.0",
+      isAccessibleForFree: true,
+      version: 2,
+      datePublished: "2027-03-02T04:00:00Z",
+      dateModified: "2027-03-02T04:00:00Z",
+      identifier: {
+        "@type": "PropertyValue",
+        propertyID: "sch",
+        value: `${SHORT_ID}/v2`,
+      },
+      publisher: { "@type": "Organization", name: "Scholium" },
+      creativeWorkStatus: "Reviewed",
+    });
+  });
+
+  it("lists the authors as Person in byline order", async () => {
+    stubApi();
+    mount(await page(BARE_ID));
+
+    expect(scholarlyJsonLd()?.author).toEqual([
+      { "@type": "Person", name: "Mei Zhang" },
+      { "@type": "Person", name: "A. Okafor" },
+    ]);
+  });
+
+  it("says a retracted paper is Retracted", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => json({ ...PAPER_BODY, status: "retracted" }),
+    });
+    mount(await page(BARE_ID));
+
+    expect(scholarlyJsonLd()?.creativeWorkStatus).toBe("Retracted");
+  });
+
+  it("uses the version page's canonical address as its url", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", SITE);
+    stubApi({ ...HAPPY, paper: byVersion });
+    mount(await versionPage(BARE_ID, "v1"));
+
+    expect(scholarlyJsonLd()?.url).toBe(`${SITE}/p/${BARE_ID}/v1`);
+  });
+
+  it("escapes every less-than sign, so a title cannot close the script", async () => {
+    const title = "</script><script>alert(1)</script> paper";
+    stubApi({ ...HAPPY, paper: () => json({ ...PAPER_BODY, title }) });
+    mount(await page(BARE_ID));
+
+    const text = document.querySelector('script[type="application/ld+json"]')?.textContent ?? "";
+    expect(text).not.toContain("</script>");
+    expect(text).toContain("\\u003c");
+    expect(JSON.parse(text).headline).toBe(title);
+  });
+
+  it("renders no JSON-LD for a tombstoned paper", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => notFound(),
+      records: () =>
+        json([versionEntry(), decisionEntry("tombstone", 12, { clause: "MOD-05" })]),
+    });
+    mount(await page(BARE_ID));
+
+    expect(screen.getByText("Content removed for legal reasons")).toBeTruthy();
+    expect(scholarlyJsonLd()).toBeNull();
+  });
+
+  it("renders no JSON-LD when the paper cannot be read", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => json({ title: "Boom", status: 500, detail: "The node is struggling." }, 500),
+    });
+    mount(await page(BARE_ID));
+
+    expect(screen.getByRole("alert").textContent).toContain("The node is struggling.");
+    expect(scholarlyJsonLd()).toBeNull();
+  });
+
+  it("renders no JSON-LD for a version that is not listed (held or missing)", async () => {
+    stubApi({ ...HAPPY, paper: () => notFound() });
+    mount(await versionPage(BARE_ID, "v9"));
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "This paper has no listed version 9 on this node.",
+    );
+    expect(scholarlyJsonLd()).toBeNull();
+  });
+});
+
 describe("metadata", () => {
   it("titles the page with the paper and its version", async () => {
     stubApi();
@@ -590,6 +704,95 @@ describe("metadata", () => {
     const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
 
     expect(meta.title).toBe("Content removed");
+    expect(meta.robots).toEqual({ index: false });
+  });
+
+  it("publishes the full Highwire tag set for a listed paper", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", SITE);
+    stubApi();
+    const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
+
+    expect(meta.alternates?.canonical).toBe(`${SITE}/p/${BARE_ID}`);
+    expect(meta.other).toMatchObject({
+      citation_title: "Can a Meta-Agent Choose the Safer Branch?",
+      citation_author: ["Mei Zhang", "A. Okafor"],
+      citation_publication_date: "2027/03/02",
+      citation_online_date: "2027/03/02",
+      citation_abstract: expect.stringMatching(/evaluation framework investigating/),
+      citation_pdf_url: `${NODE}/v1/content/bafkrei-pdf`,
+      citation_publisher: "Scholium",
+      citation_language: "en",
+    });
+  });
+
+  it("lists the citation authors in byline order", async () => {
+    stubApi();
+    const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
+
+    expect(meta.other?.citation_author).toEqual(["Mei Zhang", "A. Okafor"]);
+  });
+
+  it("canonicalises the newest-version page without a version", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", SITE);
+    stubApi();
+    const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
+
+    expect(meta.alternates?.canonical).toBe(`${SITE}/p/${BARE_ID}`);
+  });
+
+  it("canonicalises a version page to the version in its address", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", SITE);
+    stubApi({ ...HAPPY, paper: byVersion });
+    const meta = await versionMetadata({
+      params: Promise.resolve({ id: BARE_ID, version: "v1" }),
+    });
+
+    expect(meta.alternates?.canonical).toBe(`${SITE}/p/${BARE_ID}/v1`);
+  });
+
+  it("adds no citation tags to an unlisted paper, and keeps it out of indexes", async () => {
+    stubApi({ ...HAPPY, paper: () => notFound() });
+    const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
+
+    expect(meta.alternates).toBeUndefined();
+    expect(meta.other).toBeUndefined();
+    expect(meta.robots).toEqual({ index: false });
+  });
+
+  it("adds no citation tags to a tombstoned paper", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => notFound(),
+      records: () =>
+        json([versionEntry(), decisionEntry("tombstone", 12, { clause: "MOD-05" })]),
+    });
+    const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
+
+    expect(meta.alternates).toBeUndefined();
+    expect(meta.other).toBeUndefined();
+    expect(meta.robots).toEqual({ index: false });
+  });
+
+  it("adds no citation tags when the paper cannot be read", async () => {
+    stubApi({
+      ...HAPPY,
+      paper: () => json({ title: "Boom", status: 500, detail: "The node is struggling." }, 500),
+    });
+    const meta = await generateMetadata({ params: Promise.resolve({ id: BARE_ID }) });
+
+    expect(meta.alternates).toBeUndefined();
+    expect(meta.other).toBeUndefined();
+    expect(meta.robots).toEqual({ index: false });
+  });
+
+  it("adds no citation tags to a version that is not listed (held or missing)", async () => {
+    stubApi({ ...HAPPY, paper: () => notFound() });
+    const meta = await versionMetadata({
+      params: Promise.resolve({ id: BARE_ID, version: "v9" }),
+    });
+
+    expect(meta.alternates).toBeUndefined();
+    expect(meta.other).toBeUndefined();
     expect(meta.robots).toEqual({ index: false });
   });
 });
