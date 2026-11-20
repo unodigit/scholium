@@ -1023,26 +1023,37 @@ function recoveryRequester(payload: Readonly<Record<string, unknown>>): string |
  * nothing is: the request is still waiting for this guardian.
  *
  * Their own answer (`answer`, `answered_at`) is the only thing that reads
- * "You approved". A request that closed without them (`closed`, with how many
- * of the guardians had approved) says that it closed, or that it was
- * cancelled. While it is still inside its safety window it is approved but not
- * closed (`contest_until`, when the new passkey takes over). The guardian's
- * answer wins when both are recorded, and a later closure wins over the window.
+ * "You approved". A request that closed (`closed`, with how many of the
+ * guardians had approved) says that it closed. While it is still inside its
+ * safety window it is approved but not closed (`contest_until`, when the new
+ * passkey takes over). A cancel was recorded beside the answers of the
+ * guardians who had given one, so it is said first, with their answer recalled
+ * after it; any other closure leaves their own answer to speak for them, and a
+ * later closure wins over the window.
  */
 function recoverySummary(payload: Readonly<Record<string, unknown>>): string | null {
   const requester = recoveryRequester(payload);
   const from = requester ? ` from ${requester}` : "";
   const answer = readText(payload.answer);
-  if (answer === "approved" || answer === "declined") {
-    const on = formatDate(readText(payload.answered_at));
-    const verb = answer === "approved" ? "approved" : "declined";
-    return `You ${verb} the recovery request${from}${on ? ` on ${on}` : ""}.`;
-  }
+  const answered = answer === "approved" || answer === "declined";
+  const answeredOn = answered ? formatDate(readText(payload.answered_at)) : null;
   const closed = readText(payload.closed);
-  if (closed !== null) {
-    if (closed === "cancelled") {
-      return `The recovery request${from} was cancelled.`;
+  if (closed === "cancelled") {
+    const closedOn = formatDate(readText(payload.closed_at) ?? readText(payload.closedAt));
+    const cancelled = closedOn
+      ? `The recovery request${from} was cancelled by the account holder on ${closedOn}.`
+      : `The recovery request${from} was cancelled.`;
+    if (answered) {
+      const verb = answer === "approved" ? "approved" : "declined";
+      return `${cancelled} You had ${verb} it${answeredOn ? ` on ${answeredOn}` : ""}.`;
     }
+    return cancelled;
+  }
+  if (answered) {
+    const verb = answer === "approved" ? "approved" : "declined";
+    return `You ${verb} the recovery request${from}${answeredOn ? ` on ${answeredOn}` : ""}.`;
+  }
+  if (closed !== null) {
     const approved = readNumber(payload.approval_count);
     const guardians = readNumber(payload.guardian_count);
     return approved !== null && guardians !== null

@@ -791,6 +791,80 @@ describe("notification wording", () => {
       ).toBe("The recovery request from Hanna Varga was cancelled.");
     });
 
+    it("tells a guardian who approved that the account holder cancelled it", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: {
+            ...HANNA,
+            answer: "approved",
+            answered_at: "2026-11-17T12:00:00Z",
+            closed: "cancelled",
+            closed_at: "2026-11-20T09:00:00Z",
+            approval_count: 1,
+            guardian_count: 5,
+          },
+        }),
+      ).toBe(
+        "The recovery request from Hanna Varga was cancelled by the account holder on 20 Nov 2026. You had approved it on 17 Nov 2026.",
+      );
+    });
+
+    it("tells a guardian who declined that the account holder cancelled it", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: {
+            ...HANNA,
+            answer: "declined",
+            answered_at: "2026-11-17T12:00:00Z",
+            closed: "cancelled",
+            closed_at: "2026-11-20T09:00:00Z",
+            approval_count: 1,
+            guardian_count: 5,
+          },
+        }),
+      ).toBe(
+        "The recovery request from Hanna Varga was cancelled by the account holder on 20 Nov 2026. You had declined it on 17 Nov 2026.",
+      );
+    });
+
+    it("gives a guardian who never answered the cancellation and no answer of their own", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: {
+            ...HANNA,
+            closed: "cancelled",
+            closed_at: "2026-11-20T09:00:00Z",
+            approval_count: 1,
+            guardian_count: 5,
+          },
+        }),
+      ).toBe("The recovery request from Hanna Varga was cancelled by the account holder on 20 Nov 2026.");
+    });
+
+    it("keeps 'You approved' when the request finalized", () => {
+      expect(
+        notificationSummary({
+          kind: "recovery.request",
+          read: true,
+          payload: {
+            ...HANNA,
+            answer: "approved",
+            answered_at: "2026-11-17T12:00:00Z",
+            closed: "finalized",
+            closed_at: "2026-11-20T09:00:00Z",
+            approval_count: 4,
+            guardian_count: 5,
+          },
+        }),
+      ).toBe("You approved the recovery request from Hanna Varga on 17 Nov 2026.");
+    });
+
     it("lets the guardian's own answer win over the request closing", () => {
       expect(
         notificationSummary({
