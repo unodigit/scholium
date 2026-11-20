@@ -91,8 +91,13 @@ export function useSignOut(): SignOutState {
       forgetSignedInHint();
       router.replace("/");
       // The homepage is long; land at its top instead of at the offset the
-      // page we are leaving happened to have.
+      // page we are leaving happened to have.  Scroll only after the
+      // navigation has been requested, and bypass the homepage's
+      // `scroll-behavior: smooth` so the move is instant rather than a
+      // 700 ms glide to "Why Scholium".
       window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     }
   }, [router]);
 
