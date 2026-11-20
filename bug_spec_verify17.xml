@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 17: findings of verify sweep 17 (2026-11-20, worktree pinned @ 1d2648c = round 16; a homepage run is live on
+  main in another session). 15/16 journeys pass; 06 still fails at step 10, now only on guardians who approved.
+  Round-16 fixes confirmed in the browser: owner has no guardian item, request only in "Recovery in progress" with local
+  dates, cancel confirmation in the same render, owner notice reads cancelled, guardian page "Cancelled by the account
+  holder", requester copy "only you can cancel", 403 wording, saved guardians wrap, author excerpt kept after appeal,
+  "Major concerns", past-tense "was sealed".
+  Footprints stay off the live homepage run's files (feed, global-nav, dashboard-page.tsx, onboarding-form.tsx,
+  verify-email-form.tsx, manifest, tokens, ui-kit brand, paper-route, e2e journeys/branding).
+  Deferred until the homepage run merges (onboarding-form.tsx is in its footprint): guardian names set in the DID mono
+  font on /onboarding; chosen category chips not shown selected after a reload.
+  Evidence: .claw-forge/journeys/*.md and screenshots/<journey>/NN-*.png.
+  Decision (recorded here):
+  D1  A cancel is news to every guardian: it reaches them as an unread notice (bell count), whatever they had answered.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts">
+    <title>Guardians who approved a recovery never see that it was cancelled: their notice keeps reading "You approved ..."</title>
+    <symptoms>
+      After the owner cancels, okafor, solheim and keller (who approved) still read "You approved the recovery request from Marta Lindqvist on 20 Nov 2026." although the API recorded closed "cancelled" and closed_at on their notices (round 16, notices.py); recoverySummary in dashboard.ts (~L1031) returns the answer sentence whenever an answer is set, so the closure is never shown. Guardians who never answered do read "... was cancelled."
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 step 10 (screenshots/06-key-recovery/31b-bug1-FAIL-approver-okafor-no-cancel-notice.png, 31c-*.png, 31d-*.png; non-answerers 31f-*.png, 31g-*.png)
+    </reproduction_steps>
+    <expected>When a guardian's notice records both an answer and closed "cancelled", it reads 'The recovery request from {name} was cancelled by the account holder on {local date}. You had approved it on {local date}.' (declined likewise); a finalized closure keeps today's approved wording; tests cover approved+cancelled, declined+cancelled, unanswered+cancelled and approved+finalized</expected>
+    <actual>Approvers are never told</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/recovery/notices.py,apps/api/src/app/modules/recovery/requests_router.py,apps/api/src/app/modules/recovery/models.py,apps/api/src/app/modules/recovery/tests/test_owner_recovery.py,apps/web/src/features/dashboard/guardian-approval.tsx,apps/web/src/features/dashboard/guardian-approval.test.tsx">
+    <title>A cancel reaches guardians as an already-read notice, and the guardian page cannot say when it was cancelled</title>
+    <symptoms>
+      Every cancel notice, for approvers and non-answerers alike, arrives already read: no Unread label and no bell count, so no guardian is actually alerted (notices.py updates the existing notice "as history" without making it unread)
+      /me/recovery/{id} reads "Cancelled by the account holder." without a date for every guardian: GET /v1/recovery/requests/{id} (requests_router.get_recovery_request) returns no closed_at, and guardian-approval.tsx (~L180, L442) falls back to the dateless sentence
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 step 10 (screenshots/06-key-recovery/31a-bug3-approver-okafor-page-cancelled-no-date.png, 31e-*.png, 33e-*.png, 33f-*.png)
+    </reproduction_steps>
+    <expected>Per D1, a cancel marks each guardian's recovery notice unread again (or adds one new unread "cancelled" notice; exactly one unread item per guardian either way), and the owner's own resolved notice is not re-alerted; GET /v1/recovery/requests/{id} returns closed_at (and status) for a cancelled or finalized request, taken from data already stored where possible, or from a new column that existing databases gain in place the way models._ensure creates tables (no data loss, no manual migration); the guardian page then reads "Cancelled by the account holder on {local date}." API tests: unread after cancel for an approver and a non-answerer, owner not re-alerted, closed_at in the detail; web test: the dated sentence</expected>
+    <actual>Guardians are not alerted and the page has no date</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/web-auth/recover-messages.ts,apps/web/src/features/web-auth/recover-messages.test.ts">
+    <title>/recover still says "A cancel link goes to you and your guardians"</title>
+    <symptoms>
+      Before the safety window opens, /recover and a guardian's view of /recover?request= say "When 3 of your 5 guardians approve, a 72-hour safety window opens before the new key takes over. A cancel link goes to you and your guardians." (recover-messages.ts ~L74), but only the account holder can cancel (round 16 D1; a guardian's cancel is 403)
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 (screenshots/06-key-recovery/02-recovery-started-0-of-3.png, 34b-guardian-opens-recover-request-page.png)
+    </reproduction_steps>
+    <expected>The copy says the account holder is told and can cancel from Security, and guardians are told the outcome (e.g. "... before the new key takes over. The account holder is told and can cancel it; guardians are told how it ends."); no remaining recovery copy says a guardian can cancel (test greps the messages)</expected>
+    <actual>Copy contradicts the rule</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/review-form/identity.ts,apps/web/src/features/review-form/identity.test.ts,apps/web/src/features/review-form/anonymity-notice.tsx">
+    <title>The review update form says "The choice was sealed with your review" while offering "Stay anonymous instead"</title>
+    <symptoms>
+      On the update form of a signed review the notice reads "The choice was sealed with your review." (SIGNED_SEALED_DETAIL, identity.ts) yet offers "Stay anonymous instead", which switches the form to anonymous; the sentence and the control contradict each other (the update form may offer the choice: recorded decision)
+    </symptoms>
+    <reproduction_steps>
+      Journey 13 step 9 (screenshots/13-new-version-and-review-update/09c-*.png, 23a-update-form-switch-to-anonymous-diagnostic.png)
+    </reproduction_steps>
+    <expected>On the review page of an already committed review (no form), "The choice was sealed with your review." stays; on the update form the detail says the earlier version keeps its sealed choice and this update is sealed with the choice made now (e.g. "Your earlier version stays signed. This update is sealed with the choice you make here."), mirrored for anonymous; tests cover the review page and the update form, signed and anonymous</expected>
+    <actual>Contradictory copy</actual>
+  </bug>
+
+</bug_spec>
