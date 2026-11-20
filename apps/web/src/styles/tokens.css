@@ -33,6 +33,15 @@
   --critical: #b3312b;     /* Retracted, failed verification */
   --ai: #6b4ba8;           /* AI pre-review only — never human status */
   --margin-note: #fff6d6;  /* annotation highlight */
+  --bg-2: #f3f1ea;         /* alternate section background */
+  --line: #ece9e1;          /* skeleton-line colour */
+  --margin-note-strong: #f2d77a; /* strong margin-note */
+  --glass-tint: rgba(251, 250, 247, 0.72); /* glass tint */
+  --glass-hi: rgba(255, 255, 255, 0.7);    /* glass highlight */
+  --hairline: rgba(27, 29, 34, 0.08);
+  --shadow-card: 0 1px 2px rgba(27, 29, 34, 0.04), 0 10px 30px -10px rgba(27, 29, 34, 0.12);
+  --shadow-float: 0 2px 6px rgba(27, 29, 34, 0.05), 0 30px 70px -24px rgba(27, 29, 34, 0.28);
+  --shadow-glass: 0 10px 34px -6px rgba(27, 29, 34, 0.22);
 
   /* ---- Derived roles — light ----------------------------------------
      `-soft` tints are quiet chip/panel FILLS. Pair them with --ink text and
@@ -131,6 +140,16 @@
     --ai: #b9a2f2;
     --margin-note: #3a3320;
 
+    --bg-2: #101116;
+    --line: #2a2d35;
+    --margin-note-strong: #8c7330;
+    --glass-tint: rgba(28, 30, 37, 0.66);
+    --glass-hi: rgba(255, 255, 255, 0.12);
+    --hairline: rgba(255, 255, 255, 0.08);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+    --shadow-float: 0 2px 6px rgba(0, 0, 0, 0.3), 0 30px 70px -24px rgba(0, 0, 0, 0.7);
+    --shadow-glass: 0 10px 34px -6px rgba(0, 0, 0, 0.6);
+
     --accent-ink: #101218;
     --accent-soft: #232a3e;
     --verified-soft: #1a2a24;
@@ -167,6 +186,16 @@
   --critical: #f08a84;
   --ai: #b9a2f2;
   --margin-note: #3a3320;
+
+  --bg-2: #101116;
+  --line: #2a2d35;
+  --margin-note-strong: #8c7330;
+  --glass-tint: rgba(28, 30, 37, 0.66);
+  --glass-hi: rgba(255, 255, 255, 0.12);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  --shadow-float: 0 2px 6px rgba(0, 0, 0, 0.3), 0 30px 70px -24px rgba(0, 0, 0, 0.7);
+  --shadow-glass: 0 10px 34px -6px rgba(0, 0, 0, 0.6);
 
   --accent-ink: #101218;
   --accent-soft: #232a3e;
