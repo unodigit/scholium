@@ -10,9 +10,10 @@ fonts.  The look follows ``docs/design.md``:
 
 * a 600px-wide column on the warm paper background (``#FBFAF7``),
 * one white card with a hairline rule,
-* a header lockup -- the 32px PNG mark served from the web origin's
-  ``/brand/icon-192.png`` (alt ``Scholium``) next to the lowercase ``scholium``
-  wordmark set in serif text,
+* a header lockup -- one PNG from the web origin's
+  ``/brand/scholium-lockup-email.png`` (alt ``Scholium``) that holds the mark
+  and the lowercase ``scholium`` wordmark together, so the header needs no
+  serif font and no second layout cell,
 * ink-coloured (``#1B1D22``) body text,
 * a call-to-action button in the accent blue (``#2F4BA0``) for the
   notification's link, and
@@ -35,7 +36,7 @@ from app.settings import settings
 
 __all__ = [
     "ACCENT",
-    "BRAND_ICON_PATH",
+    "BRAND_LOCKUP_PATH",
     "CARD",
     "INK",
     "MAX_WIDTH",
@@ -54,10 +55,12 @@ RULE = "#E4E1D9"
 ACCENT = "#2F4BA0"
 
 MAX_WIDTH = 600
-LOGO_SIZE = 32
+#: The header lockup is shipped at 2x (340x64) and displayed at half that size.
+LOCKUP_WIDTH = 170
+LOCKUP_HEIGHT = 32
 
-#: Where the web app serves the brand mark, relative to the web origin.
-BRAND_ICON_PATH = "/brand/icon-192.png"
+#: Where the web app serves the e-mail header lockup, relative to the web origin.
+BRAND_LOCKUP_PATH = "/brand/scholium-lockup-email.png"
 #: The notifications card on the reader's dashboard, where preferences live.
 NOTIFICATION_SETTINGS_PATH = "/me#notifications"
 
@@ -175,17 +178,17 @@ def _button(href: str) -> str:
 
 
 def _lockup(origin: str) -> str:
-    """The header: the 32px PNG mark and the serif ``scholium`` wordmark."""
-    icon = escape(f"{origin}{BRAND_ICON_PATH}", quote=True)
+    """The header: one image holding the mark and the ``scholium`` wordmark.
+
+    A single out-of-the-box-safe ``<img>`` keeps the header independent of any
+    font an inbox may or may not have: the lockup is outlined artwork, served
+    from the web origin like the rest of the brand assets.
+    """
+    lockup = escape(f"{origin}{BRAND_LOCKUP_PATH}", quote=True)
     return (
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-        f'<td valign="middle" style="padding:0 10px 0 0;">'
-        f'<img src="{icon}" width="{LOGO_SIZE}" height="{LOGO_SIZE}" alt="Scholium" '
-        'style="display:block;border:0;outline:none;text-decoration:none;'
-        f'width:{LOGO_SIZE}px;height:{LOGO_SIZE}px;"></td>'
-        f'<td valign="middle" style="font-family:{_SERIF};font-size:24px;line-height:32px;'
-        f'font-weight:600;letter-spacing:-0.01em;color:{INK};">scholium</td>'
-        "</tr></table>"
+        f'<img src="{lockup}" width="{LOCKUP_WIDTH}" height="{LOCKUP_HEIGHT}" '
+        'alt="Scholium" border="0" style="display:block;border:0;outline:none;'
+        f'text-decoration:none;width:{LOCKUP_WIDTH}px;height:{LOCKUP_HEIGHT}px;">'
     )
 
 

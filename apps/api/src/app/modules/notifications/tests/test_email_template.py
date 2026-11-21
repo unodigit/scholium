@@ -10,6 +10,7 @@ plain-text body did not change.  No test touches a network or the database.
 from __future__ import annotations
 
 import email as email_lib
+import re
 from email import policy
 from html.parser import HTMLParser
 
@@ -195,23 +196,30 @@ def test_template_is_a_table_layout_on_paper_with_a_white_card():
     assert not page.find("script") and not page.find("link")
 
 
-def test_header_lockup_is_a_png_mark_plus_serif_wordmark_without_svg():
+def test_header_is_one_lockup_image_on_the_paper_background():
     html = _html(build_email("did:example:alice", "note", {"link": LINK}))
     page = Page(html)
 
     (logo,) = page.find("img")
-    assert logo["src"] == "https://scholium.example/brand/icon-192.png"
+    assert logo["src"] == "https://scholium.example/brand/scholium-lockup-email.png"
     assert logo["alt"] == "Scholium"
-    assert logo["width"] == "32" and logo["height"] == "32"
-    assert "width:32px" in logo["style"] and "height:32px" in logo["style"]
+    assert logo["width"] == "170" and logo["height"] == "32"
+    assert logo["border"] == "0"
+    assert "width:170px" in logo["style"] and "height:32px" in logo["style"]
+    assert "display:block" in logo["style"] and "border:0" in logo["style"]
 
     assert "<svg" not in html.lower()
-    assert "scholium" in page.visible.split()  # the wordmark is text, not an image
-    wordmark = next(
-        attrs for tag, attrs in page.tags if tag == "td" and "font-weight:600" in attrs.get("style", "")
-    )
-    assert "'Source Serif 4', Georgia" in wordmark["style"]
-    assert "serif" in wordmark["style"] and "color:#1B1D22" in wordmark["style"]
+    # The header carries the wordmark as artwork, not as text, so no font
+    # stack -- and in particular no serif one -- is left in it.
+    header, _, _rest = html.partition('bgcolor="#FFFFFF"')
+    assert "font-family" not in header
+    assert not re.search(r"font-family\s*:[^;\"]*serif", header, re.IGNORECASE)
+    assert "scholium" not in Page(header).visible.split()
+
+    # It still sits on the paper background, above the white card.
+    body = next(attrs for tag, attrs in page.tags if tag == "body")
+    assert "background-color:#FBFAF7" in body["style"]
+    assert "#FBFAF7" in header
 
 
 def test_call_to_action_button_is_accent_blue_and_links_to_the_notification():
@@ -301,12 +309,12 @@ def test_origin_comes_from_the_first_usable_web_origin(monkeypatch):
     assert web_origin() == "https://app.scholium.example"
 
     html = _html(build_email("did:example:alice", "note", {"link": LINK}))
-    assert 'src="https://app.scholium.example/brand/icon-192.png"' in html
+    assert 'src="https://app.scholium.example/brand/scholium-lockup-email.png"' in html
 
 
 def test_render_html_origin_override_beats_settings():
     html = render_html("did:example:alice", "note", {}, origin="http://localhost:3000/")
-    assert 'src="http://localhost:3000/brand/icon-192.png"' in html
+    assert 'src="http://localhost:3000/brand/scholium-lockup-email.png"' in html
     assert 'href="http://localhost:3000/me#notifications"' in html
 
 
