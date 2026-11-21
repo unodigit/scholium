@@ -53,7 +53,7 @@ archives are refused when none is configured).
 | `test_backend_migration.py` | A node moved from SQLite and files to a new database and S3 *is* the same node: same papers, same sync head, a byte-identical archive. A non-empty target, a damaged blob and a broken hash chain are refused. |
 | `test_demo_node.py` | `seed-demo` then `python -m app`: what was seeded is served, pre-listing bytes stay hidden. |
 | `test_delivery_wiring.py` | `compose.yaml`, the Containerfiles and `package.json` agree with the code: commands exist, every variable compose passes is read, images are not root, no secrets, no cloud SDK but boto3, no provider names under `apps/`. |
-| `test_web_entrypoint.py` (`-m web`) | The production build succeeds; `next start` serves every page with the security headers and the CSP naming the API; server-rendered pages show what the API holds. |
+| `test_web_entrypoint.py` (`-m web`) | The production build succeeds; `next start` serves every page with the security headers and the CSP naming the API; server-rendered pages show what the API holds. The logo lockup, against `docs/brand` and not the app's copy: every page that shows `BrandLogo` carries the outlined wordmark path (the 404 page shows the glyph alone), the stylesheet inks it from `--ink` and sets no typeface, no Scholium Display font file is shipped, `/brand/*` serves the lockup PNGs byte for byte, the site and paper share cards are 1200x630 PNGs whose wordmark matches the brand's reference render, and the notification e-mail that `python -m app` sends has the one-image header whose `src` the web server serves. |
 
 ## What is *not* here
 
@@ -75,6 +75,8 @@ archives are refused when none is configured).
   person (`Actor`: a fresh `did:key`, signs in, signs records). Read mail from
   `node.smtp`, not from the node.
 * Wait for jobs with `poll(...)`, never `sleep`.
+* Look at an image with `png_tools.py` (`png_size`, `decode_png`, `ink_box`, `ink_overlap`): standard library only, no Pillow.
+  Measure the drawing (where a colour was drawn, how well it matches a reference render) instead of checking `Content-Type`.
 * A failing test prints the logs of every process of its node.
 * Do not skip. A test that cannot run in an environment should fail with a message
   that says what to install.
