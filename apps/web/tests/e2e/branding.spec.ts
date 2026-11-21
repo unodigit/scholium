@@ -538,14 +538,17 @@ test.describe("the branded notification email", () => {
     expect(plain!.body).toContain("Open: http://localhost:3100/verify-email?did=");
 
     // The HTML alternative is the branded one: paper, a white card, the lockup
-    // whose icon is the delivered PNG on the web origin, an accent button and
-    // the settings footer.
+    // as ONE image on the web origin (the outlined wordmark: mail clients cannot
+    // load the brand face, docs/design.md section 2), an accent button and the
+    // settings footer.
     const markup = html!.body;
     expect(markup).toContain('<html lang="en">');
     expect(markup).toContain("<table");
     expect(markup).toContain('alt="Scholium"');
-    expect(markup).toContain('src="http://localhost:3100/brand/icon-192.png"');
-    expect(markup).toContain("scholium");
+    expect(markup).toContain('src="http://localhost:3100/brand/scholium-lockup-email.png"');
+    expect(markup).toMatch(/width="170" height="32"/);
+    // No typed wordmark beside it any more (headings keep the serif reading face).
+    expect(markup).not.toMatch(/>\s*scholium\s*<\/td>/);
     expect(markup).toContain("max-width:600px");
     expect(markup).toContain("#FBFAF7");
     expect(markup).toContain("#1B1D22");
@@ -553,11 +556,12 @@ test.describe("the branded notification email", () => {
     expect(markup).toContain('href="http://localhost:3100/verify-email?did=');
     expect(markup).toContain('href="http://localhost:3100/me#notifications"');
 
-    // The logo the email points at is served by the shipped web app.
-    const icon = await request.get("http://localhost:3100/brand/icon-192.png");
-    expect(icon.status()).toBe(200);
-    expect(icon.headers()["content-type"]).toBe("image/png");
-    expect(pngSize(await icon.body())).toEqual({ width: 192, height: 192 });
+    // The lockup the email points at is served by the shipped web app, at 2x
+    // the 170 x 32 it is shown at.
+    const lockup = await request.get("http://localhost:3100/brand/scholium-lockup-email.png");
+    expect(lockup.status()).toBe(200);
+    expect(lockup.headers()["content-type"]).toBe("image/png");
+    expect(pngSize(await lockup.body())).toEqual({ width: 340, height: 64 });
   });
 });
 
