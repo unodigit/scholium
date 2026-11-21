@@ -1,0 +1,54 @@
+{
+  "_comment": "Scholium collateral facts. Every piece reads from this file; build.py regenerates them all. Colours and type: docs/design.md sections 2-3. Copy: docs/homepage/index.html (cited per line). Region AU: the pieces are printed in Australia (90 x 55 mm card, A-series paper).",
+  "business": {
+    "trading_name": "Scholium",
+    "region": "AU",
+    "tagline": "Signed, open preprints and peer review"
+  },
+  "contact": {
+    "website": "https://scholium.fyi"
+  },
+  "links": {
+    "home": "https://scholium.fyi/"
+  },
+  "colours": {
+    "paper": "#FBFAF7",
+    "surface": "#FFFFFF",
+    "ink": "#1B1D22",
+    "ink2": "#5A5F6B",
+    "rule": "#E4E1D9",
+    "accent": "#2F4BA0",
+    "margin_note": "#FFF6D6",
+    "margin_note_strong": "#F2D77A",
+    "dark_paper": "#14151A",
+    "dark_ink": "#ECEBE6",
+    "dark_ink2": "#A3A7B2",
+    "dark_accent": "#8FA6F0",
+    "dark_margin_note": "#3A3320"
+  },
+  "fonts": {
+    "display": {"family": "Scholium Display", "file": "../type/fonts/ScholiumDisplay-Regular.otf", "weight": "400"},
+    "display_light": {"family": "Scholium Display", "file": "../type/fonts/ScholiumDisplay-Light.otf", "weight": "300"},
+    "display_bold": {"family": "Scholium Display", "file": "../type/fonts/ScholiumDisplay-Bold.otf", "weight": "700"},
+    "serif": {"family": "Source Serif 4", "file": "../../../apps/web/public/fonts/source-serif-4-latin.woff2", "weight": "200 900"},
+    "text": {"family": "Inter", "file": "../../../apps/web/public/fonts/inter-latin.woff2", "weight": "100 900"},
+    "mono": {"family": "JetBrains Mono", "file": "../../../apps/web/public/fonts/jetbrains-mono-latin.woff2", "weight": "100 800"}
+  },
+  "logo": {
+    "svg": "../scholium-favicon.svg"
+  },
+  "copy": {
+    "hero": {"text": "The preprint, signed. The review, open. The record, kept.", "source": "homepage h1"},
+    "hero_lines": ["The preprint, signed.", "The review, open.", "The record, kept."],
+    "lede": {"text": "Scholium is a free preprint and peer-review network. Every paper, version and review carries its author’s signature, so anyone can check who wrote what, and when, without taking anyone’s word for it.", "source": "homepage hero paragraph"},
+    "promises": {"items": ["Free to read and to publish", "CC BY 4.0 by default", "No token. No paywall.", "Verifies offline, without us"], "source": "homepage hero list"},
+    "provenance": {"head": "Signed by you. Checkable by anyone.", "body": "Your passkey unlocks a signing key that lives on your device. Scholium never sees it.", "source": "homepage Provenance h2 + 'Your key stays yours.'"},
+    "review": {"head": "Peer review, out in the open.", "body": "Formal reviews sit in the margin beside the paper, scored against a public rubric. Anyone can read them.", "source": "homepage Open review h2 + first two sentences"},
+    "record": {"head": "Take the record with you.", "body": "Export any paper, with every version, signature and review, as a single archive. It verifies offline, on your own machine, with no help from Scholium.", "source": "homepage Verify anywhere h2 + paragraph"},
+    "authors": {"head": "Publish in minutes. Prove priority for good.", "source": "homepage Who it's for h3"}
+  },
+  "print": {
+    "bleed_mm": 3,
+    "safe_mm": 4
+  }
+}

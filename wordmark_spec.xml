@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification mode="brownfield">
+  <project_name>Scholium — outlined Scholium Display wordmark in the logo lockup</project_name>
+  <addition_summary>
+    The wordmark in the Scholium logo lockup changes from the word "scholium" typed in Source Serif 4 semibold to
+    outline artwork drawn from Scholium Display Bold (docs/brand/type/fonts/ScholiumDisplay-Bold.otf). The brand
+    source is already updated: docs/brand/scholium-wordmark.json holds the wordmark path in the 52 x 54 BrandMark
+    grid (view box 0 0 286.99 54, pen origin x 66.04), docs/brand/scholium-lockup-light.svg and -dark.svg are the
+    reference lockups, docs/brand/scholium-lockup-light.png, -dark.png and -email.png are the renders, and
+    docs/design.md section 2 describes the rules (x-height 0.46 of the lockup height, baseline 0.205 above its bottom
+    edge, gap 0.26, ascenders level with the top of the page block). This addition carries that wordmark into the web
+    app's BrandLogo, the social share cards and the notification e-mail header. The mark itself, the colours, sizes
+    and clear space do not change, and Scholium Display is never served as a font: the wordmark is a path.
+  </addition_summary>
+  <existing_context>
+    <stack>Python 3.12 FastAPI API in apps/api (uv workspace); Next.js 16 App Router + TypeScript + Tailwind web app in apps/web (npm workspaces). The lockup is BrandLogo (apps/web/src/features/ui-kit/brand-logo.tsx, brand.css): the BrandMark glyph SVG followed by a span.sch-brand-logo__wordmark holding the text "scholium" in var(--family-serif) at weight 600, sized with font-size-adjust and aligned by baseline. The social share cards (apps/web/src/features/ui-kit/brand-card.tsx) are drawn with Satori (next/og) from static WOFF files in features/ui-kit/og-fonts and set the wordmark as Source Serif 4 text. The notification e-mail header (apps/api/src/app/modules/notifications/email_template.py) is a 32px PNG mark plus "scholium" as serif text. apps/web/public/brand/scholium-logo-light.png and -dark.png are PNG renders of the lockup that manifest.test.ts checks for even padding.</stack>
+    <test_baseline>Not re-measured for this spec; the acceptance gate measures npm test at the start of the run. Playwright journeys (npm run test:e2e) include tests/e2e/branding.spec.ts, which asserts .sch-brand-logo__wordmark has text "scholium" and computed colour equal to the ink token in light and dark mode.</test_baseline>
+    <conventions>Feature code in apps/web/src/features/&lt;feature&gt;/ with colocated *.test.ts(x); never hardcode a hex in a component (read CSS custom properties from tokens.css); docs/design.md is the UI authority and docs/brand is the brand source of truth</conventions>
+  </existing_context>
+  <layout>
+    <zone root="apps/api" profile="uv-workspace">
+      <seam tier="discovery">apps/api/src/app/module_loader.py</seam>
+    </zone>
+    <zone root="apps/web" profile="pnpm-single-app">
+      <root template="apps/web/src/app/({plugin})/**" optional="true"/>
+    </zone>
+  </layout>
+  <features_to_add>
+    <category name="Wordmark Source">
+      <feature index="1" depends_on="" shape="core"
+               touches_files="apps/web/public/brand/scholium-logo-light.png,apps/web/public/brand/scholium-logo-dark.png"
+               creates="apps/web/src/features/ui-kit/wordmark.ts,apps/web/src/features/ui-kit/wordmark.test.ts,apps/web/public/brand/scholium-lockup-email.png">
+        <description>System provides the outlined wordmark to the web app: apps/web/src/features/ui-kit/wordmark.ts exports WORDMARK = { viewBox: [0, 0, 286.99, 54], penOriginX: 66.04, path } with the path string copied verbatim from docs/brand/scholium-wordmark.json and a header comment naming docs/brand/build_lockup.py as its generator; apps/web/public/brand/scholium-logo-light.png and scholium-logo-dark.png are replaced by byte-identical copies of docs/brand/scholium-lockup-light.png and scholium-lockup-dark.png (1200 x 380, 95 px padding on every side), and apps/web/public/brand/scholium-lockup-email.png is created as a byte-identical copy of docs/brand/scholium-lockup-email.png; wordmark.test.ts passes when WORDMARK.path and WORDMARK.viewBox equal the values in docs/brand/scholium-wordmark.json and the three PNGs equal their docs/brand sources byte for byte, and the existing "the logo lockups" tests in apps/web/src/app/manifest.test.ts still pass against the new PNGs</description>
+      </feature>
+    </category>
+    <category name="Wordmark Surfaces">
+      <feature index="2" depends_on="1" shape="core"
+               touches_files="apps/web/src/features/ui-kit/brand-logo.tsx,apps/web/src/features/ui-kit/brand.css,apps/web/src/features/ui-kit/brand.test.tsx">
+        <description>UI displays the BrandLogo lockup with the outlined Scholium Display Bold wordmark instead of Source Serif 4 text: brand-logo.tsx keeps the span.sch-brand-logo__wordmark element (aria-hidden, colour var(--ink)) but its content becomes an inline SVG with viewBox "66.04 0 220.95 54" (from WORDMARK.penOriginX to the wordmark's right edge), the same height as the mark, one path with d equal to WORDMARK.path and fill "currentColor", and a title element reading "scholium" so the element's text content stays "scholium"; brand.css drops the font-family, font-weight, font-size-adjust and baseline-offset rules that set the serif text, keeps the flex gap of 0.26 of the mark height, sizes the wordmark SVG to the mark height with width 220.95/54 of it and aligns both SVGs by their top edge, so the rendered lockup matches docs/brand/scholium-lockup-light.svg (ascenders level with the top of the page block, baseline 0.205 of the height above the bottom); the lockup keeps role img, aria-label "Scholium", the sm/md/lg sizes (20/28/48 px mark height) and its token colours in light and dark mode; brand.test.tsx passes when it finds the path equal to WORDMARK.path, the viewBox above, the title "scholium", and no serif family on the wordmark element</description>
+      </feature>
+      <feature index="3" depends_on="1" shape="core"
+               touches_files="apps/web/src/features/ui-kit/brand-card.tsx,apps/web/src/features/ui-kit/brand-card.test.tsx,apps/web/src/features/ui-kit/og-fonts/README.md">
+        <description>System renders the social share cards (/opengraph-image and /p/[id]/opengraph-image return HTTP 200 with a 1200x630 PNG) with the outlined wordmark: brand-card.tsx draws the lockup's wordmark as an svg element containing a path with d equal to WORDMARK.path in the resolved ink colour, at the scale of the card's glyph (one grid unit is markHeight/54, so the wordmark is 220.95/54 x markHeight wide, placed 0.26 x markHeight after the glyph, top edges aligned), in place of the Source Serif 4 text node; BRAND_CARD_WORDMARK stays "scholium" and still feeds the image alt text; paper titles still use Source Serif 4; brand-card.test.tsx passes when the card trees contain the wordmark path and no text node "scholium" inside the lockup, and og-fonts/README.md no longer lists the wordmark as a use of source-serif-4-semibold.woff</description>
+      </feature>
+      <feature index="4" depends_on="1" shape="core"
+               touches_files="apps/api/src/app/modules/notifications/email_template.py,apps/api/src/app/modules/notifications/tests/test_email_template.py">
+        <description>System sends notification e-mails whose header displays the lockup as one image: email_template.py replaces the 32 px PNG mark plus the serif "scholium" text cell with a single img of {web origin}/brand/scholium-lockup-email.png with width 170, height 32, alt "Scholium", border 0 and display block, on the existing paper background; the plain-text body and the rest of the HTML body are unchanged; test_email_template.py passes when the header contains that img with those attributes and no serif font-family remains in the header</description>
+      </feature>
+    </category>
+  </features_to_add>
+  <integration_points>
+    New module apps/web/src/features/ui-kit/wordmark.ts, imported by brand-logo.tsx and brand-card.tsx (not exported from the ui-kit index)
+    BrandLogo is used unchanged by the global navigation, the homepage, the (web-auth) layout and the root not-found and error pages; they pick up the new wordmark without edits
+    The share-card route handlers (opengraph-image.tsx files) keep calling brand-card.tsx unchanged
+    The notification e-mail header loads /brand/scholium-lockup-email.png from the web origin, like the mark it replaces
+  </integration_points>
+  <constraints>
+    docs/brand and docs/design.md are already updated and are the source of truth; do not modify them, and never edit or regenerate the wordmark path in the app (it is copied from docs/brand/scholium-wordmark.json)
+    The BrandMark glyph and tile geometry, the favicon and manifest icons, the colours, sizes and clear space stay unchanged
+    No Scholium Display font file is added to apps/web or served to browsers or e-mail clients; the wordmark is a path
+    Components read colours from CSS custom properties in apps/web/src/styles/tokens.css; no new hex literals in components (the share card and e-mail HTML may embed brand hex values as today)
+    No new runtime dependencies
+    npm test stays green, and npm run test:e2e stays green without editing tests/e2e/branding.spec.ts or tests/e2e/home.spec.ts
+  </constraints>
+  <success_criteria>
+    The global navigation, sign-in, onboarding, recovery, not-found and error screens show the lockup with the outlined Scholium Display Bold wordmark, matching docs/brand/scholium-lockup-light.svg and -dark.svg
+    Shared links show share cards whose lockup uses the outlined wordmark
+    Notification e-mails show the lockup image in the header and keep an unchanged plain-text body
+    npm test and npm run test:e2e stay green
+  </success_criteria>
+</project_specification>

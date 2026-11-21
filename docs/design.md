@@ -25,7 +25,7 @@ The name sets the visual idea: a *scholium* is a note in the margin of a text. T
 
 ## 2. Brand
 
-Summary: delivered assets (each file in docs/brand and where it is used in the app); construction of the mark (page block, text lines, bracket, margin-note strip); light and dark lockups; minimum sizes (mark 16px, lockup 20px tall); clear space (half the mark height); colour usage (accent, paper, ink, dark-mode equivalents from §3); wordmark typography (Source Serif 4 semibold, always lowercase); do/don't (no recolouring, no stretching, no effects, never put the tile on a busy background); the clearance note.
+Summary: delivered assets (each file in docs/brand and where it is used in the app); construction of the mark (page block, text lines, bracket, margin-note strip); light and dark lockups; minimum sizes (mark 16px, lockup 20px tall); clear space (half the mark height); colour usage (accent, paper, ink, dark-mode equivalents from §3); wordmark typography (Scholium Display Bold, drawn as outlines, always lowercase); do/don't (no recolouring, no stretching, no effects, never put the tile on a busy background); the clearance note.
 
 ### Name and voice
 
@@ -43,8 +43,14 @@ The files in `docs/brand` are the source of truth for the brand. Each is used in
 | `docs/brand/favicon.ico` | Multi-size ICO (16×16, 32×32) | `apps/web/src/app/favicon.ico` |
 | `docs/brand/apple-touch-icon.png` | 180×180 PNG tile mark | `apps/web/src/app/apple-icon.png` (home-screen icon) |
 | `docs/brand/scholium-favicon-tile.jpeg` | 1024×1024 high-res tile mark | Source for `apps/web/public/brand/icon-192.png`, `icon-512.png` and `icon-maskable-512.png` (web manifest icons) |
-| `docs/brand/scholium-logo-light.jpeg` | Light lockup reference (1376×768) | Source for `apps/web/public/brand/scholium-logo-light.png`; reference for the light lockup and `BrandLogo` |
-| `docs/brand/scholium-logo-dark.jpeg` | Dark lockup reference (1376×768) | Source for `apps/web/public/brand/scholium-logo-dark.png`; reference for the dark lockup |
+| `docs/brand/scholium-lockup-light.svg` | Light lockup: the glyph mark and the outlined wordmark, tight to the ink (287 × 54 grid units) | Reference for `BrandLogo`; source for `apps/web/public/brand/scholium-logo-light.png` |
+| `docs/brand/scholium-lockup-dark.svg` | Dark lockup, same drawing in the dark tokens | Reference for the dark lockup; source for `apps/web/public/brand/scholium-logo-dark.png` |
+| `docs/brand/scholium-wordmark.json` | The wordmark's outline path and metrics in the 52 × 54 mark grid | The path `BrandLogo`, the social share cards and the e-mail header draw |
+| `docs/brand/scholium-lockup-light.png`, `-dark.png` | 1376 px renders with the clear space shown | Previews for people; not used by the app |
+| `docs/brand/scholium-lockup-email.png` | 64 px tall light lockup on an opaque paper ground | Notification e-mail header, shown at 32 px |
+| `docs/brand/scholium-logo-light.jpeg`, `-dark.jpeg` | The delivered lockup references (1376×768). **Their serif wordmark is superseded** (2026-11-21); they remain the measured source for the mark's geometry | Cited by `BrandMark` and its geometry test |
+
+`docs/brand/build_lockup.py` regenerates the lockup SVGs, the PNGs and `scholium-wordmark.json` from `docs/brand/type/fonts/ScholiumDisplay-Bold.otf`.
 
 The mark is also rendered as inline SVG by `BrandMark` / `BrandLogo` (`apps/web/src/features/ui-kit/brand-mark.tsx`, `brand-logo.tsx`) and used in the global navigation, the homepage (its navigation bar, its closing call to action and the animated mark in its name section, §5.9), the sign-in/onboarding/recovery layout, the root not-found and error pages, branded social share images, and the notification email header.
 
@@ -83,18 +89,20 @@ Known difference in dark mode: the delivered `scholium-logo-dark.jpeg` shows no 
 
 #### Lockup layout
 
-The wordmark is aligned to the mark by **baseline**, not centred, with these proportions of the lockup's height (the bracket's height, `--brand-mark-height`), all measured on the light lockup:
+The wordmark is aligned to the mark by **baseline**, not centred, with these proportions of the lockup's height (the bracket's height, `--brand-mark-height`). They were measured on the delivered lockup and are kept for the outlined wordmark; `build_lockup.py` measures them back off the drawing:
 
 | Measure | Proportion | Notes |
 | --- | --- | --- |
-| Gap, bracket's right edge to the wordmark's ink | 0.30 | The CSS gap is 0.26; the serif "s" supplies the rest as side bearing |
-| Wordmark x-height | 0.46 (0.61 of the page block) | Set with `font-size-adjust`, so a fallback serif keeps it |
+| Gap, bracket's right edge to the wordmark's ink | 0.31 | Pen origin 0.26 right of the bracket; the "s" adds its own side bearing |
+| Wordmark x-height | 0.46 (0.61 of the page block) | Drawn: 24.84 of 54 grid units |
 | Wordmark baseline above the lockup's bottom edge | 0.205 | 0.11 of the page block's height above the block's bottom edge |
-| Wordmark ascenders | reach about the top of the page block | |
+| Wordmark ascenders | reach the top of the page block | Drawn: y 6.95 against the page block's 7 |
+
+Because the wordmark is outline artwork, the lockup is one drawing: a 287 × 54 SVG (aspect 5.31) with no font to load and nothing that can fall back to another face.
 
 The mark inside the lockup carries no clear-space margins of its own: clear space belongs to the lockup as a whole. Putting the mark's half-height margin between the mark and the wordmark is what once pushed the wordmark about 0.75 mark-heights away.
 
-The social share cards draw the same glyph (`brand-card.tsx` keeps a copy with the colours resolved, and a test compares the two shape for shape). Their wordmark layout is tuned separately for the card renderer.
+The social share cards draw the same glyph (`brand-card.tsx` keeps a copy with the colours resolved, and a test compares the two shape for shape), and the same wordmark path.
 
 ### Minimum sizes
 
@@ -120,14 +128,16 @@ No other colour may be used in the mark or tile.
 
 ### Wordmark typography
 
-The wordmark is set in **Source Serif 4 semibold**, always lowercase (`scholium`), in the ink colour, set at the lockup's height and not tracked in, so that its ascenders reach about the top of the page block (see Lockup layout). It is never set in any other face, weight, case or colour.
+The wordmark is **Scholium Display Bold** (`docs/brand/type/`), always lowercase (`scholium`), in the ink colour, kerned by the face and not tracked in, so that its ascenders reach the top of the page block (see Lockup layout). It is **drawn as outlines**, the path in `docs/brand/scholium-wordmark.json`, never typed as live text: Scholium Display is not served to browsers or e-mail clients, and a typed wordmark would silently fall back to another face. It is never redrawn in any other face, weight, case or colour.
+
+Until 21 November 2026 the wordmark was Source Serif 4 semibold. Source Serif 4 remains the reading face (§3); Scholium Display is otherwise used only for marketing headlines (`docs/brand/type/README.md`).
 
 ### Do / don't
 
 Do:
 - Use the delivered geometry and the token colours exactly.
 - Keep the clear space of half the mark height.
-- Use the wordmark in Source Serif 4 semibold, always lowercase.
+- Use the outlined wordmark from `docs/brand/scholium-wordmark.json`, always lowercase; never retype it.
 
 Don't:
 - **No recolouring** — do not change any colour of the mark, tile or wordmark.
@@ -179,6 +189,8 @@ A hairline colour (`--hairline`) and three soft shadow tokens (`--shadow-card`, 
 | UI text | Inter, 400/500 | 15 / 22 |
 | Small / meta | Inter, 400 | 13 / 18 |
 | IDs, hashes, code | JetBrains Mono | 13 / 18 |
+| Wordmark | Scholium Display Bold, as outlines (§2) | lockup height |
+| Marketing headlines only | Scholium Display Light / Regular / Bold (`docs/brand/type/`); never digits, URLs or IDs | per piece |
 | Math | KaTeX | inherits |
 
 ### Space, shape, motion

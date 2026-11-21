@@ -1,0 +1,7 @@
+asset,utm_source,utm_medium,utm_campaign,utm_content,url
+business_card,card,qr_print,beta,business_card,https://scholium.fyi/?utm_source=card&utm_medium=qr_print&utm_campaign=beta&utm_content=business_card
+dl_flyer,flyer,qr_print,beta,dl_flyer,https://scholium.fyi/?utm_source=flyer&utm_medium=qr_print&utm_campaign=beta&utm_content=dl_flyer
+poster_a2,poster,qr_print,beta,poster_a2,https://scholium.fyi/?utm_source=poster&utm_medium=qr_print&utm_campaign=beta&utm_content=poster_a2
+pullup_banner,banner,qr_print,beta,pullup_banner,https://scholium.fyi/?utm_source=banner&utm_medium=qr_print&utm_campaign=beta&utm_content=pullup_banner
+email_signature,email,email,beta,email_signature,https://scholium.fyi/?utm_source=email&utm_medium=email&utm_campaign=beta&utm_content=email_signature
+email_header,email,email,beta,email_header,https://scholium.fyi/?utm_source=email&utm_medium=email&utm_campaign=beta&utm_content=email_header

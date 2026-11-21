@@ -1,0 +1,503 @@
+{
+  "copy_checked": "Signed by you. Checkable by anyone. Peer review, out in the open. Sealed until it\u2019s fair. Signed, open preprints and peer review From draft to discussed, in four steps. sch:k3f9-q2xz-7mwd/v3 scholium.fyi 0O 1Il 5S 8B 2Z 6G ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789 &.,:;-/?!\u2019'\"() \u2013 \u2014 \u00b7 \u2192 \u2018 \u201c \u201d @ # %",
+  "cuts": {
+    "A": {
+      "build": {
+        "file": "/home/bowen/projects/scholium/docs/brand/type/fonts/ScholiumDisplay-A-Light.otf",
+        "glyphs": 89,
+        "kern_pairs": 422,
+        "overlaps_removed": true,
+        "cap_height": 700,
+        "cap_ratio": 0.7,
+        "family": "Scholium Display A",
+        "style": "Light"
+      },
+      "audit": {
+        "file": "/home/bowen/projects/scholium/docs/brand/type/fonts/ScholiumDisplay-A-Light.otf",
+        "family": "Scholium Display A",
+        "subfamily": "Light",
+        "full_name": "Scholium Display A Light",
+        "postscript_name": "ScholiumDisplayA-Light",
+        "version": "Version 1.000",
+        "designer": "Scholium",
+        "licence": "Owned by Scholium",
+        "licence_url": null,
+        "units_per_em": 1000,
+        "cap_height": 700,
+        "x_height": 504,
+        "cap_ratio": 0.7,
+        "glyphs": 89,
+        "variable": false,
+        "axes": [],
+        "kerning": true,
+        "kerning_note": null,
+        "embedding": {
+          "fsType": 0,
+          "permission": "installable",
+          "ok": true,
+          "note": "no embedding restriction"
+        }
+      },
+      "missing_glyphs": {
+        "tested": 87,
+        "missing": [],
+        "covers_all": true
+      },
+      "confusable_pairs": [
+        {
+          "pair": "O/zero",
+          "width_delta": 108,
+          "height_delta": 0,
+          "area_delta": 0.081,
+          "confusable": false,
+          "cost": "a phone number, a postcode or an order code read wrong"
+        },
+        {
+          "pair": "I/one",
+          "width_delta": 145,
+          "height_delta": 26,
+          "area_delta": 0.178,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "l/one",
+          "width_delta": 145,
+          "height_delta": 5,
+          "area_delta": 0.154,
+          "confusable": false,
+          "cost": "lowercase L against the figure one -- the classic"
+        },
+        {
+          "pair": "I/l",
+          "width_delta": 0,
+          "height_delta": 21,
+          "area_delta": 0.029,
+          "confusable": false,
+          "cost": "capital I against lowercase L; a caps-only face avoids this, a face with both must not"
+        },
+        {
+          "pair": "o/zero",
+          "width_delta": 97,
+          "height_delta": 196,
+          "area_delta": 0.243,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "S/five",
+          "width_delta": 3.9,
+          "height_delta": 5.5,
+          "area_delta": 0.064,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "B/eight",
+          "width_delta": 126,
+          "height_delta": 0,
+          "area_delta": 0.107,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "Z/two",
+          "width_delta": 140.7,
+          "height_delta": 12.6,
+          "area_delta": 0.019,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "G/six",
+          "width_delta": 221,
+          "height_delta": 4.4,
+          "area_delta": 0.023,
+          "confusable": false,
+          "cost": "same"
+        }
+      ]
+    },
+    "B": {
+      "build": {
+        "file": "/home/bowen/projects/scholium/docs/brand/type/fonts/ScholiumDisplay-B-Regular.otf",
+        "glyphs": 89,
+        "kern_pairs": 422,
+        "overlaps_removed": true,
+        "cap_height": 700,
+        "cap_ratio": 0.7,
+        "family": "Scholium Display B",
+        "style": "Regular"
+      },
+      "audit": {
+        "file": "/home/bowen/projects/scholium/docs/brand/type/fonts/ScholiumDisplay-B-Regular.otf",
+        "family": "Scholium Display B",
+        "subfamily": "Regular",
+        "full_name": "Scholium Display B Regular",
+        "postscript_name": "ScholiumDisplayB-Regular",
+        "version": "Version 1.000",
+        "designer": "Scholium",
+        "licence": "Owned by Scholium",
+        "licence_url": null,
+        "units_per_em": 1000,
+        "cap_height": 700,
+        "x_height": 504,
+        "cap_ratio": 0.7,
+        "glyphs": 89,
+        "variable": false,
+        "axes": [],
+        "kerning": true,
+        "kerning_note": null,
+        "embedding": {
+          "fsType": 0,
+          "permission": "installable",
+          "ok": true,
+          "note": "no embedding restriction"
+        }
+      },
+      "missing_glyphs": {
+        "tested": 87,
+        "missing": [],
+        "covers_all": true
+      },
+      "confusable_pairs": [
+        {
+          "pair": "O/zero",
+          "width_delta": 112,
+          "height_delta": 0,
+          "area_delta": 0.082,
+          "confusable": false,
+          "cost": "a phone number, a postcode or an order code read wrong"
+        },
+        {
+          "pair": "I/one",
+          "width_delta": 146,
+          "height_delta": 35,
+          "area_delta": 0.173,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "l/one",
+          "width_delta": 146,
+          "height_delta": 14,
+          "area_delta": 0.149,
+          "confusable": false,
+          "cost": "lowercase L against the figure one -- the classic"
+        },
+        {
+          "pair": "I/l",
+          "width_delta": 0,
+          "height_delta": 21,
+          "area_delta": 0.029,
+          "confusable": false,
+          "cost": "capital I against lowercase L; a caps-only face avoids this, a face with both must not"
+        },
+        {
+          "pair": "o/zero",
+          "width_delta": 143,
+          "height_delta": 196,
+          "area_delta": 0.278,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "S/five",
+          "width_delta": 4.0,
+          "height_delta": 4.5,
+          "area_delta": 0.061,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "B/eight",
+          "width_delta": 132,
+          "height_delta": 0,
+          "area_delta": 0.116,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "Z/two",
+          "width_delta": 151.8,
+          "height_delta": 13.9,
+          "area_delta": 0.046,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "G/six",
+          "width_delta": 230,
+          "height_delta": 5.4,
+          "area_delta": 0.05,
+          "confusable": false,
+          "cost": "same"
+        }
+      ]
+    },
+    "C": {
+      "build": {
+        "file": "/home/bowen/projects/scholium/docs/brand/type/fonts/ScholiumDisplay-C-Bold.otf",
+        "glyphs": 89,
+        "kern_pairs": 422,
+        "overlaps_removed": true,
+        "cap_height": 700,
+        "cap_ratio": 0.7,
+        "family": "Scholium Display C",
+        "style": "Bold"
+      },
+      "audit": {
+        "file": "/home/bowen/projects/scholium/docs/brand/type/fonts/ScholiumDisplay-C-Bold.otf",
+        "family": "Scholium Display C",
+        "subfamily": "Bold",
+        "full_name": "Scholium Display C Bold",
+        "postscript_name": "ScholiumDisplayC-Bold",
+        "version": "Version 1.000",
+        "designer": "Scholium",
+        "licence": "Owned by Scholium",
+        "licence_url": null,
+        "units_per_em": 1000,
+        "cap_height": 700,
+        "x_height": 504,
+        "cap_ratio": 0.7,
+        "glyphs": 89,
+        "variable": false,
+        "axes": [],
+        "kerning": true,
+        "kerning_note": null,
+        "embedding": {
+          "fsType": 0,
+          "permission": "installable",
+          "ok": true,
+          "note": "no embedding restriction"
+        }
+      },
+      "missing_glyphs": {
+        "tested": 87,
+        "missing": [],
+        "covers_all": true
+      },
+      "confusable_pairs": [
+        {
+          "pair": "O/zero",
+          "width_delta": 116,
+          "height_delta": 0,
+          "area_delta": 0.085,
+          "confusable": false,
+          "cost": "a phone number, a postcode or an order code read wrong"
+        },
+        {
+          "pair": "I/one",
+          "width_delta": 145,
+          "height_delta": 45,
+          "area_delta": 0.165,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "l/one",
+          "width_delta": 145,
+          "height_delta": 24,
+          "area_delta": 0.14,
+          "confusable": false,
+          "cost": "lowercase L against the figure one -- the classic"
+        },
+        {
+          "pair": "I/l",
+          "width_delta": 0,
+          "height_delta": 21,
+          "area_delta": 0.029,
+          "confusable": false,
+          "cost": "capital I against lowercase L; a caps-only face avoids this, a face with both must not"
+        },
+        {
+          "pair": "o/zero",
+          "width_delta": 193,
+          "height_delta": 196,
+          "area_delta": 0.319,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "S/five",
+          "width_delta": 5.0,
+          "height_delta": 2.8,
+          "area_delta": 0.039,
+          "confusable": true,
+          "cost": "same"
+        },
+        {
+          "pair": "B/eight",
+          "width_delta": 137,
+          "height_delta": 0,
+          "area_delta": 0.123,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "Z/two",
+          "width_delta": 167.5,
+          "height_delta": 15.3,
+          "area_delta": 0.044,
+          "confusable": false,
+          "cost": "same"
+        },
+        {
+          "pair": "G/six",
+          "width_delta": 239,
+          "height_delta": 6.4,
+          "area_delta": 0.069,
+          "confusable": false,
+          "cost": "same"
+        }
+      ]
+    }
+  },
+  "current": {
+    "source-serif-4-latin": {
+      "audit": {
+        "file": "/home/bowen/projects/scholium/apps/web/public/fonts/source-serif-4-latin.woff2",
+        "family": "Source Serif 4",
+        "subfamily": "Regular",
+        "full_name": "Source Serif 4 Regular",
+        "postscript_name": "SourceSerif4Roman-Regular",
+        "version": "Version 4.004;hotconv 1.0.116;makeotfexe 2.5.65601",
+        "designer": null,
+        "licence": null,
+        "licence_url": "http://scripts.sil.org/OFL",
+        "units_per_em": 1000,
+        "cap_height": 670,
+        "x_height": 475,
+        "cap_ratio": 0.67,
+        "glyphs": 331,
+        "variable": true,
+        "axes": [
+          [
+            "wght",
+            200.0,
+            400.0,
+            900.0
+          ],
+          [
+            "opsz",
+            8.0,
+            20.0,
+            60.0
+          ]
+        ],
+        "kerning": true,
+        "kerning_note": null,
+        "embedding": {
+          "fsType": 0,
+          "permission": "installable",
+          "ok": true,
+          "note": "no embedding restriction"
+        }
+      },
+      "missing_glyphs": {
+        "tested": 87,
+        "missing": [
+          {
+            "char": "\u2192",
+            "codepoint": "U+2192",
+            "name": "RIGHTWARDS ARROW"
+          }
+        ],
+        "covers_all": false
+      }
+    },
+    "inter-latin": {
+      "audit": {
+        "file": "/home/bowen/projects/scholium/apps/web/public/fonts/inter-latin.woff2",
+        "family": "Inter",
+        "subfamily": "Regular",
+        "full_name": "Inter Regular",
+        "postscript_name": "Inter-Regular",
+        "version": "Version 4.001;git-66647c0bb",
+        "designer": null,
+        "licence": null,
+        "licence_url": "https://openfontlicense.org",
+        "units_per_em": 2048,
+        "cap_height": 1490,
+        "x_height": 1118,
+        "cap_ratio": 0.7275390625,
+        "glyphs": 518,
+        "variable": true,
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ],
+        "kerning": true,
+        "kerning_note": null,
+        "embedding": {
+          "fsType": 0,
+          "permission": "installable",
+          "ok": true,
+          "note": "no embedding restriction"
+        }
+      },
+      "missing_glyphs": {
+        "tested": 87,
+        "missing": [
+          {
+            "char": "\u2192",
+            "codepoint": "U+2192",
+            "name": "RIGHTWARDS ARROW"
+          }
+        ],
+        "covers_all": false
+      }
+    },
+    "jetbrains-mono-latin": {
+      "audit": {
+        "file": "/home/bowen/projects/scholium/apps/web/public/fonts/jetbrains-mono-latin.woff2",
+        "family": "JetBrains Mono",
+        "subfamily": "Regular",
+        "full_name": "JetBrains Mono Regular",
+        "postscript_name": "JetBrainsMono-Regular",
+        "version": "Version 2.211",
+        "designer": null,
+        "licence": null,
+        "licence_url": "https://scripts.sil.org/OFL",
+        "units_per_em": 1000,
+        "cap_height": 730,
+        "x_height": 550,
+        "cap_ratio": 0.73,
+        "glyphs": 394,
+        "variable": true,
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            800.0
+          ]
+        ],
+        "kerning": true,
+        "kerning_note": null,
+        "embedding": {
+          "fsType": 0,
+          "permission": "installable",
+          "ok": true,
+          "note": "no embedding restriction"
+        }
+      },
+      "missing_glyphs": {
+        "tested": 87,
+        "missing": [
+          {
+            "char": "\u2192",
+            "codepoint": "U+2192",
+            "name": "RIGHTWARDS ARROW"
+          }
+        ],
+        "covers_all": false
+      }
+    }
+  },
+  "elements_font_checked": 40
+}
