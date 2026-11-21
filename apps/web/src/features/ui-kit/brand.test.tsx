@@ -7,6 +7,7 @@ import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BrandLogo, BrandMark } from "./index";
+import { WORDMARK } from "./wordmark";
 
 afterEach(cleanup);
 
@@ -74,6 +75,12 @@ describe("BrandMark", () => {
 });
 
 describe("BrandLogo", () => {
+  const renderWordmark = () => {
+    const { container } = render(createElement(BrandLogo, {}));
+    const root = container.firstElementChild as HTMLElement;
+    return root.querySelector(".sch-brand-logo__wordmark") as HTMLElement;
+  };
+
   it("renders the lockup with wordmark", () => {
     render(createElement(BrandLogo, {}));
     expect(screen.getByRole("img", { name: "Scholium" })).toBeTruthy();
@@ -84,6 +91,30 @@ describe("BrandLogo", () => {
     render(createElement(BrandLogo, { markOnly: true }));
     expect(screen.getByRole("img", { name: "Scholium" })).toBeTruthy();
     expect(screen.queryByText("scholium")).toBeNull();
+  });
+
+  it("draws the wordmark as the outlined path, cropped at the pen origin", () => {
+    const wordmark = renderWordmark();
+    const svg = wordmark.querySelector("svg") as SVGSVGElement;
+
+    expect(svg.getAttribute("viewBox")).toBe("66.04 0 220.95 54");
+    const paths = Array.from(svg.querySelectorAll("path"));
+    expect(paths).toHaveLength(1);
+    expect(paths[0].getAttribute("d")).toBe(WORDMARK.path);
+    expect(paths[0].getAttribute("fill")).toBe("currentColor");
+  });
+
+  it("keeps the aria-hidden span and its 'scholium' text content", () => {
+    const wordmark = renderWordmark();
+    expect(wordmark.getAttribute("aria-hidden")).toBe("true");
+    expect(wordmark.querySelector("title")?.textContent).toBe("scholium");
+    expect(wordmark.textContent).toBe("scholium");
+  });
+
+  it("draws the same wordmark path as docs/brand/scholium-lockup-light.svg", () => {
+    const delivered = readFileSync(join(here, "../../../../../docs/brand/scholium-lockup-light.svg"), "utf8");
+    const paths = [...delivered.matchAll(/<path[^>]*\sd="([^"]+)"/g)].map((match) => match[1]);
+    expect(paths).toContain(WORDMARK.path);
   });
 });
 
@@ -405,7 +436,6 @@ describe("BrandMark tile is the delivered favicon", () => {
 
 describe("BrandLogo lockup proportions (stylesheet)", () => {
   const css = readFileSync(join(here, "brand.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const ref = REFERENCE;
 
   /** Declarations of the first rule whose selector is exactly `selector`. */
   const rule = (selector: string): string => {
@@ -420,12 +450,8 @@ describe("BrandLogo lockup proportions (stylesheet)", () => {
     return Number(value);
   };
 
-  /** Fractions of the lockup height, which is the bracket's height. */
-  const markHeight = ref.bracketHeight;
-
-  it("sets the wordmark about 0.3 mark-heights from the mark, not 0.75", () => {
-    const gap = custom(".sch-brand-logo", "--brand-logo-gap");
-    near(gap, 0.3, 0.05, "gap / mark height");
+  it("keeps the gap at 0.26 mark-heights (0.31 to the ink, after the s's side bearing)", () => {
+    expect(custom(".sch-brand-logo", "--brand-logo-gap")).toBeCloseTo(0.26, 5);
     expect(rule(".sch-brand-logo")).toMatch(/gap:\s*calc\(var\(--brand-mark-height\)\s*\*\s*var\(--brand-logo-gap\)\)/);
   });
 
@@ -433,23 +459,51 @@ describe("BrandLogo lockup proportions (stylesheet)", () => {
     expect(rule(".sch-brand-logo__mark")).toMatch(/margin:\s*0\s*;/);
   });
 
-  it("sizes the wordmark to the reference x-height", () => {
-    const xHeight = custom(".sch-brand-logo", "--brand-logo-x-height");
-    near(xHeight, ref.xHeight / markHeight, 0.03, "x-height / mark height");
+  it("sets the wordmark as outline artwork, not serif text", () => {
     const wordmark = rule(".sch-brand-logo__wordmark");
-    expect(wordmark).toMatch(/font-size:\s*var\(--brand-mark-height\)\s*;/);
-    expect(wordmark).toMatch(/font-size-adjust:\s*var\(--brand-logo-x-height\)\s*;/);
-    expect(wordmark).toMatch(/font-family:\s*var\(--family-serif\)/);
-    expect(wordmark).toMatch(/font-weight:\s*600/);
     expect(wordmark).toMatch(/color:\s*var\(--ink\)/);
+    expect(wordmark).not.toMatch(/font-family/);
+    expect(wordmark).not.toMatch(/font-weight/);
+    expect(wordmark).not.toMatch(/font-size-adjust/);
+    expect(css, "no serif family sets the lockup").not.toMatch(/family-serif/);
+    expect(css, "the baseline offset is gone").not.toMatch(/--brand-logo-baseline/);
+    expect(css, "the x-height adjustment is gone").not.toMatch(/--brand-logo-x-height/);
   });
 
-  it("sits the baseline just above the page block's bottom edge, as delivered", () => {
-    const { page, viewBox } = glyph();
-    const pageBottom = (viewBox.height - (page.y + page.height)) / viewBox.height;
-    const baseline = custom(".sch-brand-logo", "--brand-logo-baseline");
-    const expected = pageBottom + ref.baselineAbovePageBottom / markHeight;
-    near(baseline, expected, 0.03, "baseline above the lockup's bottom edge");
-    expect(baseline, "above the page block's bottom edge").toBeGreaterThanOrEqual(pageBottom);
+  it("sizes the wordmark SVG to the mark height at 220.95/54 of it", () => {
+    const svg = rule(".sch-brand-logo__wordmark svg");
+    expect(svg).toMatch(/height:\s*var\(--brand-mark-height\)\s*;/);
+    expect(svg).toMatch(/width:\s*calc\(var\(--brand-mark-height\)\s*\*\s*220\.95\s*\/\s*54\)\s*;/);
+  });
+
+  it("aligns both SVGs by their top edge", () => {
+    expect(rule(".sch-brand-logo")).toMatch(/align-items:\s*flex-start\s*;/);
+    expect(rule(".sch-brand-logo__mark svg")).not.toMatch(/vertical-align/);
+  });
+});
+
+describe("the wordmark's delivered proportions (docs/brand)", () => {
+  const source = JSON.parse(
+    readFileSync(join(here, "../../../../../docs/brand/scholium-wordmark.json"), "utf8"),
+  ) as {
+    readonly baseline: number;
+    readonly ink: readonly number[];
+    readonly view_box: readonly number[];
+  };
+
+  it("crops the wordmark's box from the pen origin to the drawing's right edge", () => {
+    expect(source.view_box).toEqual(WORDMARK.viewBox);
+    expect(WORDMARK.viewBox[2] - WORDMARK.penOriginX).toBeCloseTo(220.95, 2);
+    expect(WORDMARK.viewBox[3]).toBe(54);
+  });
+
+  it("sits the baseline 0.205 of the lockup height above the bottom edge", () => {
+    const height = WORDMARK.viewBox[3];
+    near((height - source.baseline) / height, 0.205, 0.002, "baseline above the lockup's bottom");
+  });
+
+  it("levels the ascenders with the top of the page block", () => {
+    // The page block starts at y = 7 on the same 54-unit grid as the wordmark.
+    near(source.ink[1], 7, 0.1, "ascender top against the page block's top");
   });
 });

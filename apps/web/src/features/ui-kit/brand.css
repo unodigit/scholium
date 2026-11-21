@@ -47,30 +47,25 @@
   height: 100%;
 }
 
-/* The lockup, laid out as the delivered lockup JPEGs are. Every proportion is a
-   fraction of the lockup's height, which is the closing bracket's height
-   (--brand-mark-height), and was measured on docs/brand/scholium-logo-light.jpeg
-   (the dark file agrees to within 2px):
+/* The lockup, laid out as docs/brand/scholium-lockup-light.svg draws it: one
+   drawing on the mark's 54-unit grid. Every proportion is a fraction of the
+   lockup's height, which is the closing bracket's height
+   (--brand-mark-height):
 
-   --brand-logo-gap       bracket's right edge to the wordmark's ink: 47 of 156
-                          = 0.30. The "s" has ~0.045 of side bearing of its own,
-                          so the flex gap is that much smaller: 0.26
-   --brand-logo-x-height  wordmark x-height: 72 of 156
-   --brand-logo-baseline  wordmark baseline above the lockup's bottom edge: 32 of
-                          156, which is 13px above the page block's bottom edge
-                          (the wordmark's ascenders reach the page block's top)
+   --brand-logo-gap  pen origin right of the bracket: 0.26. The "s" adds about
+                     0.05 of its own side bearing, for an ink gap of 0.31.
 
-   The wordmark is aligned by baseline, not centred: the mark's SVG is dropped
-   below the shared baseline by --brand-logo-baseline, so the alignment holds
-   for whichever serif the stack resolves to. */
+   The wordmark is the outlined Scholium Display Bold path (wordmark.ts) in a
+   220.95 x 54 box that runs from the pen origin to the drawing's right edge.
+   Both SVGs fill the lockup's height and align by their top edge, so the
+   wordmark's ascenders sit level with the top of the page block and its
+   baseline 0.205 of the height above the bottom, as delivered. */
 .sch-brand-logo {
   --brand-mark-height: 20px;
   --brand-logo-gap: 0.26;
-  --brand-logo-x-height: 0.46;
-  --brand-logo-baseline: 0.205;
 
   display: inline-flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: calc(var(--brand-mark-height) * var(--brand-logo-gap));
 
   min-block-size: var(--brand-mark-height);
@@ -93,39 +88,34 @@
 }
 
 /* The lockup carries the clear space; the mark inside it must not add its own
-   half-height margins between itself and the wordmark. The mark is a block
-   holding one line box (font-size and line-height 0 give it no strut), so it
-   has a real baseline for the wordmark to align to. */
+   half-height margins between itself and the wordmark. */
 .sch-brand-logo__mark {
   display: block;
   margin: 0;
   min-inline-size: 0;
   min-width: 0;
-  font-size: 0;
-  line-height: 0;
 }
 
 .sch-brand-logo__mark svg {
-  display: inline;
+  display: block;
   width: auto;
   height: 100%;
-  vertical-align: calc(var(--brand-mark-height) * var(--brand-logo-baseline) * -1);
 }
 
-/* The wordmark is set at the lockup's height, and `font-size-adjust` fixes its
-   x-height at --brand-logo-x-height of that for whichever face renders (a
-   browser without it falls back to the face's own x-height, within a few
-   percent). `line-height: 0` keeps its line box from growing the lockup. The
-   delivered wordmark is not tracked in, so neither is this one. */
+/* The wordmark is outline artwork at the lockup's full height and 220.95/54 of
+   it wide, so it shares the mark's 54-unit grid: its ascenders line up with
+   the page block's top and its baseline sits 0.205 of the height above the
+   bottom. It is inked from --ink through `currentColor` on the path. */
 .sch-brand-logo__wordmark {
-  font-family: var(--family-serif);
-  font-weight: 600;
+  display: block;
   color: var(--ink);
-  font-size: var(--brand-mark-height);
-  font-size-adjust: var(--brand-logo-x-height);
   line-height: 0;
-  letter-spacing: 0;
-  white-space: nowrap;
+}
+
+.sch-brand-logo__wordmark svg {
+  display: block;
+  width: calc(var(--brand-mark-height) * 220.95 / 54);
+  height: var(--brand-mark-height);
 }
 
 /* ----------------------------------------------------------------------------
