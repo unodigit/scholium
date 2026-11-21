@@ -3,7 +3,7 @@
  *
  * Two cards, one component:
  *
- * - **site** — the glyph mark and the lowercase `scholium` wordmark centred on
+ * - **site** — the glyph mark and the outlined `scholium` wordmark centred on
  *   the paper background, with the one-line tagline under them. Served at
  *   `/opengraph-image` and `/twitter-image`, and the fallback for everything
  *   below.
@@ -11,6 +11,11 @@
  *   title in the serif face (at most three lines), the first three authors, the
  *   `sch:` id in monospace, and a small lockup in the bottom-right corner.
  *   Served at `/p/{id}/opengraph-image`.
+ *
+ * **The wordmark is a path, not text.** Scholium Display is not bundled with the
+ * app (docs/design.md §2), so the lockup draws the outlines from
+ * `wordmark.ts` as an `<svg>` at the glyph's scale and in the ink colour, the
+ * way `BrandLogo` does; Source Serif 4 is only the paper title's face now.
  *
  * ```ts
  * // app/opengraph-image.tsx
@@ -55,6 +60,7 @@ import type { CSSProperties, ReactElement } from "react";
 
 import { ICON_GRID, ICON_SHAPES, type IconName } from "./icons";
 import { STATUS_CHIP_SPECS, isPaperStatus, type StatusTone } from "./status";
+import { WORDMARK } from "./wordmark";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                   */
@@ -68,7 +74,10 @@ export const BRAND_CARD_CONTENT_TYPE = "image/png" as const;
 /** The brand's one-line tagline (same words as the sign-in screens and the root description). */
 export const BRAND_CARD_TAGLINE = "Signed, open preprints and peer review";
 
-/** The wordmark: always lowercase (docs/design.md §2). */
+/**
+ * The wordmark's word: always lowercase (docs/design.md §2). The card does not
+ * type it (the lockup draws the outlined path); it is the name the alt text uses.
+ */
 export const BRAND_CARD_WORDMARK = "scholium";
 
 /** Alt text for the site card (`export const alt`). */
@@ -177,32 +186,44 @@ export function titleLayout(title: string): TitleLayout {
 export interface LockupLayout {
   readonly markWidth: number;
   readonly markHeight: number;
-  readonly wordmarkSize: number;
+  /** The outlined wordmark's width, at the glyph's scale. Its height is `markHeight`. */
+  readonly wordmarkWidth: number;
+  /** Between the glyph's box and the wordmark's: the wordmark's pen origin, 0.26 × `markHeight`. */
   readonly gap: number;
-  /** Space under the wordmark that lifts its ink to the mark's optical centre. */
-  readonly wordmarkLift: number;
 }
 
 /** The glyph's own box (`BrandMark`'s `glyph` variant): 52 × 54. */
 const GLYPH_BOX = { width: 52, height: 54 } as const;
 
 /**
- * Lockup proportions, from the mark's height: the wordmark's size and the gap
- * between mark and wordmark scale with it, like `BrandLogo` does. The wordmark
- * is set larger than the in-app logo's 0.72 so that, as in the delivered
- * `scholium-logo-light.jpeg`, its ascenders reach up toward the top of the
- * page block. Clear space is half the mark height (docs/design.md §2), which
- * the card keeps by padding.
+ * The part of the lockup drawing the wordmark's path lives in: from its pen
+ * origin to the lockup's right edge, the full 54 grid units tall. The path's
+ * coordinates are the lockup's (glyph at x 0–52), so the view box starts at the
+ * pen origin and the svg sits one gap after the glyph; 220.95 × 54.
+ */
+const WORDMARK_BOX = {
+  x: WORDMARK.penOriginX,
+  y: WORDMARK.viewBox[1],
+  width: Number((WORDMARK.viewBox[2] - WORDMARK.penOriginX).toFixed(2)),
+  height: WORDMARK.viewBox[3],
+} as const;
+
+/** Pen origin to the glyph's right edge, as a fraction of the lockup's height (docs/design.md §2: 0.26). */
+const WORDMARK_GAP = 0.26;
+
+/**
+ * Lockup proportions, from the mark's height: the wordmark is drawn at the
+ * glyph's scale, one grid unit being `markHeight / 54`, so it is
+ * 220.95 / 54 × `markHeight` wide and as tall as the mark, placed 0.26 ×
+ * `markHeight` after it with their top edges aligned. Clear space is half the
+ * mark height (docs/design.md §2), which the card keeps by padding.
  */
 export function lockupLayout(markHeight: number): LockupLayout {
-  const wordmarkSize = Math.round(markHeight * 0.95);
   return {
     markWidth: Math.round((markHeight * GLYPH_BOX.width) / GLYPH_BOX.height),
     markHeight,
-    wordmarkSize,
-    gap: Math.round(markHeight / 5),
-    // "scholium" has no descenders, so its ink sits low in a centred line box.
-    wordmarkLift: Math.round(wordmarkSize * 0.12),
+    wordmarkWidth: (markHeight * WORDMARK_BOX.width) / GLYPH_BOX.height,
+    gap: markHeight * WORDMARK_GAP,
   };
 }
 
@@ -463,26 +484,32 @@ function glyphMark(markHeight: number): ReactElement {
   );
 }
 
-/** The lockup: glyph, then the lowercase serif wordmark in ink. */
+/**
+ * The outlined wordmark: `WORDMARK.path` verbatim, in ink, in a box as tall as
+ * the glyph so that one grid unit is `markHeight / 54` for both. The path is the
+ * lockup's own drawing, so the view box begins at its pen origin.
+ */
+function wordmarkArt(markHeight: number): ReactElement {
+  const { wordmarkWidth } = lockupLayout(markHeight);
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={wordmarkWidth}
+      height={markHeight}
+      viewBox={`${WORDMARK_BOX.x} ${WORDMARK_BOX.y} ${WORDMARK_BOX.width} ${WORDMARK_BOX.height}`}
+    >
+      <path fill={C.ink} d={WORDMARK.path} />
+    </svg>
+  );
+}
+
+/** The lockup: glyph, then the outlined wordmark in ink, top edges aligned. */
 function lockup(markHeight: number): ReactElement {
   const layout = lockupLayout(markHeight);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: layout.gap }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: layout.gap }}>
       {glyphMark(markHeight)}
-      <div
-        style={{
-          display: "flex",
-          fontFamily: BRAND_CARD_FONTS.serif,
-          fontWeight: 600,
-          fontSize: layout.wordmarkSize,
-          lineHeight: 1,
-          letterSpacing: "-0.01em",
-          paddingBottom: layout.wordmarkLift,
-          color: C.ink,
-        }}
-      >
-        {BRAND_CARD_WORDMARK}
-      </div>
+      {wordmarkArt(markHeight)}
     </div>
   );
 }

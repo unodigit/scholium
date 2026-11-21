@@ -8,7 +8,7 @@ to browsers; the files are read from disk by the route handlers.
 
 | File | Family | Instance | Used for |
 | --- | --- | --- | --- |
-| `source-serif-4-semibold.woff` | Source Serif 4 | `wght 600`, `opsz 36` | wordmark, paper title |
+| `source-serif-4-semibold.woff` | Source Serif 4 | `wght 600`, `opsz 36` | paper title |
 | `inter-regular.woff` | Inter | `wght 400` | site card tagline |
 | `inter-medium.woff` | Inter | `wght 500` | status word, authors |
 | `jetbrains-mono-medium.woff` | JetBrains Mono | `wght 500` | the `sch:` id |

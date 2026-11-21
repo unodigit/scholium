@@ -55,6 +55,7 @@ import {
 } from "./brand-card";
 import { BrandMark } from "./brand-mark";
 import { PAPER_STATUSES, STATUS_CHIP_SPECS } from "./status";
+import { WORDMARK } from "./wordmark";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tokensCss = readFileSync(join(here, "..", "..", "styles", "tokens.css"), "utf8");
@@ -118,6 +119,29 @@ function textBox(tree: ReactNode, text: string): AnyElement {
 }
 
 const svgsOf = (tree: ReactNode) => elementsOf(tree).filter((element) => element.type === "svg");
+
+/** The paths inside the tree that draw the outlined wordmark: `d` is `WORDMARK.path`. */
+const wordmarkPathsOf = (tree: ReactNode) =>
+  elementsOf(tree).filter((element) => element.type === "path" && element.props.d === WORDMARK.path);
+
+/** The svg elements that hold a wordmark path. */
+const wordmarkSvgsOf = (tree: ReactNode) =>
+  svgsOf(tree).filter((svg) => wordmarkPathsOf(svg).length > 0);
+
+/** The lockup's own box: the div whose children are the glyph svg and the wordmark svg. */
+function lockupOf(tree: ReactNode): AnyElement {
+  const found = elementsOf(tree).find(
+    (element) =>
+      element.type === "div" &&
+      flatChildren(element.props.children as ReactNode).filter(
+        (child) => isValidElement(child) && child.type === "svg",
+      ).length === 2,
+  );
+  if (found === undefined) {
+    throw new Error("no lockup in the tree");
+  }
+  return found;
+}
 
 /** Every colour written anywhere in the tree: style values and SVG paint attributes. */
 function coloursIn(tree: ReactNode): string[] {
@@ -224,20 +248,20 @@ describe("the site card", () => {
     });
   });
 
-  it("shows the glyph mark and the lowercase serif wordmark", () => {
-    const glyphs = svgsOf(tree);
-    expect(glyphs).toHaveLength(1);
-    expect(glyphs[0].props.viewBox).toBe("0 0 52 54");
-    expect(glyphs[0].props.height).toBe(SITE_MARK_HEIGHT);
+  it("shows the glyph mark and the outlined wordmark, as two svgs", () => {
+    const svgs = svgsOf(tree);
+    expect(svgs).toHaveLength(2);
+    const [glyph, wordmark] = svgs;
+    expect(glyph.props.viewBox).toBe("0 0 52 54");
+    expect(glyph.props.height).toBe(SITE_MARK_HEIGHT);
+    expect(wordmarkSvgsOf(tree)).toEqual([wordmark]);
+    expect(wordmark.props.height).toBe(SITE_MARK_HEIGHT);
+  });
 
-    const wordmark = textBox(tree, "scholium");
-    expect(BRAND_CARD_WORDMARK).toBe("scholium");
-    expect(styleOf(wordmark)).toMatchObject({
-      fontFamily: BRAND_CARD_FONTS.serif,
-      fontWeight: 600,
-      fontSize: lockupLayout(SITE_MARK_HEIGHT).wordmarkSize,
-      color: BRAND_CARD_PALETTE.ink,
-    });
+  it("draws the wordmark in ink and types nothing in the serif face", () => {
+    const [path] = wordmarkPathsOf(tree);
+    expect(path.props.fill).toBe(BRAND_CARD_PALETTE.ink);
+    expect(elementsOf(tree).filter((element) => styleOf(element).fontFamily === BRAND_CARD_FONTS.serif)).toEqual([]);
   });
 
   it("carries the tagline under the lockup", () => {
@@ -248,15 +272,79 @@ describe("the site card", () => {
       color: BRAND_CARD_PALETTE.ink2,
     });
     const all = elementsOf(tree);
-    expect(all.indexOf(tagline)).toBeGreaterThan(all.indexOf(textBox(tree, "scholium")));
+    expect(all.indexOf(tagline)).toBeGreaterThan(all.indexOf(wordmarkSvgsOf(tree)[0]));
   });
 
-  it("names a paper nowhere", () => {
-    expect(textOf(tree)).toBe(`${BRAND_CARD_WORDMARK}${BRAND_CARD_TAGLINE}`);
+  it("names a paper nowhere, and has no text but the tagline", () => {
+    expect(textOf(tree)).toBe(BRAND_CARD_TAGLINE);
   });
 
-  it("describes itself in its alt text", () => {
+  it("describes itself in its alt text, which still names the wordmark's word", () => {
+    expect(BRAND_CARD_WORDMARK).toBe("scholium");
+    expect(BRAND_CARD_ALT).toBe(`scholium: ${BRAND_CARD_TAGLINE}`);
     expect(BRAND_CARD_ALT).toContain(BRAND_CARD_TAGLINE);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The outlined wordmark                                                       */
+/* -------------------------------------------------------------------------- */
+
+describe("the outlined wordmark", () => {
+  const CARDS: [string, BrandCardProps, number][] = [
+    ["site", SITE_CARD, SITE_MARK_HEIGHT],
+    ["paper", PAPER, CORNER_MARK_HEIGHT],
+  ];
+
+  it("is the lockup drawing's own geometry: 220.95 × 54 from the pen origin, a gap of 14.04 after the glyph", () => {
+    expect(WORDMARK.viewBox[3]).toBe(54);
+    expect(WORDMARK.viewBox[2] - WORDMARK.penOriginX).toBeCloseTo(220.95, 5);
+    // The gap is the pen origin less the glyph's 52 grid units: 0.26 of the lockup's 54.
+    expect((WORDMARK.penOriginX - 52) / 54).toBeCloseTo(0.26, 5);
+  });
+
+  describe.each(CARDS)("on the %s card", (_name, props, markHeight) => {
+    const tree = BrandCard(props);
+    const lockup = lockupOf(tree);
+    const [glyph, wordmark] = flatChildren(lockup.props.children as ReactNode) as AnyElement[];
+
+    it("is one path whose d is WORDMARK.path, in the resolved ink colour", () => {
+      const paths = elementsOf(wordmark).slice(1);
+      expect(paths).toHaveLength(1);
+      expect(paths[0].type).toBe("path");
+      expect(paths[0].props.d).toBe(WORDMARK.path);
+      expect(paths[0].props.fill).toBe(BRAND_CARD_PALETTE.ink);
+      expect(wordmarkPathsOf(tree)).toHaveLength(1);
+    });
+
+    it("comes after the glyph, as the lockup's last child", () => {
+      expect(glyph.props.viewBox).toBe("0 0 52 54");
+      expect(wordmark.type).toBe("svg");
+      expect(flatChildren(lockup.props.children as ReactNode)).toHaveLength(2);
+    });
+
+    it("is at the glyph's scale: one grid unit is markHeight / 54, so it is 220.95 / 54 × markHeight wide", () => {
+      expect(glyph.props.height).toBe(markHeight);
+      expect(wordmark.props.height).toBe(markHeight);
+      expect(wordmark.props.width as number).toBeCloseTo((220.95 / 54) * markHeight, 6);
+      // The view box starts at the pen origin, so the path lands where the lockup drawing puts it.
+      expect(wordmark.props.viewBox).toBe("66.04 0 220.95 54");
+      // Box and view box have the same aspect: nothing is stretched.
+      expect((wordmark.props.width as number) / (wordmark.props.height as number)).toBeCloseTo(220.95 / 54, 6);
+    });
+
+    it("is placed 0.26 × markHeight after the glyph, with the top edges aligned", () => {
+      expect(styleOf(lockup)).toMatchObject({ display: "flex", alignItems: "flex-start" });
+      expect(styleOf(lockup).flexDirection).toBeUndefined();
+      expect(styleOf(lockup).gap as number).toBeCloseTo(0.26 * markHeight, 6);
+      expect(styleOf(lockup).gap).toBe(lockupLayout(markHeight).gap);
+    });
+
+    it("is not typed: no text and no font anywhere in the lockup", () => {
+      expect(textOf(lockup)).toBe("");
+      expect(elementsOf(lockup).filter((element) => styleOf(element).fontFamily !== undefined)).toEqual([]);
+      expect(textOf(tree)).not.toContain(BRAND_CARD_WORDMARK);
+    });
   });
 });
 
@@ -315,10 +403,11 @@ describe("the paper card", () => {
     });
 
     it("leaves room for three title lines and a two-line byline above the footer at every size", () => {
-      // The card's content box is 630 − 2 × 64 = 502 px tall. Measured from a
-      // render, the rows that are not the title or byline take 202 px: the
-      // status chip 58, the gaps above the title (40) and byline (28), and the
-      // footer 76 (28 padding, 2 rule, 46 lockup).
+      // The card's content box is 630 − 2 × 64 = 502 px tall. The rows that
+      // are not the title or byline take at most 202 px: the status chip 58,
+      // the gaps above the title (40) and byline (28), and the footer, which
+      // is 74 now that the lockup is just the glyph's 44 px tall (28 padding,
+      // 2 rule, 44) and was measured at 76 when the wordmark was a text line.
       const room = BRAND_CARD_SIZE.height - 2 * CARD_PADDING - 202;
       const bylineHeight = 30 * 1.35 * AUTHOR_LINE_CLAMP;
       for (const length of [1, 60, 61, 100, 101, 130, 131, 300]) {
@@ -438,28 +527,31 @@ describe("the paper card", () => {
       const [idBox, lockup] = flatChildren((footer as AnyElement).props.children as ReactNode) as AnyElement[];
       expect(textOf(idBox)).toBe(PAPER.schId);
       expect(svgsOf(lockup)[0].props.height).toBe(CORNER_MARK_HEIGHT);
-      expect(textOf(lockup)).toBe("scholium");
+      expect(wordmarkSvgsOf(lockup)).toHaveLength(1);
+      expect(textOf(lockup)).toBe("");
       expect(CORNER_MARK_HEIGHT).toBeLessThan(SITE_MARK_HEIGHT / 2);
     });
 
-    it("sets the wordmark in the serif face, semibold, in ink", () => {
-      const wordmarks = elementsOf(paperTree()).filter((element) => element.type === "div" && textOf(element) === "scholium" && styleOf(element).fontFamily);
-      expect(wordmarks).toHaveLength(1);
-      expect(styleOf(wordmarks[0])).toMatchObject({
-        fontFamily: BRAND_CARD_FONTS.serif,
-        fontWeight: 600,
-        color: BRAND_CARD_PALETTE.ink,
-        fontSize: lockupLayout(CORNER_MARK_HEIGHT).wordmarkSize,
-      });
+    it("draws the wordmark as the outlined path in ink: no text node 'scholium', and no serif face in the footer", () => {
+      const tree = paperTree();
+      const [path] = wordmarkPathsOf(tree);
+      expect(path.props.fill).toBe(BRAND_CARD_PALETTE.ink);
+      expect(
+        elementsOf(tree).filter((element) => element.type === "div" && textOf(element) === BRAND_CARD_WORDMARK),
+      ).toEqual([]);
+      // Source Serif 4 is the title's face and nothing else's.
+      const serif = elementsOf(tree).filter((element) => styleOf(element).fontFamily === BRAND_CARD_FONTS.serif);
+      expect(serif.map(textOf)).toEqual([PAPER.title]);
     });
 
     it("keeps the mark, wordmark and gap in proportion at every size", () => {
       for (const height of [CORNER_MARK_HEIGHT, SITE_MARK_HEIGHT]) {
         const layout = lockupLayout(height);
         expect(layout.markWidth / layout.markHeight).toBeCloseTo(52 / 54, 1);
-        expect(layout.wordmarkSize / height).toBeGreaterThan(0.7);
-        expect(layout.wordmarkSize / height).toBeLessThan(1.1);
-        expect(layout.gap).toBe(Math.round(height / 5));
+        expect(layout.wordmarkWidth / height).toBeCloseTo(220.95 / 54, 6);
+        expect(layout.gap / height).toBeCloseTo(0.26, 6);
+        // The lockup is one drawing: 287 × 54 grid units, aspect 5.31.
+        expect((layout.markWidth + layout.gap + layout.wordmarkWidth) / height).toBeCloseTo(287 / 54, 1);
       }
     });
   });
@@ -506,6 +598,24 @@ describe("the glyph mark", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* The fonts' README                                                           */
+/* -------------------------------------------------------------------------- */
+
+describe("og-fonts/README.md", () => {
+  const readme = readFileSync(join(here, "og-fonts", "README.md"), "utf8");
+  const serifRow = readme.split("\n").find((line) => line.startsWith("|") && line.includes("`source-serif-4-semibold.woff`"));
+
+  it("lists the paper title as the use of source-serif-4-semibold.woff", () => {
+    expect(serifRow).toBeDefined();
+    expect(serifRow).toContain("paper title");
+  });
+
+  it("no longer lists the wordmark as a use of it: the wordmark is a path", () => {
+    expect(serifRow?.toLowerCase()).not.toContain("wordmark");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Palette and Satori rules, across every card                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -546,6 +656,15 @@ describe.each(EVERY_CARD)("the %s card", (_name, props) => {
 
   it("is a 1200 × 630 paper-coloured box", () => {
     expect(styleOf(tree as AnyElement)).toMatchObject({ width: 1200, height: 630, backgroundColor: "#FBFAF7" });
+  });
+
+  it("draws the wordmark once, as the outlined path, and never as a text node 'scholium'", () => {
+    expect(wordmarkPathsOf(tree)).toHaveLength(1);
+    expect(wordmarkSvgsOf(tree)).toHaveLength(1);
+    expect(textOf(tree).toLowerCase()).not.toContain(BRAND_CARD_WORDMARK);
+    expect(
+      elementsOf(tree).filter((element) => flatChildren(element.props.children as ReactNode).includes(BRAND_CARD_WORDMARK)),
+    ).toEqual([]);
   });
 
   it("names every font family it asks for", () => {
