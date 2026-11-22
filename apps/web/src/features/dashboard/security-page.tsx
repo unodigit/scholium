@@ -632,12 +632,17 @@ function RecoveryInProgressCard({
         {items.map((request) => {
           const started = formatDay(request.requestedAt);
           const completes = formatDay(request.contestUntil);
+          const approvals = request.approvals ?? 0;
+          const threshold = request.threshold ?? GUARDIAN_THRESHOLD;
+          const hours = request.safetyWindowHours ?? 72;
           return (
             <li key={request.requestId} className="db-requester">
               <span>
                 Someone started a recovery of your account.
                 {started !== null ? ` Started ${started}.` : null}
-                {completes !== null ? ` It can complete after ${completes}.` : null}
+                {completes !== null
+                  ? ` It can complete after ${completes}.`
+                  : ` ${approvals} of ${threshold} guardians have approved. If ${threshold} approve, it can complete ${hours} hours later unless you cancel it.`}
               </span>
               <button
                 type="button"

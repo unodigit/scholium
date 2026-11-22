@@ -246,6 +246,12 @@ export function parseRecoveryRequests(payload: unknown): RecoveryRequestSummary[
       readText(item.requested_at) ?? readText(item.requestedAt) ?? null;
     const contestUntil =
       readText(item.contest_until) ?? readText(item.contestUntil) ?? null;
+    const safetyWindowHours =
+      typeof item.safety_window_hours === "number"
+        ? item.safety_window_hours
+        : typeof item.safetyWindowHours === "number"
+          ? item.safetyWindowHours
+          : null;
     out.push({
       requestId,
       accountDid,
@@ -256,6 +262,7 @@ export function parseRecoveryRequests(payload: unknown): RecoveryRequestSummary[
       role,
       requestedAt,
       contestUntil,
+      safetyWindowHours,
     });
   }
   return out;
@@ -366,6 +373,8 @@ export interface RecoveryRequestSummary {
   readonly requestedAt?: string | null;
   /** When the new passkey can take over (the safety window's end), when open. */
   readonly contestUntil?: string | null;
+  /** Length of the safety window in hours, when the API records it. */
+  readonly safetyWindowHours?: number | null;
 }
 
 /** A key held by one of the member's devices. */

@@ -1082,21 +1082,17 @@ export function notificationSummary({ kind, payload, read }: NotificationLike): 
       return "The recovery of your account was completed.";
     }
     const contestUntil = readText(payload.contest_until) ?? readText(payload.contestUntil);
-    let date: string | null = contestUntil !== null ? formatDate(contestUntil) : null;
-    if (date === null) {
-      const requested = readText(payload.requested_at) ?? readText(payload.requestedAt);
-      const hours = readNumber(payload.safety_window_hours);
-      if (requested !== null && hours !== null) {
-        const when = new Date(requested);
-        if (!Number.isNaN(when.getTime())) {
-          when.setUTCHours(when.getUTCHours() + Math.trunc(hours));
-          date = formatDate(when.toISOString());
-        }
-      }
+    const date: string | null = contestUntil !== null ? formatDate(contestUntil) : null;
+    if (date !== null) {
+      return `Someone started a recovery of your account. Unless you cancel it, it can complete after ${date}.`;
     }
-    return date !== null
-      ? `Someone started a recovery of your account. Unless you cancel it, it can complete after ${date}.`
-      : "Someone started a recovery of your account. Unless you cancel it, it can complete.";
+    const approvals =
+      readNumber(payload.approval_count) ??
+      readNumber(payload.approvals_count) ??
+      (Array.isArray(payload.approvals) ? payload.approvals.length : 0);
+    const threshold = readNumber(payload.threshold) ?? 3;
+    const hours = readNumber(payload.safety_window_hours) ?? 72;
+    return `Someone started a recovery of your account. ${approvals} of ${threshold} guardians have approved. If ${threshold} approve, it can complete ${Math.trunc(hours)} hours later unless you cancel it.`;
   }
   if (kind === "recovery.request") {
     const recorded = recoverySummary(payload);

@@ -907,7 +907,7 @@ describe("notification wording", () => {
         "Recovery of your account",
       );
       expect(notificationSummary({ kind: "recovery.request", payload: OWNER })).toBe(
-        "Someone started a recovery of your account. Unless you cancel it, it can complete after 19 Nov 2026.",
+        "Someone started a recovery of your account. 0 of 3 guardians have approved. If 3 approve, it can complete 72 hours later unless you cancel it.",
       );
     });
 
