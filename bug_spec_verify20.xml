@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 20: the low findings left open after verify sweep 20 (2026-11-21, main @ df95694 incl. round 19 and the hand
+  fixes 453dd68 and df95694). 17/17 journeys pass; npm test (API 6129, web 5943) and e2e 56/56 green.
+  Decision (recorded here):
+  D1  A guardian recovery can complete only 72 hours (the contest window) after the third guardian approves
+      (recovery/approvals.py sets contest_until then; opening.py says the end "cannot be named here"). Before that, the
+      owner is told how many guardians have approved and that it can complete 72 hours after the third approval; no
+      completion date is named until contest_until exists. The owner's notice and the /me/security card say the same.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/me/service.py,apps/api/src/app/modules/me/tests/test_me_attention.py">
+    <title>The author's "Appeal the removal of your post" attention items for several hidden posts on one paper are identical except for the moderator's reason: they don't say which post</title>
+    <symptoms>
+      With three of sam's posts on one paper hidden, /me shows three items 'Appeal the removal of your post on "Can a Meta-Agent Choose the Safer Branch?"' that differ only in the reason line; _appeal_available_item in modules/me/service.py (~L628-635) builds the hide summary from the paper title only, although moderation/outcomes.excerpt(target_cid) gives the post's opening and appeal-panel items already quote the post
+    </symptoms>
+    <reproduction_steps>
+      Journey 07 step 7 (screenshots/07-flag-and-dispute/07g-author-attention-post-hidden.png)
+    </reproduction_steps>
+    <expected>A hide item quotes the start of the hidden post or review, like the panel items do: 'Appeal the removal of your post ("Sweep 20 second thread: ...") on "Title".', using outcomes.excerpt (the same quoting as appeals/subject._quoted_excerpt); with no readable excerpt the current wording stays. The author always sees their own text, so no sealing applies to their own item. Tests: two hidden posts on one paper give two different summaries, each quoting its post; a hidden post whose record cannot be read keeps the current sentence; hold/reject items are unchanged</expected>
+    <actual>The author can't tell which hidden post each item is about</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/dashboard/security-page.tsx,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/security-page.test.tsx,apps/web/src/features/dashboard/dashboard.test.ts">
+    <title>A recovery with no approvals yet: the owner's notice names a completion date that is not true, and the "Recovery in progress" card names none</title>
+    <symptoms>
+      Owner notice: "Someone started a recovery of your account. Unless you cancel it, it can complete after 23 Nov 2026." The date is requested_at + safety_window_hours (dashboard.ts ~L1084-1096), but the 72-hour window starts only when the third guardian approves. /me/security "Recovery in progress" shows only "Started 20 Nov 2026." because it reads contestUntil only (security-page.tsx ~L633-640), which is null until three guardians approve
+    </symptoms>
+    <reproduction_steps>
+      Journey 06 steps 9-10 (screenshots/06-key-recovery/30b-owner-notification-recovery-of-your-account.png, 33a-rotated-owner-second-recovery-started.png, 33b-rotated-owner-security-recovery-in-progress.png)
+    </reproduction_steps>
+    <expected>Per D1: while contest_until is null, both the notice and the card say how many guardians have approved and that the recovery can complete 72 hours after the third approval ("0 of 3 guardians have approved. If 3 approve, it can complete 72 hours later unless you cancel it."), using safety_window_hours / the threshold when given; once contest_until is set, both name that date ("It can complete after {date}"). No date is computed from requested_at. Tests: a notice and a card with contest_until null and 0 or 2 approvals name no date and give the count; with contest_until set, both name the same date</expected>
+    <actual>The notice and the card disagree, and the notice's date is wrong</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/src/scholium_cli/verify.py,apps/api/packages/cli/tests/test_cli_verify_api_export.py">
+    <title>`scholium verify` on a whole-node export checks a paper's queued newer version (whose file isn't in the export) instead of its listed version</title>
+    <symptoms>
+      For sch:por2-mgie-jfcz (v1 listed, v2 queued) the per-paper block reports "! The file contents are not in this archive, so they could not be compared with the signed manifest", because _paper_verdict in scholium_cli/verify.py calls verify_paper without head=, so the newest version (the queued v2) is checked; the export holds v1's file, which is never compared. The summary already counts the paper as listed (round 19)
+    </symptoms>
+    <reproduction_steps>
+      Journey 09 step 5 (screenshots/09-preserve-and-transparency/05b-export-cli-verify-and-rebuild.png)
+    </reproduction_steps>
+    <expected>When a paper's newest version is not listed but an older one is, its per-paper block verifies the newest listed version (verify_paper head=that version's record id), so the listed file is compared with its manifest (✓), and adds one line "1 newer version awaiting moderation (its file is not in this archive)"; a paper with no listed version, and a paper whose newest version is listed, are unchanged; the overall result and the exit code are unchanged for a valid export. Tests: listed v1 + queued v2 → v1's files are checked and pass, with the note; a v1 file corrupted in that export → failure, exit 1</expected>
+    <actual>The listed paper's file is never checked</actual>
+  </bug>
+
+</bug_spec>
