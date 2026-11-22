@@ -531,17 +531,83 @@ def _any_version_listed(archive: Archive, paper_id: str) -> bool:
     return _LISTED_STATE in _states_in_force(archive, targets).values()
 
 
+def _posted_versions(archive: Archive, paper_id: str) -> list[str]:
+    """The record ids of the paper's ``paper.version`` records, oldest first.
+
+    ``body.n`` is the version number; a fork may hold two records with the same
+    number, so ``created`` and the record id break the tie the way the rest of
+    the summary orders decisions.
+    """
+    versions: list[tuple[tuple[int, datetime, str], str]] = []
+    for record in archive.records:
+        if record.get("type") != "paper.version":
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping) or body.get("paper") != paper_id:
+            continue
+        record_id = record.get("id")
+        if not isinstance(record_id, str):
+            continue
+        number = body.get("n")
+        if isinstance(number, bool) or not isinstance(number, int):
+            number = 0
+        versions.append(((number, _created(record.get("created")), record_id), record_id))
+    versions.sort()
+    return [record_id for _key, record_id in versions]
+
+
+def _newest_listed_head(archive: Archive, paper_id: str) -> tuple[str | None, int]:
+    """The version to verify, and how many newer versions are not listed.
+
+    ``(None, 0)`` means "verify the newest version", which is both the old
+    behaviour and the right answer when the newest version is listed or when
+    no version of the paper is (it is then in the moderation queue).
+
+    A paper whose newest version no moderator has listed, but an older one
+    has, is served by the node as that older, newest listed version -- and an
+    archive carries the files that version's manifest names, not the queued
+    newer version's.  Verifying the newest version would therefore report its
+    file as missing and never compare the file the archive does hold.  So the
+    newest listed version is the head, and the count is the newer versions
+    whose files are consequently absent.
+    """
+    versions = _posted_versions(archive, paper_id)
+    if not versions:
+        return None, 0
+    states = _states_in_force(archive, versions)
+    if states.get(versions[-1]) == _LISTED_STATE:
+        return None, 0
+    listed = [
+        record_id for record_id in versions if states.get(record_id) == _LISTED_STATE
+    ]
+    if not listed:
+        return None, 0
+    head = listed[-1]
+    return head, len(versions) - versions.index(head) - 1
+
+
 def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) -> PaperVerdict:
     label = _short(paper_id) or paper_id
+    head, newer = _newest_listed_head(archive, paper_id)
     try:
         report = verify_paper(
-            archive.records, paper=paper_id, authorities=authorities
+            archive.records, paper=paper_id, head=head, authorities=authorities
         )
     except ValueError as exc:
         # A record names a paper with an id that is not a record id at all.
         return PaperVerdict(label=label, problems=(str(exc),))
     verdict = build_verdict(archive, report)
     items = tuple(item for item in verdict.items if item.key in _PAPER_ITEM_KEYS)
+    if newer:
+        # The archive holds the listed version's file, not the queued newer
+        # one's: say so on one line rather than muting the whole files check.
+        text = (
+            "1 newer version awaiting moderation (its file is not in this archive)"
+            if newer == 1
+            else f"{newer} newer versions awaiting moderation "
+            "(their files are not in this archive)"
+        )
+        items += (Item("version", WARN, text),)
     failed = any(item.state == FAIL for item in items) or not report.valid
     status = "invalid" if failed else report.status
     # The report's own status is about the paper's history; a hold is the

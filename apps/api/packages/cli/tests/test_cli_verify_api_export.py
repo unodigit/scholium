@@ -107,6 +107,11 @@ with TestClient(create_app()) as client:
 #: a paper with no listed version at all, then export.  The node keeps serving
 #: the listed v1 (``GET /v1/papers/{id}`` resolves to it), so the summary must
 #: count the first paper as listed and only the second as awaiting moderation.
+#:
+#: v2 names a manuscript of its own.  No listed version names those bytes, so
+#: an anonymous export leaves v2's file out while v1's stays in: the archive
+#: holds exactly what a reader of the listed v1 may read, and ``scholium
+#: verify`` must check v1's file -- not report the queued v2's as missing.
 BUILD_LISTED_V1_WITH_QUEUED_V2 = """
 import json
 import sys
@@ -116,10 +121,14 @@ from fastapi.testclient import TestClient
 from nacl.signing import SigningKey
 
 from app.main import create_app
-from app.modules import ledger
+from app.modules import content, ledger
 from app.modules.export.tests.test_paper_car import build_paper
 from app.modules.submissions import LISTED, MODERATION, VersionAuthor, save_version
-from scholium_record_core import did_key_from_signing_key, sign_record
+from scholium_record_core import (
+    compute_file_id,
+    did_key_from_signing_key,
+    sign_record,
+)
 
 with TestClient(create_app()) as client:
     mixed = build_paper(state=LISTED)
@@ -129,6 +138,26 @@ with TestClient(create_app()) as client:
             {"version": mixed.version["id"], "role": "author", "decision": "accept"},
         )
     )
+
+    v2_data = b"second manuscript, still in moderation"
+    v2_file = compute_file_id(v2_data)
+    content.store_bytes(v2_data, media_type="application/pdf")
+    content.set_scan_status(v2_file, content.SCAN_PASSED)
+    v2_manifest = mixed.sign(
+        "manifest",
+        {
+            "files": [
+                {
+                    "path": "paper.pdf",
+                    "cid": v2_file,
+                    "size": len(v2_data),
+                    "mediaType": "application/pdf",
+                    "role": "manuscript",
+                }
+            ]
+        },
+    )
+    ledger.append(v2_manifest)
 
     # v2 is posted after v1 is listed; no moderator has decided on it, so the
     # node keeps serving v1 and the paper does not leave the catalog.
@@ -151,7 +180,7 @@ with TestClient(create_app()) as client:
                         "creditRoles": ["Conceptualization"],
                     }
                 ],
-                "manifest": mixed.manifest["id"],
+                "manifest": v2_manifest["id"],
                 "licence": "CC-BY-4.0",
                 "changeNote": "second version",
             },
@@ -172,7 +201,7 @@ with TestClient(create_app()) as client:
         n=2,
         title=v2["body"]["title"],
         abstract=v2["body"]["abstract"],
-        manifest_cid=mixed.manifest["id"],
+        manifest_cid=v2_manifest["id"],
         licence="CC-BY-4.0",
         prev_cid=mixed.version["id"],
         authors=(VersionAuthor(mixed.did, 1, ("Conceptualization",)),),
@@ -224,12 +253,23 @@ with TestClient(create_app()) as client:
                     "short_id": paper.short_id,
                     "genesis": paper.genesis["id"],
                     "version": paper.version["id"],
+                    "file_cid": paper.file_cid,
                 }
                 for paper in (mixed, queued)
             ]
         )
     )
 """
+
+
+def paper_block(out: str, short_id: str) -> str:
+    """The lines of one paper's block in a whole-node checklist."""
+    start = out.index(f"Paper {short_id}")
+    rest = out[start:]
+    end = rest.find("\n\nPaper ", 1)
+    if end == -1:
+        end = rest.find("\n\nResult:", 1)
+    return rest[: end if end != -1 else len(rest)]
 
 
 def export_a_whole_node(
@@ -313,6 +353,73 @@ def test_a_listed_earlier_version_keeps_the_paper_listed(tmp_path, capsys):
     assert "2 awaiting moderation" not in out
     for paper in papers:
         assert paper["short_id"] in out
+
+
+def test_a_listed_version_is_verified_when_a_newer_one_is_queued(tmp_path, capsys):
+    """The archive holds the listed version's file: compare it, not v2's.
+
+    A paper whose v1 is listed and whose v2 is queued is served as v1 (the
+    catalog resolves its ``sch:`` id to the newest *listed* version), and the
+    export carries v1's file -- not v2's, which no listed version names.  So
+    the per-paper block must verify v1 and compare its file with v1's signed
+    manifest, and note on one line that the newer version is not in the
+    archive.
+    """
+    archive, papers = export_a_whole_node(tmp_path, BUILD_LISTED_V1_WITH_QUEUED_V2)
+    listed, queued = papers
+
+    code = main(["verify", str(archive)])
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    block = paper_block(out, listed["short_id"])
+    assert "The file matches the signed manifest" in block
+    assert "The file contents are not in this archive" not in block
+    assert (
+        "1 newer version awaiting moderation (its file is not in this archive)"
+        in block
+    )
+
+    # A paper with no listed version is unchanged: its only file is not in the
+    # archive, and there is no newer version to note.
+    queued_block = paper_block(out, queued["short_id"])
+    assert "The file contents are not in this archive" in queued_block
+    assert "newer version awaiting moderation" not in queued_block
+
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 awaiting moderation)" in out
+
+
+def test_a_corrupt_listed_version_file_in_the_export_fails(tmp_path, capsys):
+    """The listed version's file is checked, so corrupt bytes fail the check.
+
+    Flipping a byte of v1's file block leaves the block not matching its file
+    id; the listed v1's file check must report that the bytes are not the
+    manifest's.  (The archive-wide block check fails too; the per-paper line
+    is what proves v1 was verified rather than the queued v2.)
+    """
+    archive, papers = export_a_whole_node(tmp_path, BUILD_LISTED_V1_WITH_QUEUED_V2)
+    listed = papers[0]
+
+    carried = read_car(archive.read_bytes())
+    blocks = [
+        (
+            block.cid,
+            flip(block.data, 0)
+            if str(block.cid.set(base="base32")) == listed["file_cid"]
+            else block.data,
+        )
+        for block in carried.blocks
+    ]
+    broken = tmp_path / "broken-file.car"
+    broken.write_bytes(write_car(blocks, roots=carried.roots))
+
+    code = main(["verify", str(broken)])
+    out = capsys.readouterr().out
+
+    assert code == 1, out
+    block = paper_block(out, listed["short_id"])
+    assert "1 of 1 files failed the check against the signed manifest" in block
+    assert "the bytes in the archive do not hash to the signed file id" in block
 
 
 def test_the_documented_command_names_a_paper_that_does_not_verify(tmp_path, capsys):
