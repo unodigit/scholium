@@ -132,6 +132,11 @@ def test_a_short_panel_is_visible_to_its_author_and_reported(client, pool):
     ]
     assert moderator_notes
     assert "Only 2 eligible members are available; a panel needs 3." in moderator_notes[0].payload["summary"]
+    # Two appeals about posts on one paper are told apart by the post's opening.
+    assert (
+        f'the appeal of a hidden post on "{scene.title}" ("{scene.text}...") yet.'
+        in moderator_notes[0].payload["summary"]
+    )
 
     appellant_notes = [
         note

@@ -94,7 +94,13 @@ from .errors import (
 )
 from .models import Appeal, AppealPanelMember, ensure_tables
 from .panel import derive_panel_seed, draw_panel, get_panel, panel_seed
-from .subject import AppealSubject, describe_subject, format_day, seat_summary
+from .subject import (
+    AppealSubject,
+    _quoted_excerpt,
+    describe_subject,
+    format_day,
+    seat_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -574,6 +580,10 @@ def notify_panel_missing(
         subject = describe_subject(decision.target_cid, decision.decision_cid)
         title = subject.title
     phrase = subject.phrase() if subject is not None else "an appeal panel"
+    if subject is not None and subject.is_record and subject.excerpt:
+        # Several appeals about posts on one paper read alike without it; the
+        # notice goes to tier-4 moderators and the appellant, who may read it.
+        phrase += f' ("{_quoted_excerpt(subject.excerpt)}")'
     deadline = vote_deadline(appeal)
     when = f" on {format_day(deadline)}" if deadline is not None else ""
 
