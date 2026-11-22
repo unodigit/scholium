@@ -99,6 +99,7 @@ from .subject import (
     _quoted_excerpt,
     describe_subject,
     format_day,
+    report_is_sealed,
     seat_summary,
 )
 
@@ -580,9 +581,15 @@ def notify_panel_missing(
         subject = describe_subject(decision.target_cid, decision.decision_cid)
         title = subject.title
     phrase = subject.phrase() if subject is not None else "an appeal panel"
-    if subject is not None and subject.is_record and subject.excerpt:
-        # Several appeals about posts on one paper read alike without it; the
-        # notice goes to tier-4 moderators and the appellant, who may read it.
+    if (
+        subject is not None
+        and subject.is_record
+        and subject.excerpt
+        and not report_is_sealed(subject.target_cid)
+    ):
+        # Several appeals about posts on one paper read alike without it.  A
+        # sealed review report is never quoted: the appellant may not be its
+        # author, and the notice is one text for every recipient.
         phrase += f' ("{_quoted_excerpt(subject.excerpt)}")'
     deadline = vote_deadline(appeal)
     when = f" on {format_day(deadline)}" if deadline is not None else ""

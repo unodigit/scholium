@@ -147,6 +147,28 @@ def test_a_short_panel_is_visible_to_its_author_and_reported(client, pool):
     assert appellant_notes
 
 
+def test_a_short_panel_notice_never_quotes_a_sealed_report(client, pool, monkeypatch):
+    from app.modules.appeals import service as appeals_service
+    from app.modules.notifications import list_notifications
+
+    monkeypatch.setattr(appeals_service, "report_is_sealed", lambda target: True)
+    pool(_account(3), _account(3))
+    scene = HiddenPost(client)
+    record = scene.appeal()
+
+    notes = [
+        note
+        for did in (scene.moderator.did, scene.post_author.did)
+        for note in list_notifications(did)
+        if note.kind == appeals.PANEL_NOT_FORMED_KIND
+        and note.payload.get("appeal_cid") == record["id"]
+    ]
+    assert len(notes) == 2
+    for note in notes:
+        assert scene.text not in note.payload["summary"]
+        assert f'hidden post on "{scene.title}" yet.' in note.payload["summary"]
+
+
 def test_the_draw_retries_when_a_member_becomes_available(client, pool):
     first, second = _account(3), _account(3)
     pool(first, second)
