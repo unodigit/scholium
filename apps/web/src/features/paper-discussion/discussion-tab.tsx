@@ -425,7 +425,10 @@ export function DiscussionTab({
             )}
           </div>
 
-          {total > 0 ? (
+          {/* A hidden placeholder is listed too: with every post hidden, the
+              author still needs their row (and its Appeal) and readers the
+              "Hidden by moderation" placeholder. */}
+          {total > 0 || hiddenTotal > 0 ? (
             <ol className="pd-threads" aria-label="Threads, most helpful first">
               {ordered.map((thread) => (
                 <PostCard key={thread.cid} post={thread} depth={0} actions={postActions} />

@@ -1074,6 +1074,9 @@ describe("DiscussionTab: hidden posts", () => {
 
     expect(screen.queryByText(/No discussion yet/)).toBeNull();
     expect(screen.getByText("0 posts, 1 hidden · most helpful first")).toBeTruthy();
+    // The placeholder itself is listed, not only counted.
+    expect(screen.getByText("Hidden by moderation: Off topic.")).toBeTruthy();
+    expect(screen.getByRole("list", { name: "Threads, most helpful first" })).toBeTruthy();
   });
 
   it("keeps the plain wording when nothing is hidden", () => {
