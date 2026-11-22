@@ -1086,13 +1086,12 @@ export function notificationSummary({ kind, payload, read }: NotificationLike): 
     if (date !== null) {
       return `Someone started a recovery of your account. Unless you cancel it, it can complete after ${date}.`;
     }
-    const approvals =
-      readNumber(payload.approval_count) ??
-      readNumber(payload.approvals_count) ??
-      (Array.isArray(payload.approvals) ? payload.approvals.length : 0);
+    // The owner's notice is written when the recovery starts and updated only
+    // when it closes, so it cannot carry a live approval count: it states the
+    // rule, and /me/security's "Recovery in progress" card gives the count.
     const threshold = readNumber(payload.threshold) ?? 3;
     const hours = readNumber(payload.safety_window_hours) ?? 72;
-    return `Someone started a recovery of your account. ${approvals} of ${threshold} guardians have approved. If ${threshold} approve, it can complete ${Math.trunc(hours)} hours later unless you cancel it.`;
+    return `Someone started a recovery of your account. If ${threshold} of your guardians approve, it can complete ${Math.trunc(hours)} hours later unless you cancel it.`;
   }
   if (kind === "recovery.request") {
     const recorded = recoverySummary(payload);

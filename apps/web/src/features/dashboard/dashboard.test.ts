@@ -907,7 +907,7 @@ describe("notification wording", () => {
         "Recovery of your account",
       );
       expect(notificationSummary({ kind: "recovery.request", payload: OWNER })).toBe(
-        "Someone started a recovery of your account. 0 of 3 guardians have approved. If 3 approve, it can complete 72 hours later unless you cancel it.",
+        "Someone started a recovery of your account. If 3 of your guardians approve, it can complete 72 hours later unless you cancel it.",
       );
     });
 
@@ -949,6 +949,16 @@ describe("notification wording", () => {
           payload: { ...OWNER, status: "completed" },
         }),
       ).toBe("The recovery of your account was completed.");
+    });
+
+    it("gives no approval count (the notice is not updated while the recovery is open) and no date", () => {
+      const text = notificationSummary({
+        kind: "recovery.request",
+        payload: { ...OWNER, approval_count: 2 },
+      });
+      expect(text).toBe(
+        "Someone started a recovery of your account. If 3 of your guardians approve, it can complete 72 hours later unless you cancel it.",
+      );
     });
 
     it("still names the window's end once it is open", () => {

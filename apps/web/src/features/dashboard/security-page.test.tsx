@@ -409,6 +409,24 @@ describe("Recovery requests card", () => {
     expect(progress().getByText(/can complete after 19 Nov 2026/)).toBeTruthy();
   });
 
+  it("before the third approval gives the live count and the rule, never a date", () => {
+    for (const approvals of [0, 2]) {
+      cleanup();
+      ready({
+        recoveryRequests: [
+          { ...OWN_REQUEST, status: "pending", approvals, contestUntil: null },
+        ],
+      });
+
+      const text = progress().getByText(/Someone started a recovery of your account/).textContent;
+      expect(text).toContain("Started 16 Nov 2026.");
+      expect(text).toContain(
+        `${approvals} of 3 guardians have approved. If 3 approve, it can complete 72 hours later unless you cancel it.`,
+      );
+      expect(text).not.toMatch(/complete after/);
+    }
+  });
+
   it("confirms a cancel and removes the card in the same render", async () => {
     const cancel = vi.fn(async () => {});
     ready({ recoveryRequests: [OWN_REQUEST] }, { cancelRecovery: cancel });
