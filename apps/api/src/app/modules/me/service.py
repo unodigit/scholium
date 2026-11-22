@@ -629,7 +629,23 @@ def _appeal_available_item(
         noun = {"post": "post", "annotation": "annotation", "review": "review"}.get(
             target_kind or "", "post"
         )
-        if title:
+        # The author's own item may quote their own record: two hidden posts on
+        # one paper are otherwise told apart only by the moderator's reason.
+        quote = None
+        try:
+            from app.modules.appeals.subject import _quoted_excerpt
+            from app.modules.moderation.outcomes import excerpt
+
+            found = excerpt(target_cid)
+            if found:
+                quote = _quoted_excerpt(found)
+        except Exception:  # pragma: no cover - outcomes is a shipped plugin
+            quote = None
+        if quote and title:
+            summary = f'Appeal the removal of your {noun} ("{quote}") on "{title}".'
+        elif quote:
+            summary = f'Appeal the removal of your {noun} ("{quote}").'
+        elif title:
             summary = f'Appeal the removal of your {noun} on "{title}".'
         else:
             summary = f"Appeal the removal of your {noun}."

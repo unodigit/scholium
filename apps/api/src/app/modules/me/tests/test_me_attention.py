@@ -28,7 +28,12 @@ from app.modules.notifications import notify
 from app.modules.profiles import ProfileData, save_profile
 from app.modules.profiles.models import ProfileEmailVerification
 from app.modules.reviews.models import Review, ReviewResponse
-from app.modules.submissions import VersionAuthor, save_version
+from app.modules.submissions import (
+    AWAITING_CONSENT,
+    VersionAuthor,
+    save_paper,
+    save_version,
+)
 
 from .test_me_dashboard import (  # noqa: F401 - fixture re-exports
     DASHBOARD_URL,
@@ -147,6 +152,228 @@ def test_a_hold_is_an_appeal_action_with_a_link_until_the_appeal_is_filed():
     assert [
         item for item in _items(author) if item.get("decisionCid") == decision_cid
     ] == []
+
+
+def _ledger_post(version_cid: str, paper_cid: str, text: str) -> str:
+    """A signed ``discussion.post`` in the log, with ``text`` as its body."""
+    seed = SigningKey.generate()
+    record = sign_record(
+        {
+            "v": 1,
+            "type": "discussion.post",
+            "author": did_key_from_signing_key(seed),
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "prev": None,
+            "body": {
+                "target": version_cid,
+                "anchor": version_cid,
+                "text": text,
+                "parent": None,
+                "paper": paper_cid,
+            },
+            "proofs": [],
+        },
+        seed,
+    )
+    ledger.append(record)
+    return record["id"]
+
+
+def _paper_with_genesis(title: str, author: str) -> tuple[str, str]:
+    """A paper and its first version, with the signed genesis in the ledger.
+
+    ``_scene`` indexes a genesis the log does not hold; the outcome sentence
+    reads the paper's title from the log, so this scene appends it.
+    """
+    seed = SigningKey.generate()
+    record = sign_record(
+        {
+            "v": 1,
+            "type": "paper.genesis",
+            "author": did_key_from_signing_key(seed),
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "prev": None,
+            "body": {
+                "seed": uuid.uuid4().hex,
+                "title": title,
+                "abstract": "",
+                "categories": ["cs.CR"],
+                "licence": "CC-BY-4.0",
+                "authors": [did_key_from_signing_key(seed)],
+            },
+            "proofs": [],
+        },
+        seed,
+    )
+    ledger.append(record)
+    paper_cid = record["id"]
+    save_paper(paper_cid=paper_cid, categories=("cs.CR",))
+    version_cid = f"cid-{uuid.uuid4().hex}"
+    save_version(
+        version_cid=version_cid,
+        paper_cid=paper_cid,
+        n=1,
+        title=title,
+        abstract="",
+        manifest_cid=f"bafkreimanifest{uuid.uuid4().hex}",
+        licence="CC-BY-4.0",
+        prev_cid=paper_cid,
+        authors=(VersionAuthor(author, 1, ("Conceptualization",)),),
+        state=AWAITING_CONSENT,
+    )
+    return paper_cid, version_cid
+
+
+def _hide_notice(author: str, target_cid: str, decision_cid: str) -> None:
+    """The outcome notice a hidden record's author receives."""
+    notify(
+        author,
+        "moderation.outcome",
+        {
+            "decision_cid": decision_cid,
+            "target_cid": target_cid,
+            "action": "hide",
+            "target_kind": "post",
+            "summary": "The post you wrote was hidden by moderation.",
+            "link": "/discussion/sch:wrty-post-abcd",
+        },
+    )
+
+
+def test_two_hidden_posts_on_one_paper_read_as_two_different_appeals():
+    author = _did()
+    paper_cid, version_cid = _paper_with_genesis(
+        "Can a Meta-Agent Choose the Safer Branch?", author
+    )
+    first = _ledger_post(
+        version_cid, paper_cid, "Sweep 20 first thread: the moderation placeholder."
+    )
+    second = _ledger_post(
+        version_cid, paper_cid, "Sweep 20 second thread: a different reply, hidden too."
+    )
+    for post_cid in (first, second):
+        _hide_notice(author, post_cid, _store_decision(post_cid, "hide"))
+
+    items = [
+        item
+        for item in _items(author)
+        if item.get("kind") == "appeal_available" and item.get("action") == "hide"
+    ]
+    assert len(items) == 2
+    # Each item quotes the post it is about, so the two are told apart.
+    assert {item["summary"] for item in items} == {
+        'Appeal the removal of your post ("Sweep 20 first thread: the moderation '
+        'placeholder...") on "Can a Meta-Agent Choose the Safer Branch?".',
+        'Appeal the removal of your post ("Sweep 20 second thread: a different reply, '
+        'hidden too...") on "Can a Meta-Agent Choose the Safer Branch?".',
+    }
+
+
+def test_a_hidden_post_this_node_cannot_read_keeps_the_plain_sentence():
+    author = _did()
+    post_cid = f"cid-{uuid.uuid4().hex}"
+    _hide_notice(author, post_cid, _store_decision(post_cid, "hide"))
+
+    items = [
+        item
+        for item in _items(author)
+        if item.get("kind") == "appeal_available" and item.get("action") == "hide"
+    ]
+    assert len(items) == 1
+    assert items[0]["summary"] == "Appeal the removal of your post."
+
+
+def test_a_hidden_post_with_no_readable_excerpt_keeps_the_title_only_sentence():
+    author = _did()
+    paper_cid, version_cid = _paper_with_genesis("A paper with a hidden post", author)
+    # A record whose body carries no text: the paper is readable, the opening is not.
+    seed = SigningKey.generate()
+    record = sign_record(
+        {
+            "v": 1,
+            "type": "discussion.post",
+            "author": did_key_from_signing_key(seed),
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "prev": None,
+            "body": {"target": version_cid, "paper": paper_cid, "parent": None},
+            "proofs": [],
+        },
+        seed,
+    )
+    ledger.append(record)
+    post_cid = record["id"]
+    _hide_notice(author, post_cid, _store_decision(post_cid, "hide"))
+
+    items = [
+        item
+        for item in _items(author)
+        if item.get("kind") == "appeal_available" and item.get("action") == "hide"
+    ]
+    assert len(items) == 1
+    assert items[0]["summary"] == (
+        'Appeal the removal of your post on "A paper with a hidden post".'
+    )
+
+
+def test_a_hidden_review_quotes_its_report():
+    author = _did()
+    _paper_cid, version_cid = _paper_with_genesis("A reviewed paper", author)
+    seed = SigningKey.generate()
+    record = sign_record(
+        {
+            "v": 1,
+            "type": "review.formal",
+            "author": did_key_from_signing_key(seed),
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "prev": None,
+            "body": {
+                "target": version_cid,
+                "report": "The method is sound, but the claims are too strong.",
+                "commitment": uuid.uuid4().hex,
+            },
+            "proofs": [],
+        },
+        seed,
+    )
+    ledger.append(record)
+    review_cid = record["id"]
+    decision_cid = _store_decision(review_cid, "hide")
+    notify(
+        author,
+        "moderation.outcome",
+        {
+            "decision_cid": decision_cid,
+            "target_cid": review_cid,
+            "action": "hide",
+            "target_kind": "review",
+            "link": "/reviews/sch:wrty-paper-abcd",
+        },
+    )
+
+    items = [item for item in _items(author) if item.get("decisionCid") == decision_cid]
+    assert len(items) == 1
+    # The report is quoted; this node cannot read the version's title from the
+    # log in this scene, and a missing title never suppresses the quote.
+    assert items[0]["summary"] == (
+        'Appeal the removal of your review ("The method is sound, but the claims '
+        'are too strong...").'
+    )
+
+
+def test_hold_and_reject_items_keep_their_plain_wording():
+    author = _did()
+    _held_paper, held_version = _paper_with_genesis("A held paper", author)
+    _rejected_paper, rejected_version = _paper_with_genesis("A rejected paper", author)
+    hold_cid = _store_decision(held_version, "hold")
+    reject_cid = _store_decision(rejected_version, "reject")
+
+    summaries = {
+        item["decisionCid"]: item["summary"]
+        for item in _items(author)
+        if item.get("kind") == "appeal_available"
+    }
+    assert summaries[hold_cid] == 'Appeal the hold on "A held paper".'
+    assert summaries[reject_cid] == 'Appeal the rejection of "A rejected paper".'
 
 
 def test_a_hidden_post_the_caller_wrote_is_appealable_with_a_link():
