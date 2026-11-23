@@ -41,13 +41,12 @@ function recordYouTubeRequests(page: Page): string[] {
   return requests;
 }
 
-/** The docs search field, whatever markup the docs home uses for it. */
+/**
+ * The docs search field. The global nav has a paper search too, so the field
+ * is found by its own label, never by "the first search box on the page".
+ */
 function searchField(page: Page) {
-  return page
-    .locator(
-      'form[role="search"] input, input[type="search"], [role="searchbox"], input[type="text"]',
-    )
-    .first();
+  return page.getByRole("searchbox", { name: "Search the docs" });
 }
 
 test.describe("docs", () => {
@@ -59,12 +58,13 @@ test.describe("docs", () => {
     const search = searchField(page);
     await expect(search).toBeVisible();
     await search.fill("passkey");
-    await search.press("Enter");
 
-    // The result points at the section in Chapter 2.
-    const result = page
-      .locator('a[href$="#sign-in-with-a-passkey"]')
-      .first();
+    // The result points at the section in Chapter 2. (A "Start here" card also
+    // links that anchor, as "2", so the result is found by its own name.)
+    const result = page.getByRole("link", {
+      name: "Sign in with a passkey",
+      exact: true,
+    });
     await expect(result).toBeVisible();
     await result.click();
 
