@@ -46,6 +46,13 @@ COPY apps/web/next.config.js \
      apps/web/tsconfig.json \
      ./apps/web/
 
+# The handbook the docs pages are generated from. The build reads it from
+# ../../docs/handbook relative to apps/web (see src/features/docs), so it must
+# be here before `npm run build` or /docs has no chapters to statically
+# generate. Only the handbook travels: the docs' screenshots and posters live
+# in apps/web/public, which is already copied above.
+COPY docs/handbook ./docs/handbook
+
 # Public API origin used by the browser bundle and the CSP's connect-src. An
 # unset value falls back to http://localhost:8000 exactly as a local dev run.
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000

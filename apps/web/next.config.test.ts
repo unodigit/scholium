@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { readFile } from "node:fs/promises";
 import { parse as parseQuery, stringify as stringifyQuery } from "node:querystring";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -172,6 +173,36 @@ describe("Content-Security-Policy", () => {
     // katex.min.css's fonts are bundled by Next and served from /_next/static.
     expect(policy["font-src"] ?? policy["default-src"]).toContain("'self'");
   });
+
+  it("allows exactly the docs chapter videos' host to be framed", async () => {
+    production();
+    const policy = await csp();
+    // The docs pages embed a youtube-nocookie iframe after the reader clicks
+    // a poster. Nothing else may frame: no 'self', no other origin.
+    expect(policy["frame-src"]).toEqual(["https://www.youtube-nocookie.com"]);
+  });
+
+  it("gains only frame-src: every other directive is exactly as it was", async () => {
+    production();
+    // The whole production policy, pinned so a new directive or source cannot
+    // slip in beside the video allowance above.
+    expect(await csp()).toEqual({
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "'unsafe-inline'"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'"],
+      "font-src": ["'self'"],
+      "connect-src": ["'self'", "https://api.scholium.test"],
+      "worker-src": ["'self'"],
+      "frame-src": ["https://www.youtube-nocookie.com"],
+      "object-src": ["'none'"],
+      "base-uri": ["'self'"],
+      "form-action": ["'self'"],
+      // Allowing the video iframe to be embedded does not allow this site to
+      // be embedded: the two directions are separate directives.
+      "frame-ancestors": ["'none'"],
+    });
+  });
 });
 
 describe("the standalone build the web image runs", () => {
@@ -188,6 +219,23 @@ describe("the standalone build the web image runs", () => {
     expect(path.relative(nextConfig.outputFileTracingRoot!, fileURLToPath(import.meta.url))).toBe(
       path.join("apps", "web", "next.config.test.ts"),
     );
+  });
+
+  it("copies docs/handbook into the builder before npm run build, so the docs pages generate in the image", async () => {
+    // The docs pages are statically generated from docs/handbook, which the
+    // build reads relative to apps/web (../../docs/handbook). The image build
+    // must therefore place the handbook in the builder before `npm run build`
+    // runs — after it, /docs would build with no chapters to generate.
+    const containerfile = await readFile(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../deploy/containers/web.Containerfile"),
+      "utf8",
+    );
+    const lines = containerfile.split("\n");
+    const copied = lines.findIndex((line) => /^COPY docs\/handbook \.\/docs\/handbook\s*$/.test(line));
+    const built = lines.findIndex((line) => /^RUN npm run build/.test(line));
+    expect(copied, "the Containerfile has `COPY docs/handbook ./docs/handbook`").toBeGreaterThanOrEqual(0);
+    expect(built, "the Containerfile runs npm run build").toBeGreaterThanOrEqual(0);
+    expect(copied, "the handbook is copied before the build runs").toBeLessThan(built);
   });
 });
 
@@ -225,6 +273,38 @@ describe("the other security headers", () => {
     expect(value).not.toMatch(/publickey-credentials-(get|create)=\(\)/);
     expect(value).toContain("publickey-credentials-get=(self)");
     expect(value).toContain("publickey-credentials-create=(self)");
+  });
+
+  it("lets a clicked chapter video start playing, and changes nothing else", async () => {
+    production();
+    const value = (await sentHeaders()).get("permissions-policy")!;
+    const features = Object.fromEntries(
+      value.split(",").map((entry) => {
+        const [name, allowlist] = entry.trim().split("=");
+        return [name, allowlist];
+      }),
+    );
+    // The docs videos' iframe loads with autoplay=1 after the reader's click;
+    // it may only start by itself when this origin delegates the power to that
+    // one host, so the allowlist is this origin and it alone.
+    expect(features["autoplay"]).toBe('(self "https://www.youtube-nocookie.com")');
+    // Opening autoplay does not open anything else: every other feature keeps
+    // the allowlist it had.
+    expect(features).toEqual({
+      "accelerometer": "()",
+      "autoplay": '(self "https://www.youtube-nocookie.com")',
+      "camera": "()",
+      "display-capture": "()",
+      "geolocation": "()",
+      "gyroscope": "()",
+      "magnetometer": "()",
+      "microphone": "()",
+      "midi": "()",
+      "payment": "()",
+      "usb": "()",
+      "publickey-credentials-get": "(self)",
+      "publickey-credentials-create": "(self)",
+    });
   });
 });
 

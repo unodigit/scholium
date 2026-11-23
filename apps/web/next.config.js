@@ -13,6 +13,17 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_API_BASE_URL = "http://localhost:8000";
 
 /**
+ * Where the docs chapter videos are embedded from: youtube-nocookie.com.
+ *
+ * The docs pages show a poster and only load the iframe when the reader clicks
+ * it, and the embed host is the cookieless one. Both policies below name this
+ * one origin: the CSP's `frame-src` to allow the iframe at all, and the
+ * Permissions-Policy's `autoplay` allowlist so the clicked video starts
+ * playing instead of showing a second play button.
+ */
+const DOCS_VIDEO_EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+
+/**
  * The API's origin, for `connect-src`.
  *
  * Throws on anything that is not an http(s) origin: a policy built from a bad
@@ -53,6 +64,10 @@ function apiOrigin() {
  *   script response, which this rule also covers).
  * - `worker-src 'self'`: PDF.js's worker is bundled and served from
  *   /_next/static; it never needs a `blob:` worker while same-origin.
+ * - `frame-src` is the docs chapter videos' embed host and nothing else: a
+ *   video iframe appears only after the reader clicks its poster, and no other
+ *   page frames anything. `frame-ancestors` below is the other direction and
+ *   still forbids framing this site.
  * - The directives that do not fall back to `default-src` are set explicitly.
  */
 function contentSecurityPolicy() {
@@ -65,6 +80,7 @@ function contentSecurityPolicy() {
     "font-src": ["'self'"],
     "connect-src": ["'self'", apiOrigin()],
     "worker-src": ["'self'"],
+    "frame-src": [DOCS_VIDEO_EMBED_ORIGIN],
     "object-src": ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
@@ -81,10 +97,15 @@ function contentSecurityPolicy() {
  * WebAuthn is deliberately left on for this origin: `navigator.credentials`
  * is not governed by CSP, but `publickey-credentials-*=()` would make every
  * passkey create/get reject, and sign-in and recovery both go through them.
+ *
+ * `autoplay` is the other exception, for the docs chapter videos: the click on
+ * a poster swaps in the youtube-nocookie iframe with `autoplay=1`, and the
+ * embedded player may only start by itself when this origin delegates the
+ * power to that one — so the allowlist is this origin and it alone.
  */
 const PERMISSIONS_POLICY = [
   "accelerometer=()",
-  "autoplay=()",
+  `autoplay=(self "${DOCS_VIDEO_EMBED_ORIGIN}")`,
   "camera=()",
   "display-capture=()",
   "geolocation=()",
