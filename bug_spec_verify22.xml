@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 22: findings of verify sweep 22 (2026-11-23, main @ 57072f3; 18/18 journeys pass; npm test API 6142 / web 6184,
+  e2e 61/61). Evidence: .claw-forge/journeys/screenshots/<journey>/.
+  Decisions (recorded here):
+  D1  "Go to your dashboard" goes to the dashboard, /me (3004585 moved it to /papers with the homepage move, but the
+      label was kept; the label wins).
+  D2  A version held by the safety scan is news for its authors, like a moderator's hold: they get an attention item
+      on /me that names the file and links to the status tracker (bug_spec_scan_hold.xml D2 still applies: no appeal).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/web/src/features/web-auth/verify-email.ts,apps/web/src/features/web-auth/verify-email.test.ts">
+    <title>After confirming an email, "Go to your dashboard" opens the paper list (/papers) instead of the dashboard (/me)</title>
+    <symptoms>VERIFY_EMAIL_DASHBOARD_HREF = "/papers" in web-auth/verify-email.ts (~L238) while VERIFY_EMAIL_DASHBOARD_LABEL is "Go to your dashboard"</symptoms>
+    <reproduction_steps>Journey 03 step 10: a member who finished onboarding opens their verification link and presses "Go to your dashboard": the browser lands on /papers</reproduction_steps>
+    <expected>Per D1 the button goes to /me; the "Continue setting up" link for a member with setup left still goes to /onboarding. verify-email.test.ts asserts both targets (update any assertion of /papers for the dashboard link; grep apps/web/tests/e2e for the old target and report it if an e2e asserts it)</expected>
+    <actual>The member lands on the paper list</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/me/service.py,apps/api/src/app/modules/me/tests/test_me_attention.py,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts">
+    <title>When the safety scan holds an author's version, nothing on /me tells them: no attention item, only "Held" in My papers</title>
+    <symptoms>Sweep 22 journey 10 step 21 (screenshots/10-publish/21b-scanhold-me-held.png): sch:mx2o-3c46-neg3 was held by the scan (av_unavailable); its author's /me "Needs your attention" was empty. A moderator's hold produces an attention item (me/service.py builds hold/reject items from moderation decisions only)</symptoms>
+    <reproduction_steps>On a node without CLAMD_SOCKET submit a paper with a code .zip, finish consents and signing, then open /me as an author</reproduction_steps>
+    <expected>Per D2: while a version the author is on is in state "held" with no moderation decision and a manifest file whose scan failed, every author of the paper gets one attention item: 'A file in "{title}" failed the safety scan' with the file path and the plain reason (the same words as the tracker's fileProblem, e.g. "code.zip: a malware scan that could not run (the antivirus is unavailable)"), linking to that version's status tracker; no appeal wording. It goes away once a later version of the paper is listed or the version is no longer held. dashboard.ts renders the new item kind like the other attention items (title, detail, link). Tests: test_me_attention.py (scan-held version → one item per author with path and reason and the tracker link; a moderator's hold → the existing hold item only; a listed later version → no scan item); dashboard.test.ts renders the item</expected>
+    <actual>The author only learns of the hold by opening the paper</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/submit/checks.ts,apps/web/src/features/submit/checks.test.ts">
+    <title>A scan-held version's checks summary reads "0 of 4 checks passed, 3 not run yet." although one check failed and the other three will never run</title>
+    <symptoms>checksSummary (submit/checks.ts ~L570-588) counts the "Not run: the version was held at the safety scan" items as pending ("not run yet") and returns before mentioning the failed file check. Evidence screenshots/10-publish/21d-scanhold-tracker-scan-needs-fixing.png</symptoms>
+    <reproduction_steps>Open the status tracker of a version held by the safety scan</reproduction_steps>
+    <expected>When the report has checksRan false (bug_spec_scan_hold.xml), the summary reads "A file failed the safety scan; the other checks did not run." (no "yet"); the other summaries are unchanged. checks.test.ts covers it and an unchanged ordinary pending report</expected>
+    <actual>The summary hides the failure and promises checks that will not come</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/docs/docs.css,apps/web/src/features/docs/docs.css.test.ts">
+    <title>Docs sidebar: the chapter numbers "10." and "11." lose their first digit at 1440px</title>
+    <symptoms>The decimal list markers of .ds-list sit outside the list's box and .ds-nav clips overflow (docs.css ~L62, L126, L177), so two-digit markers are cut. Evidence screenshots/18-docs/01b-docs-home.png, 03a-chapter-top.png</symptoms>
+    <reproduction_steps>Open /docs/your-account at 1440x900 and look at the left chapter list</reproduction_steps>
+    <expected>Every number 1.-11. is fully visible (markers inside the list's padding, e.g. enough padding-inline-start or list-style-position inside with a hanging indent), at 1440 and in the phone disclosure; no horizontal scroll at 375px. docs.css.test.ts asserts the rule</expected>
+    <actual>"10." and "11." show as "0." and "1."</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/web/src/features/docs/chapter-page.tsx,apps/web/src/features/docs/chapter-page.test.tsx">
+    <title>Docs "On this page" never marks the chapter's last section: at the bottom of the page the one before it stays current</title>
+    <symptoms>The scrollspy in ContentsList (chapter-page.tsx ~L131-172) marks a heading only inside the band -20%/-60% of the viewport; the last short sections never reach it once the page cannot scroll further. Evidence screenshots/18-docs/03c-pager.png ("Erase your profile" current while "Your dashboard" is on screen)</symptoms>
+    <reproduction_steps>Scroll /docs/your-account to the very bottom</reproduction_steps>
+    <expected>When the page is scrolled to the bottom (within a few px), the last heading whose top is in the viewport is current; otherwise the band rule is unchanged; following a contents link still marks that entry. chapter-page.test.tsx covers the bottom case (stub IntersectionObserver and scroll metrics)</expected>
+    <actual>The last section is never highlighted</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="low"
+       touches_files="apps/web/src/features/docs/chapter-video.tsx,apps/web/src/features/docs/chapter-video.test.tsx">
+    <title>Without JavaScript the docs "Watch the chapter video" button does nothing</title>
+    <symptoms>chapter-video.tsx (~L235) renders the poster as a &lt;button&gt; that only a client handler turns into the player; the server HTML has no way to reach the video. Evidence screenshots/18-docs/11*-no-js*.png</symptoms>
+    <reproduction_steps>Disable JavaScript and open /docs/your-account; press "Watch the chapter video"</reproduction_steps>
+    <expected>The server HTML gives a working fallback: the poster control is a link to the video's https://www.youtube.com/watch?v={id} page (same label, opens in the same tab) that the client turns into the in-page player on a plain click (preventDefault), so with JavaScript nothing changes and still no request reaches YouTube before the click. A chapter without a video is unchanged. chapter-video.test.tsx asserts the server markup's href and that a click with JavaScript embeds the youtube-nocookie player instead of navigating</expected>
+    <actual>The control is inert without JavaScript</actual>
+  </bug>
+
+  <bug index="7" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/margin-panel.tsx,apps/web/src/features/paper-page/margin-panel.test.tsx,apps/web/src/features/paper-discussion/discussion-tab.tsx,apps/web/src/features/paper-page/paper-page.css">
+    <title>Paper margin: the Discussion tab's count does not change after a post until a reload, and at 1440px "Discussion (3)" is clipped when the panel has a scrollbar</title>
+    <symptoms>margin-panel.tsx computes counts.discussion once from the server data (~L209), while DiscussionTab keeps the posted thread in its own state; the tab label (.ppg-tab with .ppg-tab-count, ~L256-264) is 4px too narrow for "Discussion (3)" when the panel shows a vertical scrollbar (text 108px in a 104px tab). Evidence screenshots/04-discussion/20d-annotation-closed-after-reload.png</symptoms>
+    <reproduction_steps>As a member on a paper with no posts, open the Discussion tab and post a thread: the tab still reads "Discussion"; reload: "Discussion (1)". With three posts and a scrolling panel at 1440x900 the count is cut</reproduction_steps>
+    <expected>DiscussionTab reports its visible post count to the margin panel (an optional onCountChange callback), so the tab count updates as soon as a post or reply appears or a post is hidden; the tab row never clips a label: labels fit or the row wraps/shrinks its padding with the scrollbar present (no ellipsis, no horizontal scroll). margin-panel.test.tsx: posting through the tab updates the count; the label is fully in its tab (class/style assertion)</expected>
+    <actual>The count is stale until a reload and can be cut</actual>
+  </bug>
+
+  <bug index="8" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/profiles/service.py,apps/api/src/app/modules/profiles/tests/test_verify_email.py">
+    <title>Saving the profile twice with the same unconfirmed email leaves two "Email verification" notices</title>
+    <symptoms>send_verification_email (profiles/service.py ~L266-296) calls notify(did, EMAIL_VERIFICATION_KIND, …) on every save, so each save adds a notice; confirming one link settles the address but the older notice stays in the inbox</symptoms>
+    <reproduction_steps>Journey 03: save the onboarding profile, save it again with the same email, open the notifications</reproduction_steps>
+    <expected>A new verification notice for a DID marks its earlier unread email_verification notices read (or replaces them), so there is at most one unread; the newest link works and older links keep their current behaviour. test_verify_email.py: two saves → one unread notice</expected>
+    <actual>Two identical notices</actual>
+  </bug>
+
+  <bug index="9" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/recovery/notices.py,apps/api/src/app/modules/recovery/tests/test_owner_recovery.py">
+    <title>When a recovery is cancelled, the guardian's reopened notice still shows the time of the original request</title>
+    <symptoms>record_closure + _make_unread (recovery/notices.py ~L121-200) make the guardian's existing notice unread again with the cancel facts, but its time stays the request's, so the inbox shows "Recovery cancelled … 3 minutes ago" dated at the request. Evidence screenshots/06-key-recovery/31b-bug1-approver-okafor-unread-cancel-notice.png</symptoms>
+    <reproduction_steps>Journey 06 step 10: a guardian approves, the owner cancels later; the guardian's notice is unread again with the old time</reproduction_steps>
+    <expected>A notice reopened for a cancel is dated at the cancel (closed_at) wherever the inbox reads its time (the payload's created/time field, or the closed_at the web shows for a closed recovery), and sorts as new; guardians who never answered get the same. test_owner_recovery.py asserts the reopened notice's time equals the closing time</expected>
+    <actual>The cancel looks older than it is</actual>
+  </bug>
+
+</bug_spec>

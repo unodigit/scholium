@@ -331,7 +331,7 @@
       "src": "/docs/screenshots/ch07-annotation.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The paper page with the Results paragraph selected and its margin marker open: below the paragraph, Rafael Silva's annotation quotes it and suggests the added corpora appear as separate rows of the results table",
+      "alt": "The paper page with the Results paragraph selected and its margin marker open: below the paragraph, an annotation quotes it and suggests the added corpora appear as separate rows of the results table",
       "caption": "Select a paragraph's marker to open its annotations under it.",
       "heading": "Annotations",
       "source": "docs-reshoot/ch07-annotation.png"
