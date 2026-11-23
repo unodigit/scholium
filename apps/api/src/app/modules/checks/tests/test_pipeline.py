@@ -30,7 +30,7 @@ from scholium_record_core import compute_record_id
 from sqlalchemy import text
 
 from app import db
-from app.modules import checks, content, ledger
+from app.modules import checks, content, ledger, sanitizer
 from app.modules.submissions import VersionStateChanged, emit_state_changed
 from app.modules.submissions.models import PaperVersion
 from app.security import issue_access_token
@@ -135,6 +135,61 @@ def store_version(state: str = "moderation") -> tuple[str, str, str]:
         )
         session.commit()
     return version_cid, paper_cid, str(pdf.cid)
+
+
+#: Bytes of a code bundle whose scan fails because the antivirus is unavailable.
+ZIP = b"PK\x03\x04a code bundle no scan could clear"
+
+
+def store_scan_held_version(state: str = "held") -> tuple[str, str, str]:
+    """Store a version the safety scan held: a bundle blob whose scan failed.
+
+    The blob carries ``scan_status`` ``failed`` and the ``av_unavailable``
+    report the scan wrote; no ``check_results`` row exists, because the
+    advisory checks only run after a clean scan.
+
+    Returns ``(version_cid, paper_cid, bundle_cid)``.
+    """
+    from app.modules.submissions.models import ensure_tables
+
+    version_cid = new_record_cid()
+    paper_cid = new_record_cid("test.paper")
+    bundle = content.store_bytes(ZIP, media_type="application/zip")
+    content.set_scan_status(bundle.cid, content.SCAN_FAILED)
+    sanitizer.record_finding(
+        str(bundle.cid),
+        sanitizer.CHECK_AV_UNAVAILABLE,
+        "ClamAV (clamd) is unavailable: CLAMD_SOCKET is not set",
+    )
+    manifest_cid = append_manifest(
+        [
+            {
+                "path": "code.zip",
+                "cid": str(bundle.cid),
+                "size": len(ZIP),
+                "mediaType": "application/zip",
+                "role": "code",
+            }
+        ]
+    )
+
+    ensure_tables()
+    with db.SessionLocal() as session:
+        session.add(
+            PaperVersion(
+                version_cid=version_cid,
+                paper_cid=paper_cid,
+                n=1,
+                title=TITLE,
+                abstract="An abstract.",
+                manifest_cid=manifest_cid,
+                licence="CC-BY-4.0",
+                prev_cid=None,
+                state=state,
+            )
+        )
+        session.commit()
+    return version_cid, paper_cid, str(bundle.cid)
 
 
 def ensure_trigger() -> None:
@@ -277,6 +332,10 @@ def test_the_checks_route_returns_the_report_the_web_parses(client):
     assert report["referencesTotal"] == 0
     assert report["referencesUnresolved"] == 0
     assert report["metadataMatch"] is True
+    # The advisory checks ran, so the report says so; only a version the
+    # safety scan held has no results and reports checksRan false.
+    assert report["checksRan"] is True
+    assert report["checks_ran"] is True
     assert report["files"] == [
         {
             "path": "main.pdf",
@@ -293,6 +352,73 @@ def test_the_checks_route_404s_for_an_unknown_version(client):
     response = client.get(f"/v1/papers/{derive_unknown_short_id()}/v/9/checks")
 
     assert response.status_code == 404
+
+
+def moderator_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {issue_access_token('did:key:z6MkModeratorForChecks', 4)}"}
+
+
+@pytest.mark.parametrize("state", ["held", "rejected"])
+def test_a_scan_held_version_returns_its_file_failure_report(client, state):
+    # The safety scan holds the version before the advisory checks can run, so
+    # there is no check_results row; the per-file scan verdict is the report.
+    version_cid, paper_cid, bundle_cid = store_scan_held_version(state)
+
+    response = client.get(
+        f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator_headers()
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["state"] == state
+    assert report["versionCid"] == version_cid
+    # The advisory checks did not run, and the report says so rather than
+    # pretending the file scan's failure is a pending check.
+    assert report["checksRan"] is False
+    assert report["checks_ran"] is False
+    assert report["files"] == [
+        {
+            "path": "code.zip",
+            "cid": bundle_cid,
+            "role": "code",
+            "status": "failed",
+            "failedChecks": ["av_unavailable"],
+            "detail": "ClamAV (clamd) is unavailable: CLAMD_SOCKET is not set",
+        }
+    ]
+    assert report["similarity"] == {"pct": None}
+    assert report["similarityPct"] is None
+    assert report["similarity_pct"] is None
+    assert report["references"] == {"total": None, "unresolved": None}
+    assert report["referencesTotal"] is None
+    assert report["referencesUnresolved"] is None
+    assert report["metadata"] == {"match": None, "signedTitle": None}
+    assert report["metadataMatch"] is None
+    assert report["metadata_match"] is None
+
+
+def test_a_scan_held_version_is_still_hidden_from_a_stranger(client):
+    version_cid, paper_cid, _ = store_scan_held_version()
+
+    response = client.get(f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    # The unknown-version 404, not the pending one: a stranger cannot tell the
+    # version exists or that it was held.
+    assert "have not run yet" not in response.json()["detail"]
+
+
+def test_a_version_still_scanning_keeps_the_checks_pending_404(client):
+    version_cid, paper_cid, _ = store_version(state="scanning")
+
+    response = client.get(
+        f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator_headers()
+    )
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert "have not run yet" in response.json()["detail"]
 
 
 def derive_unknown_short_id() -> str:

@@ -26,6 +26,13 @@ widen access to an unlisted version (the caller's authorship or moderator
 tier).  A token that is missing or unusable simply leaves the caller
 anonymous.
 
+A version the safety scan held never reaches the advisory checks, so it has
+no ``check_results`` row.  For a ``held`` or ``rejected`` version with a file
+its scan could not clear, the per-file scan verdicts are the report: it
+answers ``200`` with the failed file, its failed checks and detail, the
+advisory columns null, and ``checksRan`` false.  A version still scanning, or
+in moderation with no results yet, keeps the checks-pending ``404``.
+
 The payload carries both the natural camelCase spelling and the flat
 snake_case spellings of the ``check_results`` columns, because the web
 normalizer accepts either.
@@ -150,37 +157,41 @@ def _signed_title(version_cid: str) -> Optional[str]:
     return title if isinstance(title, str) and title.strip() else None
 
 
-@router.get(
-    "/papers/{paper_id}/v/{n}/checks",
-    summary="Return a paper version's advisory checks report",
-)
-def get_paper_checks(
-    paper_id: str,
-    n: int,
-    principal: Optional[Principal] = Depends(_optional_principal),
-) -> dict[str, Any]:
-    """Return version ``n``'s checks report, or a 404 problem until checks ran."""
-    from app.modules.reading import visibility
+#: States a safety-scan hold leaves a version in.  A moderator's decision in
+#: the same states is *not* this case: it is told apart by the failed file.
+_SCAN_HOLD_STATES = frozenset({"held", "rejected"})
 
-    ref = _resolve(paper_id, n)
-    if ref is None:
-        raise _not_found(paper_id, n)
-    if not visibility.may_read(ref, principal):
-        # Pre-listing report the caller may not see: the unknown-version 404,
-        # ahead of the pending check so it never reveals whether the version
-        # exists or whether its checks have run.
-        raise _not_found(paper_id, n)
 
-    ensure_check_results_table()
-    result = get_check_result(ref.version_cid)
-    if result is None:
-        raise _checks_pending(ref.version_cid)
+def _scan_held(version_cid: str, state: Optional[str]) -> bool:
+    """Whether the safety scan held ``version_cid`` before its checks could run.
 
+    True only for a version in a state a hold leaves it in *and* with at least
+    one manifest file whose blob ``scan_status`` is ``failed``.  A moderator's
+    hold whose files all passed is not a scan hold, so it keeps the pending
+    ``404`` until the advisory checks run.
+    """
+    if state not in _SCAN_HOLD_STATES:
+        return False
+    from app.modules import content
+
+    for entry in manifest_entries(version_cid):
+        cid = entry.get("cid")
+        if not isinstance(cid, str) or not cid:
+            continue
+        blob = content.get_blob(cid)
+        if blob is not None and getattr(blob, "scan_status", None) == content.SCAN_FAILED:
+            return True
+    return False
+
+
+def _report(ref: Any, n: int, result: Any) -> dict[str, Any]:
+    """The checks report; ``result`` is ``None`` when the checks did not run."""
     similarity_pct = getattr(result, "similarity_pct", None)
     references_total = getattr(result, "references_total", None)
     references_unresolved = getattr(result, "references_unresolved", None)
     metadata_match = getattr(result, "metadata_match", None)
     signed_title = _signed_title(ref.version_cid)
+    checks_ran = result is not None
 
     return {
         "paper": ref.paper,
@@ -189,6 +200,8 @@ def get_paper_checks(
         "version_cid": ref.version_cid,
         "state": ref.state or "",
         "files": [_file_report(dict(entry)) for entry in manifest_entries(ref.version_cid)],
+        "checksRan": checks_ran,
+        "checks_ran": checks_ran,
         "similarity": {"pct": similarity_pct},
         "similarityPct": similarity_pct,
         "similarity_pct": similarity_pct,
@@ -207,3 +220,42 @@ def get_paper_checks(
         "firstPageTitle": None,
         "checkedAt": None,
     }
+
+
+@router.get(
+    "/papers/{paper_id}/v/{n}/checks",
+    summary="Return a paper version's advisory checks report",
+)
+def get_paper_checks(
+    paper_id: str,
+    n: int,
+    principal: Optional[Principal] = Depends(_optional_principal),
+) -> dict[str, Any]:
+    """Return version ``n``'s checks report, or a 404 problem until checks ran.
+
+    A version the safety scan held answers with its per-file verdicts and
+    ``checksRan`` false rather than the pending 404; see :func:`_scan_held`.
+    """
+    from app.modules.reading import visibility
+
+    ref = _resolve(paper_id, n)
+    if ref is None:
+        raise _not_found(paper_id, n)
+    if not visibility.may_read(ref, principal):
+        # Pre-listing report the caller may not see: the unknown-version 404,
+        # ahead of the pending check so it never reveals whether the version
+        # exists or whether its checks have run.
+        raise _not_found(paper_id, n)
+
+    ensure_check_results_table()
+    result = get_check_result(ref.version_cid)
+    if result is None:
+        # The advisory checks run only after a clean scan.  A version the scan
+        # held has its per-file verdicts instead, which say which file failed
+        # and why; anything else has no results yet.
+        if _scan_held(ref.version_cid, ref.state):
+            return _report(ref, n, None)
+        raise _checks_pending(ref.version_cid)
+
+    return _report(ref, n, result)
+
