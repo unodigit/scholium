@@ -528,6 +528,7 @@ export function MarginMarkers(props: MarginMarkersProps) {
   }, [paragraphsProp, paragraphList, text, data, initial]);
 
   const [selected, setSelected] = useState<string | null>(null);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
   const [composerFor, setComposerFor] = useState<string | null>(null);
   const [composerText, setComposerText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -666,6 +667,13 @@ export function MarginMarkers(props: MarginMarkersProps) {
         next[paragraphId] = list;
         return next;
       });
+      // A newly posted annotation is shown to its author: open that paragraph's
+      // thread.
+      setOpenIds((prev) => {
+        const next = new Set(prev);
+        next.add(paragraphId);
+        return next;
+      });
       closeComposer();
       await reload();
     } catch (error) {
@@ -745,49 +753,70 @@ export function MarginMarkers(props: MarginMarkersProps) {
                 {paragraph.text}
               </p>
               <div className="pd-margin" aria-label={`Annotations for paragraph ${paragraph.id}`}>
-                {count > 0 ? (
+                {paragraphAnnotations.length > 0 ? (
                   <button
                     type="button"
                     className="pd-margin-marker"
                     data-paragraph-id={paragraph.id}
                     data-testid={`margin-marker-${paragraph.id}`}
-                    aria-label={`${count} annotation${count === 1 ? "" : "s"} on this paragraph`}
-                    onClick={() => setSelected(paragraph.id)}
+                    aria-expanded={openIds.has(paragraph.id)}
+                    aria-controls={`pd-annotation-list-${paragraph.id}`}
+                    aria-label={
+                      count > 0
+                        ? `${count} annotation${count === 1 ? "" : "s"} on this paragraph`
+                        : "Annotations hidden by moderation on this paragraph"
+                    }
+                    onClick={() => {
+                      setOpenIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(paragraph.id)) {
+                          next.delete(paragraph.id);
+                        } else {
+                          next.add(paragraph.id);
+                          setSelected(paragraph.id);
+                        }
+                        return next;
+                      });
+                    }}
                   >
                     <span className="pd-margin-marker__dot" aria-hidden="true" />
                     {count > 1 ? <span className="pd-margin-marker__count">{count}</span> : null}
                   </button>
                 ) : null}
-                {paragraphAnnotations.length > 0 ? (
-                  <ul className="pd-annotation-list" aria-label={`Annotations for ${paragraph.id}`}>
-                    {paragraphAnnotations.map((annotation, index) => (
-                      <li
-                        key={annotation.id || index}
-                        className="pd-annotation"
-                        data-annotation-id={annotation.id}
-                      >
-                        {annotation.hidden === true ? (
-                          <p className="pd-annotation__text pd-post__text--hidden" data-hidden="true">
-                            {typeof annotation.hidden_reason === "string" &&
-                            annotation.hidden_reason.trim() !== ""
-                              ? `Hidden by moderation: ${annotation.hidden_reason.trim()}`
-                              : "Hidden by moderation."}
-                          </p>
-                        ) : (
-                          <>
-                            {annotation.quote ? (
-                              <blockquote className="pd-annotation__quote">{annotation.quote}</blockquote>
-                            ) : null}
-                            {annotation.text ? (
-                              <p className="pd-annotation__text">{annotation.text}</p>
-                            ) : null}
-                          </>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
               </div>
+              {paragraphAnnotations.length > 0 && openIds.has(paragraph.id) ? (
+                <ul
+                  id={`pd-annotation-list-${paragraph.id}`}
+                  className="pd-annotation-list"
+                  aria-label={`Annotations for ${paragraph.id}`}
+                >
+                  {paragraphAnnotations.map((annotation, index) => (
+                    <li
+                      key={annotation.id || index}
+                      className="pd-annotation"
+                      data-annotation-id={annotation.id}
+                    >
+                      {annotation.hidden === true ? (
+                        <p className="pd-annotation__text pd-post__text--hidden" data-hidden="true">
+                          {typeof annotation.hidden_reason === "string" &&
+                          annotation.hidden_reason.trim() !== ""
+                            ? `Hidden by moderation: ${annotation.hidden_reason.trim()}`
+                            : "Hidden by moderation."}
+                        </p>
+                      ) : (
+                        <>
+                          {annotation.quote ? (
+                            <blockquote className="pd-annotation__quote">{annotation.quote}</blockquote>
+                          ) : null}
+                          {annotation.text ? (
+                            <p className="pd-annotation__text">{annotation.text}</p>
+                          ) : null}
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           );
         })}

@@ -455,6 +455,7 @@ export type Routes = Partial<{
   manifest: () => Response;
   reviews: () => Response;
   threads: () => Response;
+  annotations: () => Response;
   text: () => Response;
   compare: (from: number, to: number) => Response;
   cite: (format: string, path: string) => Response;
@@ -510,6 +511,7 @@ export function stubApi(routes: Routes = HAPPY): ReturnType<typeof vi.fn> {
     if (/\/manifest$/.test(path)) return (routes.manifest ?? notFound)();
     if (/\/reviews$/.test(path)) return (routes.reviews ?? notFound)();
     if (/\/threads$/.test(path)) return (routes.threads ?? notFound)();
+    if (/\/annotations$/.test(path)) return (routes.annotations ?? notFound)();
     if (/\/text$/.test(path)) return (routes.text ?? notFound)();
     if (/\/consents$/.test(path)) return (routes.consents ?? notFound)();
     if (/\/checks$/.test(path)) return (routes.checks ?? notFound)();

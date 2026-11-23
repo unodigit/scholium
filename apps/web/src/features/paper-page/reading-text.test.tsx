@@ -6,6 +6,27 @@ import { loadKatex, type LoadMath } from "./math-typeset";
 import { stubApi } from "./paper-page-fixtures";
 import { ReadingText } from "./reading-text";
 
+// Posting an annotation signs it with the device key, which needs a real
+// authenticator. The composer's behaviour on the page, not the signing, is what
+// these tests check, so signing returns a signed record directly.
+vi.mock("../web-auth/sign-record", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../web-auth/sign-record")>();
+  return {
+    ...actual,
+    signRecord: async (type: string, body: Record<string, unknown>) => ({
+      v: 1,
+      type,
+      id: "bafyrei-signed-annotation",
+      author: "did:key:z6Mk-signature-for-the-test",
+      created: "2026-01-01T00:00:00.000Z",
+      prev: null,
+      body,
+      proofs: [],
+      sig: "signature",
+    }),
+  };
+});
+
 /**
  * The paragraphs of the reading column, with their math typeset once the page
  * runs. The annotation component (feature 150) renders the paragraphs; these
@@ -44,6 +65,64 @@ function paragraphElement(id: string): HTMLElement {
     throw new Error(`no paragraph ${id}`);
   }
   return element;
+}
+
+/* --------------------------- annotations -------------------------------- */
+
+const ANNOTATED_PARAGRAPHS = [
+  { id: "p1", text: "Only the marker belongs in the narrow margin column." },
+  { id: "p2", text: "Every note on this paragraph was hidden by a moderator." },
+  { id: "p3", text: "Nothing has been said about this paragraph." },
+];
+
+const QUOTE = "the marker alone, not the annotations";
+const NOTE =
+  "The quote and this note take the full width of the reading column, instead of wrapping one word per line in the 48px gutter.";
+
+const NOTE_GROUPS: Record<string, unknown[]> = {
+  p1: [{ id: "a1", paragraph_id: "p1", quote: QUOTE, text: NOTE }],
+  p2: [{ id: "h1", paragraph_id: "p2", hidden: true, hidden_reason: "Harassment" }],
+};
+
+const POSTED_NOTE = "A note the author has just posted.";
+const POSTED_GROUPS: Record<string, unknown[]> = {
+  ...NOTE_GROUPS,
+  p1: [
+    ...NOTE_GROUPS.p1,
+    { id: "a2", paragraph_id: "p1", quote: QUOTE, text: POSTED_NOTE },
+  ],
+};
+
+function jsonResponse(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/**
+ * Answer the annotations read the way the node does. A POST records the new
+ * annotation, so the reload that follows it returns the list with the note in
+ * it, as the real endpoint would.
+ */
+function stubAnnotationApi() {
+  const state = { posted: false };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (/\/annotations$/.test(path)) {
+      if (init?.method === "POST") {
+        state.posted = true;
+        return jsonResponse({ id: "bafyrei-posted-annotation" });
+      }
+      return jsonResponse({ annotations: state.posted ? POSTED_GROUPS : NOTE_GROUPS });
+    }
+    return new Response("{}", {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 beforeEach(() => {
@@ -264,5 +343,89 @@ describe("ReadingText: annotations", () => {
     });
     // The paragraph is still typeset while it is being annotated.
     expect(paragraph.querySelector(".katex")).not.toBeNull();
+  });
+});
+
+describe("ReadingText: the annotation margin column", () => {
+  it("keeps the marker column to the marker and starts every list closed", async () => {
+    stubAnnotationApi();
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    const marker = await screen.findByTestId("margin-marker-p1");
+    const margin = marker.closest(".pd-margin");
+    expect(margin).not.toBeNull();
+    // The bug: the list was drawn inside the 48px column, beside the paragraph.
+    expect(margin?.querySelector(".pd-annotation-list")).toBeNull();
+
+    // Closed at first, and the marker is a disclosure button for the list.
+    expect(marker.getAttribute("aria-expanded")).toBe("false");
+    expect(marker.getAttribute("aria-controls")).toBe("pd-annotation-list-p1");
+    expect(document.getElementById("pd-annotation-list-p1")).toBeNull();
+    expect(margin?.textContent).toBe("");
+
+    // A paragraph whose only annotations are hidden still has a marker, and
+    // the label says the annotations are there but hidden rather than counting
+    // them as visible.
+    const hiddenMarker = await screen.findByTestId("margin-marker-p2");
+    expect(hiddenMarker.getAttribute("aria-label")).toBe(
+      "Annotations hidden by moderation on this paragraph",
+    );
+    // A paragraph with no annotations at all has no marker.
+    expect(screen.queryByTestId("margin-marker-p3")).toBeNull();
+  });
+
+  it("opens the list across the reading column and closes it again", async () => {
+    stubAnnotationApi();
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    const marker = await screen.findByTestId("margin-marker-p1");
+    fireEvent.click(marker);
+
+    const list = await screen.findByRole("list", { name: "Annotations for p1" });
+    expect(marker.getAttribute("aria-expanded")).toBe("true");
+    // Opening the list also selects the paragraph, as clicking the marker
+    // always has.
+    expect(paragraphElement("p1").getAttribute("data-selected")).toBe("true");
+    // It is a sibling of the paragraph and the margin, not inside the column.
+    expect(list.closest(".pd-margin")).toBeNull();
+    expect(list.closest(".pd-paragraph-row")).not.toBeNull();
+    expect(screen.getByText(QUOTE)).toBeTruthy();
+    expect(screen.getByText(NOTE)).toBeTruthy();
+
+    fireEvent.click(marker);
+    expect(screen.queryByRole("list", { name: "Annotations for p1" })).toBeNull();
+    expect(marker.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("shows the moderation placeholders when a hidden-only paragraph is opened", async () => {
+    stubAnnotationApi();
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    const marker = await screen.findByTestId("margin-marker-p2");
+    fireEvent.click(marker);
+
+    expect(await screen.findByText("Hidden by moderation: Harassment")).toBeTruthy();
+    expect(marker.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById("pd-annotation-list-p2")).not.toBeNull();
+  });
+
+  it("opens the paragraph's list after the author posts a new annotation", async () => {
+    stubAnnotationApi();
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    const paragraph = paragraphElement("p1");
+    const marker = await screen.findByTestId("margin-marker-p1");
+    expect(marker.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.focus(paragraph);
+    fireEvent.keyDown(paragraph, { key: "a" });
+    const textarea = await screen.findByRole("textbox");
+    fireEvent.change(textarea, { target: { value: POSTED_NOTE } });
+    fireEvent.click(screen.getByRole("button", { name: "Save annotation" }));
+
+    // A new annotation the reader cannot see would be a silent failure, so the
+    // paragraph it belongs to opens.
+    await waitFor(() => expect(marker.getAttribute("aria-expanded")).toBe("true"));
+    expect(await screen.findByText(POSTED_NOTE)).toBeTruthy();
   });
 });

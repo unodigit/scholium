@@ -45,6 +45,9 @@ export interface ReadingTextProps {
   readonly abstract?: string;
   /** How to fetch the math renderer. Tests pass their own. */
   readonly loadMath?: LoadMath;
+  /** Annotations for the reading column, when a test seeds them directly. */
+  readonly annotations?: unknown;
+  readonly initialAnnotations?: unknown;
 }
 
 /** The heading and abstract the paper page renders above the reading column. */
@@ -137,6 +140,8 @@ export function ReadingText({
   title,
   abstract,
   loadMath = loadKatex,
+  annotations,
+  initialAnnotations,
 }: ReadingTextProps) {
   const scope = useRef<HTMLDivElement>(null);
 
@@ -196,6 +201,8 @@ export function ReadingText({
         versionCid={versionCid}
         paragraphs={shown}
         load={loadAnnotations}
+        annotations={annotations}
+        initialAnnotations={initialAnnotations}
       />
     </div>
   );

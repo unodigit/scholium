@@ -122,6 +122,15 @@ describe("paper-discussion.css", () => {
     expect(rule(".pd-compose")).toMatch(/flex-direction:\s*column/);
   });
 
+  it("gives a paragraph's annotations the whole row, not the 48px marker column", () => {
+    // The margin column is only wide enough for the marker; the list of
+    // annotations sits on its own row of .pd-paragraph-row and spans both
+    // columns, so a quote and a note are as wide as the reading column.
+    expect(rule(".pd-annotation-list")).toMatch(/grid-column:\s*1\s*\/\s*-1/);
+    expect(rule(".pd-paragraph-row")).toMatch(/grid-template-columns:/);
+    expect(rule(".pd-margin")).not.toMatch(/grid-column/);
+  });
+
   it("lets long ids, quotes and posts wrap, and keeps a reader's line breaks", () => {
     expect(rule(".pd-post__author")).toMatch(/overflow-wrap:\s*anywhere/);
     expect(rule(".pd-post__author")).toMatch(/font-family:\s*var\(--family-mono\)/);
