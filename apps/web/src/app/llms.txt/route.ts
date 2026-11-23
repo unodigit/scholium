@@ -56,6 +56,21 @@ Scholium works alongside existing preprint servers such as arXiv; papers can be 
 - [Network status](/network): the node's standing, log head and moderation statistics
 - [Moderation policies](/policies): the policy clauses that moderation decisions cite
 
+## Docs
+
+- [Docs](/docs): The Scholium handbook: how Scholium works and how to use it
+- [How Scholium works](/docs/how-scholium-works): Understand the ideas, the roles and the life of a paper
+- [Your account](/docs/your-account): Sign in, set up your account, move up the trust tiers, protect your account
+- [Reading and finding papers](/docs/reading-and-finding-papers): Browse, search, follow, read and cite
+- [Checking a paper is genuine](/docs/checking-a-paper-is-genuine): Understand the Verified badge and check files yourself
+- [Publishing a paper](/docs/publishing-a-paper): Submit a paper, get co-author consent, through moderation to listing
+- [Reviewing a paper](/docs/reviewing-a-paper): Write a formal review; understand how status is decided
+- [Discussion and annotations](/docs/discussion-and-annotations): Comment on papers and annotate paragraphs
+- [AI pre-review](/docs/ai-pre-review): Read and respond to the advisory AI report
+- [Moderation, appeals and reports](/docs/moderation-appeals-and-reports): Understand decisions, appeal one, report content, moderate
+- [FAQ and known limitations](/docs/faq-and-known-limitations): Find quick answers and what this release cannot do yet
+- [Glossary](/docs/glossary): Look up a term
+
 ## Name
 
 A scholium (plural scholia) is an explanatory note written in the margin of a scholarly text. Scholium keeps a paper and its margin together: reviews, notes and corrections stay beside the text they are about.

@@ -26,6 +26,18 @@ const STATIC_URLS = [
   `${SITE}/c/cs.AI`,
   `${SITE}/c/cs.LG`,
   `${SITE}/c/cs.MA`,
+  `${SITE}/docs`,
+  `${SITE}/docs/how-scholium-works`,
+  `${SITE}/docs/your-account`,
+  `${SITE}/docs/reading-and-finding-papers`,
+  `${SITE}/docs/checking-a-paper-is-genuine`,
+  `${SITE}/docs/publishing-a-paper`,
+  `${SITE}/docs/reviewing-a-paper`,
+  `${SITE}/docs/discussion-and-annotations`,
+  `${SITE}/docs/ai-pre-review`,
+  `${SITE}/docs/moderation-appeals-and-reports`,
+  `${SITE}/docs/faq-and-known-limitations`,
+  `${SITE}/docs/glossary`,
 ];
 
 /** One `GET /v1/papers` item, shaped like the catalog's wire format. */

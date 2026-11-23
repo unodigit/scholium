@@ -3,6 +3,7 @@ import type { MetadataRoute } from "next";
 import { DEFAULT_CATEGORIES, categoryHref } from "../components/nav/categories";
 import { api, type ApiClient } from "../lib/api";
 import { resolveSiteUrl } from "./site-metadata";
+import { chapters } from "../features/docs/handbook";
 
 /**
  * `/sitemap.xml`, served by Next from this file as an App Router metadata
@@ -207,6 +208,8 @@ export function staticSitemapEntries(siteUrl: string): MetadataRoute.Sitemap {
     ...DEFAULT_CATEGORIES.map((category) => ({
       url: `${base}${categoryHref(category)}`,
     })),
+    { url: `${base}/docs` },
+    ...chapters.map((chapter) => ({ url: `${base}${chapter.href}` })),
   ];
 }
 
