@@ -4,19 +4,19 @@
       "src": "/docs/screenshots/ch01-navigation-bar.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The navigation bar on a computer, with the Categories menu open on cs.AI, cs.LG and cs.MA",
-      "caption": "On a computer, the navigation bar holds search, Categories, Submit, notifications and your account.",
+      "alt": "The navigation bar on a computer, with the Categories menu open on Artificial Intelligence (cs.AI), Machine Learning (cs.LG) and Multiagent Systems (cs.MA), above the Latest paper list",
+      "caption": "On a computer, the navigation bar holds search, Categories, Docs, Submit, notifications and your account.",
       "heading": "Where things are",
-      "source": "02-search-and-discover/05b-categories-menu.png"
+      "source": "docs-reshoot/ch01-navigation-bar.png"
     },
     {
       "src": "/docs/screenshots/ch01-phone-navigation.webp",
       "width": 390,
       "height": 844,
-      "alt": "A paper page on a phone, with the margin collapsed at the bottom and the Home, Search, Submit, Inbox and Me bar below it",
-      "caption": "On a phone, the navigation moves to a bar at the bottom of the screen.",
+      "alt": "A paper page on a phone: a Corrected banner, the title and buttons, the collapsed Margin bar, and the Home, Search, Submit, Inbox, Me and Sign out bar at the bottom",
+      "caption": "On a phone, the navigation moves to a bar at the bottom of the screen, and the margin folds into a bar above it.",
       "heading": "Where things are",
-      "source": "01-read-feed-and-paper/08-paper-header-mobile-390.png"
+      "source": "docs-reshoot/ch01-phone-navigation.png"
     }
   ],
   "02": [
@@ -24,75 +24,75 @@
       "src": "/docs/screenshots/ch02-passkey-sign-in.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The sign-in page, with the Sign in with passkey button and the Recover your account link",
+      "alt": "The sign-in page, with the Sign in with passkey button, a note that a first sign-in creates your account, and the Recover your account link",
       "caption": "The sign-in page. Your first sign-in on a device creates your account.",
       "heading": "Sign in with a passkey",
-      "source": "03-new-member-onboarding/01a-signin-page.png"
+      "source": "docs-reshoot/ch02-sign-in.png"
     },
     {
-      "src": "/docs/screenshots/ch02-onboarding.webp",
+      "src": "/docs/screenshots/ch02-endorsements.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The onboarding page at 1 of 5 steps complete: the passkey step is done and the name, affiliation and email fields are empty",
-      "caption": "Onboarding after the first sign-in. The passkey step is already done.",
-      "heading": "Set up your account (onboarding)",
-      "source": "03-new-member-onboarding/01b-onboarding-passkey-done.png"
+      "alt": "Ana Costa's public profile seen by a moderator: Tier 2 · Author, endorsements in cs.AI and cs.LG from Dr. Tunde Okafor, and an Endorse card with Computation and language (cs.CL) chosen",
+      "caption": "A member's profile lists who endorsed them, and in which category. People allowed to endorse see an Endorse card.",
+      "heading": "Endorsements",
+      "source": "docs-reshoot/ch02-endorse.png"
     },
     {
-      "src": "/docs/screenshots/ch02-recovery-safety-window.webp",
+      "src": "/docs/screenshots/ch02-recovery-guardians.webp",
       "width": 1440,
       "height": 900,
-      "alt": "A recovery request with 3 of 3 guardian approvals, the Check for approvals button and the open 72-hour safety window",
-      "caption": "Three guardians have approved. The new passkey takes over when the 72-hour safety window ends.",
-      "heading": "Recover a lost account",
-      "source": "06-key-recovery/04-requester-3-of-3-safety-window.png"
+      "alt": "The Security page: the Devices card with the active signing key, Recovery guardians showing 3 of 5 with five named guardians and a Change guardians button, and an empty Recovery requests card",
+      "caption": "Your guardians are listed on the Security page. Any 3 of the 5 can approve a new key.",
+      "heading": "Recovery guardians",
+      "source": "docs-reshoot/ch02-security.png"
     },
     {
-      "src": "/docs/screenshots/ch02-security-page.webp",
+      "src": "/docs/screenshots/ch02-dashboard.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Security page with the Devices card, five recovery guardians and the Change guardians button, Recovery requests and Key rotation",
-      "caption": "The Security page lists this device's key, your five guardians and any recovery requests waiting for you.",
-      "heading": "Security settings",
-      "source": "03-new-member-onboarding/05a-security.png"
+      "alt": "A reviewer's dashboard: Needs your attention with an appeal panel vote due 7 Dec 2026 and email verification, My papers empty, My reviews with one revealed review marked Author replied, and the Saved searches, Credentials and Security cards",
+      "caption": "Your dashboard gathers what needs your attention, your papers and your reviews.",
+      "heading": "Your dashboard",
+      "source": "docs-reshoot/ch02-dashboard.png"
     }
   ],
   "03": [
     {
-      "src": "/docs/screenshots/ch03-following-feed.webp",
+      "src": "/docs/screenshots/ch03-paper-list.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The paper list on the Following tab, with two papers, each showing authors, category, version, age, abstract and an Under review chip",
-      "caption": "The Following tab shows new papers in the categories you follow.",
+      "alt": "The paper list on the Latest tab with three papers, each showing authors, categories, version, age, the start of the abstract and an Under review chip",
+      "caption": "The Latest tab shows the newest listed papers first. Filter by category or change the sort at the top.",
       "heading": "The paper list",
-      "source": "03-new-member-onboarding/03d-following-feed.png"
+      "source": "docs-reshoot/ch03-paper-list.png"
     },
     {
       "src": "/docs/screenshots/ch03-keyword-search.webp",
       "width": 1440,
       "height": 900,
-      "alt": "Keyword search results for \"calibration\", with the Keyword and Semantic toggle, Save this search, and the category, date and status filters",
-      "caption": "A keyword search. The filters on the left count the matches in each category and status.",
+      "alt": "Keyword search results for \"calibration\": two papers, the Keyword and Semantic toggle, Save this search, and the category, date and status filters with counts",
+      "caption": "Search results, with filters on the left. Save this search adds it to your dashboard and daily digest.",
       "heading": "Search",
-      "source": "02-search-and-discover/01-search-calibration.png"
+      "source": "docs-reshoot/ch03-search.png"
     },
     {
       "src": "/docs/screenshots/ch03-paper-page.webp",
       "width": 1440,
       "height": 900,
-      "alt": "A paper page: title, authors, Under review chip, PDF, HTML, Cite, Download and Report, with the margin open on the Reviews tab",
-      "caption": "A paper page. The margin beside the text holds the verification badge, the paper ID and six tabs.",
+      "alt": "A paper page: a Corrected banner with the authors' reason and View record, then the title, authors, Corrected chip, v2 of 2, PDF, HTML, Cite, Download and Report, with the margin open on the Reviews tab",
+      "caption": "A paper page. Banners such as Corrected sit above the title; the margin on the right holds reviews, AI, discussion, versions, files and proof.",
       "heading": "The paper page",
-      "source": "01-read-feed-and-paper/03-paper-page.png"
+      "source": "docs-reshoot/ch03-corrected-banner.png"
     },
     {
-      "src": "/docs/screenshots/ch03-corrected-banner.webp",
+      "src": "/docs/screenshots/ch03-cite.webp",
       "width": 1440,
       "height": 900,
-      "alt": "A paper page with a Corrected banner above the title that gives the authors' reason and a View record link",
-      "caption": "A correction notice puts a banner above the title of every version.",
-      "heading": "Banners",
-      "source": "15-correction-notice/03a-anon-corrected.png"
+      "alt": "The Cite this paper dialog with BibTeX and RIS entries for sch:egfc-jpj6-7q7z/v2, each with Copy and Download buttons",
+      "caption": "Cite gives BibTeX and RIS for the exact version you are reading.",
+      "heading": "Cite a paper",
+      "source": "docs-reshoot/ch03-cite.png"
     }
   ],
   "04": [
@@ -100,155 +100,209 @@
       "src": "/docs/screenshots/ch04-proof-tab.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Proof tab: signed by all 3 listed authors, version history intact, files match, recorded in the public log, timestamp anchor pending, no retraction or correction, preserved in 1 of 1 local copy",
-      "caption": "The Proof tab lists each check your browser ran. Anchor pending is expected in this release.",
+      "alt": "The proof of a paper, verified in the browser: signed by both listed authors, version history intact from v1 to v2, files match, recorded in the public log, timestamp anchor pending, no retraction or correction, and preserved in 1 of 1 local copy",
+      "caption": "The proof runs in your browser and lists each check with its result.",
       "heading": "The Proof tab",
-      "source": "08-verify-and-download/02a-proof-checklist.png"
+      "source": "docs-reshoot/ch04-proof-page.png"
     },
     {
       "src": "/docs/screenshots/ch04-verify-file-match.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Verify a file page after a PDF was dropped, showing This file matches what the authors signed and naming the paper and version",
-      "caption": "The file matches a signed version. Only its fingerprint left your device.",
+      "alt": "The Verify a file page after calibration-drift.pdf was dropped, showing This file matches what the authors signed and naming the paper and version 2",
+      "caption": "Drop a file you already have; the check runs on your device and names the paper and version it belongs to.",
       "heading": "Check a file you already have",
-      "source": "08-verify-and-download/06b-verify-pdf-no-id-match.png"
+      "source": "docs-reshoot/ch04-verify-file.png"
     },
     {
       "src": "/docs/screenshots/ch04-download-archive.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Download menu open on a paper page, offering the Paper archive with the scholium verify command for it",
-      "caption": "Download, then Paper archive, saves the .car file that the command-line verifier checks.",
+      "alt": "The Download menu open on a paper page, offering the Paper archive with the scholium verify sch-egfc-jpj6-7q7z.car command, and How to verify",
+      "caption": "Download the paper archive to check it offline with the scholium verify command.",
       "heading": "Check offline with the command-line verifier",
-      "source": "08-verify-and-download/05a-download-menu-archive.png"
+      "source": "docs-reshoot/ch04-download-menu.png"
     },
     {
       "src": "/docs/screenshots/ch04-network-page.webp",
       "width": 1440,
       "height": 900,
       "alt": "The Network page with the This node, Log head, Public timestamp (Anchor pending) and Probe pass rate cards",
-      "caption": "The network page shows who runs the server, the head of its public log and its timestamp status.",
+      "caption": "The network page shows who runs this node, the head of its record log and its timestamp and replication status.",
       "heading": "The network page",
-      "source": "09-preserve-and-transparency/01b-network-this-node.png"
+      "source": "docs-reshoot/ch04-network.png"
     }
   ],
   "05": [
     {
-      "src": "/docs/screenshots/ch05-files-step.webp",
+      "src": "/docs/screenshots/ch05-details-step.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Files step with the Paper and Code and data drop zones, and main.pdf uploaded with the role Paper PDF and its fingerprint matched",
-      "caption": "Step 1. Each uploaded file gets a role and is fingerprinted on your device.",
-      "heading": "Step 1: Files",
-      "source": "10-publish/02-pdf-uploaded.png"
+      "alt": "Step 2, Details, of the submit wizard: the title and abstract filled in and the categories cs.AI and cs.LG chosen",
+      "caption": "Step 2: give the title, abstract and categories, as they should be cited.",
+      "heading": "Step 2: Details",
+      "source": "docs-reshoot/ch05-details.png"
     },
     {
-      "src": "/docs/screenshots/ch05-authors-step.webp",
+      "src": "/docs/screenshots/ch05-sign-step.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Authors step with the Add a co-author form and two authors, each with CRediT roles selected and move up and down buttons",
-      "caption": "Step 3. Add co-authors by DID and give everyone at least one CRediT role.",
-      "heading": "Step 3: Authors",
-      "source": "10-publish/04d-roles-and-consents.png"
+      "alt": "Step 5, Sign: a summary of the title, abstract, categories, licence, two authors with their CRediT roles and the one file, above Back to Checks and Sign and submit",
+      "caption": "Step 5: check the summary, then sign. What you sign becomes version 1.",
+      "heading": "Step 5: Sign",
+      "source": "docs-reshoot/ch05-sign.png"
     },
     {
       "src": "/docs/screenshots/ch05-status-tracker.webp",
       "width": 1440,
       "height": 900,
       "alt": "The status tracker: Submitted done, Co-author consents 0 of 2 in progress with a Sign your consent button, then Scan, Moderation, Listed and AI pre-review not started",
-      "caption": "The tracker after submitting. The version waits until every author, including you, signs a consent.",
+      "caption": "After you submit, the status tracker shows each stage. The paper waits until every author has consented.",
       "heading": "After you submit: the status tracker",
-      "source": "10-publish/07b-status-tracker.png"
+      "source": "docs-reshoot/ch05-status-tracker.png"
     },
     {
-      "src": "/docs/screenshots/ch05-issue-notice.webp",
+      "src": "/docs/screenshots/ch05-co-author-consent.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Issue a notice dialog with Correction selected over Retraction and Withdrawal, and a reason filled in",
-      "caption": "Issue notice offers a correction, a retraction or a withdrawal. A reason is required.",
-      "heading": "Corrections, retractions and withdrawals",
-      "source": "15-correction-notice/01-issue-notice-form.png"
+      "alt": "The Review and sign page a co-author opens: version 1 signed by Ana Costa, the title, abstract, categories, licence and change note, and Co-author consents showing 1 of 2 signed",
+      "caption": "A co-author reads the version on this page, then accepts or declines being named on it.",
+      "heading": "Co-author consent",
+      "source": "docs-reshoot/ch05-consent.png"
     }
   ],
   "06": [
     {
-      "src": "/docs/screenshots/ch06-conflict-check.webp",
+      "src": "/docs/screenshots/ch06-rubric.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The review form beside the paper: a You are reviewing anonymously notice, a conflict check with all three checks passed, and a sealed review of v1",
-      "caption": "The review form runs the conflict check and states whether you review anonymously.",
-      "heading": "2. The conflict check",
-      "source": "13-new-version-and-review-update/00c-solheim-sealed-seeded-review.png"
+      "alt": "The review form beside the paper's text, part-way through the rubric: Soundness and Evidence scored 3 of 5 with justifications, Reproducibility scored 3 with its justification still empty",
+      "caption": "Score each dimension from 1 to 5 and say why. Every justification is required.",
+      "heading": "4. Fill the rubric",
+      "source": "docs-reshoot/ch06-rubric.png"
     },
     {
-      "src": "/docs/screenshots/ch06-reviews-revealed-and-sealed.webp",
+      "src": "/docs/screenshots/ch06-review-sealed.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Reviews page with Reviewer A revealed, recommending Minor revisions with six scores and justifications, and Reviewer B not yet revealed",
-      "caption": "A revealed review shows its rubric and recommendation. A sealed one shows nothing yet.",
-      "heading": "6. Reveal the review",
-      "source": "12-review-commit-reveal/00a-anon-seeded-reviews.png"
+      "alt": "After committing: the conflict check with one advisory affiliation conflict, and Your review is sealed, saying one review is committed and it can be revealed once one more is committed or on 14 Dec 2026, with Reveal review and Download review key",
+      "caption": "A committed review is sealed. It can be revealed once a second review is committed, or after the waiting period.",
+      "heading": "5. Commit the review (sealed)",
+      "source": "docs-reshoot/ch06-sealed.png"
+    },
+    {
+      "src": "/docs/screenshots/ch06-author-reply.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Reviews page: Reviewer A's review followed by the authors' point-by-point reply on Soundness and Reproducibility and a general reply, then Reviewer B, revealed, recommending Major concerns",
+      "caption": "The authors' reply appears under the review it answers, point by point.",
+      "heading": "7. Author replies",
+      "source": "docs-reshoot/ch06-author-reply.png"
+    },
+    {
+      "src": "/docs/screenshots/ch06-update-for-v2.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "Updating a review for version 2: the recommendation Minor revisions, a revised written report, and the Update review button with a note that scores and recommendation are published at once",
+      "caption": "When a new version is listed, update your review. The new scores are public at once; the written report follows the version's gate.",
+      "heading": "8. Update your review for a new version",
+      "source": "docs-reshoot/ch06-update-v2.png"
     }
   ],
   "07": [
     {
-      "src": "/docs/screenshots/ch07-discussion-sign-in.webp",
+      "src": "/docs/screenshots/ch07-discussion-signed-out.webp",
       "width": 1440,
       "height": 900,
-      "alt": "A paper's Discussion tab with no posts yet and a Sign in to start a thread or reply prompt",
-      "caption": "Anyone can read a discussion. Posting needs a signed-in member.",
+      "alt": "A paper's discussion seen while signed out: 4 posts, 1 hidden, a Sign in to start a thread or reply prompt, and a question from Mei Zhang with a reply from the author",
+      "caption": "Anyone can read the discussion. Sign in to start a thread or reply.",
       "heading": "Who can take part",
-      "source": "01-read-feed-and-paper/04b-tab-discussion.png"
+      "source": "docs-reshoot/ch07-who-can-take-part.png"
+    },
+    {
+      "src": "/docs/screenshots/ch07-discussion-thread.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A discussion thread: Mei Zhang's question about how the refit questions were sampled, marked helpful by 3 members, with replies from Ana Costa and Rafael Silva, each with Mark helpful, Reply and Report",
+      "caption": "Threads are ordered by helpful marks. Replies sit under the post they answer.",
+      "heading": "Discussion threads",
+      "source": "docs-reshoot/ch07-discussion-thread.png"
+    },
+    {
+      "src": "/docs/screenshots/ch07-annotation.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "An annotation in the discussion: Rafael Silva's note quoting the paper's Results paragraph and suggesting the added corpora appear as separate rows of the results table",
+      "caption": "An annotation quotes the paragraph it is attached to.",
+      "heading": "Annotations",
+      "source": "docs-reshoot/ch07-annotation.png"
+    },
+    {
+      "src": "/docs/screenshots/ch07-report-post.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The report panel under a promotional post, with reasons from Spam or advertising to Something else, Spam or advertising selected, and Send report",
+      "caption": "Report a post and choose a reason. A moderator reviews every report.",
+      "heading": "Report a post",
+      "source": "docs-reshoot/ch07-report-post.png"
     }
   ],
   "08": [
     {
-      "src": "/docs/screenshots/ch08-ai-pre-review.webp",
+      "src": "/docs/screenshots/ch08-ai-finding.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The AI pre-review page with the Advisory banner and a Methodology finding showing severity, confidence, a quotation from the paper and Rebut, Confirm and Wrong buttons",
-      "caption": "Each finding names its severity, confidence and evidence. The banner marks the report as advisory.",
+      "alt": "The AI pre-review page with the Advisory banner, version 2 with 7 findings, and a Methodology finding showing severity, confidence, the agents that also reported it, a quotation from the paper and Rebut, Confirm and Wrong buttons",
+      "caption": "Each finding gives a severity, a confidence and the passage it is about. The report is advisory only.",
       "heading": "How to read a finding",
-      "source": "01-read-feed-and-paper/05d-standalone-ai.png"
+      "source": "docs-reshoot/ch08-ai-finding.png"
+    },
+    {
+      "src": "/docs/screenshots/ch08-rebuttal.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "An author writing a rebuttal under a finding that quotes the Results paragraph, with Send rebuttal and Cancel and a note that it is published beside the finding",
+      "caption": "Authors can rebut a finding; the rebuttal is published beside it.",
+      "heading": "Responding to findings",
+      "source": "docs-reshoot/ch08-rebut.png"
     }
   ],
   "09": [
     {
+      "src": "/docs/screenshots/ch09-moderation-queue.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The moderation console with 2 papers waiting, each with category, age, similarity, unresolved references, scan result and a New account signal, above the Flags section",
+      "caption": "The console lists versions waiting for a decision, oldest first, with signals from the automated checks.",
+      "heading": "For moderators: the console",
+      "source": "docs-reshoot/ch09-mod-queue.png"
+    },
+    {
       "src": "/docs/screenshots/ch09-moderation-decision.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The moderation decision page with the paper on the left and, on the right, policy clause MOD-03, the reason for the author and the preview of what the author will see",
-      "caption": "A decision names a policy clause and a reason. The preview shows what the author will read.",
+      "alt": "The moderation decision page with the paper on the left and, on the right, List the paper, policy clause MOD-01 with its text, the reason for the author and a preview of what the author will see",
+      "caption": "Every decision cites a policy clause and gives the author a reason. The preview shows what the author will see.",
       "heading": "For moderators: the console",
-      "source": "11-moderation-hold-and-appeal/02a-hold-preview.png"
+      "source": "docs-reshoot/ch09-mod-decision.png"
     },
     {
       "src": "/docs/screenshots/ch09-appeal-form.webp",
       "width": 1440,
       "height": 900,
-      "alt": "The Appeal the moderation decision dialog over a paper held from listing, showing the moderator's reason and the author's grounds for appeal",
-      "caption": "The appeal form quotes the moderator's reason. Your grounds are required.",
+      "alt": "The Appeal the moderation decision dialog over a paper held from listing under MOD-03, showing the moderator's reason and the author's grounds for appeal",
+      "caption": "An author can appeal a decision once. The grounds are signed and read by the panel.",
       "heading": "Appeals",
-      "source": "11-moderation-hold-and-appeal/05a-appeal-form.png"
-    },
-    {
-      "src": "/docs/screenshots/ch09-panel-vote.webp",
-      "width": 1440,
-      "height": 900,
-      "alt": "An appeal waiting for the panel, with the decision appealed, the grounds, and the panel vote form with Outcome and Your reasons",
-      "caption": "A panel member reads the decision and the grounds, then votes with a reason.",
-      "heading": "If you are on a panel",
-      "source": "11-moderation-hold-and-appeal/08c-open-lands-on-appeal.png"
+      "source": "docs-reshoot/ch09-appeal-dialog.png"
     },
     {
       "src": "/docs/screenshots/ch09-report-paper.webp",
       "width": 1440,
       "height": 900,
       "alt": "The Report this paper dialog with reasons from Research misconduct to Something else, and Duplicated figures selected",
-      "caption": "Reporting a paper. A moderator reviews every report and tells you the outcome.",
+      "caption": "Report a paper and choose a reason. Reports are private to you and the moderators.",
       "heading": "Reporting content",
-      "source": "07-flag-and-dispute/01a-paper-report-panel.png"
+      "source": "docs-reshoot/ch09-report-paper.png"
     }
   ],
   "10": [],
