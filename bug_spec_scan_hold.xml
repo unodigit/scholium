@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Found while shooting the docs screenshots (2026-11-23, main @ 4cbbe5f). Verify node without ClamAV: rafael's
+  "Seed Sensitivity of Few-Shot Example Selection in Agent Planning" (sch:6jid-k5i4-uvp5, v1) has a code .zip whose
+  blob has scan_status "failed" (scan_reports: av_unavailable, "ClamAV (clamd) is unavailable: CLAMD_SOCKET is not
+  set"); sanitizer/scan_job.py moved the version to "held"; there is no check_results row and no moderation decision.
+  Decisions (recorded here):
+  D1  A version held by the safety scan has a checks report: the per-file scan verdicts are its result. The advisory
+      checks (similarity, references, metadata) did not run and say so; they are not "pending".
+  D2  A scan hold is not a moderator's decision. The author is told which file failed and why, and that the fix is a
+      new version with a corrected file (docs/handbook/05-publishing-a-paper.md "The safety scan"); no appeal sentence
+      is shown, because there is no decision to appeal.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/checks/router.py,apps/api/src/app/modules/checks/tests/test_pipeline.py">
+    <title>GET /v1/papers/{id}/v/{n}/checks answers "checks pending" (404) forever for a version the safety scan held, hiding which file failed</title>
+    <symptoms>
+      get_paper_checks (modules/checks/router.py ~L153-205) raises _checks_pending whenever get_check_result(version_cid) is None. The advisory checks run only after a clean scan, so a version the scanner held (state "held" from sanitizer/scan_job.py, a manifest file whose blob scan_status is "failed") never gets a check_results row, and the endpoint 404s for its author for ever, although _file_report already knows each file's failed checks and detail
+    </symptoms>
+    <reproduction_steps>
+      On a node without CLAMD_SOCKET, submit a paper with a code .zip bundle, consent, sign: the version goes to "held"; as the author, GET /v1/papers/{id}/v/1/checks returns the checks-pending 404 problem
+    </reproduction_steps>
+    <expected>Per D1: when no check_results row exists but the version's state is "held" or "rejected" and at least one manifest file's blob has scan_status "failed", the endpoint returns 200 with the usual shape: state, files (each from _file_report, so the failed file carries status "failed", its failed check names such as av_unavailable and the detail), similarity, references and metadata values null, and a new field checksRan: false (checks_ran too, like the other snake/camel pairs); a report built from check_results carries checksRan: true. Visibility is unchanged (only those who may read the pre-listing version see it; others get the unknown-version 404). A version still scanning, or in moderation with no check_results yet, keeps the pending 404. Tests in test_pipeline.py: a held version with a failed av_unavailable bundle returns 200 with that file failed, checksRan false and null advisory values; a stranger still gets 404; a version with check_results is unchanged apart from checksRan true; a version still scanning keeps the pending 404</expected>
+    <actual>The author's tracker can never show why the version was held</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium"
+       touches_files="apps/web/src/features/submit/status-tracker.tsx,apps/web/src/features/submit/status-tracker.test.tsx,apps/web/src/features/submit/checks.ts,apps/web/src/features/submit/checks.test.ts">
+    <title>The status tracker of a version the safety scan held says "Scan: Done", "Moderation: Held" and "Checks pending", never which file failed</title>
+    <symptoms>
+      status-tracker.tsx marks the Scan step done for every state in PAST_SCAN, which includes "held" (~L79, L106), and puts the attention on Moderation ("Not listed while the hold stands"), although no moderator acted; TrackerChecks shows "Checks pending … They run once the version is signed and every co-author has consented" whenever checks is null (~L213-228). docs/handbook/05-publishing-a-paper.md "The safety scan" promises the tracker shows "paper.pdf failed the safety scan: …" with Needs fixing
+    </symptoms>
+    <reproduction_steps>
+      As rafael on the verify node, open the status tracker of sch:6jid-k5i4-uvp5 v1 (held because its code bundle failed the av_unavailable check): Scan Done, Moderation Held, Automated checks "Checks pending"
+    </reproduction_steps>
+    <expected>Per D1 and D2, using the report from bug 1 (VersionChecks gains checksRan, parsed from checksRan or checks_ran, default true when absent so older reports read as before): when the report has a file with status "failed", the Scan step is not done; it carries the attention with the label "Needs fixing" and the detail from the existing fileProblem() wording in checks.ts ("{path} failed the safety scan: a malware scan that could not run (the antivirus is unavailable).", one sentence per failed file), and a link "Publish a new version" to newVersionHref(paper) from new-version.ts; the Moderation step is then neither done nor in attention ("Not reached"). When checksRan is false, the Automated checks section does not say "Checks pending": the file scan row shows the failure as now (Needs fixing) and similarity, references and metadata read "Not run: the version was held at the safety scan". A held version whose files all passed (a moderator's hold) is unchanged: Scan done, Moderation in attention. Tests: status-tracker.test.tsx for a scan-held version (Scan Needs fixing with the file sentence and the Publish a new version link, Moderation Not reached, no "Checks pending"), and for a moderator hold (unchanged); checks.test.ts for parsing checksRan and the "Not run" items</expected>
+    <actual>The author is told the scan passed and a moderator holds the paper</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/unlisted-paper.ts,apps/web/src/features/paper-page/unlisted-paper.test.ts">
+    <title>The paper page of a version the safety scan held says "Held from listing — You can appeal once", but there is no decision to appeal</title>
+    <symptoms>
+      unlistedBanner (paper-page/unlisted-paper.ts ~L379-392) shows "Held from listing" with refusalDetail(null), which includes APPEAL_ONCE ("You can appeal once."), for action === null and state === "held", i.e. also when the hold came from the safety scan and no moderator decided anything
+    </symptoms>
+    <reproduction_steps>
+      As rafael, open /p/sch:6jid-k5i4-uvp5 on the verify node: the banner reads Held from listing … You can appeal once
+    </reproduction_steps>
+    <expected>Per D2: with no moderation decision and state "held", the banner label is "Held: a file failed the safety scan" and its detail "Fix the file and publish a new version. The status tracker says which file failed and why." with no appeal sentence; tone and icon as now. A hold with a moderation decision (action "hold") is unchanged, its reason and the appeal sentence included. Tests in unlisted-paper.test.ts for both cases</expected>
+    <actual>The author is invited to appeal a decision nobody made</actual>
+  </bug>
+
+</bug_spec>
