@@ -12,28 +12,30 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "next": "^16.4.6",
-    "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "tailwindcss": "4.0.0",
     "@ipld/dag-cbor": "^9.0.0",
-    "multiformats": "^9.9.0",
     "@noble/ed25519": "^2.1.0",
     "@noble/hashes": "^1.4.0",
     "katex": "^0.19.1",
+    "multiformats": "^9.9.0",
+    "next": "^16.4.6",
     "pdfjs-dist": "^6.5.438",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "4.0.0",
     "tus-js-client": "^4.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
-    "vitest": "^5.1.0",
-    "@testing-library/react": "^16.0.0",
     "@playwright/test": "^1.48.0",
+    "@tailwindcss/postcss": "4.0.0",
+    "@testing-library/react": "^16.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "jsdom": "^31.0.1",
     "postcss": "^8.4.0",
-    "@tailwindcss/postcss": "4.0.0",
-    "jsdom": "^31.0.1"
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
   }
 }
