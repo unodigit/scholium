@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -54,11 +58,31 @@ vi.mock("../paper-ai", async (importOriginal) => {
 });
 vi.mock("../paper-discussion", async (importOriginal) => {
   const { createElement } = await import("react");
+  const original = await importOriginal<{
+    countPosts: (threads: readonly unknown[]) => number;
+  }>();
+  // The stand-in can "post": it counts the posts it was given, as the real tab
+  // counts the ones it shows, and reports one more the way a posted thread
+  // does — through `onCountChange`, without a reload.
   return {
-    ...(await importOriginal<object>()),
+    ...original,
     DiscussionTab: (props: Record<string, unknown>) => {
       stubs.props.discussion = props;
-      return createElement("div", { "data-testid": "discussion-tab" });
+      const shown = (props.initial as { threads?: readonly unknown[] } | undefined)?.threads;
+      const report = props.onCountChange as ((count: number) => void) | undefined;
+      return createElement(
+        "div",
+        { "data-testid": "discussion-tab" },
+        createElement(
+          "button",
+          {
+            type: "button",
+            "data-testid": "discussion-post",
+            onClick: () => report?.((shown === undefined ? 0 : original.countPosts(shown)) + 1),
+          },
+          "Post a thread",
+        ),
+      );
     },
   };
 });
@@ -105,6 +129,21 @@ function props(overrides: Partial<MarginPanelProps> = {}): MarginPanelProps {
 }
 
 const TABS = ["Reviews", "AI", "Discussion", "Versions", "Files", "Proof"];
+
+const here = dirname(fileURLToPath(import.meta.url));
+/** paper-page.css as shipped, comments stripped (the header names tokens). */
+const pageCss = readFileSync(join(here, "paper-page.css"), "utf8").replace(
+  /\/\*[\s\S]*?\*\//g,
+  "",
+);
+
+/** The body of every rule with this exact selector, including in @media blocks. */
+function ruleBodies(selector: string): string[] {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...pageCss.matchAll(new RegExp(`${escaped}\\s*\\{([^{}]*)\\}`, "g"))].map(
+    (match) => match[1],
+  );
+}
 
 const tab = (name: string) => screen.getByRole("tab", { name: new RegExp(`^${name}`) });
 
@@ -189,6 +228,53 @@ describe("the tabs", () => {
 
     expect(tab("Reviews").textContent).toBe("Reviews");
     expect(tab("Discussion").textContent).toBe("Discussion");
+  });
+});
+
+describe("the Discussion count", () => {
+  it("follows a post made in the tab, without waiting for a reload", () => {
+    render(<MarginPanel {...props()} />);
+    expect(tab("Discussion").textContent).toBe("Discussion (8)");
+
+    fireEvent.click(tab("Discussion"));
+    fireEvent.click(screen.getByTestId("discussion-post"));
+
+    expect(tab("Discussion").textContent).toBe("Discussion (9)");
+  });
+
+  it("shows the badge when the first thread is posted to a paper with none", () => {
+    // The reported case: "Discussion" with no posts, a thread posted in the
+    // tab, and it must read "Discussion (1)" before any reload.
+    render(
+      <MarginPanel
+        {...props({
+          discussion: ok({ paper: SHORT_ID, paperCid: VERSION_CID, threads: [] }),
+        })}
+      />,
+    );
+    expect(tab("Discussion").textContent).toBe("Discussion");
+
+    fireEvent.click(tab("Discussion"));
+    fireEvent.click(screen.getByTestId("discussion-post"));
+
+    expect(tab("Discussion").textContent).toBe("Discussion (1)");
+  });
+
+  it("follows posts hidden in the tab: with none left, the count goes away", () => {
+    render(<MarginPanel {...props()} />);
+    fireEvent.click(tab("Discussion"));
+
+    const report = stubs.props.discussion.onCountChange as (count: number) => void;
+    act(() => report(0));
+
+    expect(tab("Discussion").textContent).toBe("Discussion");
+  });
+
+  it("offers the tab a way to report its count", () => {
+    render(<MarginPanel {...props()} />);
+    fireEvent.click(tab("Discussion"));
+
+    expect(stubs.props.discussion.onCountChange).toBeTypeOf("function");
   });
 });
 
@@ -457,6 +543,27 @@ describe("the badge", () => {
     fireEvent.click(screen.getByRole("link", { name: /^Details/ }));
 
     expect(tab("Proof").getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("a tab label stays inside its tab", () => {
+  it("lets the badge move to a second line rather than be cut by the panel", () => {
+    const bodies = ruleBodies(".ppg-tab");
+    expect(bodies.length).toBeGreaterThan(0);
+    const all = bodies.join("\n");
+    // The label itself stays whole ("Discussion" never splits; nowrap holds
+    // from 768 px), but the tab is a wrapping row: when the scrollbar leaves
+    // "Discussion (3)" a few pixels short, the badge moves down inside the tab.
+    expect(all).toMatch(/flex-wrap:\s*wrap/);
+    expect(all).toMatch(/justify-content:\s*center/);
+    expect(pageCss).toMatch(/@media \(min-width: 48rem\)[\s\S]*?\.ppg-tab\s*\{[^}]*white-space:\s*nowrap/);
+    // Cut text is the failure, not the fix: no ellipsis, no clipped overflow.
+    expect(pageCss).not.toMatch(/\.ppg-tab\s*\{[^}]*(?:text-overflow|overflow:\s*hidden)/);
+  });
+
+  it("keeps the count badge inside the tab when it moves to its own line", () => {
+    const badge = ruleBodies(".ppg-tab-count").join("\n");
+    expect(badge).toMatch(/max-inline-size:\s*100%/);
   });
 });
 

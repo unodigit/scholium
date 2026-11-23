@@ -131,6 +131,19 @@ export function MarginPanel({
   // What the finished check verified, for the badge's counted words; the
   // anchor state stays on its own line beneath it.
   const [proofCounts, setProofCounts] = useState<VerifyCounts | null>(null);
+  // The Discussion tab owns the threads once it is open, and reports how many
+  // posts it shows after a post, a reply or a hidden post. Until it has (it
+  // mounts when first opened), the server's read is the count.
+  const [countSource, setCountSource] = useState(discussion);
+  const [discussionCount, setDiscussionCount] = useState<number | null>(() =>
+    discussion.ok ? countPosts(discussion.data.threads) : null,
+  );
+  if (countSource !== discussion) {
+    // A host swapped the paper without remounting the panel: the old count is
+    // not this paper's.
+    setCountSource(discussion);
+    setDiscussionCount(discussion.ok ? countPosts(discussion.data.threads) : null);
+  }
 
   const open = useCallback((tab: MarginTabId) => {
     setActive(tab);
@@ -205,8 +218,8 @@ export function MarginPanel({
   if (reviews.ok) {
     counts.reviews = reviews.data.count;
   }
-  if (discussion.ok) {
-    counts.discussion = countPosts(discussion.data.threads);
+  if (discussionCount !== null) {
+    counts.discussion = discussionCount;
   }
 
   const anchor = versions.ok
@@ -261,6 +274,9 @@ export function MarginPanel({
             >
               {TAB_LABELS[tab]}
               {count !== undefined && count > 0 ? (
+                // One item: the tab is a wrapping row (paper-page.css), so the
+                // badge moves to a second line inside its tab rather than being
+                // cut when a scrollbar narrows the column.
                 <span className="ppg-tab-count"> ({count})</span>
               ) : null}
             </button>
@@ -287,6 +303,7 @@ export function MarginPanel({
                 <DiscussionTab
                   paperId={shortId}
                   versionCid={versionCid}
+                  onCountChange={setDiscussionCount}
                   {...seed(discussion)}
                 />
               ) : null}

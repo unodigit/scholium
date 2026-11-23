@@ -926,21 +926,34 @@
 /* ---- Tabs ------------------------------------------------------------------ */
 
 /* Three to a row: six tabs do not fit one row of 360 px, and two even rows read
-   better than a scrolling strip (§5.2 draws two rows too). */
+   better than a scrolling strip (§5.2 draws two rows too). The strip's own
+   inline padding and gap are kept small so "Discussion (3)", the widest label,
+   fits even when the panel's scrollbar takes part of the row. */
 .ppg-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: calc(var(--space-unit) * 1);
-  padding: calc(var(--space-unit) * 2);
+  gap: calc(var(--space-unit) * 0.5);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 1);
   border-block-end: 1px solid var(--rule);
 }
 
+/* The label and its badge are two items of a wrapping row. The label itself
+   never breaks (nowrap from 768 px), but if the pair is wider than the column
+   — four pixels too wide is what a scrollbar costs "Discussion (3)" — the
+   badge moves to a second line inside the tab. It must never poke out of the
+   tab, where the panel's overflow-x would cut it. */
 .ppg-tab {
   box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  align-content: center;
+  column-gap: calc(var(--space-unit) * 1);
   min-block-size: calc(var(--space-unit) * 9);
-  /* One unit inline: a 360 px panel gives each of the three columns ~104 px
-     of text, which is what keeps "Discussion" and its badge on one line. */
-  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 1);
+  /* Half a unit inline: the three columns must still hold "Discussion" and its
+     badge when the panel's scrollbar narrows the row. */
+  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 0.5);
   border: 1px solid transparent;
   border-radius: var(--corner-control);
   background-color: transparent;
@@ -972,16 +985,16 @@
   font-weight: 600;
 }
 
-/* The count is a badge of its own: a pill after the label, never a word that
-   can break away from it. */
+/* The count is a badge of its own: a pill after the label, whole on whatever
+   line the tab's wrapping puts it on, and never wider than its tab. */
 .ppg-tab-count {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+  max-inline-size: 100%;
   min-inline-size: calc(var(--space-unit) * 5);
   block-size: calc(var(--space-unit) * 5);
-  margin-inline-start: calc(var(--space-unit) * 1);
   border-radius: var(--corner-pill);
   background-color: color-mix(in srgb, var(--ink) 8%, transparent);
   color: var(--ink);
@@ -991,9 +1004,10 @@
   vertical-align: middle;
 }
 
-/* From 768 px the strip is the full-width bottom sheet or the 360 px panel;
-   either way the label and its badge share one line. On a phone the two may
-   still wrap rather than overflow a narrow column. */
+/* From 768 px the strip is the full-width bottom sheet or the 360 px panel, and
+   the label itself never breaks. Its badge may still move to a second line
+   inside the tab when the column cannot hold the pair: the scrollbar costs
+   "Discussion (3)" a few pixels. */
 @media (min-width: 48rem) {
   .ppg-tab {
     white-space: nowrap;

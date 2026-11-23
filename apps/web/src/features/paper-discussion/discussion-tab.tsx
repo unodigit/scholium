@@ -117,6 +117,13 @@ export interface DiscussionTabProps {
   viewerDid?: string | null;
   /** Where "Sign in" goes; defaults to sign-in, then back to the paper page. */
   signInHref?: string;
+  /**
+   * Report how many posts the tab shows — hidden placeholders are not posts,
+   * replies are — whenever that changes, so a host can keep a badge in step
+   * without re-reading. The paper page's margin panel counts its Discussion
+   * tab this way: a post, a reply or a hidden post shows there at once.
+   */
+  onCountChange?: (count: number) => void;
 }
 
 type View =
@@ -142,6 +149,7 @@ export function DiscussionTab({
   signedIn: signedInOverride,
   viewerDid: viewerDidOverride,
   signInHref: signInHrefOverride,
+  onCountChange,
 }: DiscussionTabProps) {
   // The live session: the token lives in memory, so the DID and the signed-in
   // state are only known after mount. A pinned viewer wins, for hosts/tests.
@@ -211,6 +219,13 @@ export function DiscussionTab({
     loadRef.current = load ?? loadThreads;
   }, [load]);
 
+  // The host's count listener, for the same reason: an inline callback must
+  // not be the thing that re-reports the count.
+  const onCountChangeRef = useRef(onCountChange);
+  useEffect(() => {
+    onCountChangeRef.current = onCountChange;
+  }, [onCountChange]);
+
   // Refs that track the viewer and view without re-triggering effects.
   const loadedViewerKeyRef = useRef<string | null>(null);
   const lastViewerKeyRef = useRef<string | null>(viewerKey);
@@ -276,6 +291,13 @@ export function DiscussionTab({
   const total = data === null ? 0 : countPosts(data.threads);
   // A hidden placeholder is listed but is not a post; the summary says both.
   const hiddenTotal = data === null ? 0 : countHiddenPosts(data.threads);
+
+  // Tell the host how many posts are on screen: a posted thread or reply, or a
+  // post hidden by moderation, moves the count at once, without a reload. The
+  // loading and error states say nothing, so the last known count stands.
+  useEffect(() => {
+    if (view.kind === "ready") onCountChangeRef.current?.(total);
+  }, [view.kind, total]);
 
   /* ---- What a card may do --------------------------------------------- */
 
