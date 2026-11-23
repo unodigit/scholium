@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  User request (2026-11-23): the screenshots in the docs should open in a modal or pop-up overlay, not navigate to
+  another URL. main @ 51addbe.
+  Decision (recorded here):
+  D1  A native <dialog> opened with showModal() is the overlay (focus trap, Escape and the top layer come from the
+      browser). The figure keeps its <a href="{src}"> so the full-size image still opens without JavaScript; with
+      JavaScript the click is intercepted and the overlay opens instead. No new dependency.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/web/src/features/docs/markdown.tsx,apps/web/src/features/docs/markdown.test.tsx,apps/web/src/features/docs/docs.css"
+       creates="apps/web/src/features/docs/screenshot-lightbox.tsx,apps/web/src/features/docs/screenshot-lightbox.test.tsx">
+    <title>Clicking a docs screenshot navigates away to the bare image URL instead of opening it in an overlay on the page</title>
+    <symptoms>
+      ScreenshotFigure in apps/web/src/features/docs/markdown.tsx (~L189-215) wraps each chapter screenshot in &lt;a href={screenshot.src}&gt; ("Open full-size image: …"), so a click leaves /docs/{slug} for /docs/screenshots/{file}.webp: the reader loses their place, the caption and the site navigation, and has to press Back. markdown.tsx is rendered on the server (it is not a client module)
+    </symptoms>
+    <reproduction_steps>
+      Open http://localhost:3200/docs/your-account at 1440x900, scroll to "Sign in with a passkey" and click the screenshot: the browser navigates to /docs/screenshots/ch02-passkey-sign-in.webp
+    </reproduction_steps>
+    <expected>Per D1: a new client component screenshot-lightbox.tsx ("use client") renders the figure's link and image exactly as now (same href, alt, width, height, loading lazy, decoding async, classes, aria-label "Open full-size image: {alt}") and markdown.tsx's ScreenshotFigure uses it, so the server-rendered HTML and the no-JavaScript behaviour are unchanged. With JavaScript, a plain left click (no Ctrl, Meta, Shift or Alt, button 0) calls preventDefault and opens a &lt;dialog&gt; with showModal(): the dialog is labelled by the screenshot's caption (aria-labelledby), shows the image at full resolution scaled to fit the viewport (max 95vw by 90vh, object-fit contain, never wider than the page), the caption below it, and a Close button (aria-label "Close image", visible focus ring, at least 44px) that receives focus on open. Escape, the Close button and a click on the backdrop outside the image close it; focus then returns to the screenshot link; the URL does not change; the page behind does not scroll while it is open (overflow hidden on the root, restored on close). A modified click (Ctrl/Meta/Shift/middle) still opens the image the normal browser way. The backdrop is a dimmed token colour (::backdrop in docs.css, using tokens only; works in light and dark mode), the dialog has no horizontal scroll at 375px, and opening respects prefers-reduced-motion (no animation when reduced). Tests: screenshot-lightbox.test.tsx (jsdom: stub HTMLDialogElement.prototype.showModal and close if missing) asserts a click opens the dialog with the image, alt and caption and does not navigate (defaultPrevented), the Close button has focus, Escape/close returns focus to the link, a Ctrl-click is not intercepted, and the root overflow is restored on close; markdown.test.tsx keeps asserting the figure's link href and alt in the server markup (update the existing "links to the full-size image" test only as far as needed)</expected>
+    <actual>The screenshot opens as a separate page (the bare image URL)</actual>
+  </bug>
+
+</bug_spec>
