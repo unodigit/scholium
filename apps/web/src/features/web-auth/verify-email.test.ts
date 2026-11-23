@@ -9,6 +9,8 @@ import {
   parseVerifyEmailLink,
   resendVerificationEmail,
   verifyEmailAddress,
+  verifyEmailContinueHref,
+  verifyEmailContinueLabel,
   type VerifyEmailClient,
 } from "./verify-email";
 
@@ -147,5 +149,19 @@ describe("describeVerifyEmailFailure", () => {
 
     expect(failure.expired).toBe(false);
     expect(failure.message).toContain("Can't reach Scholium");
+  });
+});
+
+describe("verified page call to action", () => {
+  it("sends a member who finished onboarding to their dashboard", () => {
+    // Regression: the "Go to your dashboard" button used to land on the paper
+    // list (/papers) instead of the dashboard (/me).
+    expect(verifyEmailContinueHref(true)).toBe("/me");
+    expect(verifyEmailContinueLabel(true)).toBe("Go to your dashboard");
+  });
+
+  it("sends a member with setup left to onboarding", () => {
+    expect(verifyEmailContinueHref(false)).toBe("/onboarding");
+    expect(verifyEmailContinueLabel(false)).toBe("Continue setting up");
   });
 });

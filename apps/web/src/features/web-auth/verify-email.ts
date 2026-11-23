@@ -235,7 +235,7 @@ export function isOnboarded(
 export const VERIFY_EMAIL_CONTINUE_SETUP_HREF = "/onboarding";
 
 /** Where the verified page sends a member who finished onboarding. */
-export const VERIFY_EMAIL_DASHBOARD_HREF = "/papers";
+export const VERIFY_EMAIL_DASHBOARD_HREF = "/me";
 
 /** Label for the setup CTA. */
 export const VERIFY_EMAIL_CONTINUE_SETUP_LABEL = "Continue setting up";
