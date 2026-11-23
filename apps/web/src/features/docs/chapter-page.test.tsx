@@ -2,7 +2,14 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -67,6 +74,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 /** The chapter with this slug; the tests name chapters they know exist. */
@@ -194,6 +202,138 @@ describe("chapter page", () => {
 
     // The body arrives as children; nothing about it is client-side here.
     expect(screen.getByText("Chapter body")).toBeTruthy();
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   "On this page" when the chapter is scrolled to its very bottom
+   ------------------------------------------------------------------------- */
+
+describe("On this page at the bottom of the chapter", () => {
+  /** Redefine a scroll metric jsdom has no layout to compute, restorably. */
+  function setMetric(object: object, name: string, value: number) {
+    Object.defineProperty(object, name, {
+      configurable: true,
+      writable: true,
+      value,
+    });
+  }
+
+  it("marks the last heading on screen once the page runs out of scroll", () => {
+    const chapter = chapterAt("your-account");
+    const headingByText = new Map(
+      chapter.headings.map((heading) => [heading.text, heading]),
+    );
+    const last = headingByText.get("Your dashboard");
+    const beforeLast = headingByText.get("Erase your profile");
+    const earlier = headingByText.get("Security settings");
+    if (!last || !beforeLast || !earlier) {
+      throw new Error("the chapter's last headings moved");
+    }
+
+    // The observer is a stub: it never delivers on its own, so the band's
+    // entries are handed to it, entry by entry, below.
+    let notify: IntersectionObserverCallback | undefined;
+    class FakeObserver {
+      constructor(callback: IntersectionObserverCallback) {
+        notify = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+
+    // A 2000px chapter in an 800px viewport: 1200px of scroll, currently
+    // 1000px down, with the last section still below the reading band.
+    setMetric(window, "innerHeight", 800);
+    setMetric(window, "scrollY", 1000);
+    setMetric(document.documentElement, "scrollHeight", 2000);
+
+    render(
+      <ChapterPage
+        number={chapter.number}
+        title={chapter.title}
+        summary={chapter.summary}
+        headings={chapter.headings}
+        video={chapter.video}
+        transcript={[]}
+        previous={null}
+        next={null}
+      >
+        {chapter.headings.map((heading) => (
+          <h2 key={heading.id} id={heading.id}>
+            {heading.text}
+          </h2>
+        ))}
+      </ChapterPage>,
+    );
+
+    // At the bottom of the chapter every heading has scrolled out above the
+    // viewport except the last one, "Your dashboard".
+    for (const heading of chapter.headings) {
+      const element = document.getElementById(heading.id);
+      if (element === null) throw new Error(`no #${heading.id} in the body`);
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+        top: heading.id === last.id ? 250 : -400,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+    }
+
+    const contents = screen.getByRole("navigation", { name: "On this page" });
+    const current = () =>
+      within(contents)
+        .getAllByRole("link")
+        .filter((link) => link.getAttribute("aria-current") === "location")
+        .map((link) => link.textContent);
+    const bandEntry = (
+      heading: (typeof chapter.headings)[number],
+      isIntersecting: boolean,
+    ) =>
+      ({
+        isIntersecting,
+        target: document.getElementById(heading.id),
+      }) as unknown as IntersectionObserverEntry;
+
+    // Mid-chapter the reading band alone decides, as before.
+    act(() => {
+      notify?.([bandEntry(beforeLast, true)], {} as IntersectionObserver);
+    });
+    expect(current()).toEqual(["Erase your profile"]);
+
+    // Scrolled to the very bottom: the last section never climbs into the
+    // band, but it is the one on screen, so it is the one marked.
+    setMetric(window, "scrollY", 1200);
+    fireEvent.scroll(window);
+    expect(current()).toEqual(["Your dashboard"]);
+
+    // Back off the bottom, the band decides again.
+    setMetric(window, "scrollY", 1000);
+    act(() => {
+      notify?.(
+        [bandEntry(beforeLast, false), bandEntry(earlier, true)],
+        {} as IntersectionObserver,
+      );
+    });
+    expect(current()).toEqual(["Security settings"]);
+
+    // And following a contents link still marks that entry.
+    fireEvent.click(
+      within(contents).getByRole("link", { name: "Erase your profile" }),
+    );
+    expect(current()).toEqual(["Erase your profile"]);
+
+    // jsdom's own metrics back for the rest of the file.
+    setMetric(window, "scrollY", 0);
+    setMetric(window, "innerHeight", 768);
+    delete (document.documentElement as { scrollHeight?: number }).scrollHeight;
   });
 });
 

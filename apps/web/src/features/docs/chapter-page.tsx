@@ -24,8 +24,11 @@
  * The list marks the section in view with `aria-current="location"`, driven by
  * an `IntersectionObserver` (the fallback the modern-web scrollspy guidance
  * prescribes where `scroll-target-group` / `:target-current` is unavailable).
- * The active link is styled with accent colour *and* semibold weight and an
- * indicator bar, never colour alone.
+ * At the very bottom of the chapter, where the page runs out of scroll and
+ * the last sections can never cross the observer's reading band, the last
+ * heading still inside the viewport is the one marked. The active link is
+ * styled with accent colour *and* semibold weight and an indicator bar,
+ * never colour alone.
  *
  * This is a client module because the scrollspy and the disclosure's
  * breakpoint behaviour need the DOM. The article's Markdown arrives as
@@ -73,6 +76,12 @@ const SIDEBAR_QUERY = "(min-width: 1100px)";
 
 /** The band of the viewport in which a heading counts as the section in view. */
 const SPY_ROOT_MARGIN = "-20% 0px -60% 0px";
+
+/**
+ * How close to the end of the document, in pixels, counts as "the bottom":
+ * scrolling reports fractional metrics, so the last stretch is not exact.
+ */
+const SPY_BOTTOM_SLACK = 2;
 
 /** A chevron for the "On this page" disclosure; it turns when opened. */
 function Chevron() {
@@ -127,12 +136,48 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
   // Highlight the section crossing the reading band. The observer is the
   // documented fallback for browsers without `scroll-target-group`; the last
   // heading in document order that is in the band wins, so two headings close
-  // together resolve the way the page reads.
+  // together resolve the way the page reads. The band assumes the page can
+  // still scroll: at the very bottom it cannot, and the chapter's last,
+  // shorter sections never climb that high, so there the section being read
+  // is the last heading still inside the viewport.
   useEffect(() => {
     if (headings.length === 0) return;
     if (typeof IntersectionObserver === "undefined") return;
 
     const inBand = new Set<string>();
+
+    const elements = headings
+      .map((heading) => document.getElementById(heading.id))
+      .filter((element): element is HTMLElement => element !== null);
+
+    // "Scrolled as far as the document goes" — only meaningful when there
+    // was scroll room to begin with.
+    const scrolledToBottom = () => {
+      const maxScroll =
+        document.documentElement.scrollHeight - window.innerHeight;
+      return (
+        maxScroll > SPY_BOTTOM_SLACK &&
+        window.scrollY >= maxScroll - SPY_BOTTOM_SLACK
+      );
+    };
+
+    const mark = () => {
+      if (scrolledToBottom()) {
+        let last: string | null = null;
+        for (const element of elements) {
+          const top = element.getBoundingClientRect().top;
+          if (top >= 0 && top <= window.innerHeight) last = element.id;
+        }
+        if (last !== null) setActiveId(last);
+        return;
+      }
+      let current: string | null = null;
+      for (const heading of headings) {
+        if (inBand.has(heading.id)) current = heading.id;
+      }
+      if (current !== null) setActiveId(current);
+    };
+
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -140,18 +185,10 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
           if (entry.isIntersecting) inBand.add(id);
           else inBand.delete(id);
         }
-        let current: string | null = null;
-        for (const heading of headings) {
-          if (inBand.has(heading.id)) current = heading.id;
-        }
-        if (current !== null) setActiveId(current);
+        mark();
       },
       { rootMargin: SPY_ROOT_MARGIN, threshold: 0 },
     );
-
-    const elements = headings
-      .map((heading) => document.getElementById(heading.id))
-      .filter((element): element is HTMLElement => element !== null);
     for (const element of elements) observer.observe(element);
 
     // A link to /docs/slug#heading starts with that section active, before
@@ -165,9 +202,20 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
     fromHash();
     window.addEventListener("hashchange", fromHash);
 
+    // The observer cannot see past the point where the page runs out of
+    // scroll, so there the scroll position decides. Anywhere else the
+    // observer alone decides: recomputing here would race its pending
+    // entries with a band that has not caught up, and undo a contents link
+    // the reader just followed.
+    const fromScroll = () => {
+      if (scrolledToBottom()) mark();
+    };
+    window.addEventListener("scroll", fromScroll, { passive: true });
+
     return () => {
       observer.disconnect();
       window.removeEventListener("hashchange", fromHash);
+      window.removeEventListener("scroll", fromScroll);
     };
   }, [headings]);
 
