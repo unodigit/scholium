@@ -32,7 +32,7 @@ An annotation is a comment attached to one paragraph of one version of a paper.
 2. Press **A**.
 3. Write your note and choose **Save annotation**. Escape closes the box without saving.
 
-Annotations appear as markers beside the paragraph, and in the Discussion tab. If a paper has none yet, you will see "No annotations yet — select a paragraph and press A to add the first."
+Annotations appear as markers beside the paragraph, and in the Discussion tab. Select a marker to open that paragraph's annotations under it; select it again to close them. If a paper has none yet, you will see "No annotations yet — select a paragraph and press A to add the first."
 
 **Things to know:**
 

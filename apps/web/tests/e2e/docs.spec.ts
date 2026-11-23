@@ -103,7 +103,7 @@ test.describe("docs", () => {
 
     // A curated screenshot, found by the alt text written for it.
     const screenshot = page.getByAltText(
-      "The sign-in page, with the Sign in with passkey button and the Recover your account link",
+      "The sign-in page, with the Sign in with passkey button, a note that a first sign-in creates your account, and the Recover your account link",
     );
     await screenshot.scrollIntoViewIfNeeded();
     await expect(screenshot).toBeVisible();
