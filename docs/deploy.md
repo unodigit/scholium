@@ -229,7 +229,7 @@ The model id is left out on purpose: model ids change, so copy the one you want 
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Public URL of the API. The web image **bakes it in at build time** (and into its Content-Security-Policy); change it and the web image must be rebuilt. Production: not a loopback address. |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Public origin of the web app, used in share and OG-image URLs. Also a build-time value. Production: not a loopback address. |
 | `RATE_LIMIT_ENABLED` | `1` | Per-tier write throttling. Production requires `1`. |
-| `HOST` | `127.0.0.1` (image: `0.0.0.0`) | Address `python -m app` listens on. |
+| `HOST` | `0.0.0.0` | Address `python -m app` listens on (every interface; set `127.0.0.1` to keep it to this machine). |
 | `PORT` | `8000` | Port `python -m app` listens on. |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Peers whose `X-Forwarded-*` headers `python -m app` honours. Set it to the proxy's or tunnel connector's address when TLS ends in front of the api. |
 
@@ -298,7 +298,7 @@ No containers, no account, no configuration: SQLite, files under `./data/content
 ```sh
 npm install                                   # once, at the repository root
 cd apps/api
-uv run --all-packages python -m app           # API on http://127.0.0.1:8000
+uv run --all-packages python -m app           # API on port 8000, every interface (http://127.0.0.1:8000 here)
 npm run dev --workspace apps/web              # web app on http://localhost:3000 (second terminal, repository root)
 ```
 
@@ -344,7 +344,7 @@ export S3_ACCESS_KEY_ID=scholium-minio              # the MinIO user, MINIO_ROOT
 export S3_SECRET_ACCESS_KEY=scholium-minio-secret   # its password, MINIO_ROOT_PASSWORD
 export SMTP_URL=smtp://127.0.0.1:1025
 cd apps/api
-uv run --all-packages python -m app                 # API on http://127.0.0.1:8000
+uv run --all-packages python -m app                 # API on port 8000, every interface (http://127.0.0.1:8000 here)
 ```
 
 | Value | Where it comes from |

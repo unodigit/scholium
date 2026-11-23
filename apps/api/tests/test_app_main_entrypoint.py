@@ -23,3 +23,19 @@ def test_main_invokes_uvicorn_with_env(monkeypatch):
     assert captured["port"] == 9000
     assert captured["proxy_headers"] is True
     assert captured["forwarded_allow_ips"] == "10.0.0.1"
+
+
+def test_main_listens_on_every_interface_by_default(monkeypatch):
+    captured = {}
+
+    def fake_run(app, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+
+    entrypoint.main()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8000

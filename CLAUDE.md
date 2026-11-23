@@ -25,7 +25,7 @@
   if you need a full suite, call Bash with `timeout: 600000` (a shell `timeout 590` prefix does not
   extend the tool's limit). Three tool-killed commands in a row end the attempt (`agent_command_stuck`).
   The acceptance gate runs the full `npm test` anyway.
-- Run API: `cd apps/api && uv run python -m app` (serves `create_app` on HOST/PORT, default 127.0.0.1:8000; set FORWARDED_ALLOW_IPS to honour proxy headers)
+- Run API: `cd apps/api && uv run python -m app` (serves `create_app` on HOST/PORT, default 0.0.0.0:8000; set FORWARDED_ALLOW_IPS to honour proxy headers)
 - Web only: `npm test --workspace apps/web`
 - Browser journeys: `npm run test:e2e` (Playwright, not part of `npm test`)
 - System tests: `npm run test:system` (`tests/e2e/`, not part of `npm test`): starts the shipped
