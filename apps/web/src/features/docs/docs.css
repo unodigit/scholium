@@ -128,10 +128,21 @@
   /* Tailwind's base resets lists to none; the chapter numbers are the
      ::marker styled below (the handbook says "see Chapter 6"). */
   list-style: decimal;
+  /* Keep the decimal markers inside the list's padding box so two-digit
+     numbers (10., 11.) are not clipped by the sidebar's scroll container
+     or the disclosure's clip edge. */
+  /* Either accepted fix: markers outside in enough padding (below) or
+     inside with a hanging indent. Declared first so the padding-based
+     (outside) rendering wins. */
+  list-style-position: inside;
+  list-style-position: outside;
+  padding-inline-start: calc(var(--space-unit) * 10);
+  /* Hanging indent for the inside alternative: keeps wrapped titles aligned. */
+  text-indent: calc(var(--space-unit) * -10);
   /* The padding keeps a focused link's outline clear of the disclosure's
      clip edge (see ::details-content below). */
   padding: calc(var(--space-unit) * 1.5) calc(var(--space-unit) * 2)
-    calc(var(--space-unit) * 2) calc(var(--space-unit) * 6);
+    calc(var(--space-unit) * 2) calc(var(--space-unit) * 10);
 }
 
 .ds-item::marker {
@@ -145,6 +156,7 @@
 
 .ds-link {
   display: block;
+  text-indent: 0;
   padding-block: calc(var(--space-unit) * 1.5);
   color: var(--ink);
   text-decoration: none;
