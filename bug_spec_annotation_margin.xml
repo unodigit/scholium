@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Found while re-shooting the docs screenshots (2026-11-23, main @ 843aa01).
+  Decision (recorded here):
+  D1  docs/design.md §component table: a margin marker is "a small dot in the gutter; count when stacked; opens
+      annotation thread". The marker stays in the narrow gutter column; the thread it opens is shown under the
+      paragraph at the full width of the row, not inside the gutter. A paragraph's thread starts closed and the
+      marker opens and closes it (a disclosure button).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-discussion/annotations.tsx,apps/web/src/features/paper-discussion/paper-discussion.css,apps/web/src/features/paper-discussion/paper-discussion.css.test.ts,apps/web/src/features/paper-page/reading-text.test.tsx">
+    <title>On the paper page, a paragraph's annotations are drawn inside the 48px margin-marker column, so each quote and note wraps about one word per line</title>
+    <symptoms>
+      MarginMarkers (apps/web/src/features/paper-discussion/annotations.tsx ~L729-790, rendered by paper-page/reading-text.tsx) puts the &lt;ul class="pd-annotation-list"&gt; inside &lt;div class="pd-margin"&gt;, the second column of .pd-paragraph-row, whose width is calc(var(--space-unit) * 12) = 48px (paper-discussion.css ~L533-565, .pd-margin also centres its children). At 1440px on /papers/{id} the annotation's quote and text wrap roughly one word per line beside the paragraph, and the list is always rendered, so the marker button only selects the paragraph and opens nothing. There are no component tests for MarginMarkers
+    </symptoms>
+    <reproduction_steps>
+      Sign in, open a listed paper at /papers/{id} at 1440x900, select a paragraph, press A, write an annotation of two sentences and post it. The annotation appears in the 48px column to the right of the paragraph, one or two words per line
+    </reproduction_steps>
+    <expected>Per D1: .pd-margin holds only the marker. The paragraph's annotation list is a sibling of the paragraph and the margin inside .pd-paragraph-row, placed on its own grid row spanning both columns (grid-column: 1 / -1), so it is as wide as the reading column. It starts closed. The marker is a disclosure button: aria-expanded false/true, aria-controls the list's id, and pressing it (click, Enter or Space) opens and closes the list; opening also selects the paragraph, as now. The marker shows whenever the paragraph has annotations: its label and count still count only visible annotations ("2 annotations on this paragraph"); a paragraph whose only annotations are hidden by moderation shows the marker labelled "Annotations hidden by moderation on this paragraph", and opening it shows the "Hidden by moderation" placeholders as now. Composing (select a paragraph, press A, the popover) is unchanged, and a newly posted annotation opens its paragraph's list so the author sees it. No horizontal scroll at 375px. Tests (paper-page/reading-text.test.tsx, which renders MarginMarkers through ReadingText; pass annotations through its loader): the list is not a descendant of .pd-margin; it is closed at first and the marker has aria-expanded="false"; clicking the marker shows the quote and text and sets aria-expanded="true", clicking again closes it; a hidden-only paragraph gets the marker with the moderation label and shows the placeholder when opened; posting a new annotation leaves its list open. paper-discussion.css.test.ts: .pd-annotation-list (or its row wrapper) spans grid-column 1 / -1</expected>
+    <actual>Annotations are unreadable on the paper page: about one word per line in a 48px gutter</actual>
+  </bug>
+
+</bug_spec>
