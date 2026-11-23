@@ -28,7 +28,7 @@ from scholium_record_core import did_key_from_signing_key, encode_signature
 from sqlalchemy import create_engine, inspect, text
 
 from app import db
-from app.modules.notifications import list_notifications, mark_read
+from app.modules.notifications import Notification, list_notifications, mark_read, notify
 from app.modules.orcid import Credential, ensure_credential_tables, issue_orcid_credential
 from app.modules.orcid import models as orcid_models
 from app.modules.recovery import RecoveryRequest, apply_rotation, set_guardians
@@ -498,6 +498,102 @@ def test_cancelling_twice_still_leaves_one_unread_item_per_guardian(recovery):
     for guardian in recovery.guardians:
         assert len(unread_notices(recovery, did_key_from_signing_key(guardian))) == 1
     assert unread_notices(recovery, recovery.did) == []
+
+
+#: The payload members the web inbox dates a notice from, most specific first
+#: (``notificationTime`` in ``features/dashboard/dashboard.ts``).
+INBOX_TIME_KEYS = ("created_at", "createdAt", "requested_at", "requestedAt", "decided_at", "decidedAt")
+
+
+def inbox_time(notice) -> str | None:
+    """The time the inbox dates ``notice`` at: the first of those members it finds."""
+    for key in INBOX_TIME_KEYS:
+        value = notice.payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def backdate_requests(recovery, hours: int) -> str:
+    """Make every guardian's notice of the request say it was asked ``hours`` ago."""
+    asked = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with db.SessionLocal() as session:
+        for guardian in recovery.guardians:
+            rows = (
+                session.query(Notification)
+                .filter(Notification.did == did_key_from_signing_key(guardian), Notification.kind == "recovery.request")
+                .all()
+            )
+            for row in rows:
+                if row.payload.get("request_id") == recovery.request_id:
+                    row.payload = {**row.payload, "requested_at": asked}
+        session.commit()
+    return asked
+
+
+@pytest.mark.parametrize("opened_first", [False, True], ids=["unopened", "already-opened"])
+def test_a_reopened_cancel_notice_is_dated_at_the_cancel(recovery, opened_first):
+    approvers, silent = recovery.guardians[:2], recovery.guardians[2:]
+    for guardian in approvers:
+        approve(recovery, guardian)
+    asked = backdate_requests(recovery, hours=3)
+    if opened_first:
+        for guardian in silent:
+            open_notice(recovery, did_key_from_signing_key(guardian))
+
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    closed_at = detail(recovery)["closed_at"]
+    assert closed_at != asked
+    for guardian in approvers + silent:
+        [alert] = unread_notices(recovery, did_key_from_signing_key(guardian))
+        # Dated at the cancel wherever the inbox reads a time, not at the request.
+        assert alert.payload["closed_at"] == closed_at
+        assert inbox_time(alert) == closed_at
+        # The request's own time stays, for the guardian page that says when it was asked.
+        assert alert.payload["requested_at"] == asked
+
+
+def test_a_signed_cancel_dates_the_reopened_notice_at_the_cancel_too(recovery):
+    asked = backdate_requests(recovery, hours=3)
+
+    assert signed_cancel(recovery, recovery.account_seed).status_code == 200
+
+    closed_at = detail(recovery)["closed_at"]
+    assert closed_at != asked
+    for guardian in recovery.guardians:
+        [alert] = unread_notices(recovery, did_key_from_signing_key(guardian))
+        assert inbox_time(alert) == closed_at
+
+
+def test_a_repeat_cancel_keeps_the_reopened_notice_dated_at_the_first_cancel(recovery):
+    backdate_requests(recovery, hours=5)
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+    first = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0) - timedelta(hours=3)
+    set_stored_closed_at(recovery, first)
+
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    for guardian in recovery.guardians:
+        [alert] = unread_notices(recovery, did_key_from_signing_key(guardian))
+        assert inbox_time(alert) == first.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_reopened_cancel_notice_sorts_as_new(recovery):
+    guardian = did_key_from_signing_key(recovery.guardians[0])
+    approve(recovery, recovery.guardians[0])
+    # Something else reaches the guardian after the request and before the cancel.
+    notify(guardian, "consent.request", {"version_cid": "bafy-arrived-after-the-request"})
+
+    assert recovery.client.post(cancel_url(recovery), headers=auth(recovery.did)).status_code == 200
+
+    # The inbox is ordered by id: the cancel is the newest item, as it is the newest news.
+    newest = list_notifications(guardian)[-1]
+    assert newest.kind == "recovery.request"
+    assert newest.payload["request_id"] == recovery.request_id
+    assert newest.payload["closed"] == "cancelled"
+    assert newest.read is False
+    assert len(notices_of(recovery, guardian)) == 1
 
 
 def test_a_refused_cancel_alerts_nobody(recovery):

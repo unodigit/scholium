@@ -19,7 +19,9 @@ A guardian's own answer is never replaced by a closure.  A cancel is the one
 closure recorded beside it: every guardian of the account is told, whether or
 not they had approved.  A cancel is also news, not history: each guardian's
 notice is made unread again, so the bell counts it and the inbox labels it
-(exactly one unread item per guardian, however often they had read it).
+(exactly one unread item per guardian, however often they had read it).  It is
+dated at the cancel (``created_at`` is the cancel's ``closed_at``) and sorts as
+the newest item, not at the request that opened it.
 
 The account's own notice (sent to the account holder when the request is
 opened) is resolved when the request closes, by cancel or completion: it gets
@@ -118,13 +120,19 @@ def recorded_closing_time(request_id: str, account_did: str) -> Optional[str]:
     return None
 
 
-def _make_unread(did: str, request_id: str) -> None:
-    """Make ``did``'s notice of ``request_id`` unread again.
+def _make_unread(did: str, request_id: str, closed_at: str) -> None:
+    """Reopen ``did``'s notice of ``request_id`` as news, dated at ``closed_at``.
 
     ``resolve_for_subject`` reads everything it resolves, which suits a notice
     that only records history.  A cancel is news: the guardian has to be alerted
-    to it.  Only the latest notice of the request is reopened, so the guardian
-    has exactly one unread item for it.
+    to it, and the inbox has to date it at the cancel, not at the request.  The
+    row has no time of its own: the inbox dates a notice from its payload
+    (``created_at`` before ``requested_at``) and orders it by ``id``.  So the
+    latest notice of the request is replaced by an unread copy that carries
+    ``created_at`` (``requested_at`` stays, for the page that says when the
+    request was made) and a new ``id``, which sorts it as the newest item.
+    Only the latest notice of the request is reopened, so the guardian has
+    exactly one unread item for it.
     """
     with db.SessionLocal() as session:
         rows = (
@@ -138,9 +146,20 @@ def _make_unread(did: str, request_id: str) -> None:
             for row in rows
             if isinstance(row.payload, dict) and row.payload.get("request_id") == request_id
         ]
-        if about and about[-1].read:
-            about[-1].read = False
-            session.commit()
+        if not about:
+            return
+        latest = about[-1]
+        # The copy is added (and so numbered) before the old row goes.
+        session.add(
+            Notification(
+                did=latest.did,
+                kind=latest.kind,
+                payload={**dict(latest.payload), "created_at": closed_at},
+                read=False,
+            )
+        )
+        session.delete(latest)
+        session.commit()
 
 
 def record_answer(
@@ -197,7 +216,7 @@ def record_closure(
         try:
             resolve_for_subject(guardian, NOTIFICATION_KIND, request_id, facts)
             if closed == "cancelled":
-                _make_unread(guardian, request_id)
+                _make_unread(guardian, request_id, facts["closed_at"])
         except Exception:
             logger.exception("could not resolve %s's notice of recovery request %s", guardian, request_id)
     if closed is not None:
