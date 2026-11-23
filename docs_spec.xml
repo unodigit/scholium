@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification mode="brownfield">
+  <project_name>Scholium — in-app documentation at /docs built from the handbook, screenshots and chapter videos</project_name>
+  <addition_summary>
+    Give members and visitors a documentation section inside the app. /docs is a docs home with search, a
+    "start here" card per role and a card per chapter; /docs/{chapter} renders one of the 11 handbook chapters with
+    a chapter list, an "On this page" contents list, the chapter's explainer video and curated screenshots of the
+    real app placed under the sections they illustrate. The handbook Markdown in docs/handbook/ stays the single
+    source of the text: pages are generated from it at build time, so editing a chapter updates the docs. The
+    material already exists and is committed: docs/handbook/NN-slug.md (11 chapters plus README.md),
+    docs/handbook/screenshots.json (curated screenshots per chapter, files in apps/web/public/docs/screenshots/),
+    docs/handbook/videos.json (per chapter: a YouTube URL, empty until the owner uploads the videos, the duration,
+    a poster in apps/web/public/docs/posters/ and a WebVTT transcript in docs/handbook/transcripts/). Videos play
+    from youtube-nocookie.com behind a click-to-load poster, so no YouTube request is made until the reader asks
+    for the video; a chapter without a URL shows the poster and its transcript. The structure follows the Diátaxis
+    split the handbook already uses (explanation in chapters 1 and 4, how-to sections, reference in 10 and 11).
+  </addition_summary>
+  <existing_context>
+    <stack>Next.js 16 App Router + TypeScript web app in apps/web (npm workspace), each feature owning a route group apps/web/src/app/(feature)/ with its own layout.tsx and tsconfig.json (see apps/web/src/app/(policies-page)/ for a public page: GlobalNav, a main element and NavTabBarSpacer) plus apps/web/src/features/feature/; GlobalNav and the mobile tab bar live in apps/web/src/components/nav, SiteFooter in apps/web/src/components/footer; the homepage at / has its own nav in apps/web/src/features/home/home-nav.tsx; the paper list is at /papers; colour tokens in apps/web/src/styles/tokens.css (light default, dark via prefers-color-scheme and data-theme); Source Serif 4, Inter and JetBrains Mono self-hosted; next.config.js sets a Content-Security-Policy (default-src 'self', no frame-src today) and a Permissions-Policy with autoplay=(); output "standalone"; the production image deploy/containers/web.Containerfile copies only apps/web/src, apps/web/public and config files into the builder before npm run build; no Markdown library is installed; sitemap.ts and the llms.txt route in apps/web/src/app list the public pages</stack>
+    <test_baseline>unmeasured for this spec — the acceptance gate re-measures npm test at run start; Playwright journeys (npm run test:e2e) are outside npm test</test_baseline>
+    <conventions>Feature code in apps/web/src/features/&lt;feature&gt;/ with colocated *.test.ts(x) and *.css.test.ts; never hardcode a hex in a component or feature CSS (use the custom properties in tokens.css); docs/design.md is the UI authority; brand voice plain, precise, collegial, short sentences, no hype words; status is never colour alone; add web dependencies with npm install &lt;pkg&gt; --workspace apps/web, never in the root package.json; the docs pages are statically generated at build time (no runtime file reads)</conventions>
+  </existing_context>
+  <layout>
+    <zone root="apps/web" profile="pnpm-single-app">
+      <root template="apps/web/src/app/({plugin})/**" optional="true"/>
+    </zone>
+  </layout>
+  <features_to_add>
+    <category name="Content">
+      <feature index="1" depends_on="" shape="core"
+               touches_files="apps/web/package.json,package-lock.json"
+               creates="apps/web/src/features/docs/handbook.ts,apps/web/src/features/docs/handbook.test.ts">
+        <description>System loads the handbook for the docs pages: react-markdown (v10) and remark-gfm (v4) are added to apps/web with npm install --workspace apps/web; features/docs/handbook.ts reads docs/handbook/ (resolved from the apps/web directory as ../../docs/handbook, at build time only) and returns the 11 chapters in number order, each with number, slug (the file name without "NN-" and ".md", e.g. your-account), title (its "# " heading), summary (the "Read it if you want to…" column of README.md's chapter table), the Markdown body without the title line, and its ## and ### headings with GitHub-style anchor ids (lower case, punctuation removed, spaces to hyphens, a repeated heading gets -1, -2); it also returns README.md's "Quick start by role" sections (each ### title with its ordered list), the chapter's screenshots from screenshots.json and its video entry from videos.json; resolveHandbookHref(href, fromSlug) maps "NN-slug.md#anchor" to /docs/slug#anchor, "#anchor" to the same chapter, README.md to /docs, http(s) URLs unchanged and any other relative path (../deploy.md) to null; handbook.test.ts asserts the 11 chapters and slugs in order, that every internal link in every chapter and in README.md resolves to an existing chapter and heading anchor (the failure lists each broken link), that every screenshots.json heading exists in its chapter and every src file exists under apps/web/public, and that every videos.json poster exists and every youtube value is "" or a youtube.com/watch, youtu.be, /embed/ or /shorts/ URL</description>
+      </feature>
+      <feature index="2" depends_on="1" shape="core"
+               creates="apps/web/src/features/docs/markdown.tsx,apps/web/src/features/docs/markdown.test.tsx">
+        <description>UI displays a handbook chapter's Markdown: features/docs/markdown.tsx renders it with react-markdown and remark-gfm and no raw HTML; ## and ### headings carry the anchor ids from handbook.ts and a "#" link (aria-label "Link to this section") shown on hover and focus; links go through resolveHandbookHref, so a cross-chapter link becomes a Next Link to /docs/slug#anchor and a null result displays as its text with the path in code; tables are wrapped in a horizontally scrollable region (role region, an aria-label naming the table's first header, tabindex 0) so wide tables never widen the page; each screenshot of the chapter is displayed as a figure directly after the heading it names, with an img carrying src, alt, width and height, loading lazy, decoding async, a figcaption, and a link to the full-size image; markdown.test.tsx asserts the heading ids and anchor links, a rewritten cross-chapter link, the plain-text ../deploy.md case, the table region and a screenshot figure placed after its heading with its alt and caption</description>
+      </feature>
+      <feature index="3" depends_on="1" shape="core"
+               creates="apps/web/src/features/docs/chapter-video.tsx,apps/web/src/features/docs/chapter-video.test.tsx,apps/web/src/features/docs/transcript.ts,apps/web/src/features/docs/transcript.test.ts">
+        <description>UI displays a chapter's explainer video without loading YouTube until asked: when the chapter's videos.json youtube URL holds a valid video id (from youtube.com/watch?v=, youtu.be/, /embed/ or /shorts/), chapter-video.tsx shows a button with the poster image, a play icon and the label "Watch the chapter video (4 min 33 s)" from duration_seconds; clicking it replaces the button with an iframe of https://www.youtube-nocookie.com/embed/{id}?autoplay=1&amp;rel=0&amp;cc_load_policy=1 titled "Chapter video: {chapter title}", with allow "autoplay; encrypted-media; picture-in-picture; fullscreen", allowfullscreen and referrerpolicy strict-origin-when-cross-origin, in a 16:9 frame; with an empty or invalid URL it shows the poster with the note "Video coming soon" and no button; in both cases a "Read the transcript" disclosure holds the transcript; transcript.ts parses the chapter's WebVTT file (cue timings, cue numbers and the WEBVTT header removed) into paragraphs, starting a new paragraph after a cue that ends a sentence and at least every 6 cues; the tests assert no iframe and no youtube URL in the markup before the click, the iframe after it, the coming-soon case, id extraction for each URL form and an invalid one, and the transcript paragraphs of a small sample file</description>
+      </feature>
+      <feature index="4" depends_on="" shape="core"
+               touches_files="apps/web/next.config.js,apps/web/next.config.test.ts,deploy/containers/web.Containerfile">
+        <description>System allows the docs videos and builds the docs in the image: GET /docs returns 200 with a Content-Security-Policy header whose policy gains frame-src https://www.youtube-nocookie.com (every other directive unchanged, frame-ancestors stays 'none'); the Permissions-Policy autoplay entry becomes autoplay=(self "https://www.youtube-nocookie.com") so a clicked video starts playing; deploy/containers/web.Containerfile copies docs/handbook into the builder stage (COPY docs/handbook ./docs/handbook) before npm run build, so the statically generated docs pages build in the image; next.config.test.ts asserts the new frame-src and autoplay values, that no other directive changed, and that the Containerfile's COPY docs/handbook line comes before its npm run build line</description>
+      </feature>
+    </category>
+    <category name="Pages">
+      <feature index="5" depends_on="1" shape="core"
+               creates="apps/web/src/app/(docs)/layout.tsx,apps/web/src/app/(docs)/tsconfig.json,apps/web/src/features/docs/docs-shell.tsx,apps/web/src/features/docs/docs-shell.test.tsx,apps/web/src/features/docs/docs.css,apps/web/src/features/docs/docs.css.test.ts">
+        <description>UI displays the docs shell on every /docs page: the (docs) route group's layout renders GlobalNav, a main element with the docs shell and NavTabBarSpacer; docs-shell.tsx displays a "Docs" heading link to /docs and the 11 chapters as a numbered list of links to /docs/{slug}, the current chapter marked aria-current="page"; at 1100 px and wider the list is a sticky left sidebar, below it the list collapses into a "Chapters" disclosure above the content; docs.css uses only tokens.css custom properties, a reading width of about 72 characters for the article column, and no horizontal page scroll from 320 px up; docs-shell.test.tsx asserts the 11 links in order and aria-current on the current one, and docs.css.test.ts asserts no hex colours and the 1100 px breakpoint</description>
+      </feature>
+      <feature index="6" depends_on="2,5" shape="core"
+               creates="apps/web/src/app/(docs)/docs/page.tsx,apps/web/src/features/docs/docs-index.tsx,apps/web/src/features/docs/docs-index.test.tsx,apps/web/src/features/docs/docs-search.tsx,apps/web/src/features/docs/docs-search.test.tsx">
+        <description>UI displays the docs home at /docs (GET /docs returns 200, statically generated, metadata title "Docs" and a description): an H1 "Scholium docs" with one sentence on what the docs cover; a search field (label "Search the docs", "/" focuses it) that filters, as the reader types, the chapter titles, their ## and ### headings and the glossary terms of chapter 11, listing up to 12 matches as links to /docs/{slug}#{anchor} with the chapter name beside each, and "No matches for …" when none; a "Start here" row with one card per README "Quick start by role" section showing its title and steps (rendered with the Markdown component, so its chapter links point at /docs pages); and a card per chapter in order with its number, title, summary, poster thumbnail (width and height set, lazy) and "Video, 4 min 33 s" or "Video coming soon"; without JavaScript every chapter card and link still works; the tests assert the H1, 11 chapter cards in order with links, the role cards, a search for "passkey" listing the sign-in section of chapter 2, and the no-match message</description>
+      </feature>
+      <feature index="7" depends_on="2,3,5" shape="core"
+               creates="apps/web/src/app/(docs)/docs/[chapter]/page.tsx,apps/web/src/features/docs/chapter-page.tsx,apps/web/src/features/docs/chapter-page.test.tsx,apps/web/src/features/docs/chapter.css,apps/web/tests/e2e/docs.spec.ts">
+        <description>UI displays each handbook chapter at /docs/{slug}: the page is statically generated for the 11 slugs (generateStaticParams, dynamicParams false, so GET /docs/no-such-chapter returns 404) with metadata title "{chapter title} · Docs", the summary as description and a canonical URL; the article shows "Chapter N" above the H1, the summary, the chapter video, the Markdown body with its screenshots, and previous and next chapter links at the end; at 1100 px and wider an "On this page" list of the ## and ### headings sits on the right and highlights the section in view, below that width it is a collapsible "On this page" above the article; chapter.css uses only tokens.css properties; chapter-page.test.tsx asserts the H1, the eyebrow, the contents list entries for a chapter, the previous and next links (none before chapter 1, none after chapter 11) and the 404 for an unknown slug; tests/e2e/docs.spec.ts (Playwright) opens /docs, searches "passkey" and follows the result to /docs/your-account#sign-in-with-a-passkey, opens a chapter and sees its video block, a screenshot with its alt text and the contents list, follows a cross-chapter link to the right anchor, checks that no request to youtube.com or youtube-nocookie.com is made while browsing, and checks that the page has no horizontal scroll at 375 px</description>
+      </feature>
+    </category>
+    <category name="Discoverability">
+      <feature index="8" depends_on="" shape="core"
+               touches_files="apps/web/src/components/nav/global-nav.tsx,apps/web/src/components/nav/global-nav.test.tsx,apps/web/src/components/footer/site-footer.tsx,apps/web/src/components/footer/site-footer.test.tsx">
+        <description>UI displays a "Docs" link to /docs in the global navigation (next to Submit on desktop, marked aria-current when the path starts with /docs) and in the site footer next to the Policies link; the mobile tab bar is unchanged; global-nav.test.tsx and site-footer.test.tsx assert the link, its href and the current state on /docs/your-account</description>
+      </feature>
+      <feature index="9" depends_on="" shape="core"
+               touches_files="apps/web/src/features/home/home-nav.tsx,apps/web/src/features/home/home-page.test.tsx">
+        <description>UI displays a "Docs" link to /docs in the homepage navigation, after the FAQ section link, for signed-in and signed-out visitors alike; home-page.test.tsx asserts the link and its href in both states</description>
+      </feature>
+      <feature index="10" depends_on="1" shape="core"
+               touches_files="apps/web/src/app/sitemap.ts,apps/web/src/app/sitemap.test.ts,apps/web/src/app/llms.txt/route.ts,apps/web/src/app/llms.txt/route.test.ts">
+        <description>System returns the docs to search and answer engines: GET /sitemap.xml returns 200 and includes /docs and the 11 /docs/{slug} URLs (from handbook.ts) with the other public pages; GET /llms.txt returns 200 with a "Docs" section linking /docs and each chapter with its title and summary; sitemap.test.ts and route.test.ts assert the 12 docs URLs and the llms.txt section</description>
+      </feature>
+    </category>
+  </features_to_add>
+</project_specification>

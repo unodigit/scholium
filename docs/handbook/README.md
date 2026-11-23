@@ -24,7 +24,7 @@ Operators who run a Scholium server should read [`docs/deploy.md`](../deploy.md)
 
 ### I want to read papers
 
-1. Open the home page. No account is needed.
+1. Open **Papers** (**/papers**), or **Browse papers** on the home page. No account is needed.
 2. Search by keywords, or paste a `sch:` ID to jump straight to a paper.
 3. On a paper, check the badge at the top of the margin. **Signed · anchor pending** means the paper verified ([why "pending"](04-checking-a-paper-is-genuine.md#the-verification-badge)).
 4. Read the **Reviews** tab for peer review and the **AI** tab for the advisory pre-review.

@@ -1,0 +1,241 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:04.376
+Chapter six: reviewing a paper. Formal reviews are the heart of Scholium.
+
+00:00:04.376 --> 00:00:10.171
+They are structured and signed, they appear next to the paper, and they decide its status.
+
+00:00:10.171 --> 00:00:13.084
+This chapter is for reviewers, and for authors.
+
+00:00:13.084 --> 00:00:21.045
+A formal review is different from discussion, which is open to any member, and from the AI pre-review, which only advises.
+
+00:00:21.045 --> 00:00:24.843
+You need tier three, Reviewer, which the node operator grants.
+
+00:00:24.843 --> 00:00:28.273
+You cannot review a paper if you are one of its authors.
+
+00:00:28.273 --> 00:00:33.819
+You write one review per paper, across all its versions, and you need no invitation.
+
+00:00:33.819 --> 00:00:37.627
+An author or a moderator can invite a tier three reviewer.
+
+00:00:37.627 --> 00:00:40.910
+The invitation appears under Needs your attention.
+
+00:00:40.910 --> 00:00:46.037
+In this release it is only a pointer, with nothing to accept or decline.
+
+00:00:46.037 --> 00:00:50.930
+Here is the flow. Open the form, pass the conflict check, and fill the rubric.
+
+00:00:50.930 --> 00:00:54.505
+Commit the review, and it stays sealed. Later, reveal it.
+
+00:00:54.505 --> 00:00:59.045
+The authors reply, and after a new version you update your review.
+
+00:00:59.045 --> 00:01:03.284
+To start, open the Reviews tab of the paper and choose Review this paper.
+
+00:01:03.284 --> 00:01:06.123
+The review form shows the paper beside it.
+
+00:01:06.123 --> 00:01:11.331
+The form runs three conflict checks, and marks each one pass, fail or unknown.
+
+00:01:11.331 --> 00:01:13.668
+First: not an author of this paper.
+
+00:01:13.668 --> 00:01:17.941
+Second: no co-authorship with an author in the last three years.
+
+00:01:17.941 --> 00:01:20.411
+Third: a different institution.
+
+00:01:20.411 --> 00:01:22.414
+Only the first check blocks you.
+
+00:01:22.414 --> 00:01:29.048
+The other two are advisory: if one fails, decide whether you can review fairly, and decline if you cannot.
+
+00:01:29.048 --> 00:01:33.141
+Without a saved affiliation, the form asks you to save one.
+
+00:01:33.141 --> 00:01:37.801
+By default, you review anonymously, as Reviewer A, Reviewer B, and so on.
+
+00:01:37.801 --> 00:01:41.840
+Your letter for the paper stays the same across versions.
+
+00:01:41.840 --> 00:01:45.318
+Scholium does not store your identity in readable form.
+
+00:01:45.318 --> 00:01:50.187
+At commit, it encrypts your identity with the key of the integrity committee.
+
+00:01:50.187 --> 00:01:52.800
+Only a misconduct case can open it.
+
+00:01:52.800 --> 00:01:56.443
+In this release, the escrow uses a single committee key.
+
+00:01:56.443 --> 00:02:00.738
+A scheme that needs several committee members to agree is planned.
+
+00:02:00.738 --> 00:02:04.976
+Nobody can open an identity through the website or the API.
+
+00:02:04.976 --> 00:02:08.266
+For public credit, choose Sign with my name instead.
+
+00:02:08.266 --> 00:02:16.448
+When you come back to a signed review, the form opens in the signed state on any device, and offers Stay anonymous instead.
+
+00:02:16.448 --> 00:02:22.524
+After the reveal, a signed review keeps its letter, and shows Signed by, with a link to your profile.
+
+00:02:22.524 --> 00:02:26.533
+It also appears under Signed reviews on your public profile.
+
+00:02:26.533 --> 00:02:28.001
+Next, fill the rubric.
+
+00:02:28.001 --> 00:02:33.937
+Score each of six dimensions from one to five, and write a justification for every score.
+
+00:02:33.937 --> 00:02:36.939
+Scholium rejects a review without them.
+
+00:02:36.939 --> 00:02:45.360
+The six dimensions are soundness of method, evidence for claims, reproducibility, novelty, clarity, and limitations and ethics.
+
+00:02:45.360 --> 00:02:48.168
+Set your confidence: low, medium or high.
+
+00:02:48.168 --> 00:02:51.866
+Then choose a recommendation, which drives the status.
+
+00:02:51.866 --> 00:02:55.565
+Sound as is and Minor revisions count toward Reviewed.
+
+00:02:55.565 --> 00:02:58.578
+Major concerns keeps the paper Under review.
+
+00:02:58.578 --> 00:03:01.718
+Fundamentally flawed makes it Contested.
+
+00:03:01.718 --> 00:03:04.989
+You can add an optional written report in Markdown.
+
+00:03:04.989 --> 00:03:07.554
+If you used AI assistance, tick the box.
+
+00:03:07.554 --> 00:03:12.059
+After the reveal, your review then shows AI assistance declared.
+
+00:03:12.059 --> 00:03:17.034
+Then choose Commit review. This signs the review with a per-paper key and seals it.
+
+00:03:17.034 --> 00:03:22.528
+Nobody can read it yet: not the authors, not the other reviewers, and not the server.
+
+00:03:22.528 --> 00:03:25.719
+The seal stops reviewers from influencing each other.
+
+00:03:25.719 --> 00:03:33.766
+A review can be revealed when a second reviewer commits on the same version, or 21 days after the first commit on that version.
+
+00:03:33.766 --> 00:03:37.542
+The form shows where things stand: here, one review so far.
+
+00:03:37.542 --> 00:03:41.846
+This review can be revealed after one more, or on a set date.
+
+00:03:41.846 --> 00:03:46.759
+Save your review key. The reveal secret stays in the browser where you committed.
+
+00:03:46.759 --> 00:03:51.552
+Export it as a review key file, with a passphrase of at least eight characters.
+
+00:03:51.552 --> 00:03:55.046
+Without it, you cannot reveal from another browser.
+
+00:03:55.046 --> 00:03:58.159
+Scholium does not reveal reviews automatically.
+
+00:03:58.159 --> 00:04:02.531
+When the gate opens, go back to the form and choose Reveal review.
+
+00:04:02.531 --> 00:04:08.032
+Your rubric, recommendation and report then become public on the Reviews tab.
+
+00:04:08.032 --> 00:04:13.168
+Until then, the Reviews tab shows the review as sealed, and says when it can open.
+
+00:04:13.168 --> 00:04:19.665
+Authors can answer a review point by point: one reply per rubric dimension, plus a general reply.
+
+00:04:19.665 --> 00:04:22.881
+Replies appear under the review as Author reply.
+
+00:04:22.881 --> 00:04:26.027
+Only people on the author list can reply.
+
+00:04:26.027 --> 00:04:30.427
+When the authors publish a new version, choose Update for the new version.
+
+00:04:30.427 --> 00:04:35.643
+An update needs a complete rubric again. It can replace your earlier review once.
+
+00:04:35.643 --> 00:04:39.107
+An update publishes your scores and recommendation at once.
+
+00:04:39.107 --> 00:04:43.851
+Your written report follows when the reveal gate of the new version opens.
+
+00:04:43.851 --> 00:04:49.701
+A reviewer who did not write a review, and is not an author, can rate it once, from one to five.
+
+00:04:49.701 --> 00:04:54.088
+You rate the review, not the paper, and ratings never change the status.
+
+00:04:54.088 --> 00:04:56.987
+Reviewer reputation is planned for later.
+
+00:04:56.987 --> 00:04:59.350
+How is the status of a paper decided?
+
+00:04:59.350 --> 00:05:04.908
+Scholium uses only signed records and a fixed rule, so any server gets the same answer.
+
+00:05:04.908 --> 00:05:08.502
+It works down this list, and the first match wins.
+
+00:05:08.502 --> 00:05:11.787
+A reviewer's current review is their latest update.
+
+00:05:11.787 --> 00:05:18.502
+Discussion, helpful votes, review ratings, AI findings and withdrawal notices never change status.
+
+00:05:18.502 --> 00:05:24.373
+As an author, you can reply to each review, and publish a new version that answers the reviews.
+
+00:05:24.373 --> 00:05:27.278
+Reviewers can then update their recommendation.
+
+00:05:27.278 --> 00:05:31.510
+If necessary, you can issue a correction or retraction notice.
+
+00:05:31.510 --> 00:05:34.806
+In short: one review per paper, from tier three.
+
+00:05:34.806 --> 00:05:41.193
+Score six dimensions, commit a sealed review, and reveal it after a second review or 21 days.
+
+00:05:41.193 --> 00:05:46.950
+A fixed rule sets the status. Next, chapter seven: discussion and annotations.

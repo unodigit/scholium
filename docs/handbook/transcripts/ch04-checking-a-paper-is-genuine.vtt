@@ -1,0 +1,217 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:02.657
+Chapter four: checking a paper is genuine.
+
+00:00:02.657 --> 00:00:07.275
+Every paper, version, review and decision on Scholium is a signed record.
+
+00:00:07.275 --> 00:00:13.115
+Your browser can check the signatures itself, so you do not have to trust the website.
+
+00:00:13.115 --> 00:00:17.124
+When you open a paper, your browser downloads its signed records.
+
+00:00:17.124 --> 00:00:22.581
+Then it makes five checks: signatures, history, files, the public log and notices.
+
+00:00:22.581 --> 00:00:29.207
+Signatures: every listed author signed the version, and each signature matches the public key of that author.
+
+00:00:29.207 --> 00:00:35.504
+History: each version links to the one before it, and nothing in the chain is changed or missing.
+
+00:00:35.504 --> 00:00:39.843
+Files: your browser makes a fingerprint of each file that you can download.
+
+00:00:39.843 --> 00:00:46.549
+It compares the fingerprint with the signed record, so each file is exactly the file that the authors signed.
+
+00:00:46.549 --> 00:00:51.628
+Public log: the version is in the server's public log, which only adds entries.
+
+00:00:51.628 --> 00:00:56.528
+Notices: the browser looks for a retraction or a correction on record.
+
+00:00:56.528 --> 00:01:00.138
+The badge at the top of the margin panel shows the result.
+
+00:01:00.138 --> 00:01:06.699
+With the counts known, it reads, for example: Verified, three author signatures across one version.
+
+00:01:06.699 --> 00:01:08.416
+The badge has five states.
+
+00:01:08.416 --> 00:01:13.502
+Verified, in green: every check passed, and the public timestamp is in place.
+
+00:01:13.502 --> 00:01:20.837
+Signed, anchor pending, in amber: all signatures and files check out, but the timestamp is not added yet.
+
+00:01:20.837 --> 00:01:27.087
+In this release, anchor pending is the best result that you will see, because anchoring is not enabled yet.
+
+00:01:27.087 --> 00:01:30.816
+Checking means that the check is running in your browser.
+
+00:01:30.816 --> 00:01:35.796
+Could not check, in grey: you may be offline, or the proof is not available.
+
+00:01:35.796 --> 00:01:38.352
+This is not a failure. Try again later.
+
+00:01:38.352 --> 00:01:44.250
+Verification failed, in red: a file or a signature does not match what the authors signed.
+
+00:01:44.250 --> 00:01:45.829
+Do not rely on it.
+
+00:01:45.829 --> 00:01:47.062
+Why anchor pending?
+
+00:01:47.062 --> 00:01:56.598
+Scholium is designed to timestamp its public log on a public blockchain every hour, so nobody, not even the server operator, can backdate a record.
+
+00:01:56.598 --> 00:01:58.944
+That comes in a later release.
+
+00:01:58.944 --> 00:02:02.285
+Until then, every paper shows timestamp anchor pending.
+
+00:02:02.285 --> 00:02:06.512
+Your browser still fully checks the signatures and the history.
+
+00:02:06.512 --> 00:02:09.584
+To see the details, choose the badge or Details.
+
+00:02:09.584 --> 00:02:14.848
+This opens the Proof tab, a plain checklist headed Verified in your browser.
+
+00:02:14.848 --> 00:02:20.713
+The checklist names the signers, the intact history, the matching files and the public log entry.
+
+00:02:20.713 --> 00:02:25.104
+Then come the anchor state, any notices, and the preserved copies.
+
+00:02:25.104 --> 00:02:27.372
+Re-run check runs everything again.
+
+00:02:27.372 --> 00:02:32.501
+Technical details shows the record identifiers, for people who want them.
+
+00:02:32.501 --> 00:02:35.990
+Your browser fingerprints up to 32 mebibytes of files.
+
+00:02:35.990 --> 00:02:39.685
+A file that it skips shows a warning, never a pass.
+
+00:02:39.685 --> 00:02:41.715
+Retracted papers still verify.
+
+00:02:41.715 --> 00:02:46.179
+A retraction is an extra signed record, not a change to the paper.
+
+00:02:46.179 --> 00:02:51.990
+Withdrawn papers verify too, and the notices row links to the withdrawal record.
+
+00:02:51.990 --> 00:02:55.264
+Someone sends you a PDF. Is it the genuine paper?
+
+00:02:55.264 --> 00:02:59.942
+To find out, use the Verify a file page. The footer links to it.
+
+00:02:59.942 --> 00:03:04.599
+Drop the file on the page, or choose a file. Your browser makes its fingerprint.
+
+00:03:04.599 --> 00:03:09.366
+The file never leaves your device: only the fingerprint goes to the server.
+
+00:03:09.366 --> 00:03:13.110
+If the file matches, the page names the paper and the version.
+
+00:03:13.110 --> 00:03:17.979
+If not, it tells you that the file does not match what the authors signed.
+
+00:03:17.979 --> 00:03:21.173
+Could not check means that the server could not be reached.
+
+00:03:21.173 --> 00:03:25.526
+Could not read this file means that your browser could not open the file.
+
+00:03:25.526 --> 00:03:30.076
+To check against one version, add that version's ID to the page address.
+
+00:03:30.076 --> 00:03:33.426
+This page checks the fingerprint, not the signatures.
+
+00:03:33.426 --> 00:03:37.808
+For signatures, use the Proof tab or the command-line verifier.
+
+00:03:37.808 --> 00:03:43.684
+For full independence from any Scholium server, download the paper archive from the Download menu.
+
+00:03:43.684 --> 00:03:48.342
+Then check it on your own computer with the scholium command-line tool.
+
+00:03:48.342 --> 00:03:51.184
+Run scholium verify with the archive file.
+
+00:03:51.184 --> 00:03:56.592
+The last line of the output is the verdict. Verified gives exit code zero.
+
+00:03:56.592 --> 00:04:00.032
+Verified with the status retracted also gives zero.
+
+00:04:00.032 --> 00:04:04.619
+Not verified, with the number of failed checks, gives exit code one.
+
+00:04:04.619 --> 00:04:08.256
+If the tool could not run, the exit code is two.
+
+00:04:08.256 --> 00:04:14.941
+Other commands fetch a paper from a server and verify it, or check one file against one version in an archive.
+
+00:04:14.941 --> 00:04:20.688
+You can also rebuild a whole-server archive into a fresh database, or print the version.
+
+00:04:20.688 --> 00:04:24.018
+In this release, the verifier is not a separate download.
+
+00:04:24.018 --> 00:04:28.448
+It ships in the Scholium source code, and you run it from a checkout.
+
+00:04:28.448 --> 00:04:31.840
+Anyone can copy and rebuild the whole public record.
+
+00:04:31.840 --> 00:04:38.233
+Public export in the footer, and on the network page, downloads every public record on the server.
+
+00:04:38.233 --> 00:04:41.307
+Removed and unlisted content is left out.
+
+00:04:41.307 --> 00:04:48.181
+Anyone can check that archive with scholium verify, and rebuild the catalogue from it with scholium rebuild.
+
+00:04:48.181 --> 00:04:53.419
+A paper whose newest version is not listed yet shows as awaiting moderation.
+
+00:04:53.419 --> 00:04:57.315
+The network page is the public transparency page of the server.
+
+00:04:57.315 --> 00:05:04.208
+It shows this node, the log head, the public timestamp, which is anchor pending, and the probe pass rate.
+
+00:05:04.208 --> 00:05:12.883
+It also shows replication: one of one local copy, against a policy target of five replicas, three operators and two jurisdictions.
+
+00:05:12.883 --> 00:05:19.222
+Then come moderation decisions by policy clause, the incident log, and the public export.
+
+00:05:19.222 --> 00:05:25.648
+In short: your browser checks every paper for itself, and anchor pending is the best result today.
+
+00:05:25.648 --> 00:05:30.894
+A file check needs only a fingerprint, and the offline verifier needs no server.
+
+00:05:30.894 --> 00:05:33.851
+Next, chapter five: publishing a paper.

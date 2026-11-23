@@ -1,0 +1,301 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:01.613
+Chapter two: your account.
+
+00:00:01.613 --> 00:00:05.272
+This chapter covers sign-in, account setup and trust tiers.
+
+00:00:05.272 --> 00:00:09.765
+It also shows how to protect your account if you lose your device.
+
+00:00:09.765 --> 00:00:12.195
+To sign in, choose Sign in with passkey.
+
+00:00:12.195 --> 00:00:17.844
+Your first sign-in creates your account, and your browser makes a signing key on your device.
+
+00:00:17.844 --> 00:00:21.707
+The key cannot be copied out, and Scholium never sees it.
+
+00:00:21.707 --> 00:00:25.736
+Your public identifier is a DID, which starts with DID key.
+
+00:00:25.736 --> 00:00:27.853
+It is in every record you sign.
+
+00:00:27.853 --> 00:00:32.965
+People need it to endorse you, or to name you as a recovery guardian.
+
+00:00:32.965 --> 00:00:39.582
+In this release, an account belongs to the browser and device that created it, and you cannot add a device yet.
+
+00:00:39.582 --> 00:00:43.797
+A different browser or computer creates a separate, new account.
+
+00:00:43.797 --> 00:00:48.069
+Returning users go back to the page they came from, or to the feed.
+
+00:00:48.069 --> 00:00:51.958
+You stay signed in for 30 days, and each visit restarts them.
+
+00:00:51.958 --> 00:00:55.355
+Sign out ends the session in this browser only.
+
+00:00:55.355 --> 00:01:00.460
+If the signature check fails, or the sign-in takes more than five minutes, try again.
+
+00:01:00.460 --> 00:01:04.184
+After too many attempts from your network, wait a few minutes.
+
+00:01:04.184 --> 00:01:07.467
+The recovery link is always on the sign-in page.
+
+00:01:07.467 --> 00:01:10.760
+A new account goes to onboarding, which has five steps.
+
+00:01:10.760 --> 00:01:12.735
+The passkey step is already done.
+
+00:01:12.735 --> 00:01:19.003
+Next come your name, an optional affiliation and your email, which is never shown on your profile.
+
+00:01:19.003 --> 00:01:24.185
+Then link your ORCID iD, which you need for tier one, and pick categories to follow.
+
+00:01:24.185 --> 00:01:28.533
+Their new papers fill your Following feed and your daily digest.
+
+00:01:28.533 --> 00:01:31.297
+The last step names five recovery guardians.
+
+00:01:31.297 --> 00:01:36.697
+It is strongly recommended, because without guardians you cannot recover your account.
+
+00:01:36.697 --> 00:01:42.309
+Start reading stays disabled until you save them, but Skip for now is always there.
+
+00:01:42.309 --> 00:01:47.611
+You can come back to onboarding later, and it keeps your progress in this browser only.
+
+00:01:47.611 --> 00:01:52.885
+In this release, it is the only place to change your name, affiliation or email.
+
+00:01:52.885 --> 00:01:57.435
+Scholium then emails you a confirmation link, valid for 24 hours.
+
+00:01:57.435 --> 00:02:00.655
+Until you confirm, your dashboard reminds you.
+
+00:02:00.655 --> 00:02:04.434
+If the link expires, choose Resend verification email.
+
+00:02:04.434 --> 00:02:07.984
+A new email address needs a new confirmation.
+
+00:02:07.984 --> 00:02:11.141
+Your ORCID iD proves who you are as a researcher.
+
+00:02:11.141 --> 00:02:15.200
+With a confirmed email, in either order, it gives you tier one.
+
+00:02:15.200 --> 00:02:21.141
+It also adds a chip to your profile, and it is the only way to recover a lost account.
+
+00:02:21.141 --> 00:02:27.090
+One ORCID iD belongs to one account only, and in this release you cannot unlink or re-link it.
+
+00:02:27.090 --> 00:02:30.971
+You have ten minutes to finish the round trip to ORCID.
+
+00:02:30.971 --> 00:02:36.846
+Each account has a trust tier from zero to four, and each tier adds to the one below.
+
+00:02:36.846 --> 00:02:41.754
+Readers read and report. Members discuss and annotate. Authors publish.
+
+00:02:41.754 --> 00:02:46.923
+Reviewers write formal reviews. Moderators make moderation decisions.
+
+00:02:46.923 --> 00:02:49.173
+Your first sign-in gives tier zero.
+
+00:02:49.173 --> 00:02:53.352
+Email and ORCID give tier one, and an endorsement gives tier two.
+
+00:02:53.352 --> 00:02:56.710
+The node operator grants tiers three and four.
+
+00:02:56.710 --> 00:03:01.723
+If your tier does not allow an action, Scholium tells you exactly what is missing.
+
+00:03:01.723 --> 00:03:04.875
+A tier change takes effect within 15 minutes.
+
+00:03:04.875 --> 00:03:06.647
+Authors have two more rules.
+
+00:03:06.647 --> 00:03:11.522
+To submit a paper, you need an active endorsement in every category it lists.
+
+00:03:11.522 --> 00:03:18.822
+And an author account younger than 90 days can start one new paper per seven days, not counting new versions.
+
+00:03:18.822 --> 00:03:23.265
+An endorsement is a signed statement that you may publish in a category.
+
+00:03:23.265 --> 00:03:29.590
+A reviewer endorsed in that category can give one, and a moderator can give one in any category.
+
+00:03:29.590 --> 00:03:35.638
+To ask, send the link from View public profile on your dashboard to someone who can endorse you.
+
+00:03:35.638 --> 00:03:37.717
+Only they see the Endorse button.
+
+00:03:37.717 --> 00:03:42.150
+One endorsement gives tier two, but each category needs its own.
+
+00:03:42.150 --> 00:03:48.698
+Each account can write a limited number of times per rolling 24 hours, and only accepted writes count.
+
+00:03:48.698 --> 00:03:52.294
+New accounts get 20, and the limit grows with your tier.
+
+00:03:52.294 --> 00:03:55.968
+At the limit, Scholium tells you when to try again.
+
+00:03:55.968 --> 00:04:00.979
+Your key lives on one device, so a lost device would mean a lost account.
+
+00:04:00.979 --> 00:04:03.175
+Recovery guardians prevent that.
+
+00:04:03.175 --> 00:04:08.998
+Name exactly five other accounts by their DIDs: people you trust and can reach.
+
+00:04:08.998 --> 00:04:12.735
+If you lose your device, three of the five must approve.
+
+00:04:12.735 --> 00:04:17.007
+Then a 72-hour safety window runs before the new key takes over.
+
+00:04:17.007 --> 00:04:21.344
+Until it ends, you can cancel a recovery you did not start.
+
+00:04:21.344 --> 00:04:27.079
+To change guardians, choose Change guardians on the Security page and replace any DID.
+
+00:04:27.079 --> 00:04:31.413
+Saving asks for your passkey, and your device signs the new list.
+
+00:04:31.413 --> 00:04:35.547
+So a stolen session alone cannot redirect your recovery.
+
+00:04:35.547 --> 00:04:40.266
+To recover, choose Recover your account on the sign-in page of a new device.
+
+00:04:40.266 --> 00:04:44.950
+Enter the ORCID iD linked to your account, and choose Start recovery.
+
+00:04:44.950 --> 00:04:48.560
+Scholium notifies your guardians, and the account itself.
+
+00:04:48.560 --> 00:04:53.456
+Each guardian opens the request on their dashboard and chooses Approve.
+
+00:04:53.456 --> 00:04:56.046
+Check for approvals shows your progress.
+
+00:04:56.046 --> 00:05:01.225
+After three approvals and the safety window, your new device holds your account.
+
+00:05:01.225 --> 00:05:06.998
+If no account has that ORCID iD, or it has no guardians, contact the node operator.
+
+00:05:06.998 --> 00:05:13.789
+If anyone starts a recovery of your account, you get a notification, and an email if your email is confirmed.
+
+00:05:13.789 --> 00:05:19.174
+If you did not start it, open the Security page and choose Cancel this recovery.
+
+00:05:19.174 --> 00:05:23.777
+You can cancel until the safety window ends, even after a key rotation.
+
+00:05:23.777 --> 00:05:29.936
+Also tell your guardians not to approve: without three approvals, the recovery never completes.
+
+00:05:29.936 --> 00:05:34.550
+A device with your passkey can also cancel from the request page.
+
+00:05:34.550 --> 00:05:41.403
+Known issue: while a recovery of your own account is open, your dashboard also lists it as if you were a guardian.
+
+00:05:41.403 --> 00:05:43.547
+Do not approve it. Cancel it.
+
+00:05:43.547 --> 00:05:48.171
+If you are someone's guardian, their request appears in Needs your attention.
+
+00:05:48.171 --> 00:05:54.998
+Approve only after you confirm with the person, by a channel you trust, that they really lost their device.
+
+00:05:54.998 --> 00:05:59.676
+The Security page shows your device key, guardians and recovery requests.
+
+00:05:59.676 --> 00:06:07.494
+Rotate key replaces your signing key: it asks for your passkey twice, signs you out everywhere else, and cannot be undone.
+
+00:06:07.494 --> 00:06:11.739
+Then you sign in again, with the same account, DID and tier.
+
+00:06:11.739 --> 00:06:20.337
+Your public profile shows your name, affiliation, ORCID chip, tier and DID, and lists your endorsements, papers and signed reviews.
+
+00:06:20.337 --> 00:06:22.443
+It never shows your email.
+
+00:06:22.443 --> 00:06:26.721
+Erase my profile, on the Security page, asks you to confirm first.
+
+00:06:26.721 --> 00:06:28.342
+Erasure cannot be undone.
+
+00:06:28.342 --> 00:06:32.891
+If you save your profile again later, only the new details show.
+
+00:06:32.891 --> 00:06:38.934
+Scholium erases your name, affiliation and email, and destroys the key that decrypts them.
+
+00:06:38.934 --> 00:06:42.156
+Your account, DID, tier and signed records stay.
+
+00:06:42.156 --> 00:06:46.518
+Your ORCID link stays too, hidden, so recovery still works.
+
+00:06:46.518 --> 00:06:51.934
+Your profile then says it was erased, and a short form of your DID replaces your name.
+
+00:06:51.934 --> 00:06:54.138
+The public log records the erasure.
+
+00:06:54.138 --> 00:07:00.080
+Names typed into a paper's author list stay, because they are part of its signed record.
+
+00:07:00.080 --> 00:07:09.086
+Your dashboard collects what concerns you: items that need your attention, your papers and reviews, saved searches, credentials and follows.
+
+00:07:09.086 --> 00:07:13.088
+The bell in the navigation bar opens your notifications.
+
+00:07:13.088 --> 00:07:16.757
+In short: your passkey on one device holds your account.
+
+00:07:16.757 --> 00:07:21.016
+Email and ORCID give tier one, and an endorsement gives tier two.
+
+00:07:21.016 --> 00:07:23.768
+Five guardians can restore a lost account.
+
+00:07:23.768 --> 00:07:27.312
+Next, chapter three: reading and finding papers.

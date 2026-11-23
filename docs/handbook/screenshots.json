@@ -1,0 +1,256 @@
+{
+  "01": [
+    {
+      "src": "/docs/screenshots/ch01-navigation-bar.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The navigation bar on a computer, with the Categories menu open on cs.AI, cs.LG and cs.MA",
+      "caption": "On a computer, the navigation bar holds search, Categories, Submit, notifications and your account.",
+      "heading": "Where things are",
+      "source": "02-search-and-discover/05b-categories-menu.png"
+    },
+    {
+      "src": "/docs/screenshots/ch01-phone-navigation.webp",
+      "width": 390,
+      "height": 844,
+      "alt": "A paper page on a phone, with the margin collapsed at the bottom and the Home, Search, Submit, Inbox and Me bar below it",
+      "caption": "On a phone, the navigation moves to a bar at the bottom of the screen.",
+      "heading": "Where things are",
+      "source": "01-read-feed-and-paper/08-paper-header-mobile-390.png"
+    }
+  ],
+  "02": [
+    {
+      "src": "/docs/screenshots/ch02-passkey-sign-in.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The sign-in page, with the Sign in with passkey button and the Recover your account link",
+      "caption": "The sign-in page. Your first sign-in on a device creates your account.",
+      "heading": "Sign in with a passkey",
+      "source": "03-new-member-onboarding/01a-signin-page.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-onboarding.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The onboarding page at 1 of 5 steps complete: the passkey step is done and the name, affiliation and email fields are empty",
+      "caption": "Onboarding after the first sign-in. The passkey step is already done.",
+      "heading": "Set up your account (onboarding)",
+      "source": "03-new-member-onboarding/01b-onboarding-passkey-done.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-recovery-safety-window.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A recovery request with 3 of 3 guardian approvals, the Check for approvals button and the open 72-hour safety window",
+      "caption": "Three guardians have approved. The new passkey takes over when the 72-hour safety window ends.",
+      "heading": "Recover a lost account",
+      "source": "06-key-recovery/04-requester-3-of-3-safety-window.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-security-page.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Security page with the Devices card, five recovery guardians and the Change guardians button, Recovery requests and Key rotation",
+      "caption": "The Security page lists this device's key, your five guardians and any recovery requests waiting for you.",
+      "heading": "Security settings",
+      "source": "03-new-member-onboarding/05a-security.png"
+    }
+  ],
+  "03": [
+    {
+      "src": "/docs/screenshots/ch03-following-feed.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The paper list on the Following tab, with two papers, each showing authors, category, version, age, abstract and an Under review chip",
+      "caption": "The Following tab shows new papers in the categories you follow.",
+      "heading": "The paper list",
+      "source": "03-new-member-onboarding/03d-following-feed.png"
+    },
+    {
+      "src": "/docs/screenshots/ch03-keyword-search.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "Keyword search results for \"calibration\", with the Keyword and Semantic toggle, Save this search, and the category, date and status filters",
+      "caption": "A keyword search. The filters on the left count the matches in each category and status.",
+      "heading": "Search",
+      "source": "02-search-and-discover/01-search-calibration.png"
+    },
+    {
+      "src": "/docs/screenshots/ch03-paper-page.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A paper page: title, authors, Under review chip, PDF, HTML, Cite, Download and Report, with the margin open on the Reviews tab",
+      "caption": "A paper page. The margin beside the text holds the verification badge, the paper ID and six tabs.",
+      "heading": "The paper page",
+      "source": "01-read-feed-and-paper/03-paper-page.png"
+    },
+    {
+      "src": "/docs/screenshots/ch03-corrected-banner.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A paper page with a Corrected banner above the title that gives the authors' reason and a View record link",
+      "caption": "A correction notice puts a banner above the title of every version.",
+      "heading": "Banners",
+      "source": "15-correction-notice/03a-anon-corrected.png"
+    }
+  ],
+  "04": [
+    {
+      "src": "/docs/screenshots/ch04-proof-tab.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Proof tab: signed by all 3 listed authors, version history intact, files match, recorded in the public log, timestamp anchor pending, no retraction or correction, preserved in 1 of 1 local copy",
+      "caption": "The Proof tab lists each check your browser ran. Anchor pending is expected in this release.",
+      "heading": "The Proof tab",
+      "source": "08-verify-and-download/02a-proof-checklist.png"
+    },
+    {
+      "src": "/docs/screenshots/ch04-verify-file-match.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Verify a file page after a PDF was dropped, showing This file matches what the authors signed and naming the paper and version",
+      "caption": "The file matches a signed version. Only its fingerprint left your device.",
+      "heading": "Check a file you already have",
+      "source": "08-verify-and-download/06b-verify-pdf-no-id-match.png"
+    },
+    {
+      "src": "/docs/screenshots/ch04-download-archive.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Download menu open on a paper page, offering the Paper archive with the scholium verify command for it",
+      "caption": "Download, then Paper archive, saves the .car file that the command-line verifier checks.",
+      "heading": "Check offline with the command-line verifier",
+      "source": "08-verify-and-download/05a-download-menu-archive.png"
+    },
+    {
+      "src": "/docs/screenshots/ch04-network-page.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Network page with the This node, Log head, Public timestamp (Anchor pending) and Probe pass rate cards",
+      "caption": "The network page shows who runs the server, the head of its public log and its timestamp status.",
+      "heading": "The network page",
+      "source": "09-preserve-and-transparency/01b-network-this-node.png"
+    }
+  ],
+  "05": [
+    {
+      "src": "/docs/screenshots/ch05-files-step.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Files step with the Paper and Code and data drop zones, and main.pdf uploaded with the role Paper PDF and its fingerprint matched",
+      "caption": "Step 1. Each uploaded file gets a role and is fingerprinted on your device.",
+      "heading": "Step 1: Files",
+      "source": "10-publish/02-pdf-uploaded.png"
+    },
+    {
+      "src": "/docs/screenshots/ch05-authors-step.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Authors step with the Add a co-author form and two authors, each with CRediT roles selected and move up and down buttons",
+      "caption": "Step 3. Add co-authors by DID and give everyone at least one CRediT role.",
+      "heading": "Step 3: Authors",
+      "source": "10-publish/04d-roles-and-consents.png"
+    },
+    {
+      "src": "/docs/screenshots/ch05-status-tracker.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The status tracker: Submitted done, Co-author consents 0 of 2 in progress with a Sign your consent button, then Scan, Moderation, Listed and AI pre-review not started",
+      "caption": "The tracker after submitting. The version waits until every author, including you, signs a consent.",
+      "heading": "After you submit: the status tracker",
+      "source": "10-publish/07b-status-tracker.png"
+    },
+    {
+      "src": "/docs/screenshots/ch05-issue-notice.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Issue a notice dialog with Correction selected over Retraction and Withdrawal, and a reason filled in",
+      "caption": "Issue notice offers a correction, a retraction or a withdrawal. A reason is required.",
+      "heading": "Corrections, retractions and withdrawals",
+      "source": "15-correction-notice/01-issue-notice-form.png"
+    }
+  ],
+  "06": [
+    {
+      "src": "/docs/screenshots/ch06-conflict-check.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The review form beside the paper: a You are reviewing anonymously notice, a conflict check with all three checks passed, and a sealed review of v1",
+      "caption": "The review form runs the conflict check and states whether you review anonymously.",
+      "heading": "2. The conflict check",
+      "source": "13-new-version-and-review-update/00c-solheim-sealed-seeded-review.png"
+    },
+    {
+      "src": "/docs/screenshots/ch06-reviews-revealed-and-sealed.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Reviews page with Reviewer A revealed, recommending Minor revisions with six scores and justifications, and Reviewer B not yet revealed",
+      "caption": "A revealed review shows its rubric and recommendation. A sealed one shows nothing yet.",
+      "heading": "6. Reveal the review",
+      "source": "12-review-commit-reveal/00a-anon-seeded-reviews.png"
+    }
+  ],
+  "07": [
+    {
+      "src": "/docs/screenshots/ch07-discussion-sign-in.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A paper's Discussion tab with no posts yet and a Sign in to start a thread or reply prompt",
+      "caption": "Anyone can read a discussion. Posting needs a signed-in member.",
+      "heading": "Who can take part",
+      "source": "01-read-feed-and-paper/04b-tab-discussion.png"
+    }
+  ],
+  "08": [
+    {
+      "src": "/docs/screenshots/ch08-ai-pre-review.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The AI pre-review page with the Advisory banner and a Methodology finding showing severity, confidence, a quotation from the paper and Rebut, Confirm and Wrong buttons",
+      "caption": "Each finding names its severity, confidence and evidence. The banner marks the report as advisory.",
+      "heading": "How to read a finding",
+      "source": "01-read-feed-and-paper/05d-standalone-ai.png"
+    }
+  ],
+  "09": [
+    {
+      "src": "/docs/screenshots/ch09-moderation-decision.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The moderation decision page with the paper on the left and, on the right, policy clause MOD-03, the reason for the author and the preview of what the author will see",
+      "caption": "A decision names a policy clause and a reason. The preview shows what the author will read.",
+      "heading": "For moderators: the console",
+      "source": "11-moderation-hold-and-appeal/02a-hold-preview.png"
+    },
+    {
+      "src": "/docs/screenshots/ch09-appeal-form.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Appeal the moderation decision dialog over a paper held from listing, showing the moderator's reason and the author's grounds for appeal",
+      "caption": "The appeal form quotes the moderator's reason. Your grounds are required.",
+      "heading": "Appeals",
+      "source": "11-moderation-hold-and-appeal/05a-appeal-form.png"
+    },
+    {
+      "src": "/docs/screenshots/ch09-panel-vote.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "An appeal waiting for the panel, with the decision appealed, the grounds, and the panel vote form with Outcome and Your reasons",
+      "caption": "A panel member reads the decision and the grounds, then votes with a reason.",
+      "heading": "If you are on a panel",
+      "source": "11-moderation-hold-and-appeal/08c-open-lands-on-appeal.png"
+    },
+    {
+      "src": "/docs/screenshots/ch09-report-paper.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Report this paper dialog with reasons from Research misconduct to Something else, and Duplicated figures selected",
+      "caption": "Reporting a paper. A moderator reviews every report and tells you the outcome.",
+      "heading": "Reporting content",
+      "source": "07-flag-and-dispute/01a-paper-report-panel.png"
+    }
+  ],
+  "10": [],
+  "11": []
+}

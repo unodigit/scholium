@@ -1,0 +1,112 @@
+{
+  "01": {
+    "youtube": "",
+    "duration_seconds": 273,
+    "poster": {
+      "src": "/docs/posters/ch01-how-scholium-works.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch01-how-scholium-works.vtt"
+  },
+  "02": {
+    "youtube": "",
+    "duration_seconds": 447,
+    "poster": {
+      "src": "/docs/posters/ch02-your-account.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch02-your-account.vtt"
+  },
+  "03": {
+    "youtube": "",
+    "duration_seconds": 356,
+    "poster": {
+      "src": "/docs/posters/ch03-reading-and-finding-papers.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch03-reading-and-finding-papers.vtt"
+  },
+  "04": {
+    "youtube": "",
+    "duration_seconds": 334,
+    "poster": {
+      "src": "/docs/posters/ch04-checking-a-paper-is-genuine.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch04-checking-a-paper-is-genuine.vtt"
+  },
+  "05": {
+    "youtube": "",
+    "duration_seconds": 424,
+    "poster": {
+      "src": "/docs/posters/ch05-publishing-a-paper.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch05-publishing-a-paper.vtt"
+  },
+  "06": {
+    "youtube": "",
+    "duration_seconds": 347,
+    "poster": {
+      "src": "/docs/posters/ch06-reviewing-a-paper.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch06-reviewing-a-paper.vtt"
+  },
+  "07": {
+    "youtube": "",
+    "duration_seconds": 141,
+    "poster": {
+      "src": "/docs/posters/ch07-discussion-and-annotations.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch07-discussion-and-annotations.vtt"
+  },
+  "08": {
+    "youtube": "",
+    "duration_seconds": 207,
+    "poster": {
+      "src": "/docs/posters/ch08-ai-pre-review.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch08-ai-pre-review.vtt"
+  },
+  "09": {
+    "youtube": "",
+    "duration_seconds": 383,
+    "poster": {
+      "src": "/docs/posters/ch09-moderation-appeals-and-reports.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch09-moderation-appeals-and-reports.vtt"
+  },
+  "10": {
+    "youtube": "",
+    "duration_seconds": 343,
+    "poster": {
+      "src": "/docs/posters/ch10-faq-and-known-limitations.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch10-faq-and-known-limitations.vtt"
+  },
+  "11": {
+    "youtube": "",
+    "duration_seconds": 285,
+    "poster": {
+      "src": "/docs/posters/ch11-glossary.webp",
+      "width": 1280,
+      "height": 720
+    },
+    "transcript": "transcripts/ch11-glossary.vtt"
+  }
+}

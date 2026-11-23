@@ -1,0 +1,241 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:02.563
+Chapter three: reading and finding papers.
+
+00:00:02.563 --> 00:00:05.648
+Anyone can read Scholium without an account.
+
+00:00:05.648 --> 00:00:09.615
+The home feed has three tabs. Latest shows newly listed papers.
+
+00:00:09.615 --> 00:00:12.574
+Reviewed shows papers with the status Reviewed.
+
+00:00:12.574 --> 00:00:17.760
+Following shows papers in the categories that you follow, after you sign in.
+
+00:00:17.760 --> 00:00:23.634
+Sort the feed by Newest, Recently reviewed or Recently updated, and filter it by category.
+
+00:00:23.634 --> 00:00:25.861
+Show more papers loads more.
+
+00:00:25.861 --> 00:00:32.696
+Each row shows the title, authors, categories, version, age, the start of the abstract and one status chip.
+
+00:00:32.696 --> 00:00:36.992
+There are no like counts, vote counts or popularity rankings.
+
+00:00:36.992 --> 00:00:40.870
+There are six status chips. Preprint: no formal reviews yet.
+
+00:00:40.870 --> 00:00:44.877
+Under review: a reviewer committed at least one formal review.
+
+00:00:44.877 --> 00:00:50.448
+Reviewed: two or more reviewers published reviews, and every review is positive.
+
+00:00:50.448 --> 00:00:56.664
+Contested: a reviewer judged the paper fundamentally flawed, or a moderator put it on hold.
+
+00:00:56.664 --> 00:00:59.875
+Corrected and Retracted: a notice is on record.
+
+00:00:59.875 --> 00:01:03.691
+Chapter six explains how Scholium sets the status.
+
+00:01:03.691 --> 00:01:08.356
+Authors choose a category from a list of 23 categories in seven fields.
+
+00:01:08.356 --> 00:01:12.304
+The Categories menu lists the three launch categories.
+
+00:01:12.304 --> 00:01:18.848
+Each category with papers has a page that lists its papers, with a Follow button and an Atom feed link.
+
+00:01:18.848 --> 00:01:23.485
+To search, use the search field in the navigation bar, or the search page.
+
+00:01:23.485 --> 00:01:25.365
+Keyword search is the default.
+
+00:01:25.365 --> 00:01:30.213
+It matches every word that you type in titles, abstracts and full text.
+
+00:01:30.213 --> 00:01:33.237
+Quotes and wildcards are ordinary characters.
+
+00:01:33.237 --> 00:01:36.866
+To find papers by related wording, switch to Semantic.
+
+00:01:36.866 --> 00:01:40.491
+In semantic mode, the filters are not available.
+
+00:01:40.491 --> 00:01:46.120
+Type a Scholium ID, which starts with sch:, and Scholium opens that paper.
+
+00:01:46.120 --> 00:01:50.704
+If the ID names a version, Scholium opens that version.
+
+00:01:50.704 --> 00:01:59.787
+Filters narrow keyword results: category and status, each with a count, a date range, and Code available, for papers with a code bundle.
+
+00:01:59.787 --> 00:02:03.975
+Choose Save this search, and new matches go into your daily digest.
+
+00:02:03.975 --> 00:02:10.939
+The digest needs a confirmed email address, and the confirmation tells you if yours is not confirmed yet.
+
+00:02:10.939 --> 00:02:14.497
+The Saved searches card on your dashboard lists your searches.
+
+00:02:14.497 --> 00:02:16.160
+Delete takes one away.
+
+00:02:16.160 --> 00:02:21.517
+To follow a category, choose Follow on its page, or pick categories during onboarding.
+
+00:02:21.517 --> 00:02:24.570
+Its new papers then appear in your Following tab.
+
+00:02:24.570 --> 00:02:27.461
+Papers and people have no Follow button.
+
+00:02:27.461 --> 00:02:31.681
+Every day at six o'clock UTC, Scholium sends a digest by email.
+
+00:02:31.681 --> 00:02:38.443
+It holds new papers in the categories that you follow, and new matches for your saved searches.
+
+00:02:38.443 --> 00:02:42.112
+The digest holds up to 50 papers from the last seven days.
+
+00:02:42.112 --> 00:02:48.080
+You get it only if your email address is confirmed, and only on days with something new.
+
+00:02:48.080 --> 00:02:54.651
+Each category also has a feed for feed readers and scripts, in Atom or JSON Feed format.
+
+00:02:54.651 --> 00:02:59.531
+You can set a limit from 1 to 100 papers. The default is 50.
+
+00:02:59.531 --> 00:03:02.885
+The address of a paper always shows its newest version.
+
+00:03:02.885 --> 00:03:05.968
+Each version also has an address of its own.
+
+00:03:05.968 --> 00:03:10.451
+The header starts with a link back to the main category, where you can follow it.
+
+00:03:10.451 --> 00:03:14.283
+Then come the title and the authors, each linked to a profile.
+
+00:03:14.283 --> 00:03:22.171
+Next are the status chip, the version and the licence, and the actions: PDF, HTML, Cite, Download and Report.
+
+00:03:22.171 --> 00:03:27.273
+Authors of the paper also see Invite reviewer, New version and Issue notice.
+
+00:03:27.273 --> 00:03:32.171
+After a moderation hold or rejection, they also see File an appeal.
+
+00:03:32.171 --> 00:03:40.400
+A banner across the top shows a retraction, a correction, a withdrawal by the authors, or content removed for legal reasons.
+
+00:03:40.400 --> 00:03:43.593
+A banner also tells you when you read an older version.
+
+00:03:43.593 --> 00:03:49.334
+Each banner links to the signed record behind it, and to the policy clause when one applies.
+
+00:03:49.334 --> 00:03:51.965
+HTML is the default reading view.
+
+00:03:51.965 --> 00:03:56.669
+Its mathematics is typeset, and screen readers can read it.
+
+00:03:56.669 --> 00:03:59.380
+PDF shows the PDF inside the page.
+
+00:03:59.380 --> 00:04:04.006
+On phones, the PDF opens in your device's own viewer.
+
+00:04:04.006 --> 00:04:08.356
+The margin panel is beside the text, or below it on small screens.
+
+00:04:08.356 --> 00:04:16.139
+At its top are the verification badge, Details, the paper's ID, which you click to copy, and the timestamp line.
+
+00:04:16.139 --> 00:04:21.210
+Below them are six tabs: Reviews, AI, Discussion, Versions, Files and Proof.
+
+00:04:21.210 --> 00:04:26.480
+Each tab has its own address that you can link to, and a page of its own.
+
+00:04:26.480 --> 00:04:28.424
+Nobody edits a published paper.
+
+00:04:28.424 --> 00:04:33.253
+The authors publish a new version, and every earlier version stays available.
+
+00:04:33.253 --> 00:04:37.227
+The Versions tab lists each version with its change note.
+
+00:04:37.227 --> 00:04:41.253
+Viewing marks the version that you read, and Latest marks the newest.
+
+00:04:41.253 --> 00:04:44.454
+Compare shows what changed between two versions.
+
+00:04:44.454 --> 00:04:49.937
+The Files tab lists each file with its role, size, licence and safety scan result.
+
+00:04:49.937 --> 00:04:53.280
+You can download a file only when its scan passed.
+
+00:04:53.280 --> 00:04:56.288
+For other files, the tab tells you why.
+
+00:04:56.288 --> 00:05:00.850
+Cite gives BibTeX and RIS, each with Copy and a download button.
+
+00:05:00.850 --> 00:05:05.456
+A citation of a retracted paper includes a retraction note.
+
+00:05:05.456 --> 00:05:11.792
+Download, then Paper archive, saves every version, file and signed record of the paper in one file.
+
+00:05:11.792 --> 00:05:15.712
+Anyone can check it offline with the Scholium verifier.
+
+00:05:15.712 --> 00:05:20.499
+On the keyboard, Tab moves to a paragraph, and the A key annotates it.
+
+00:05:20.499 --> 00:05:24.191
+Arrow keys, Home and End move between the margin tabs.
+
+00:05:24.191 --> 00:05:26.779
+Escape closes dialogs and menus.
+
+00:05:26.779 --> 00:05:30.605
+Status always has an icon and a word, never colour alone.
+
+00:05:30.605 --> 00:05:34.633
+The site follows your dark mode and reduced motion settings.
+
+00:05:34.633 --> 00:05:40.000
+The feed, search, category pages and paper header work without JavaScript.
+
+00:05:40.000 --> 00:05:42.419
+In short: anyone can read and search.
+
+00:05:42.419 --> 00:05:46.863
+After you sign in, you can follow categories and get a daily digest.
+
+00:05:46.863 --> 00:05:52.223
+Every version keeps its own address, and you can cite it or take its archive away.
+
+00:05:52.223 --> 00:05:55.760
+Next, chapter four: checking a paper is genuine.

@@ -1,0 +1,295 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:02.129
+Chapter five: publishing a paper.
+
+00:00:02.129 --> 00:00:08.336
+From files on your computer to a listed, citable paper, and then new versions and notices.
+
+00:00:08.336 --> 00:00:13.493
+Before you start, check five things. Each one stops a submission if it is missing.
+
+00:00:13.493 --> 00:00:16.038
+Only tier two, Author, can start papers.
+
+00:00:16.038 --> 00:00:19.409
+You need an endorsement in every category you choose.
+
+00:00:19.409 --> 00:00:24.325
+Co-authors copy their DID from the Credentials card on their dashboard.
+
+00:00:24.325 --> 00:00:27.108
+The submit page lists anything that blocks you.
+
+00:00:27.108 --> 00:00:31.296
+For example, new Author accounts can start one new paper a week.
+
+00:00:31.296 --> 00:00:36.569
+You sign and submit. Every co-author consents. A safety scan checks the files.
+
+00:00:36.569 --> 00:00:42.512
+Then a moderator decides. A listed paper gets an AI pre-review and formal reviews.
+
+00:00:42.512 --> 00:00:46.679
+The path can stop at three points. A decline stops the version.
+
+00:00:46.679 --> 00:00:49.722
+A failed scan holds it until you fix the file.
+
+00:00:49.722 --> 00:00:54.091
+A hold or rejection gives a reason, and you can appeal once.
+
+00:00:54.091 --> 00:00:56.340
+Choose Submit in the navigation bar.
+
+00:00:56.340 --> 00:01:00.526
+The wizard has five steps, and saves your progress in this browser.
+
+00:01:00.526 --> 00:01:05.861
+After you submit, the draft is cleared. If submitting fails, the draft is kept.
+
+00:01:05.861 --> 00:01:11.410
+Step one: files. The Paper zone takes your PDF, LaTeX source and figures.
+
+00:01:11.410 --> 00:01:15.286
+Code and data are optional, as zip or tar archives.
+
+00:01:15.286 --> 00:01:18.955
+You need a PDF or LaTeX source to continue.
+
+00:01:18.955 --> 00:01:23.795
+A PDF can be up to 50 MiB, and any other file up to 5 GiB.
+
+00:01:23.795 --> 00:01:27.967
+Accounts under 90 days old can upload 2 GiB a day.
+
+00:01:27.967 --> 00:01:31.621
+Older accounts can upload 20 GiB a day.
+
+00:01:31.621 --> 00:01:37.852
+Each file gets a role, such as Paper PDF. Uploads resume after a dropped connection.
+
+00:01:37.852 --> 00:01:41.664
+Unfinished uploads are deleted after 24 hours.
+
+00:01:41.664 --> 00:01:42.934
+Step two: details.
+
+00:01:42.934 --> 00:01:47.873
+The title can have up to 300 characters, and the abstract up to 5,000.
+
+00:01:47.873 --> 00:01:51.471
+Scholium does not read the abstract from your file.
+
+00:01:51.471 --> 00:01:54.693
+Choose one to three endorsed categories.
+
+00:01:54.693 --> 00:01:57.014
+The default licence is CC BY 4.0.
+
+00:01:57.014 --> 00:02:00.671
+Each option says whether journals usually accept it.
+
+00:02:00.671 --> 00:02:04.587
+You cannot change the licence of a signed version.
+
+00:02:04.587 --> 00:02:07.838
+Step three: authors. You are on the list already.
+
+00:02:07.838 --> 00:02:13.078
+Add each co-author by DID, and give everyone at least one CRediT role, you too.
+
+00:02:13.078 --> 00:02:15.867
+Move up and Move down set the order.
+
+00:02:15.867 --> 00:02:21.708
+Use DIDs. In this release, Scholium cannot find an account by ORCID iD or email.
+
+00:02:21.708 --> 00:02:29.045
+Such an author shows Not matched, and blocks the step until you remove them or add them by DID.
+
+00:02:29.045 --> 00:02:31.402
+Step four lists the automated checks.
+
+00:02:31.402 --> 00:02:36.752
+They run after you sign and every co-author consents, so here they show Not run yet.
+
+00:02:36.752 --> 00:02:38.235
+You can continue.
+
+00:02:38.235 --> 00:02:42.294
+Step five: sign. Review the summary. You are signing version one.
+
+00:02:42.294 --> 00:02:47.189
+You cannot edit it later, but you can publish a new version at any time.
+
+00:02:47.189 --> 00:02:48.652
+Choose Sign and submit.
+
+00:02:48.652 --> 00:02:54.884
+Your device signs the paper, its file list and its first version, so expect three passkey prompts.
+
+00:02:54.884 --> 00:02:57.573
+Then you see Submitted, version one.
+
+00:02:57.573 --> 00:03:03.149
+The status tracker shows each stage as Done, In progress, Needs attention or Not started.
+
+00:03:03.149 --> 00:03:07.808
+You must consent too. A Sign your consent button stays until you do.
+
+00:03:07.808 --> 00:03:11.066
+Nobody can be published as an author without agreeing.
+
+00:03:11.066 --> 00:03:16.294
+Every author gets a notification, and an email if they have a confirmed address.
+
+00:03:16.294 --> 00:03:22.429
+On the Review and sign page, you can add a public comment, then accept or decline authorship.
+
+00:03:22.429 --> 00:03:28.107
+A decline asks you to confirm. The files open only after the safety scan passes.
+
+00:03:28.107 --> 00:03:31.844
+If everyone accepts, the version goes to the safety scan.
+
+00:03:31.844 --> 00:03:37.351
+If anyone declines, it returns to draft and names who declined. It cannot ask again.
+
+00:03:37.351 --> 00:03:41.947
+Fix the author list and submit a new version. Answers are final.
+
+00:03:41.947 --> 00:03:46.016
+Scholium inspects your files before anyone can open them.
+
+00:03:46.016 --> 00:03:55.583
+It checks PDFs for embedded JavaScript and files, actions that launch programs, hidden text, and text that tries to instruct AI tools.
+
+00:03:55.583 --> 00:03:58.411
+Encrypted or unreadable PDFs fail.
+
+00:03:58.411 --> 00:04:03.586
+Archives are checked for unsafe paths, links and malware. Files are never changed.
+
+00:04:03.586 --> 00:04:08.130
+If a file fails, the version is held, and the tracker shows what failed.
+
+00:04:08.130 --> 00:04:10.928
+Fix the file and submit a new version.
+
+00:04:10.928 --> 00:04:13.566
+At moderation, Scholium runs three checks.
+
+00:04:13.566 --> 00:04:19.243
+You and the moderators see the results before listing, and everyone sees them after.
+
+00:04:19.243 --> 00:04:24.841
+Similarity reports the highest overlap of five-word phrases with any listed paper.
+
+00:04:24.841 --> 00:04:31.248
+Under 15 percent is Low overlap, from 15 percent Worth a look, and from 30 percent High.
+
+00:04:31.248 --> 00:04:35.037
+References reports how many references could be resolved.
+
+00:04:35.037 --> 00:04:38.760
+Metadata match checks for your signed title on page one.
+
+00:04:38.760 --> 00:04:42.948
+High similarity and unresolved references do not block listing.
+
+00:04:42.948 --> 00:04:46.539
+A failed file or a title mismatch must be fixed.
+
+00:04:46.539 --> 00:04:54.652
+A volunteer moderator reviews every new version, with a target of 48 hours, and can list, hold, reclassify or reject it.
+
+00:04:54.652 --> 00:05:00.528
+Every decision names a policy clause and a reason, and is a public signed record.
+
+00:05:00.528 --> 00:05:05.273
+If your paper is held or rejected, the first author gets a notification.
+
+00:05:05.273 --> 00:05:09.687
+The paper page shows the reason, and says that you can appeal once.
+
+00:05:09.687 --> 00:05:12.064
+Chapter nine explains appeals.
+
+00:05:12.064 --> 00:05:16.465
+A listed paper has a permanent ID, and each version has its own.
+
+00:05:16.465 --> 00:05:22.640
+The ID ends in a checksum, so typos are caught. A search for the ID opens the paper.
+
+00:05:22.640 --> 00:05:27.978
+The paper appears in the feed, its category, search, Atom feeds and daily digests.
+
+00:05:27.978 --> 00:05:31.493
+The AI pre-review starts, and reviewers can review it.
+
+00:05:31.493 --> 00:05:34.496
+Invite reviewer points a reviewer at it.
+
+00:05:34.496 --> 00:05:38.626
+Papers are never edited. Choose New version on your paper page.
+
+00:05:38.626 --> 00:05:41.249
+The form starts from the latest version.
+
+00:05:41.249 --> 00:05:46.566
+Keep or replace files, write the required change note, and sign and submit.
+
+00:05:46.566 --> 00:05:52.490
+The new version goes through consent, the scan and moderation again, with the same author list.
+
+00:05:52.490 --> 00:05:56.544
+Earlier versions stay available, and show A newer version exists.
+
+00:05:56.544 --> 00:06:00.811
+The latest version's authors, or a moderator, can publish one.
+
+00:06:00.811 --> 00:06:05.376
+To add a notice, use Issue notice on the paper page and give a reason.
+
+00:06:05.376 --> 00:06:10.406
+Any author, or a moderator, can issue one. It applies to every version.
+
+00:06:10.406 --> 00:06:13.670
+A correction notes an error, but the work stands.
+
+00:06:13.670 --> 00:06:17.667
+A retraction says readers should no longer rely on the work.
+
+00:06:17.667 --> 00:06:22.597
+The status becomes Corrected or Retracted, with a banner on every version.
+
+00:06:22.597 --> 00:06:25.462
+A retraction also shows in citations.
+
+00:06:25.462 --> 00:06:28.826
+A withdrawal says you no longer stand behind the paper.
+
+00:06:28.826 --> 00:06:34.025
+A banner shows your reason, the status does not change, and the files stay available.
+
+00:06:34.025 --> 00:06:38.768
+Retraction and withdrawal ask you to confirm. You cannot undo a notice.
+
+00:06:38.768 --> 00:06:41.729
+Moderators can mirror paper details from arXiv.
+
+00:06:41.729 --> 00:06:49.942
+In this release, imports work through the API only, and you cannot yet claim an imported paper as its author in the web app.
+
+00:06:49.942 --> 00:06:54.445
+In short: check your tier, endorsements and co-author DIDs first.
+
+00:06:54.445 --> 00:06:57.701
+Every author consents, and a moderator decides.
+
+00:06:57.701 --> 00:07:01.373
+To change a paper, publish a new version or a notice.
+
+00:07:01.373 --> 00:07:04.336
+Next, chapter six: reviewing a paper.

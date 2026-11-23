@@ -74,7 +74,9 @@ flowchart TD
 
 | Page | Address | What it is for |
 | --- | --- | --- |
-| Home feed | `/` | Latest, Reviewed and Following papers |
+| Home | `/` | What Scholium is, with links to the papers and this handbook |
+| Papers | `/papers` | Latest, Reviewed and Following papers |
+| Docs | `/docs` | This handbook, with screenshots and a short video per chapter |
 | Category | `/c/{category}` | One category's papers, follow it, its Atom feed |
 | Search | `/search` | Keyword and semantic search with filters |
 | Paper | `/p/{id}` | Read a paper; its reviews, AI report, discussion, versions, files and proof |

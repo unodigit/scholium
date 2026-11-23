@@ -8,7 +8,7 @@ Go to **/signin** and choose **Sign in with passkey**.
 
 - **Your first sign-in creates your account.** Your browser makes a signing key on your device and protects it with a passkey (Face ID, Touch ID, Windows Hello or a security key). The key cannot be copied out of the browser, and Scholium never sees it. The page says so: "Use your passkey to sign in. Scholium never sees your key."
 - **Your account's public identifier is a DID**, a string that starts with `did:key:`. It appears on your public profile and in every record you sign. You will need it when people endorse you or name you as a recovery guardian.
-- **New accounts go to onboarding** (next section). Returning users go back to the page they came from, or to the home feed.
+- **New accounts go to onboarding** (next section). Returning users go back to the page they came from, or to the paper list (**/papers**).
 
 > **Use one browser on one device.** In this release an account belongs to the browser and device where you created it. There is no "add a device" feature yet. Signing in from a different browser or computer creates a separate, new account.
 

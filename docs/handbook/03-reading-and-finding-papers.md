@@ -2,9 +2,9 @@
 
 Anyone can read Scholium without an account. This chapter covers the feed, search, following categories, the paper page and citing.
 
-## The home feed
+## The paper list
 
-The home page (**/**) lists papers with three tabs:
+The **Papers** page (**/papers**) lists papers with three tabs. The home page (**/**) explains what Scholium is; its **Browse papers** button opens the list.
 
 | Tab | Shows |
 | --- | --- |

@@ -1,0 +1,256 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.889
+Chapter ten: frequently asked questions and known limitations.
+
+00:00:03.889 --> 00:00:06.460
+First, short answers to common questions.
+
+00:00:06.460 --> 00:00:10.875
+Then the deliberate limits of this release, and one known issue.
+
+00:00:10.875 --> 00:00:15.563
+Is Scholium free? Yes. Scholium is free to read and free to publish.
+
+00:00:15.563 --> 00:00:20.001
+Is Scholium a journal? No. Scholium lists, reviews and badges papers.
+
+00:00:20.001 --> 00:00:25.468
+Listing means that a moderator found the submission in scope and within the policies.
+
+00:00:25.468 --> 00:00:28.763
+It does not mean that the science is correct.
+
+00:00:28.763 --> 00:00:31.457
+The formal reviews are where the work is judged.
+
+00:00:31.457 --> 00:00:33.877
+They show openly, next to the paper.
+
+00:00:33.877 --> 00:00:38.243
+Can I post a paper that is also on arXiv, or submit it to a journal?
+
+00:00:38.243 --> 00:00:43.187
+Cross-posting is expected. Choose a licence that your target journal accepts.
+
+00:00:43.187 --> 00:00:47.760
+The licence picker tells you which licences most journals accept.
+
+00:00:47.760 --> 00:00:50.445
+Can I change my paper after it is published?
+
+00:00:50.445 --> 00:00:54.228
+Not the version itself, because a signed version is permanent.
+
+00:00:54.228 --> 00:00:59.509
+Publish a new version with a change note. Every earlier version stays available.
+
+00:00:59.509 --> 00:01:03.496
+Can I delete my paper? No. Scholium keeps a permanent record.
+
+00:01:03.496 --> 00:01:08.921
+You can issue a withdrawal or a retraction notice, which shows alongside the paper.
+
+00:01:08.921 --> 00:01:16.315
+A moderator takes down content that must be removed for legal reasons, and a notice of its removal remains.
+
+00:01:16.315 --> 00:01:18.766
+Why does every paper say anchor pending?
+
+00:01:18.766 --> 00:01:22.505
+Public blockchain timestamps are planned for a later release.
+
+00:01:22.505 --> 00:01:26.428
+Your browser still checks signatures, history and files in full.
+
+00:01:26.428 --> 00:01:31.669
+Signed, anchor pending is the best result in this release. It is not a warning.
+
+00:01:31.669 --> 00:01:35.035
+My badge says could not check. Is the paper fake? No.
+
+00:01:35.035 --> 00:01:41.069
+Your browser could not finish the check, usually because you are offline or the server is busy.
+
+00:01:41.069 --> 00:01:43.120
+Choose Re-run check later.
+
+00:01:43.120 --> 00:01:48.256
+Only Verification failed, with a red cross, means that something does not match.
+
+00:01:48.256 --> 00:01:50.990
+Who can see my email address? Nobody else.
+
+00:01:50.990 --> 00:01:55.156
+Scholium uses it to confirm your account and to send you emails.
+
+00:01:55.156 --> 00:01:57.174
+It never shows on your profile.
+
+00:01:57.174 --> 00:02:02.651
+Your name, affiliation and email are stored encrypted, and you can erase them.
+
+00:02:02.651 --> 00:02:05.354
+Will authors know who reviewed their paper?
+
+00:02:05.354 --> 00:02:08.622
+Not if you review anonymously, which is the default.
+
+00:02:08.622 --> 00:02:10.760
+Your review appears as Reviewer A.
+
+00:02:10.760 --> 00:02:14.805
+Your identity is held in escrow for misconduct cases only.
+
+00:02:14.805 --> 00:02:19.685
+If you choose Sign with my name instead, your review shows on your public profile.
+
+00:02:19.685 --> 00:02:22.421
+Why can't I see the reviews on a paper yet?
+
+00:02:22.421 --> 00:02:27.191
+Reviews stay sealed until a second reviewer commits, or until 21 days pass.
+
+00:02:27.191 --> 00:02:29.990
+Then each reviewer reveals their own review.
+
+00:02:29.990 --> 00:02:33.952
+The Reviews tab tells you when a report is still sealed.
+
+00:02:33.952 --> 00:02:37.819
+Does the AI pre-review affect the status of my paper? No.
+
+00:02:37.819 --> 00:02:42.364
+It is advisory only, and there is no path from AI output to status.
+
+00:02:42.364 --> 00:02:44.528
+You can rebut any finding.
+
+00:02:44.528 --> 00:02:47.308
+I lost my phone or laptop. What do I do?
+
+00:02:47.308 --> 00:02:52.728
+On a new device, go to the recover page and start recovery with your ORCID iD.
+
+00:02:52.728 --> 00:02:58.688
+Three of your five guardians must approve. Then a 72-hour safety window follows.
+
+00:02:58.688 --> 00:03:03.527
+Without a linked ORCID iD and saved guardians, recovery is not possible.
+
+00:03:03.527 --> 00:03:05.339
+So set up both early.
+
+00:03:05.339 --> 00:03:07.838
+How do I become a reviewer or moderator?
+
+00:03:07.838 --> 00:03:12.800
+The node operator grants tiers three and four. Contact the node operator.
+
+00:03:12.800 --> 00:03:14.299
+What emails will I get?
+
+00:03:14.299 --> 00:03:18.795
+Email confirmation, co-author consent requests, and the daily digest.
+
+00:03:18.795 --> 00:03:25.189
+Also the notice that someone started a recovery of your account, if your email is confirmed.
+
+00:03:25.189 --> 00:03:30.294
+Everything else is a notification in Scholium, in the bell or on your dashboard.
+
+00:03:30.294 --> 00:03:39.499
+This includes moderation outcomes, report outcomes, appeal notices, and the recovery requests that you are asked to approve as a guardian.
+
+00:03:39.499 --> 00:03:43.840
+Now the known limitations. These are deliberate limits of the first release.
+
+00:03:43.840 --> 00:03:45.211
+Plan around them.
+
+00:03:45.211 --> 00:03:49.680
+Accounts. One browser holds one account. You cannot add a second device.
+
+00:03:49.680 --> 00:03:54.549
+If you sign in from another browser, you create a new, separate account.
+
+00:03:54.549 --> 00:03:57.982
+You can edit your profile only on the onboarding page.
+
+00:03:57.982 --> 00:04:01.115
+You cannot unlink or re-link your ORCID iD.
+
+00:04:01.115 --> 00:04:04.385
+Publishing. You must add co-authors by their DID.
+
+00:04:04.385 --> 00:04:07.656
+Lookup by ORCID iD or email is not available yet.
+
+00:04:07.656 --> 00:04:12.928
+Your browser keeps your submission drafts. The server does not keep them.
+
+00:04:12.928 --> 00:04:17.090
+Scholium does not read the abstract from your file, so paste it in.
+
+00:04:17.090 --> 00:04:21.094
+Claiming a paper imported from arXiv is not available yet.
+
+00:04:21.094 --> 00:04:25.834
+Reviewing. You cannot save a review draft, so complete the form in one sitting.
+
+00:04:25.834 --> 00:04:30.795
+Revealing is manual. Come back and choose Reveal review when the gate opens.
+
+00:04:30.795 --> 00:04:34.080
+Your review key lives in the browser where you committed.
+
+00:04:34.080 --> 00:04:37.766
+If you might switch browsers, export the review key file.
+
+00:04:37.766 --> 00:04:40.366
+You cannot accept or decline invitations.
+
+00:04:40.366 --> 00:04:45.334
+Scholium records review ratings, but does not use them for anything yet.
+
+00:04:45.334 --> 00:04:50.320
+Discussion. You cannot edit or delete posts, and you cannot withdraw helpful votes.
+
+00:04:50.320 --> 00:04:53.904
+There is no blocking, and no muting from the web app.
+
+00:04:53.904 --> 00:04:58.955
+Annotations attach to a whole paragraph. They do not carry over to new versions.
+
+00:04:58.955 --> 00:04:59.491
+Network.
+
+00:04:59.491 --> 00:05:05.518
+Public timestamps, called anchoring, are not enabled, so every paper shows anchor pending.
+
+00:05:05.518 --> 00:05:08.665
+Each server keeps one local copy of each paper.
+
+00:05:08.665 --> 00:05:12.347
+Replication across several operators comes later.
+
+00:05:12.347 --> 00:05:17.564
+One known issue. A recovery of your own account also shows as a guardian request.
+
+00:05:17.564 --> 00:05:22.923
+It shows on your dashboard, and under Recovery requests on the security page.
+
+00:05:22.923 --> 00:05:24.052
+Do not approve it.
+
+00:05:24.052 --> 00:05:29.531
+Cancel it, as chapter two describes in the section: a recovery you did not start.
+
+00:05:29.531 --> 00:05:32.882
+In short: Scholium is free, and it is not a journal.
+
+00:05:32.882 --> 00:05:37.199
+A signed version is permanent, and anchor pending is not a warning.
+
+00:05:37.199 --> 00:05:42.560
+Plan around the limits of this first release. Next, chapter eleven: glossary.

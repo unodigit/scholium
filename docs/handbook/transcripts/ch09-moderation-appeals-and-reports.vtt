@@ -1,0 +1,253 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.104
+Chapter nine: moderation, appeals and reports.
+
+00:00:03.104 --> 00:00:06.005
+Scholium does not accept or reject science.
+
+00:00:06.005 --> 00:00:12.411
+Moderators decide only whether a submission belongs on the network under published rules.
+
+00:00:12.411 --> 00:00:15.228
+Every decision cites a rule and gives a reason.
+
+00:00:15.228 --> 00:00:18.805
+Every decision is public, and you can appeal it once.
+
+00:00:18.805 --> 00:00:23.909
+Moderators are experienced members at tier four. The node operator appoints them.
+
+00:00:23.909 --> 00:00:29.979
+Every new version, and every reported paper or post, goes to them in the moderation queue.
+
+00:00:29.979 --> 00:00:34.744
+Each decision must cite a policy clause and give a reason that the author sees.
+
+00:00:34.744 --> 00:00:37.156
+Each decision is a public signed record.
+
+00:00:37.156 --> 00:00:40.512
+Its banner links to the record and to the clause.
+
+00:00:40.512 --> 00:00:45.207
+The network page shows how many decisions moderators made under each clause.
+
+00:00:45.207 --> 00:00:50.981
+The policies page shows the full text of each clause, and each clause has its own link.
+
+00:00:50.981 --> 00:00:52.380
+There are ten clauses.
+
+00:00:52.380 --> 00:01:00.981
+The first five are about work that is out of scope, plagiarism, fabrication and paper mills, hostile files, and unlawful content.
+
+00:01:00.981 --> 00:01:08.157
+The other five are about privacy, misconduct allegations, identity and consent, spam, and the wrong category.
+
+00:01:08.157 --> 00:01:12.107
+Node operators can publish their own version of the clauses.
+
+00:01:12.107 --> 00:01:15.931
+The policies page always shows the clauses in force.
+
+00:01:15.931 --> 00:01:23.162
+A moderator can list a version, hold it until a problem is fixed, move it to another category, or reject it.
+
+00:01:23.162 --> 00:01:26.041
+A moderator can also delist a listed paper.
+
+00:01:26.041 --> 00:01:29.856
+A hold on a listed paper makes the paper Contested.
+
+00:01:29.856 --> 00:01:35.899
+For a report, a moderator can dismiss the flag, which closes the report with no action.
+
+00:01:35.899 --> 00:01:40.344
+A moderator can also hide a reported post, annotation or review.
+
+00:01:40.344 --> 00:01:45.467
+A legal takedown deletes the files, but a notice of removal remains.
+
+00:01:45.467 --> 00:01:48.461
+The console lists waiting items, oldest first.
+
+00:01:48.461 --> 00:01:56.987
+Each row shows the paper, its category, its waiting time, the similarity percentage, the unresolved references and the scan result.
+
+00:01:56.987 --> 00:02:02.464
+A new account flag marks authors whose accounts are less than ninety days old.
+
+00:02:02.464 --> 00:02:07.452
+Open an item to see the paper beside the decision form. First choose the action.
+
+00:02:07.452 --> 00:02:10.907
+Then choose the policy clause, which is required.
+
+00:02:10.907 --> 00:02:15.638
+Write the reason that the author will see. Reclassify also needs the new category.
+
+00:02:15.638 --> 00:02:18.923
+Then read the preview of what the author will see.
+
+00:02:18.923 --> 00:02:20.431
+Then choose Sign decision.
+
+00:02:20.431 --> 00:02:24.485
+The form tells you that the decision is a public signed record.
+
+00:02:24.485 --> 00:02:29.874
+Moderators can decide only versions that finished co-author consent and the safety scan.
+
+00:02:29.874 --> 00:02:36.213
+When the safety scan holds a version, the version waits for the author to submit a fixed version.
+
+00:02:36.213 --> 00:02:42.078
+If moderation holds or rejects your paper, you can ask a panel of your peers for a fresh look.
+
+00:02:42.078 --> 00:02:48.965
+Any author of the paper can appeal: the submitter, the signer of a version, or a co-author who accepted.
+
+00:02:48.965 --> 00:02:52.063
+For a hidden post or review, its author can appeal.
+
+00:02:52.063 --> 00:02:54.431
+Other readers see only the placeholder.
+
+00:02:54.431 --> 00:02:59.351
+You see the reason, the start of your post, Show my post, and the appeal control.
+
+00:02:59.351 --> 00:03:02.059
+So you can tell which post was hidden.
+
+00:03:02.059 --> 00:03:04.326
+You can appeal once for each decision.
+
+00:03:04.326 --> 00:03:09.499
+One appeal covers all the co-authors, so agree among yourselves before you file.
+
+00:03:09.499 --> 00:03:13.230
+To appeal, open your paper page and choose File an appeal.
+
+00:03:13.230 --> 00:03:18.133
+This button appears when the latest decision is a hold or a rejection.
+
+00:03:18.133 --> 00:03:21.040
+Explain your grounds. The grounds are required.
+
+00:03:21.040 --> 00:03:25.275
+Then the page shows: Appeal filed on the date, awaiting panel.
+
+00:03:25.275 --> 00:03:28.738
+Three members at tier three or tier four form the panel.
+
+00:03:28.738 --> 00:03:34.208
+The server draws the panel by a fixed procedure, so nobody can choose its members.
+
+00:03:34.208 --> 00:03:36.503
+Some people cannot sit on the panel.
+
+00:03:36.503 --> 00:03:45.061
+These are the moderator who decided, you, every author of the paper, the author of the decided item, and anyone who reported it.
+
+00:03:45.061 --> 00:03:47.435
+The panel gets fourteen days to vote.
+
+00:03:47.435 --> 00:03:54.251
+Each member votes to uphold the decision, overturn it, modify it, or send it back to the moderators.
+
+00:03:54.251 --> 00:03:56.738
+Uphold means that the decision stands.
+
+00:03:56.738 --> 00:04:02.563
+Overturn reverses the decision, and the paper automatically returns to its earlier state.
+
+00:04:02.563 --> 00:04:05.901
+For modify, moderators act on a different decision.
+
+00:04:05.901 --> 00:04:09.115
+For send back, moderators look at it again.
+
+00:04:09.115 --> 00:04:10.667
+Two matching votes decide.
+
+00:04:10.667 --> 00:04:15.126
+The outcome is a public signed record with the reasons of the panel.
+
+00:04:15.126 --> 00:04:19.422
+Then you get a notice, for example: The appeal panel upheld the decision.
+
+00:04:19.422 --> 00:04:24.059
+When the panel overturns the decision, you get an Appeal outcome notice.
+
+00:04:24.059 --> 00:04:29.157
+If there are not enough eligible members, the appeal shows panel not yet formed.
+
+00:04:29.157 --> 00:04:33.617
+Scholium tries again every day, and when someone new becomes eligible.
+
+00:04:33.617 --> 00:04:39.115
+After the deadline, a moderator who was not involved may decide without a panel.
+
+00:04:39.115 --> 00:04:43.969
+If you are on a panel, the duty appears in Needs your attention on your dashboard.
+
+00:04:43.969 --> 00:04:48.408
+Read the decision, the paper and the grounds. Then vote, and give a reason.
+
+00:04:48.408 --> 00:04:50.288
+Your reason is published.
+
+00:04:50.288 --> 00:04:55.872
+Any signed-in member can report a paper or a discussion post with the Report button.
+
+00:04:55.872 --> 00:05:05.046
+For a paper, the reasons are research misconduct, plagiarism, duplicated figures, spam or advertising, off topic, or something else.
+
+00:05:05.046 --> 00:05:14.534
+For a post, the reasons are spam or advertising, harassment or abuse, off topic, misleading or false, a legal problem, or something else.
+
+00:05:14.534 --> 00:05:19.871
+After you report, you see Reported, and this message: A moderator reviews every report.
+
+00:05:19.871 --> 00:05:22.358
+You will be told what was decided.
+
+00:05:22.358 --> 00:05:25.622
+Your report goes to the moderation queue as a flag.
+
+00:05:25.622 --> 00:05:30.486
+A moderator decides it, for example to dismiss the flag or to hide the post.
+
+00:05:30.486 --> 00:05:33.254
+Then you get a notice of the outcome.
+
+00:05:33.254 --> 00:05:39.528
+The notice includes the note of the moderator, for example that the paper was reviewed and kept listed.
+
+00:05:39.528 --> 00:05:44.192
+Reports are private. Only you and the moderators can read your report.
+
+00:05:44.192 --> 00:05:49.606
+When content must be removed for legal reasons, a moderator issues a legal takedown.
+
+00:05:49.606 --> 00:05:53.744
+The files are deleted, and nobody can download them again.
+
+00:05:53.744 --> 00:05:57.322
+The paper page shows: Content removed for legal reasons.
+
+00:05:57.322 --> 00:05:59.623
+The record of its existence remains.
+
+00:05:59.623 --> 00:06:07.243
+The signed history still verifies, so the record of the network stays complete and honest about what was removed.
+
+00:06:07.243 --> 00:06:14.951
+In short: moderators decide only whether a submission is listed, and every decision cites a clause and gives a reason.
+
+00:06:14.951 --> 00:06:18.609
+You can appeal once, and a panel of three peers decides.
+
+00:06:18.609 --> 00:06:23.451
+Next, chapter ten: frequently asked questions and known limitations.
