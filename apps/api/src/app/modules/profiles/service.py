@@ -264,6 +264,30 @@ def erase_profile(did: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _settle_verification_notices(did: str, *, keep_id: Optional[int] = None) -> None:
+    """Mark ``did``'s unread email-verification notices read, except ``keep_id``.
+
+    Only the newest link is worth acting on: a fresh notice supersedes the
+    earlier ones (a profile saved twice must not ask for the same address
+    twice), and redeeming a link settles the reminder entirely.  Best-effort by
+    design -- an inbox that cannot be tidied must not fail the save or the
+    verification.
+    """
+    try:
+        from app.modules.notifications.service import list_notifications, mark_read
+
+        for notification in list_notifications(did):
+            if getattr(notification, "kind", None) != EMAIL_VERIFICATION_KIND:
+                continue
+            if getattr(notification, "read", True):
+                continue
+            if keep_id is not None and getattr(notification, "id", None) == keep_id:
+                continue
+            mark_read(did, notification.id)
+    except Exception:
+        pass
+
+
 def send_verification_email(
     did: str,
     email: str,
@@ -276,6 +300,10 @@ def send_verification_email(
     transport, or the notifications plugin itself, is unavailable.  ``None``
     means "could not hand the message to notifications" -- the profile is
     still saved and a later PUT mints a fresh link.
+
+    A fresh notice settles the DID's earlier unread ones, so saving the same
+    address twice leaves one reminder (carrying the newest link) rather than a
+    stack of identical ones.
     """
     _require_did(did)
     token = issue_verification_token(did, email, now=now)
@@ -289,10 +317,11 @@ def send_verification_email(
         return None
 
     try:
-        notify(did, EMAIL_VERIFICATION_KIND, payload)
+        notification = notify(did, EMAIL_VERIFICATION_KIND, payload)
     except Exception:
         logger.exception("could not send the email verification link for %s", did)
         return None
+    _settle_verification_notices(did, keep_id=getattr(notification, "id", None))
     return payload
 
 
@@ -338,14 +367,7 @@ def mark_email_verified(
         session.commit()
 
     # The verification notification no longer needs attention.
-    try:
-        from app.modules.notifications.service import list_notifications, mark_read
-
-        for notification in list_notifications(did):
-            if getattr(notification, "kind", None) == "email.verify" and not getattr(notification, "read", True):
-                mark_read(did, notification.id)
-    except Exception:
-        pass
+    _settle_verification_notices(did)
 
     return EmailVerification(did=did, email=profile.email, verified_at=verified_at)
 

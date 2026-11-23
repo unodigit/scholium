@@ -32,7 +32,7 @@ from nacl.signing import SigningKey
 
 from app import db
 from app.modules.identity.models import Account, ensure_account_table
-from app.modules.notifications import clear_outbox, get_outbox
+from app.modules.notifications import clear_outbox, get_outbox, list_notifications
 from app.modules.orcid import MEMBER_TIER, generate_mock_orcid_id, issue_orcid_credential
 from app.settings import settings
 from app.modules.profiles import (
@@ -172,6 +172,34 @@ def test_every_save_emails_a_fresh_link(client, did, auth):
     second = _last_token()
 
     assert first != second
+
+
+def test_saving_twice_leaves_one_unread_verification_notice(client, did, auth):
+    """Saving the same address again supersedes the earlier notice.
+
+    Journey 03 saves the onboarding profile twice with the same address; the
+    inbox must ask the member to verify it once, not once per save.  The
+    superseded notice is only marked read, so its link still redeems and the
+    surviving unread notice carries the newest link.
+    """
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    first = _last_token()
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    newest = _last_token()
+
+    unread = [
+        notification
+        for notification in list_notifications(did)
+        if notification.kind == EMAIL_VERIFICATION_KIND and not notification.read
+    ]
+
+    assert len(unread) == 1
+    assert newest in unread[0].payload["link"]
+    # Marking the older notice read does not invalidate its link.
+    assert _verify(client, did, first).status_code == 200
+    # Nor does superseding it: the surviving notice's newest link still works.
+    assert _verify(client, did, newest).status_code == 200
+    assert email_verified(did) is True
 
 
 # --- asking for a fresh link (the expiry screen's resend option) --------------
