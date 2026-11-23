@@ -927,8 +927,9 @@
 
 /* Three to a row: six tabs do not fit one row of 360 px, and two even rows read
    better than a scrolling strip (§5.2 draws two rows too). The strip's own
-   inline padding and gap are kept small so "Discussion (3)", the widest label,
-   fits even when the panel's scrollbar takes part of the row. */
+   inline padding and gap are kept small so each column keeps its room for the
+   label; the tab's own padding is the space inside its outline, and its badge
+   wraps when the column cannot hold the pair. */
 .ppg-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -938,10 +939,10 @@
 }
 
 /* The label and its badge are two items of a wrapping row. The label itself
-   never breaks (nowrap from 768 px), but if the pair is wider than the column
-   — four pixels too wide is what a scrollbar costs "Discussion (3)" — the
-   badge moves to a second line inside the tab. It must never poke out of the
-   tab, where the panel's overflow-x would cut it. */
+   never breaks (nowrap from 768 px), but the pair is wider than a column of the
+   360 px panel once the tab keeps its own inline padding, so the badge moves to
+   a second line inside the tab. It must never poke out of the tab, where the
+   panel's overflow-x would cut it. */
 .ppg-tab {
   box-sizing: border-box;
   display: flex;
@@ -951,9 +952,11 @@
   align-content: center;
   column-gap: calc(var(--space-unit) * 1);
   min-block-size: calc(var(--space-unit) * 9);
-  /* Half a unit inline: the three columns must still hold "Discussion" and its
-     badge when the panel's scrollbar narrows the row. */
-  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 0.5);
+  /* Two units inline: the selected tab's border is its own edge, so the label
+     must never sit against it. The three columns cannot also hold the badge
+     when the panel's scrollbar narrows the row, so the badge wraps to a second
+     line inside the tab (below) rather than the padding being given up. */
+  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 2);
   border: 1px solid transparent;
   border-radius: var(--corner-control);
   background-color: transparent;
@@ -1005,9 +1008,9 @@
 }
 
 /* From 768 px the strip is the full-width bottom sheet or the 360 px panel, and
-   the label itself never breaks. Its badge may still move to a second line
-   inside the tab when the column cannot hold the pair: the scrollbar costs
-   "Discussion (3)" a few pixels. */
+   the label itself never breaks. Its badge moves to a second line inside the
+   tab, because the column cannot hold the label, the badge and the tab's own
+   inline padding on one line. */
 @media (min-width: 48rem) {
   .ppg-tab {
     white-space: nowrap;

@@ -81,6 +81,62 @@ function declarationsIn(css: { rules: string }, query: string, selector: string)
   return declarations({ rules: inMedia(css, query) }, selector);
 }
 
+/**
+ * The values of a `padding` shorthand, split on whitespace that is not inside
+ * `calc(...)`, so `calc(var(--space-unit) * 2) calc(var(--space-unit) * 1)`
+ * is two values and not six.
+ */
+function paddingValues(padding: string): string[] {
+  const values: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of padding) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (/\s/.test(char) && depth === 0) {
+      if (current !== "") values.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  if (current !== "") values.push(current);
+  return values;
+}
+
+/**
+ * How many `--space-unit`s of inline padding each `.ppg-tab` rule asks for,
+ * base rule and any width- or pointer-specific override alike. Throws on a
+ * form this does not read (say `padding-inline: 1px`) so a change cannot slip
+ * past the contract by being written differently.
+ */
+function tabInlinePaddingUnits(css: { rules: string }): number[] {
+  return blocks(css.rules)
+    .filter(({ selector }) =>
+      selector.split(",").some((part) => part.trim() === ".ppg-tab"),
+    )
+    .flatMap(({ body }) => {
+      const padding = /(?:^|;)\s*padding:\s*([^;]+)/.exec(body)?.[1]?.trim();
+      if (padding === undefined) return [];
+      const values = paddingValues(padding);
+      // 1 to 4 values; the inline sides are the second value (2, 3 and 4
+      // values) and, with 4, the fourth.
+      const inline =
+        values.length === 1
+          ? [values[0]]
+          : values.length === 2 || values.length === 3
+            ? [values[1]]
+            : [values[1], values[3]];
+      return inline.map((value) => {
+        const units = /calc\(var\(--space-unit\)\s*\*\s*([\d.]+)\)/.exec(value);
+        if (units === null) {
+          throw new Error(`unexpected inline padding on .ppg-tab: ${padding}`);
+        }
+        return Number(units[1]);
+      });
+    });
+}
+
 /** The `@keyframes` rule called `name`, brace-matched. */
 function keyframes(css: { rules: string }, name: string): string {
   const at = css.rules.indexOf(`@keyframes ${name} {`);
@@ -304,6 +360,20 @@ describe("the layout (docs/design.md §5.2)", () => {
     const badge = declarations(page, ".ppg-tab-count");
     expect(badge).toMatch(/border-radius:\s*var\(--corner-pill\)/);
     expect(badge).toMatch(/background-color:/);
+  });
+
+  it("keeps two units of inline padding inside a tab's outline", () => {
+    // The selected tab's border is the tab's own edge: with the label boxed in
+    // by half a unit the outline sat against "Discussion (3)". Two units each
+    // side is the control padding (§5.2); when the column cannot hold the
+    // label and its badge, the badge wraps to a second line rather than the
+    // padding being squeezed away again. Any width-specific .ppg-tab override
+    // must keep the same room.
+    const paddings = tabInlinePaddingUnits(page);
+    expect(paddings.length).toBeGreaterThan(0);
+    for (const units of paddings) {
+      expect(units).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it("sets the abstract in the reading serif at the reading size", () => {
