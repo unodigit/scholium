@@ -46,6 +46,7 @@ function checks(overrides: Partial<VersionChecks> = {}): VersionChecks {
     version: REF.version,
     versionCid: "bafyreiexample",
     state: "moderation",
+    checksRan: true,
     files: [file()],
     referencesTotal: 10,
     referencesUnresolved: 0,
@@ -188,6 +189,14 @@ describe("normalizeVersionChecks", () => {
   it("drops a file entry with no path rather than showing an unnamed row", () => {
     const report = normalizeVersionChecks({ files: [{ cid: PDF }, { path: "paper.pdf" }] }, REF);
     expect(report.files.map((entry) => entry.path)).toEqual(["paper.pdf"]);
+  });
+
+  it("reads checksRan, and treats an older report without it as having run", () => {
+    expect(normalizeVersionChecks({ state: "moderation" }, REF).checksRan).toBe(true);
+    expect(normalizeVersionChecks({ checksRan: true }, REF).checksRan).toBe(true);
+    expect(normalizeVersionChecks({ checksRan: false }, REF).checksRan).toBe(false);
+    expect(normalizeVersionChecks({ checks_ran: false }, REF).checksRan).toBe(false);
+    expect(normalizeVersionChecks({ checks_ran: "false" }, REF).checksRan).toBe(false);
   });
 });
 
@@ -358,6 +367,36 @@ describe("checkItems", () => {
     expect(some).toMatchObject({ state: "attention", label: "Worth a look" });
     expect(some.summary).toBe("Some overlap: 15%");
     expect(high.summary).toBe("High overlap: 30%");
+  });
+
+  it("says the advisory checks did not run when the safety scan held the version", () => {
+    const items = checkItems(
+      checks({
+        state: "held",
+        checksRan: false,
+        files: [
+          file({
+            path: "code.zip",
+            cid: ZIP,
+            role: "code",
+            status: "failed",
+            failedChecks: ["av_unavailable"],
+          }),
+        ],
+        referencesTotal: null,
+        referencesUnresolved: null,
+        similarityPct: null,
+        metadataMatch: null,
+      }),
+    );
+    // The file verdict is the scan's result and is shown as the failure it is.
+    expect(items[0]).toMatchObject({ state: "attention", label: "Needs fixing", fix: "files" });
+    // The advisory checks never ran; they are not waiting to run.
+    expect(items.slice(1).map((item) => [item.state, item.label, item.summary])).toEqual([
+      ["pending", "Not run", "Not run: the version was held at the safety scan"],
+      ["pending", "Not run", "Not run: the version was held at the safety scan"],
+      ["pending", "Not run", "Not run: the version was held at the safety scan"],
+    ]);
   });
 
   it("shows a scan in progress and every file's own verdict", () => {

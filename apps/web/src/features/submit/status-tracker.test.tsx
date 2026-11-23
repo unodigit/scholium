@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { VersionChecks } from "./checks";
 import type { ConsentReport, TrackerEntry } from "./consents";
 import { StatusTracker } from "./status-tracker";
 
@@ -48,6 +49,27 @@ function report(over: Partial<ConsentReport> = {}): ConsentReport {
     signed: 0,
     declined: 0,
     authors: [],
+    ...over,
+  };
+}
+
+function checks(over: Partial<VersionChecks> = {}): VersionChecks {
+  return {
+    paper: "sch:abcd-efgh-ijkl",
+    version: 1,
+    versionCid: "bafyreiversion",
+    state: "held",
+    checksRan: true,
+    files: [
+      { path: "paper.pdf", cid: "bafkreipdf", role: "pdf", status: "passed", failedChecks: [], detail: null },
+    ],
+    referencesTotal: 10,
+    referencesUnresolved: 0,
+    similarityPct: 2,
+    metadataMatch: true,
+    signedTitle: null,
+    firstPageTitle: null,
+    checkedAt: null,
     ...over,
   };
 }
@@ -199,6 +221,118 @@ describe("StatusTracker — the viewer's own consent", () => {
   it("offers no link when it has no version to point at", () => {
     render(<StatusTracker submitted trackerEntries={[mei()]} />);
     expect(screen.queryByRole("link", { name: "Sign your consent" })).toBeNull();
+  });
+});
+
+describe("StatusTracker — a version the safety scan held", () => {
+  const done = [mei({ status: "signed" }), ada({ status: "signed" })];
+  const held = report({ state: "held", signed: 2, waiting: 0 });
+  const scanHeld = checks({
+    state: "held",
+    checksRan: false,
+    files: [
+      {
+        path: "code.zip",
+        cid: "bafkreizip",
+        role: "code",
+        status: "failed",
+        failedChecks: ["av_unavailable"],
+        detail: null,
+      },
+    ],
+    referencesTotal: null,
+    referencesUnresolved: null,
+    similarityPct: null,
+    metadataMatch: null,
+  });
+
+  const renderHeld = (reportChecks: VersionChecks): void => {
+    render(
+      <StatusTracker
+        submitted
+        trackerEntries={done}
+        report={held}
+        paper="sch:abcd-efgh-ijkl"
+        checks={reportChecks}
+      />,
+    );
+  };
+
+  it("names the failed file on the Scan step and offers a new version, not a hold to appeal", () => {
+    renderHeld(scanHeld);
+
+    const scan = stage("scan");
+    expect(scan.dataset.state).toBe("attention");
+    expect(scan.dataset.done).toBe("false");
+    expect(scan.querySelector(".sw-status-tracker__state")?.textContent).toBe("Needs fixing");
+    expect(scan.querySelector(".sw-status-tracker__detail")?.textContent).toBe(
+      "code.zip failed the safety scan: a malware scan that could not run (the antivirus is unavailable).",
+    );
+    const link = within(scan).getByRole("link", { name: "Publish a new version" });
+    expect(link.getAttribute("href")).toBe("/submit/new-version/sch%3Aabcd-efgh-ijkl");
+
+    // Moderation never happened: it is not where the version waits.
+    const moderation = stage("moderation");
+    expect(moderation.dataset.state).toBe("upcoming");
+    expect(moderation.dataset.done).toBe("false");
+    expect(moderation.querySelector(".sw-status-tracker__state")?.textContent).toBe("Not reached");
+    expect(moderation.textContent).not.toContain("Held");
+  });
+
+  it("names every failed file, one sentence each", () => {
+    renderHeld(
+      checks({
+        checksRan: false,
+        files: [
+          {
+            path: "code.zip",
+            cid: "bafkreizip",
+            role: "code",
+            status: "failed",
+            failedChecks: ["av_unavailable"],
+            detail: null,
+          },
+          {
+            path: "paper.pdf",
+            cid: "bafkreipdf",
+            role: "pdf",
+            status: "failed",
+            failedChecks: ["javascript"],
+            detail: null,
+          },
+        ],
+      }),
+    );
+
+    expect(stage("scan").querySelector(".sw-status-tracker__detail")?.textContent).toBe(
+      "code.zip failed the safety scan: a malware scan that could not run (the antivirus is unavailable). " +
+        "paper.pdf failed the safety scan: JavaScript.",
+    );
+  });
+
+  it("says the advisory checks did not run rather than that they are pending", () => {
+    renderHeld(scanHeld);
+
+    expect(screen.queryByText(/Checks pending/)).toBeNull();
+    const rows = new Map(
+      [...document.querySelectorAll<HTMLElement>("[data-check]")].map((row) => [row.dataset.check, row]),
+    );
+    expect(rows.get("files")?.textContent).toContain("Needs fixing");
+    for (const id of ["references", "similarity", "metadata"]) {
+      expect(rows.get(id)?.textContent).toContain("Not run: the version was held at the safety scan");
+    }
+  });
+
+  it("leaves a moderator's hold unchanged: the scan passed and moderation is where it waits", () => {
+    renderHeld(checks());
+
+    expect(stage("scan").dataset.state).toBe("done");
+    expect(stage("scan").querySelector(".sw-status-tracker__state")?.textContent).toBe("Done");
+    expect(stage("moderation").dataset.state).toBe("attention");
+    expect(stage("moderation").querySelector(".sw-status-tracker__state")?.textContent).toBe("Held");
+    expect(stage("moderation").querySelector(".sw-status-tracker__detail")?.textContent).toBe(
+      "Not listed while the hold stands",
+    );
   });
 });
 

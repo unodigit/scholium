@@ -16,6 +16,11 @@
  * yet — a 404 until it has scanned the version — which reads as
  * **Checks pending**; a report is shown as the four advisory verdicts. Checks
  * never gate anything here: signing has already happened.
+ *
+ * A version the safety scan held is not a version waiting for a moderator. Its
+ * report names the file that failed, so the Scan step carries the attention
+ * ("Needs fixing", the reason, and a link to publish a corrected version),
+ * Moderation reads "Not reached", and the advisory checks say they did not run.
  */
 
 import Link from "next/link";
@@ -24,7 +29,8 @@ import type { ReactElement, ReactNode } from "react";
 import { ConsentTracker } from "./consent-tracker";
 import { countConsents, consentSummary, trackerFromDraft, trackerFromReport, type ConsentReport, type TrackerEntry } from "./consents";
 import { CHECK_STATE_TONES } from "./checks-step";
-import { checkItems, checksSummary, type VersionChecks } from "./checks";
+import { checkItems, checksSummary, fileProblem, type VersionChecks } from "./checks";
+import { newVersionHref } from "./new-version";
 import type { DraftAuthor } from "./authors";
 import { CheckIcon, WarningIcon } from "./icons";
 import "./submit.css";
@@ -93,6 +99,11 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
   const consentsDone =
     PAST_CONSENTS.has(state) || (counts.total > 0 && counts.signed === counts.total && counts.declined === 0);
 
+  // The scan only passed when it ran: a report naming a failed file is the
+  // scan's own verdict, and it stops the version before moderation.
+  const failedFiles = props.checks?.files.filter((file) => file.status === "failed") ?? [];
+  const scanFailed = failedFiles.length > 0;
+
   const stages: Stage[] = [
     { key: "submitted", label: "Submitted", done: props.submitted ?? true },
     {
@@ -103,13 +114,22 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
       done: consentsDone,
       attention: counts.declined > 0 && !consentsDone,
     },
-    { key: "scan", label: "Scan", detail: "Files and references are checked", done: PAST_SCAN.has(state) },
+    {
+      key: "scan",
+      label: "Scan",
+      detail: scanFailed
+        ? failedFiles.map((file) => fileProblem(file)).join(" ")
+        : "Files and references are checked",
+      done: PAST_SCAN.has(state) && !scanFailed,
+      attention: scanFailed,
+    },
     {
       key: "moderation",
       label: "Moderation",
-      detail: state === "held" ? "Not listed while the hold stands" : "Target: 48 hours",
-      done: PAST_MODERATION.has(state),
-      attention: state === "held",
+      detail: state === "held" && !scanFailed ? "Not listed while the hold stands" : "Target: 48 hours",
+      done: PAST_MODERATION.has(state) && !scanFailed,
+      // A hold by the safety scan is not a moderator's decision.
+      attention: state === "held" && !scanFailed,
     },
     { key: "listed", label: "Listed", done: state === "listed" },
     { key: "ai", label: "AI pre-review", detail: "Advisory, after listing", done: false },
@@ -125,6 +145,10 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
     owesConsent && state === "awaiting_consent" && versionCid !== undefined && versionCid !== ""
       ? `/consent/${encodeURIComponent(versionCid)}`
       : null;
+  // A file the scan failed is fixed by publishing a corrected one in a new version.
+  const fixPaper = props.paper ?? report?.paper;
+  const fixHref =
+    scanFailed && fixPaper !== undefined && fixPaper !== "" ? newVersionHref(fixPaper) : null;
 
   return (
     <section className="sw-status-tracker" aria-label="Status tracker">
@@ -138,13 +162,19 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
                 ? "attention"
                 : "current"
               : "upcoming";
-          // After listing, the AI pre-review is on its way rather than "in progress"; a hold is said as "Held".
+          // After listing, the AI pre-review is on its way rather than "in
+          // progress"; a hold is said as "Held"; a failed scan is something to
+          // fix; and moderation behind a failed scan was never reached.
           const stateWords =
             stage.key === "ai" && stageState === "current"
               ? "Pending"
-              : stage.key === "moderation" && stageState === "attention"
-                ? "Held"
-                : STATE_WORDS[stageState];
+              : stage.key === "scan" && stageState === "attention"
+                ? "Needs fixing"
+                : stage.key === "moderation" && stageState === "attention"
+                  ? "Held"
+                  : stage.key === "moderation" && scanFailed && !stage.done
+                    ? "Not reached"
+                    : STATE_WORDS[stageState];
           return (
             <li
               key={stage.key}
@@ -179,6 +209,11 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
                   <p className="sw-status-tracker__detail" role={stage.key === "consents" ? "status" : undefined}>
                     {stage.detail}
                   </p>
+                ) : null}
+                {stage.key === "scan" && fixHref !== null ? (
+                  <Link className="sw-button sw-button--primary sw-status-tracker__action" href={fixHref}>
+                    Publish a new version
+                  </Link>
                 ) : null}
                 {stage.key === "consents" ? (
                   <>

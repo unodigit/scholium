@@ -83,6 +83,13 @@ export interface VersionChecks {
   firstPageTitle: string | null;
   /** When the results were last written, ISO 8601, when the node reports it. */
   checkedAt: string | null;
+  /**
+   * Whether the advisory checks ran at all. A version the safety scan held has
+   * a report of its per-file verdicts but no similarity, references or metadata
+   * results, because those run only after a clean scan. Absent (an older node)
+   * reads as `true`.
+   */
+  checksRan?: boolean;
 }
 
 /** A draft file shown before a version exists, so step 4 can say what will be scanned. */
@@ -388,13 +395,39 @@ function metadataItems(
   };
 }
 
+/** The line for a check that never ran because the safety scan held the version. */
+const HELD_AT_SCAN = "Not run: the version was held at the safety scan";
+
+const HELD_AT_SCAN_DETAILS = {
+  references: "The reference check runs once the safety scan passes.",
+  similarity: "Similarity is measured once the safety scan passes.",
+  metadata: "The metadata check runs once the safety scan passes.",
+} as const;
+
+/** A check the safety scan stopped before it could run; it is not waiting to run. */
+function heldAtScanRow(id: keyof typeof HELD_AT_SCAN_DETAILS): {
+  state: CheckState;
+  label: string;
+  summary: string;
+  detail: string;
+} {
+  return {
+    state: "pending",
+    label: "Not run",
+    summary: HELD_AT_SCAN,
+    detail: HELD_AT_SCAN_DETAILS[id],
+  };
+}
+
 /**
  * The four rows of step 4.
  *
  * `report` is `null` before the version exists; `draftFiles` then names the
  * files that will be scanned, so the step still shows what it is waiting for.
  * With a report, the report's own file list decides — it is what the node
- * signed and scanned.
+ * signed and scanned. A report whose `checksRan` is false (the safety scan
+ * held the version) keeps the file verdict but says the advisory checks did
+ * not run, rather than that they are pending.
  */
 export function checkItems(report: VersionChecks | null, draftFiles: readonly DraftCheckFile[] = []): CheckItem[] {
   const files =
@@ -409,16 +442,22 @@ export function checkItems(report: VersionChecks | null, draftFiles: readonly Dr
           detail: null,
         }));
   const filesRow = fileItems(files);
-  const referencesRow = referenceItems(
-    report?.referencesTotal ?? null,
-    report?.referencesUnresolved ?? null,
-  );
-  const similarityRow = similarityItems(report?.similarityPct ?? null);
-  const metadataRow = metadataItems(
-    report?.metadataMatch ?? null,
-    report?.signedTitle ?? null,
-    report?.firstPageTitle ?? null,
-  );
+  // The advisory checks run only after a clean scan. When the scan held the
+  // version they never ran, so they say so instead of "Not run yet".
+  const ran = report?.checksRan !== false;
+  const referencesRow = ran
+    ? referenceItems(report?.referencesTotal ?? null, report?.referencesUnresolved ?? null)
+    : heldAtScanRow("references");
+  const similarityRow = ran
+    ? similarityItems(report?.similarityPct ?? null)
+    : heldAtScanRow("similarity");
+  const metadataRow = ran
+    ? metadataItems(
+        report?.metadataMatch ?? null,
+        report?.signedTitle ?? null,
+        report?.firstPageTitle ?? null,
+      )
+    : { ...heldAtScanRow("metadata"), fix: null };
 
   return [
     { id: "files", title: CHECK_TITLES.files, ...filesRow },
@@ -807,5 +846,8 @@ export function normalizeVersionChecks(payload: unknown, ref: ChecksVersionRef):
     firstPageTitle,
     checkedAt:
       stringOf(firstDefined(payload, ["checkedAt", "checked_at", "updatedAt", "updated_at"])) ?? null,
+    // A node that does not say ran the advisory checks; only a held version's
+    // report says otherwise.
+    checksRan: boolOf(firstDefined(payload, ["checksRan", "checks_ran"])) ?? true,
   };
 }
