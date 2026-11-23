@@ -20,9 +20,9 @@ import { resolveSiteUrl } from "../../../site-metadata";
  * component as children. Only plain data (the title, the headings, the video
  * entry and the transcript's paragraphs) crosses into the client component.
  *
- * The metadata names the chapter: "{chapter title} · Docs" as an absolute
- * title (the root layout's "%s · Scholium" template must not add a second
- * suffix), the README summary as the description, and the chapter's own URL as
+ * The metadata names the chapter: "{chapter title} · Docs", which the root
+ * layout's "%s · Scholium" template completes as "… · Docs · Scholium" (the
+ * docs home is "Docs · Scholium"), the README summary as the description, and the chapter's own URL as
  * the canonical address.
  */
 
@@ -47,7 +47,7 @@ export async function generateMetadata({
   if (chapter === undefined) notFound();
 
   return {
-    title: { absolute: `${chapter.title} · Docs` },
+    title: `${chapter.title} · Docs`,
     description: chapter.summary,
     alternates: {
       canonical: `${resolveSiteUrl()}${chapter.href}`,

@@ -125,6 +125,9 @@
 
 .ds-list {
   margin: 0;
+  /* Tailwind's base resets lists to none; the chapter numbers are the
+     ::marker styled below (the handbook says "see Chapter 6"). */
+  list-style: decimal;
   /* The padding keeps a focused link's outline clear of the disclosure's
      clip edge (see ::details-content below). */
   padding: calc(var(--space-unit) * 1.5) calc(var(--space-unit) * 2)

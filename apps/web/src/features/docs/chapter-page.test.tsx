@@ -266,7 +266,8 @@ describe("chapter route", () => {
       params: Promise.resolve({ chapter: chapter.slug }),
     });
 
-    expect(metadata.title).toEqual({ absolute: "Your account · Docs" });
+    // The root template adds " · Scholium", as on the docs home.
+    expect(metadata.title).toBe("Your account · Docs");
     expect(metadata.description).toBe(chapter.summary);
     expect(metadata.alternates?.canonical).toBe(`${SITE}/docs/your-account`);
   });
