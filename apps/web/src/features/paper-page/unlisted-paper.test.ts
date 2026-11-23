@@ -213,6 +213,21 @@ describe("unlistedBanner", () => {
     expect(banner.tone).toBe("pending");
   });
 
+  it("states a scan hold as a failed file to fix, not a decision to appeal", () => {
+    // The safety scan moved the version to "held" and no moderator decided
+    // anything: there is no decision to appeal, only a file to correct.
+    const banner = unlistedBanner("held", null);
+
+    expect(banner.label).toBe("Held: a file failed the safety scan");
+    expect(banner.detail).toBe(
+      "Fix the file and publish a new version. The status tracker says which file failed and why.",
+    );
+    expect(banner.detail).not.toContain("appeal");
+    expect(banner.tone).toBe("pending");
+    expect(banner.icon).toBe("alert");
+    expect(banner.decision).toBeNull();
+  });
+
   it("states a reject as not listed, and that an appeal is possible", () => {
     const banner = unlistedBanner(
       "rejected",

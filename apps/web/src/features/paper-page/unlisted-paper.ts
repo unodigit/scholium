@@ -373,9 +373,13 @@ function refusalDetail(reason: string | null): string {
  *
  * The standing decision wins when it refused the paper (hold, reject, delist):
  * its reason is the author's to read, verbatim, with the appeal sentence
- * design.md §8 promises. Otherwise the version's lifecycle `state` — the
- * consent report's public `state` field — says which pre-listing stage the
- * paper is in. Nothing known is the honest "Not listed yet".
+ * design.md §8 promises. A held state with *no* decision is the safety scan's
+ * hold: no moderator decided anything, so there is nothing to appeal — the
+ * banner says which way out (a new version with the file corrected) and the
+ * status tracker says which file failed and why. Otherwise the version's
+ * lifecycle `state` — the consent report's public `state` field — says which
+ * pre-listing stage the paper is in. Nothing known is the honest "Not listed
+ * yet".
  */
 export function unlistedBanner(
   state: string | null | undefined,
@@ -383,10 +387,20 @@ export function unlistedBanner(
 ): UnlistedBanner {
   const action = decision?.action ?? null;
 
-  if (action === "hold" || (action === null && state === "held")) {
+  if (action === "hold") {
     return {
       label: "Held from listing",
       detail: refusalDetail(decision?.reason ?? null),
+      tone: "pending",
+      icon: "alert",
+      decision,
+    };
+  }
+  if (action === null && state === "held") {
+    return {
+      label: "Held: a file failed the safety scan",
+      detail:
+        "Fix the file and publish a new version. The status tracker says which file failed and why.",
       tone: "pending",
       icon: "alert",
       decision,
