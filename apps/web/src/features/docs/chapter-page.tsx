@@ -161,6 +161,10 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
       );
     };
 
+    // Back at the top (Home, or a scroll up past the first heading): the band
+    // may hold no heading, so the entry marked during the jump would stay.
+    const scrolledToTop = () => window.scrollY <= SPY_BOTTOM_SLACK;
+
     const mark = () => {
       if (scrolledToBottom()) {
         let last: string | null = null;
@@ -178,6 +182,15 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
       let current: string | null = null;
       for (const heading of headings) {
         if (inBand.has(heading.id)) current = heading.id;
+      }
+      if (current === null && scrolledToTop()) {
+        // Nothing in the band at the top: the first heading on screen is
+        // where reading starts; with none on screen, no entry is current.
+        const first = elements.find(
+          (element) => element.getBoundingClientRect().top <= window.innerHeight,
+        );
+        setActiveId(first ? first.id : null);
+        return;
       }
       if (current !== null) setActiveId(current);
     };
@@ -208,11 +221,11 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
 
     // The observer cannot see past the point where the page runs out of
     // scroll, so there the scroll position decides. Anywhere else the
-    // observer alone decides: recomputing here would race its pending
+    // observer alone decides (the top is handled the same way): recomputing here would race its pending
     // entries with a band that has not caught up, and undo a contents link
     // the reader just followed.
     const fromScroll = () => {
-      if (scrolledToBottom()) mark();
+      if (scrolledToBottom() || scrolledToTop()) mark();
     };
     window.addEventListener("scroll", fromScroll, { passive: true });
 

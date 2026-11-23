@@ -409,6 +409,28 @@ describe("On this page at the bottom of the chapter", () => {
     fireEvent.scroll(window);
     expect(current()).toEqual(["Your dashboard"]);
 
+    // Then Home: back at the top no heading is in the band, so the entry
+    // marked at the bottom must not stay; the first heading on screen is.
+    const first = chapter.headings[0];
+    chapter.headings.forEach((heading, index) => {
+      const element = document.getElementById(heading.id);
+      if (element === null) throw new Error(`no #${heading.id} in the body`);
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+        top: 600 + index * 700,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+    });
+    setMetric(window, "scrollY", 0);
+    fireEvent.scroll(window);
+    expect(current()).toEqual([first.text]);
+
     // jsdom's own metrics back for the rest of the file.
     setMetric(window, "scrollY", 0);
     setMetric(window, "innerHeight", 768);
