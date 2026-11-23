@@ -30,6 +30,33 @@
       "source": "docs-reshoot/ch02-sign-in.png"
     },
     {
+      "src": "/docs/screenshots/ch02-onboarding-profile.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Welcome page after a first sign-in: 1 of 5 steps complete, Create your passkey done, and Add your name filled in with Dr. Hannah Lindqvist, Department of Computer Science, Uppsala University and an example.org email, above Save profile and Link your ORCID iD",
+      "caption": "Onboarding starts with your name, affiliation and email. Only the email is private.",
+      "heading": "Set up your account (onboarding)",
+      "source": "docs-reshoot/ch02-onboarding-profile.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-onboarding-complete.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The end of onboarding with every step done: ORCID iD linked, cs.AI, cs.LG and stat.ML followed, five named recovery guardians with a Change them on Security link, and the Start reading Scholium button",
+      "caption": "When your guardians are saved, Start reading Scholium takes you into the site.",
+      "heading": "Set up your account (onboarding)",
+      "source": "docs-reshoot/ch02-onboarding-done.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-confirm-email.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A new member's dashboard: Needs your attention holds one item, Email verification, Confirm your email address, with an Open link; the Credentials card shows the linked ORCID iD",
+      "caption": "Until you confirm your email, your dashboard reminds you.",
+      "heading": "Confirm your email",
+      "source": "docs-reshoot/ch02-confirm-email.png"
+    },
+    {
       "src": "/docs/screenshots/ch02-endorsements.webp",
       "width": 1440,
       "height": 900,
@@ -46,6 +73,42 @@
       "caption": "Your guardians are listed on the Security page. Any 3 of the 5 can approve a new key.",
       "heading": "Recovery guardians",
       "source": "docs-reshoot/ch02-security.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-recovery-approvals.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Recover your account page on a new device, recovering Dr. Ingrid Solheim by her ORCID iD: Guardian approvals at 2 of 3, Waiting for guardians, 1 more approval needed, a Check for approvals button, and the 72-hour safety window still to come",
+      "caption": "On the new device, Check for approvals shows how many guardians have approved.",
+      "heading": "Recover a lost account",
+      "source": "docs-reshoot/ch02-recovery-approvals.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-recovery-window.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The same recovery after a third approval: 3 of 3 approvals, Safety window open, and the 72-hour safety window saying the new passkey takes over on 26 Nov 2026 unless the account holder cancels",
+      "caption": "After the third approval, the 72-hour safety window opens. The old key works until it ends.",
+      "heading": "Recover a lost account",
+      "source": "docs-reshoot/ch02-recovery-window.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-recovery-in-progress.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Security page of the account being recovered: the five guardians with Change guardians, and a Recovery in progress card saying someone started a recovery on 23 Nov 2026 that can complete after 26 Nov 2026, with Cancel this recovery",
+      "caption": "If someone else started the recovery, cancel it on your Security page before the window ends.",
+      "heading": "A recovery you did not start",
+      "source": "docs-reshoot/ch02-recovery-not-started.png"
+    },
+    {
+      "src": "/docs/screenshots/ch02-guardian-request.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A guardian's view of a recovery request: Dr. Ingrid Solheim is asking to recover their account, with the account DID, the new key, 1 of 3 approvals and Approve and Decline buttons",
+      "caption": "A guardian sees who is asking and the new key. Approve only after you have checked with the person.",
+      "heading": "If you are someone's guardian",
+      "source": "docs-reshoot/ch02-guardian-approve.png"
     },
     {
       "src": "/docs/screenshots/ch02-dashboard.webp",
@@ -77,6 +140,24 @@
       "source": "docs-reshoot/ch03-search.png"
     },
     {
+      "src": "/docs/screenshots/ch03-follow-category.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The cs.MA category page with the + Follow and Atom feed buttons above its newest paper, Can a Meta-Agent Choose the Safer Branch?",
+      "caption": "Follow a category from its page.",
+      "heading": "Following and the daily digest",
+      "source": "docs-reshoot/ch03-follow-category.png"
+    },
+    {
+      "src": "/docs/screenshots/ch03-following-tab.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Following tab of the paper list, showing three papers from the categories this member follows",
+      "caption": "The Following tab lists new papers in the categories you follow.",
+      "heading": "Following and the daily digest",
+      "source": "docs-reshoot/ch03-following-tab.png"
+    },
+    {
       "src": "/docs/screenshots/ch03-paper-page.webp",
       "width": 1440,
       "height": 900,
@@ -84,6 +165,24 @@
       "caption": "A paper page. Banners such as Corrected sit above the title; the margin on the right holds reviews, AI, discussion, versions, files and proof.",
       "heading": "The paper page",
       "source": "docs-reshoot/ch03-corrected-banner.png"
+    },
+    {
+      "src": "/docs/screenshots/ch03-versions-tab.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The margin's Versions tab on a paper page: Version 1, Initial version, and Version 2, marked Viewing and Latest, with its change note about two more retrieval corpora and a variance analysis, and a Compare v1 with v2 link",
+      "caption": "The Versions tab lists every version with its change note.",
+      "heading": "Versions and comparing them",
+      "source": "docs-reshoot/ch03-versions-tab.png"
+    },
+    {
+      "src": "/docs/screenshots/ch03-compare-versions.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "The Compare v1 with v2 page: a summary of 5 paragraphs changed, 1 removed, 1 file replaced and the abstract changed, the two change notes, the replaced PDF, and the abstract with the word three struck out",
+      "caption": "The comparison shows the change notes, the files and every changed paragraph.",
+      "heading": "Versions and comparing them",
+      "source": "docs-reshoot/ch03-compare-versions.png"
     },
     {
       "src": "/docs/screenshots/ch03-cite.webp",
@@ -303,6 +402,24 @@
       "caption": "Report a paper and choose a reason. Reports are private to you and the moderators.",
       "heading": "Reporting content",
       "source": "docs-reshoot/ch09-report-paper.png"
+    },
+    {
+      "src": "/docs/screenshots/ch09-legal-takedown-form.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A moderator's decision page with Legal takedown (tombstone) and MOD-05 Unlawful content chosen, the legal reason for the takedown, and a warning that the version's files are deleted and their ids denylisted while the signed records stay",
+      "caption": "A moderator issues a takedown with the legal reason. It cannot be undone.",
+      "heading": "Legal removal",
+      "source": "docs-reshoot/ch09-legal-takedown-form.png"
+    },
+    {
+      "src": "/docs/screenshots/ch09-legal-removal.webp",
+      "width": 1440,
+      "height": 900,
+      "alt": "A removed paper seen by a reader: Content removed for legal reasons, with the date, the reason and The record of its existence remains, links to the record and policy MOD-05, and the paper's title",
+      "caption": "After a takedown, readers see why the paper was removed. Its record remains.",
+      "heading": "Legal removal",
+      "source": "docs-reshoot/ch09-legal-removal.png"
     }
   ],
   "10": [],
