@@ -1,0 +1,326 @@
+/*
+ * A handbook chapter at `/docs/{slug}`.
+ *
+ * The docs shell (`docs.css`) owns the page frame and the chapter navigation;
+ * this file styles the article and its "On this page" list. Every colour,
+ * type, space, shape and motion value is a design token from
+ * `src/styles/tokens.css` (docs/design.md §3): there is no colour literal
+ * here, so light, dark and a forced `data-theme` all re-theme the chapter with
+ * nothing else to change. The raw lengths that remain are structural — the
+ * 1100px breakpoint the spec names and the 64px height of the sticky global
+ * header (`components/nav`), the same offset the docs shell uses.
+ *
+ * Shape, decided by the same 1100px breakpoint as the shell:
+ *
+ * - below it, the contents list is a "On this page" disclosure above the
+ *   article;
+ * - at 1100px and wider, it is a sticky list in the right margin beside the
+ *   article, and the article column takes the shell's reading width.
+ *
+ * Rules are prefixed `chapter-` so nothing leaks into another feature.
+ */
+
+/* ---- Page layout --------------------------------------------------------- */
+
+.chapter-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "toc"
+    "article";
+  gap: calc(var(--space-unit) * 6);
+  min-width: 0;
+}
+
+.chapter-article {
+  grid-area: article;
+  /* Grid items refuse to shrink below their content without this; a long
+     word, table or code line must wrap rather than widen the page. */
+  min-width: 0;
+}
+
+.chapter-toc {
+  grid-area: toc;
+  min-width: 0;
+}
+
+/* ---- Article ------------------------------------------------------------- */
+
+/* The "Chapter N" line above the H1: chrome, not prose. */
+.chapter-eyebrow {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.chapter-title {
+  margin: 0;
+  color: var(--ink);
+}
+
+.chapter-summary {
+  margin: calc(var(--space-unit) * 3) 0 calc(var(--space-unit) * 8);
+  max-width: var(--measure-reading);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* The video sits between the summary and the body, with the same breathing
+   room the body's first heading gets below it. */
+.chapter-video-block {
+  margin-block: calc(var(--space-unit) * 8);
+}
+
+.chapter-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ---- Contents: "On this page" -------------------------------------------- */
+
+/* Shown instead of the disclosure trigger in the wide layout. */
+.chapter-toc-title {
+  display: none;
+  margin: 0 0 calc(var(--space-unit) * 3);
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  font-weight: 600;
+  color: var(--ink-2);
+  text-transform: uppercase;
+}
+
+.chapter-toc-details {
+  min-width: 0;
+}
+
+/* The disclosure trigger, below 1100px. */
+.chapter-toc-toggle {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  min-height: 44px;
+  margin-inline: calc(var(--space-unit) * -2);
+  padding-inline: calc(var(--space-unit) * 2);
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.chapter-toc-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.chapter-toc-toggle:hover {
+  background-color: var(--bg-2);
+}
+
+.chapter-toc-chevron {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  /* Closed, the chevron points the way the list opens from. */
+  rotate: -90deg;
+  transition: rotate var(--duration-base) var(--ease-decel);
+}
+
+.chapter-toc-details[open] > .chapter-toc-toggle .chapter-toc-chevron {
+  rotate: 0deg;
+}
+
+.chapter-toc-list {
+  margin: 0;
+  /* The list is a navigation, not prose: no bullets, and room for each
+     link's focus outline inside the sticky scroll box. */
+  padding: 0;
+  list-style: none;
+}
+
+.chapter-toc-item {
+  min-width: 0;
+}
+
+/* A `###` heading is a subdivision of the `##` above it. */
+.chapter-toc-item[data-level="3"] {
+  padding-inline-start: calc(var(--space-unit) * 4);
+}
+
+.chapter-toc-link {
+  display: block;
+  padding-block: calc(var(--space-unit) * 1.5);
+  /* The indicator bar is inside the link's own padding, so it always meets
+     the text; transparent until the section is in view. */
+  border-inline-start: 2px solid transparent;
+  padding-inline-start: calc(var(--space-unit) * 3);
+  color: var(--ink-2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  text-decoration: none;
+  transition:
+    color var(--duration-fast) var(--ease-decel),
+    border-color var(--duration-fast) var(--ease-decel);
+}
+
+.chapter-toc-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+/* The section in view: accent AND semibold AND the bar, never colour alone. */
+.chapter-toc-link[aria-current="location"] {
+  border-inline-start-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Touch targets are at least 44px (docs/design.md §9). */
+@media (pointer: coarse) {
+  .chapter-toc-link {
+    padding-block: calc(var(--space-unit) * 2.5);
+  }
+}
+
+/* Opening and closing slides the list. Progressive enhancement: without
+   interpolate-size it snaps between the same two states, and reduced motion
+   is neutralised globally in base.css. */
+.chapter-toc-details::details-content {
+  overflow: clip;
+  contain: layout;
+}
+
+.chapter-toc-details:not([open])::details-content {
+  block-size: 0;
+}
+
+@supports (interpolate-size: allow-keywords) {
+  .chapter-toc-details::details-content {
+    interpolate-size: allow-keywords;
+    transition:
+      block-size var(--duration-base) var(--ease-decel),
+      content-visibility var(--duration-base) var(--ease-decel),
+      display var(--duration-base) var(--ease-decel);
+    transition-behavior: allow-discrete;
+  }
+}
+
+/* ---- Previous and next chapter ------------------------------------------- */
+
+.chapter-pager {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) * 4);
+  margin-top: calc(var(--space-unit) * 16);
+  padding-top: calc(var(--space-unit) * 8);
+  border-top: 1px solid var(--rule);
+}
+
+.chapter-pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 1);
+  max-width: 100%;
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4);
+  border: 1px solid var(--rule);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-decel),
+    border-color var(--duration-fast) var(--ease-decel);
+}
+
+/* With only one link, it still sits at the correct end of the row. */
+.chapter-pager-next {
+  margin-inline-start: auto;
+  text-align: end;
+}
+
+.chapter-pager-link:hover {
+  border-color: var(--accent);
+  background-color: var(--bg-2);
+}
+
+.chapter-pager-label {
+  font-family: var(--family-sans);
+  font-size: var(--type-meta);
+  line-height: var(--leading-meta);
+  color: var(--ink-2);
+}
+
+.chapter-pager-title {
+  font-family: var(--family-serif);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  font-weight: var(--weight-title);
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+/* ---- Right margin: 1100px and wider -------------------------------------- */
+
+@media (min-width: 1100px) {
+  /* A chapter needs room for the chapter sidebar, the reading column and the
+     contents list. The shell's frame leaves the reading column plus the
+     margin-panel share; a chapter spends that share on "On this page", so the
+     article keeps its reading measure instead of being squeezed. */
+  .ds-main:has(.chapter-page) {
+    max-width: calc(
+      var(--reading-column) + var(--margin-panel) + var(--space-unit) * 64
+    );
+  }
+
+  .ds-content:has(> .chapter-page) {
+    max-width: none;
+  }
+
+  .chapter-page {
+    /* The contents column takes what the margin allows, down to a narrow
+       screen's share, so the article never drops below a readable width. */
+    grid-template-columns: minmax(0, 1fr) minmax(9rem, 14rem);
+    grid-template-areas: "article toc";
+    column-gap: calc(var(--space-unit) * 10);
+    /* Keeps the right column from stretching to the article's height, which
+       would leave the sticky list nowhere to travel. */
+    align-items: start;
+  }
+
+  .chapter-toc {
+    position: sticky;
+    /* Clears the 64px sticky global header (components/nav). */
+    top: calc(64px + var(--space-unit) * 6);
+    max-height: calc(100vh - 64px - var(--space-unit) * 12);
+    /* dvh keeps the box inside the viewport as mobile browser toolbars
+       come and go; the vh line above is the fallback. */
+    max-height: calc(100dvh - 64px - var(--space-unit) * 12);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-inline-end: calc(var(--space-unit) * 1);
+  }
+
+  /* The list is always open in the margin, so the heading replaces the
+     disclosure trigger. */
+  .chapter-toc-title {
+    display: block;
+  }
+
+  .chapter-toc-toggle {
+    display: none;
+  }
+}
