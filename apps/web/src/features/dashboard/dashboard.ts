@@ -109,6 +109,8 @@ export interface NeedsAttention {
   readonly review_invitations: readonly AttentionItem[];
   readonly author_replies: readonly AttentionItem[];
   readonly moderation_outcomes: readonly AttentionItem[];
+  /** Versions the safety scan holds, naming the file that failed. */
+  readonly scan_holds?: readonly AttentionItem[];
   /** Open recovery requests that still need this guardian's answer. */
   readonly recovery_requests?: readonly AttentionItem[];
   /** Appeal panels the caller was drawn to and has not voted on yet. */
@@ -242,6 +244,7 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
     moderation_outcomes: Array.isArray(value.moderation_outcomes)
       ? value.moderation_outcomes
       : [],
+    scan_holds: Array.isArray(value.scan_holds) ? value.scan_holds : [],
     recovery_requests: Array.isArray(value.recovery_requests)
       ? value.recovery_requests
       : [],
@@ -257,6 +260,7 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
         ...groups.review_invitations,
         ...groups.author_replies,
         ...groups.moderation_outcomes,
+        ...groups.scan_holds,
         ...groups.appeal_panels,
         ...groups.email_verification,
         ...groups.recovery_requests,
@@ -270,6 +274,7 @@ function parseNeedsAttention(value: unknown): NeedsAttention {
     review_invitations: groups.review_invitations.map(parseAttentionItem),
     author_replies: groups.author_replies.map(parseAttentionItem),
     moderation_outcomes: groups.moderation_outcomes.map(parseAttentionItem),
+    scan_holds: groups.scan_holds.map(parseAttentionItem),
     recovery_requests: groups.recovery_requests.map(parseAttentionItem),
     appeal_panels: groups.appeal_panels.map(parseAttentionItem),
     email_verification: groups.email_verification.map(parseAttentionItem),

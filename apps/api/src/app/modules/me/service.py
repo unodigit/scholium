@@ -41,6 +41,15 @@ that is *still open*: a notice about something finished is not an action.
     ``release``), and one already appealed, is Notifications only.  The
     moderator's reason is a field of its own, never repeated in the sentence.
 
+``scan_holds``
+    Every version of the caller's papers the *safety scan* held: the version is
+    still in state ``held``, no ``moderation.decision`` is recorded against it,
+    a manifest file's blob verdict is ``failed`` and no later version of the
+    paper is listed.  The item names the file that failed and links to the
+    version's status tracker; there is no decision, so there is no appeal
+    wording.  A moderator's hold keeps its own ``moderation_outcomes`` item and
+    never this one.
+
 ``appeal_panels``
     Every seat on ``appeal_panels`` the caller holds that is still unvoted on
     an appeal no panel has decided (features 75-76).  The item asks them to
@@ -80,8 +89,9 @@ every node; an absent table simply means there are no author replies.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from sqlalchemy import MetaData, Table, inspect
 
@@ -112,7 +122,7 @@ from app.modules.reviews.models import (
     ReviewInvitation,
     ensure_tables as ensure_review_tables,
 )
-from app.modules.submissions import AWAITING_CONSENT
+from app.modules.submissions import AWAITING_CONSENT, HELD as VERSION_HELD, LISTED
 from app.modules.submissions.models import (
     Authorship,
     Paper,
@@ -137,6 +147,7 @@ ATTENTION_KINDS = (
     "review_invitations",
     "author_replies",
     "moderation_outcomes",
+    "scan_holds",
     "appeal_panels",
     "email_verification",
 )
@@ -151,6 +162,29 @@ _APPEAL_VERBS = {
     "hold": "hold on",
     "reject": "rejection of",
     "delist": "delisting of",
+}
+
+#: How each failing scanner check reads to the author.  The words mirror the
+#: status tracker's ``fileProblem`` vocabulary (``FAILED_CHECK_WORDS`` in
+#: ``apps/web/src/features/submit/checks.ts``), so /me and the tracker name the
+#: same failure with the same words; an unknown check name is humanised, not
+#: hidden, exactly as the tracker humanises it.
+_SCAN_CHECK_WORDS = {
+    "javascript": "JavaScript",
+    "embedded_files": "embedded files",
+    "launch": "a Launch action",
+    "openaction": "an OpenAction entry",
+    "hidden_text": "hidden or near-invisible text",
+    "pdf_unreadable": "an unreadable PDF",
+    "path_traversal": "a path that escapes the archive",
+    "symlink": "a symbolic link",
+    "absolute_path": "an absolute path",
+    "malware": "malware",
+    "av_unavailable": "a malware scan that could not run (the antivirus is unavailable)",
+    "bundle_unreadable": "an archive that could not be read",
+    "file_missing": "a file missing from this node",
+    "file_unreadable": "a file that could not be read",
+    "manifest_unreadable": "a manifest that could not be read",
 }
 
 #: The record type whose signer created a paper, listed on its byline or not.
@@ -805,6 +839,127 @@ def _moderation_outcomes(
     return list(merged.values())
 
 
+def _scan_check_words(name: str) -> str:
+    """The plain words the failing check ``name`` reads with."""
+    words = _SCAN_CHECK_WORDS.get(name)
+    if words is not None:
+        return words
+    return re.sub(r"[_-]+", " ", name).strip() or name
+
+
+def _join_check_words(words: Sequence[str]) -> str:
+    """``"a and b"`` / ``"a, b and c"``, the way the tracker joins them."""
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0]
+    return f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def _first_failed_manifest_file(version_cid: str) -> Optional[dict[str, Any]]:
+    """The first manifest file of ``version_cid`` whose scan failed, or ``None``.
+
+    "Failed" is the blob verdict the scan saved (``blobs.scan_status``), the
+    same rule the checks report reads, so the two never disagree.  The file
+    carries its manifest path and the names of the checks it failed.
+    """
+    from app.modules import content, sanitizer
+    from app.modules.checks.pipeline import manifest_entries
+
+    for entry in manifest_entries(version_cid):
+        cid = entry.get("cid")
+        if not isinstance(cid, str) or not cid:
+            continue
+        try:
+            blob = content.get_blob(cid)
+        except Exception:  # pragma: no cover - a damaged store must not break the dashboard
+            logger.debug("could not read the blob row for %s", cid, exc_info=True)
+            continue
+        if blob is None or getattr(blob, "scan_status", None) != content.SCAN_FAILED:
+            continue
+        path = entry.get("path")
+        failed = [
+            str(report.check_name)
+            for report in sanitizer.reports_for(cid)
+            if getattr(report, "result", None) == sanitizer.RESULT_FAILED
+        ]
+        return {
+            "cid": cid,
+            "path": path if isinstance(path, str) and path else cid,
+            "failed_checks": failed,
+        }
+    return None
+
+
+def _scan_holds(
+    paper_by_cid: Mapping[str, Paper],
+    versions_by_paper: Mapping[str, list[PaperVersion]],
+    paper_cids: Iterable[str],
+) -> list[dict[str, Any]]:
+    """The versions of the caller's papers the safety scan holds, one item each.
+
+    A scan hold records no decision, so without this item the author learns of
+    it only by opening the paper.  The item names the file that failed and
+    links to the version's status tracker, which says what to do about it;
+    there is no decision, so there is no appeal to invite them to.  It stops
+    once a later version of the paper is listed, the version leaves ``held``,
+    or a moderator decides -- their hold keeps its own appeal item.
+    """
+    items: list[dict[str, Any]] = []
+    for paper_cid in sorted(set(paper_cids)):
+        paper = paper_by_cid.get(paper_cid)
+        if paper is None:
+            continue
+        versions = versions_by_paper.get(paper_cid, [])
+        for version in versions:
+            if version.state != VERSION_HELD:
+                continue
+            # A listed later version says the paper moved on; the held one is
+            # history nobody needs to act on any more.
+            if any(later.state == LISTED and later.n > version.n for later in versions):
+                continue
+            if _latest_decisions([version.version_cid]):
+                # A moderator decided this version: their appeal item, not the
+                # scan's, tells the author about it.
+                continue
+            failed = _first_failed_manifest_file(version.version_cid)
+            if failed is None:
+                # A hold whose files all passed is a moderator's, not the
+                # scan's; the appeal item (or nothing) speaks for it.
+                continue
+            title = getattr(version, "title", None)
+            short_id = getattr(paper, "short_id", None)
+            if title:
+                summary = f'A file in "{title}" failed the safety scan.'
+            elif short_id:
+                summary = f"A file in {short_id} failed the safety scan."
+            else:
+                summary = "A file in your paper failed the safety scan."
+            words = _join_check_words(
+                [_scan_check_words(name) for name in failed["failed_checks"]]
+            )
+            reason = (
+                f"{failed['path']}: {words}"
+                if words
+                else f"{failed['path']}: the safety scan failed."
+            )
+            items.append(
+                _item(
+                    "scan_hold",
+                    summary,
+                    paper=paper,
+                    version=version,
+                    reason=reason,
+                    link=f"/p/{short_id}/v{version.n}" if short_id else None,
+                    status="open",
+                    path=failed["path"],
+                    fileCid=failed["cid"],
+                    failedChecks=failed["failed_checks"],
+                )
+            )
+    return items
+
+
 def _appeal_panels(
     did: str,
     paper_by_cid: Mapping[str, Paper],
@@ -1118,6 +1273,7 @@ def build_dashboard(did: str) -> dict[str, Any]:
     invitations = _review_invitations(did, paper_by_cid, version_by_cid)
     replies = _author_replies(my_review_cids, reviews, paper_by_cid, version_by_cid)
     outcomes = _moderation_outcomes(did, paper_by_cid, version_by_cid, paper_cids)
+    scan_holds = _scan_holds(paper_by_cid, versions_by_paper, paper_cids)
     panels = _appeal_panels(did, paper_by_cid, version_by_cid)
     verification = _email_verification(did)
 
@@ -1126,6 +1282,7 @@ def build_dashboard(did: str) -> dict[str, Any]:
         "review_invitations": invitations,
         "author_replies": replies,
         "moderation_outcomes": outcomes,
+        "scan_holds": scan_holds,
         "appeal_panels": panels,
         "email_verification": verification,
     }

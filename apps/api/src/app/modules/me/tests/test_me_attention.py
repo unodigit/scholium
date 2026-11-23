@@ -9,7 +9,9 @@ caller, each naming the paper and linking to where the action is taken:
 * a hidden post the caller wrote is appealable, with a working link;
 * an author reply names the paper by title and stops being asked once the
   reviewer updates the review;
-* an unverified email address is asked to be confirmed until it is verified.
+* an unverified email address is asked to be confirmed until it is verified;
+* a version the safety scan held is one item per author naming the file, until
+  a later version is listed or a moderator decides (bug spec round 22, item 2).
 """
 
 from __future__ import annotations
@@ -18,10 +20,15 @@ import uuid
 from datetime import datetime, timezone
 
 from nacl.signing import SigningKey
-from scholium_record_core import derive_short_id, did_key_from_signing_key, sign_record
+from scholium_record_core import (
+    compute_record_id,
+    derive_short_id,
+    did_key_from_signing_key,
+    sign_record,
+)
 
 from app import db
-from app.modules import ledger
+from app.modules import content, ledger, sanitizer
 from app.modules.appeals.models import Appeal, AppealPanelMember
 from app.modules.moderation.models import ModerationDecision
 from app.modules.notifications import notify
@@ -41,6 +48,7 @@ from .test_me_dashboard import (  # noqa: F401 - fixture re-exports
     _auth,
     _did,
     _escrow,
+    _new_paper_cid,
     _now,
     _scene,
     client,
@@ -521,3 +529,157 @@ def test_an_unverified_email_is_an_action_until_it_is_verified():
     assert [
         item for item in _items(did) if item.get("kind") == "email_verification"
     ] == []
+
+
+# --------------------------------------------------------------------------- #
+# A version the safety scan held is news for its authors (round 22, item 2)
+# --------------------------------------------------------------------------- #
+
+
+#: Bytes of a code bundle whose scan fails because the antivirus is unavailable,
+#: the same fixture the checks report's tests use.
+_ZIP = b"PK\x03\x04a code bundle no scan could clear"
+
+
+def _append_manifest(files: list[dict]) -> str:
+    """Append an unsigned ``manifest`` record naming ``files``; return its cid."""
+    envelope = {
+        "v": 1,
+        "type": "manifest",
+        "author": _did(),
+        "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "prev": None,
+        "body": {"files": files, "nonce": uuid.uuid4().hex},
+        "proofs": [],
+    }
+    envelope["id"] = compute_record_id(envelope)
+    return ledger.append(envelope).record_cid
+
+
+def _scan_held_scene(
+    *,
+    authors: tuple[str, ...],
+    title: str,
+) -> tuple[str, str]:
+    """A paper whose first version the safety scan held: ``code.zip`` failed.
+
+    The bundle's blob carries the ``failed`` verdict the scan saved and the
+    ``av_unavailable`` finding it recorded -- exactly what
+    ``sanitizer.scan_version`` leaves behind on a node without ``CLAMD_SOCKET``
+    -- and the version points at a manifest record that names it.
+    """
+    bundle = content.store_bytes(_ZIP, media_type="application/zip")
+    content.set_scan_status(bundle.cid, content.SCAN_FAILED)
+    sanitizer.record_finding(
+        str(bundle.cid),
+        sanitizer.CHECK_AV_UNAVAILABLE,
+        "ClamAV (clamd) is unavailable: CLAMD_SOCKET is not set",
+    )
+    manifest_cid = _append_manifest(
+        [
+            {
+                "path": "code.zip",
+                "cid": str(bundle.cid),
+                "size": len(_ZIP),
+                "mediaType": "application/zip",
+                "role": "code",
+            }
+        ]
+    )
+    paper_cid = _new_paper_cid(title)
+    version_cid = f"cid-{uuid.uuid4().hex}"
+    save_paper(paper_cid=paper_cid, categories=("cs.CR",))
+    save_version(
+        version_cid=version_cid,
+        paper_cid=paper_cid,
+        n=1,
+        title=title,
+        abstract="",
+        manifest_cid=manifest_cid,
+        licence="CC-BY-4.0",
+        prev_cid=paper_cid,
+        authors=tuple(
+            VersionAuthor(did, position, ("Conceptualization",))
+            for position, did in enumerate(authors, start=1)
+        ),
+        state="held",
+    )
+    return paper_cid, version_cid
+
+
+def test_a_scan_held_version_is_one_item_per_author_with_the_file_and_link():
+    first, second = _did(), _did()
+    paper_cid, version_cid = _scan_held_scene(
+        authors=(first, second), title="A paper the scan held"
+    )
+
+    for author in (first, second):
+        items = [item for item in _items(author) if item.get("kind") == "scan_hold"]
+        assert len(items) == 1
+        item = items[0]
+        assert item["summary"] == (
+            'A file in "A paper the scan held" failed the safety scan.'
+        )
+        # The file path and the plain reason read with the tracker's words.
+        assert item["reason"] == (
+            "code.zip: a malware scan that could not run (the antivirus is unavailable)"
+        )
+        assert item["path"] == "code.zip"
+        assert item["failedChecks"] == ["av_unavailable"]
+        assert item["paper"] == derive_short_id(paper_cid)
+        assert item["versionCid"] == version_cid
+        assert item["version"] == 1
+        assert item["title"] == "A paper the scan held"
+        # The link opens that version's status tracker, which says which file
+        # failed and offers the new version that fixes it.
+        assert item["link"] == f"/p/{derive_short_id(paper_cid)}/v1"
+        # There is no decision to appeal, so there is no appeal wording.
+        assert "appeal" not in item["summary"].lower()
+
+    body = client.get(DASHBOARD_URL, headers=_auth(first)).json()
+    group = body["needs_attention"]["scan_holds"]
+    assert [item["kind"] for item in group] == ["scan_hold"]
+    assert group[0] in body["needs_attention"]["items"]
+
+
+def test_a_moderators_hold_keeps_only_the_appeal_item():
+    author = _did()
+    _paper_cid, version_cid = _scan_held_scene(
+        authors=(author,), title="A paper the scan held"
+    )
+    decision_cid = _store_decision(version_cid, "hold")
+
+    items = _items(author)
+
+    # The moderator's hold is the appeal item the dashboard already serves; the
+    # scan's own telling of it adds nothing.
+    assert [item for item in items if item.get("kind") == "scan_hold"] == []
+    appeal = [item for item in items if item.get("decisionCid") == decision_cid]
+    assert len(appeal) == 1
+    assert appeal[0]["kind"] == "appeal_available"
+    assert appeal[0]["action"] == "hold"
+
+
+def test_a_listed_later_version_ends_the_scan_item():
+    author = _did()
+    paper_cid, first_version = _scan_held_scene(
+        authors=(author,), title="A paper the scan held"
+    )
+    assert len(
+        [item for item in _items(author) if item.get("kind") == "scan_hold"]
+    ) == 1
+
+    save_version(
+        version_cid=f"cid-{uuid.uuid4().hex}",
+        paper_cid=paper_cid,
+        n=2,
+        title="A paper the scan held",
+        abstract="",
+        manifest_cid=f"bafkreimanifest{uuid.uuid4().hex}",
+        licence="CC-BY-4.0",
+        prev_cid=first_version,
+        authors=(VersionAuthor(author, 1, ("Conceptualization",)),),
+        state="listed",
+    )
+
+    assert [item for item in _items(author) if item.get("kind") == "scan_hold"] == []

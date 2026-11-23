@@ -548,6 +548,53 @@ describe("an appeal panel's attention item", () => {
   });
 });
 
+describe("a scan-held version's attention item", () => {
+  /** One `scan_holds` row, exactly as the `me` plugin serves it. */
+  const SCAN_HOLD = {
+    kind: "scan_hold",
+    summary: 'A file in "Sparse attention without the quadratic cost" failed the safety scan.',
+    reason: "code.zip: a malware scan that could not run (the antivirus is unavailable)",
+    paper: "sch:k3f9-q2xz-7mwd",
+    shortId: "sch:k3f9-q2xz-7mwd",
+    paperCid: "bafy-genesis-1",
+    version: 1,
+    versionCid: "bafy-version-1",
+    version_cid: "bafy-version-1",
+    title: "Sparse attention without the quadratic cost",
+    path: "code.zip",
+    failedChecks: ["av_unavailable"],
+    link: "/p/sch:k3f9-q2xz-7mwd/v1",
+    createdAt: "2026-11-20T09:00:00Z",
+  };
+
+  it("renders like the other attention items: the sentence, the reason beneath it, the link", () => {
+    const payload = structuredClone(PAYLOAD) as typeof PAYLOAD & {
+      needs_attention: typeof PAYLOAD.needs_attention & { scan_holds: unknown[] };
+    };
+    payload.needs_attention = {
+      ...payload.needs_attention,
+      count: PAYLOAD.needs_attention.count + 1,
+      scan_holds: [SCAN_HOLD],
+    };
+
+    const attention = parseDashboard(payload).needs_attention;
+
+    expect(attention.scan_holds).toHaveLength(1);
+    const item = attention.scan_holds?.[0];
+    expect(item?.summary).toBe(SCAN_HOLD.summary);
+    expect(item?.reason).toBe(SCAN_HOLD.reason);
+    expect(item?.link).toBe(SCAN_HOLD.link);
+    expect(item?.path).toBe("code.zip");
+    // The flat list carries it too, derived from the groups in dashboard order.
+    expect(attention.items.map((row) => row.kind)).toEqual([
+      "consent_to_sign",
+      "review_invitation",
+      "author_reply",
+      "scan_hold",
+    ]);
+  });
+});
+
 describe("notification wording", () => {
   it("names each kind", () => {
     expect(notificationKindLabel("consent.request")).toBe("Consent request");
