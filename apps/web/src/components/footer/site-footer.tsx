@@ -72,6 +72,11 @@ export function SiteFooter() {
               Policies
             </Link>
           </li>
+          <li>
+            <Link className="sf-link" href="/docs">
+              Docs
+            </Link>
+          </li>
           <li className="sf-export">
             <a className="sf-link" href={publicExportHref()}>
               Public export{" "}

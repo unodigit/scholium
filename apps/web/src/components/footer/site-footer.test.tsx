@@ -109,16 +109,17 @@ describe("SiteFooter", () => {
 
     const nav = within(footer).getByRole("navigation", { name: "Footer" });
     const items = within(nav).getAllByRole("listitem");
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(5);
 
     const links = within(footer).getAllByRole("link");
-    expect(links).toHaveLength(4);
+    expect(links).toHaveLength(5);
     expect(footer.querySelectorAll("[tabindex]")).toHaveLength(0);
     // Reading order is tab order: the DOM order of the four links.
     expect(links.map((a) => a.textContent)).toEqual([
       "Network",
       "Verify a file",
       "Policies",
+      "Docs",
       "Public export CAR archive",
     ]);
   });

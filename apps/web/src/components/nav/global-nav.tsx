@@ -322,6 +322,7 @@ function DesktopHeader({
   onSignOut: () => void;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [query, setQuery] = useSearchQuery();
 
   // Soft-navigate on submit; the `action` keeps the form working without JS.
@@ -362,6 +363,14 @@ function DesktopHeader({
       </form>
 
       <CategoryMenu categories={categories} />
+
+      <Link
+        href="/docs"
+        className="gn-link"
+        aria-current={isInside(pathname, "/docs") ? "page" : undefined}
+      >
+        Docs
+      </Link>
 
       <Link href="/submit" className="gn-submit">
         Submit
