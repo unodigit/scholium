@@ -979,11 +979,15 @@ function consentSubject(payload: Readonly<Record<string, unknown>>): {
  * An answered notification is a record of what they did, not a call to do it
  * again: it is worded in the past tense and carries no action link.
  *
- * Only these kinds are worded from the read flag, because nothing records
- * their answer yet. A recovery request and an appeal panel seat do -- the API
- * writes what the member did into the payload -- so their wording comes from
- * that (see {@link recoverySummary}), never from the notice having been read:
- * opening a notice or marking it read is not answering it.
+ * A consent and a review invitation are still worded from the read flag,
+ * because nothing records their answer yet. An email verification writes why
+ * the notice was settled into the payload (``verified`` when the link was
+ * redeemed, ``superseded`` when a newer link replaced it), so a read notice
+ * is only said to be confirmed when the payload says so: a save that merely
+ * superseded it does not confirm the address. A recovery request and an
+ * appeal panel seat write their facts the same way -- their wording comes
+ * from that (see {@link recoverySummary}), never from the notice having been
+ * read: opening a notice or marking it read is not answering it.
  */
 function answeredSummary(
   kind: string,
@@ -999,7 +1003,15 @@ function answeredSummary(
       return `You signed your consent${versionPart}.`;
     }
     case "email.verify":
-      return "You confirmed your email address.";
+      if (readBool(payload.verified)) {
+        return "You confirmed your email address.";
+      }
+      if (readBool(payload.superseded)) {
+        return "A newer confirmation link replaced this one.";
+      }
+      // An older row settled before the facts were recorded: it does not say
+      // the address was confirmed, because nothing proves that it was.
+      return "Email confirmation reminder.";
     case "review.invitation":
     case "review_invitation": {
       const title = readText(payload.title);

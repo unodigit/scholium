@@ -733,8 +733,27 @@ describe("notification wording", () => {
       }),
     ).toBe('You signed your consent on "Sparse attention" (version 2).');
     expect(
-      notificationSummary({ kind: "email.verify", read: true, payload: {} }),
+      notificationSummary({ kind: "email.verify", read: true, payload: { verified: true } }),
     ).toBe("You confirmed your email address.");
+  });
+
+  it("words an email-verification notice from its facts, never from read alone", () => {
+    // Confirmed by redeeming the link.
+    expect(
+      notificationSummary({ kind: "email.verify", read: true, payload: { verified: true } }),
+    ).toBe("You confirmed your email address.");
+    // Settled because a newer save mailed a newer link: not confirmed.
+    expect(
+      notificationSummary({ kind: "email.verify", read: true, payload: { superseded: true } }),
+    ).toBe("A newer confirmation link replaced this one.");
+    // An older read row with neither fact must not claim a confirmation.
+    expect(notificationSummary({ kind: "email.verify", read: true, payload: {} })).toBe(
+      "Email confirmation reminder.",
+    );
+    // Unread still asks.
+    expect(notificationSummary({ kind: "email.verify", payload: {} })).toBe(
+      "Confirm your email address.",
+    );
   });
 
   describe("a recovery notice says what the guardian did, never what was merely read", () => {

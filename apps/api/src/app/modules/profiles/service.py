@@ -264,7 +264,12 @@ def erase_profile(did: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _settle_verification_notices(did: str, *, keep_id: Optional[int] = None) -> None:
+def _settle_verification_notices(
+    did: str,
+    *,
+    keep_id: Optional[int] = None,
+    facts: Optional[dict[str, Any]] = None,
+) -> None:
     """Mark ``did``'s unread email-verification notices read, except ``keep_id``.
 
     Only the newest link is worth acting on: a fresh notice supersedes the
@@ -272,18 +277,41 @@ def _settle_verification_notices(did: str, *, keep_id: Optional[int] = None) -> 
     twice), and redeeming a link settles the reminder entirely.  Best-effort by
     design -- an inbox that cannot be tidied must not fail the save or the
     verification.
+
+    ``facts`` records why the notice was settled, as
+    :func:`~app.modules.notifications.resolve_for_subject` writes them: a new
+    payload dict -- ``superseded`` when a newer link replaced it, ``verified``
+    when the link was redeemed.  The client words the notice from those facts,
+    so a superseded notice never reads as a confirmation.
     """
     try:
-        from app.modules.notifications.service import list_notifications, mark_read
+        from app.modules.notifications import Notification, list_notifications
 
-        for notification in list_notifications(did):
-            if getattr(notification, "kind", None) != EMAIL_VERIFICATION_KIND:
-                continue
-            if getattr(notification, "read", True):
-                continue
-            if keep_id is not None and getattr(notification, "id", None) == keep_id:
-                continue
-            mark_read(did, notification.id)
+        settled = [
+            notification.id
+            for notification in list_notifications(did)
+            if getattr(notification, "kind", None) == EMAIL_VERIFICATION_KIND
+            and not getattr(notification, "read", True)
+            and not (keep_id is not None and getattr(notification, "id", None) == keep_id)
+        ]
+        if not settled:
+            return
+
+        session = db.SessionLocal()
+        try:
+            rows = (
+                session.query(Notification)
+                .filter(Notification.id.in_(settled), Notification.did == did)
+                .all()
+            )
+            for row in rows:
+                if facts:
+                    # A new dict: the JSON column only notices a reassignment.
+                    row.payload = {**dict(row.payload), **facts}
+                row.read = True
+            session.commit()
+        finally:
+            session.close()
     except Exception:
         pass
 
@@ -321,7 +349,7 @@ def send_verification_email(
     except Exception:
         logger.exception("could not send the email verification link for %s", did)
         return None
-    _settle_verification_notices(did, keep_id=getattr(notification, "id", None))
+    _settle_verification_notices(did, keep_id=getattr(notification, "id", None), facts={"superseded": True})
     return payload
 
 
@@ -366,8 +394,9 @@ def mark_email_verified(
             row.verified_at = verified_at
         session.commit()
 
-    # The verification notification no longer needs attention.
-    _settle_verification_notices(did)
+    # The verification notification no longer needs attention; it records that
+    # the address was in fact confirmed.
+    _settle_verification_notices(did, facts={"verified": True})
 
     return EmailVerification(did=did, email=profile.email, verified_at=verified_at)
 

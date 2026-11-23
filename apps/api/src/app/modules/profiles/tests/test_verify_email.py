@@ -202,6 +202,49 @@ def test_saving_twice_leaves_one_unread_verification_notice(client, did, auth):
     assert email_verified(did) is True
 
 
+def test_the_superseded_notice_says_a_newer_link_replaced_it(client, did, auth):
+    """A notice replaced by a newer one records ``superseded``, never ``verified``.
+
+    The member saved the same *unconfirmed* address twice, so the older notice
+    must not read as though the address had been confirmed: it says a newer
+    link replaced it (D1 in round 23 -- the client words the notice from the
+    payload facts, as :func:`resolve_for_subject` writes them).
+    """
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+
+    notices = [
+        notification
+        for notification in list_notifications(did)
+        if notification.kind == EMAIL_VERIFICATION_KIND
+    ]
+
+    assert len(notices) == 2
+    older, newer = notices
+    assert older.read is True
+    assert older.payload.get("superseded") is True
+    assert older.payload.get("verified") is not True
+    assert newer.read is False
+    assert newer.payload.get("superseded") is not True
+
+
+def test_redeeming_a_link_records_that_the_address_was_verified(client, did, auth):
+    """Redeeming records ``verified`` on the notice it settles."""
+    client.put(f"/v1/profiles/{did}", json=PROFILE, headers=auth(did))
+    token = _last_token()
+
+    assert _verify(client, did, token).status_code == 200
+
+    (settled,) = [
+        notification
+        for notification in list_notifications(did)
+        if notification.kind == EMAIL_VERIFICATION_KIND
+    ]
+    assert settled.read is True
+    assert settled.payload.get("verified") is True
+    assert settled.payload.get("superseded") is not True
+
+
 # --- asking for a fresh link (the expiry screen's resend option) --------------
 
 
