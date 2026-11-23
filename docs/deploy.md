@@ -248,7 +248,7 @@ None of these is tied to a backend; all have safe defaults. The `UPLOAD_*` varia
 | `UPLOAD_DAILY_QUOTA_BYTES_ESTABLISHED` | 20 GiB | The same allowance for accounts 90 days or older. |
 | `REFRESH_REUSE_GRACE_SECONDS` | `30` | How long after a refresh token was rotated the same value is still accepted and receives its successor (concurrent tabs refreshing together). |
 | `REFRESH_COOKIE_SAMESITE` | `lax` | `SameSite` attribute of the refresh cookie (`lax`, `strict` or `none`). |
-| `CLAMD_SOCKET` | *(unset)* | Unix socket of a ClamAV daemon. Unset, bundle scans report that antivirus is unavailable. |
+| `CLAMD_SOCKET` | *(unset)* | Unix socket of a ClamAV daemon. Unset, bundle scans report that antivirus is unavailable, and that counts as a failed scan: every version with a code or data bundle is held and never listed. Set it on any node where authors upload bundles. |
 | `MODERATION_POLICIES_YAML` | the bundled file | Path of the moderation policies file. `POLICIES_YAML` is an alias. |
 | `OAI_ADMIN_EMAIL` | `admin@scholium.local` | Contact address OAI-PMH reports to harvesters. |
 
