@@ -226,6 +226,35 @@ describe("HomePage", () => {
   });
 });
 
+describe("HomeNav", () => {
+  /** Every link in the sections bar, in the order a reader tabs through them. */
+  const sectionLinks = (container: HTMLElement): HTMLAnchorElement[] => [
+    ...container.querySelectorAll<HTMLAnchorElement>(".nav-links a"),
+  ];
+
+  it.each([
+    ["signed in", true],
+    ["signed out", false],
+  ] as const)("links to the docs after FAQ when %s", (_state, signedIn) => {
+    const { container } = render(<HomeNav signedIn={signedIn} />);
+
+    const links = sectionLinks(container);
+
+    // The Docs entry is the FAQ section's neighbour: same list, right after it.
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Provenance",
+      "Open review",
+      "AI pre-review",
+      "Verify",
+      "FAQ",
+      "Docs",
+    ]);
+    const docs = links[links.length - 1]!;
+    expect(docs.textContent).toBe("Docs");
+    expect(docs.getAttribute("href")).toBe("/docs");
+  });
+});
+
 describe("RevealScan", () => {
   it("observes the blocks a section only wrote class names for, and marks them when seen", async () => {
     const observed: Element[] = [];

@@ -33,6 +33,7 @@ export function HomeNav({ signedIn: signedInProp }: HomeNavProps = {}) {
             <li><a href="#ai">AI pre-review</a></li>
             <li><a href="#verify">Verify</a></li>
             <li><a href="#faq">FAQ</a></li>
+            <li><a href="/docs">Docs</a></li>
           </ul>
         </nav>
         <div className="nav-cta">
