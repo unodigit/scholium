@@ -119,8 +119,14 @@ describe("chapter cards", () => {
       expect(image.getAttribute("height")).toBe(String(poster?.height));
       expect(image.getAttribute("loading")).toBe("lazy");
 
-      // videos.json has no YouTube address yet, so every card says so.
-      expect(card.textContent).toContain("Video coming soon");
+      // A chapter with a YouTube address gives the video's length; one
+      // without (chapter 11 until it is uploaded) says it is coming.
+      if (chapters[index].video?.youtube) {
+        expect(card.textContent).toMatch(/Video, \d+ min( \d+ s)?/);
+        expect(card.textContent).not.toContain("Video coming soon");
+      } else {
+        expect(card.textContent).toContain("Video coming soon");
+      }
     });
   });
 
