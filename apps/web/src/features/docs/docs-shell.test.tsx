@@ -156,3 +156,36 @@ describe("DocsShell shell", () => {
     ).toBe(true);
   });
 });
+
+/* ---------------------------------------------------------------------------
+   The "Chapters" disclosure by window width
+   ------------------------------------------------------------------------- */
+
+describe("DocsShell chapters disclosure", () => {
+  function stubWidth(wide: boolean) {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: wide,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("starts collapsed on a narrow window, so a phone opens on the text", () => {
+    stubWidth(false);
+    const { container } = render(<DocsShell chapters={chapters}>Chapter text</DocsShell>);
+    expect(container.querySelector("details")?.open).toBe(false);
+  });
+
+  it("stays open as the sidebar on a wide window", () => {
+    stubWidth(true);
+    const { container } = render(<DocsShell chapters={chapters}>Chapter text</DocsShell>);
+    expect(container.querySelector("details")?.open).toBe(true);
+  });
+});

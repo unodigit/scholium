@@ -109,6 +109,9 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
   const [activeId, setActiveId] = useState<string | null>(null);
 
   // The summary is the trigger below 1100px and is hidden above it.
+  // On a narrow window the list starts collapsed, so a phone opens on the
+  // chapter text rather than two screens of links; without JavaScript it
+  // stays open (server markup), so every link still works.
   useEffect(() => {
     const details = detailsRef.current;
     if (!details || typeof window.matchMedia !== "function") return;
@@ -116,7 +119,7 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
     const reveal = () => {
       if (sidebar.matches) details.open = true;
     };
-    reveal();
+    details.open = sidebar.matches;
     sidebar.addEventListener("change", reveal);
     return () => sidebar.removeEventListener("change", reveal);
   }, []);

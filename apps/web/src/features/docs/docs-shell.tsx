@@ -56,6 +56,9 @@ export function DocsShell({ chapters, children }: DocsShellProps) {
   // the sidebar back when the window grows past the sidebar breakpoint (the
   // sidebar has no trigger to reopen it). Collapsing on the way down stays
   // the reader's choice.
+  // On a narrow window the list starts collapsed, so a phone opens on the
+  // chapter text rather than two screens of links; without JavaScript it
+  // stays open (server markup), so every link still works.
   useEffect(() => {
     const details = chaptersRef.current;
     if (!details || typeof window.matchMedia !== "function") return;
@@ -63,7 +66,7 @@ export function DocsShell({ chapters, children }: DocsShellProps) {
     const reveal = () => {
       if (sidebar.matches) details.open = true;
     };
-    reveal();
+    details.open = sidebar.matches;
     sidebar.addEventListener("change", reveal);
     return () => sidebar.removeEventListener("change", reveal);
   }, []);
