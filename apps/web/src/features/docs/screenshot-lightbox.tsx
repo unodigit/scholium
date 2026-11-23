@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import type { HandbookScreenshot } from "./handbook";
 
@@ -31,6 +31,10 @@ export function ScreenshotLightbox(props: ScreenshotLightboxProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const captionId = useId();
   const previousOverflow = useRef({ html: "", body: "" });
+  // The full-size image is only in the DOM while the overlay is open, so a
+  // closed overlay never fetches it ahead of the lazy figure image and the
+  // page holds one image per screenshot.
+  const [open, setOpen] = useState(false);
 
   function lockScroll() {
     previousOverflow.current = {
@@ -48,6 +52,7 @@ export function ScreenshotLightbox(props: ScreenshotLightboxProps) {
 
   function closeDialog() {
     unlockScroll();
+    setOpen(false);
     const dialog = dialogRef.current;
     if (dialog) {
       try {
@@ -72,6 +77,7 @@ export function ScreenshotLightbox(props: ScreenshotLightboxProps) {
     }
     event.preventDefault();
     lockScroll();
+    setOpen(true);
     const dialog = dialogRef.current;
     if (dialog && typeof dialog.showModal === "function") {
       dialog.showModal();
@@ -96,6 +102,7 @@ export function ScreenshotLightbox(props: ScreenshotLightboxProps) {
 
   function handleClose() {
     unlockScroll();
+    setOpen(false);
     linkRef.current?.focus();
   }
 
@@ -140,7 +147,9 @@ export function ScreenshotLightbox(props: ScreenshotLightboxProps) {
           {/* Sizing lives in docs.css (`dialog.screenshot-lightbox img`): the
               image is capped against the dialog's content box, not viewport
               units, so the overlay never scrolls sideways at 375px. */}
-          <img src={src} alt={alt} className="block h-auto w-auto object-contain" />
+          {open ? (
+            <img src={src} alt={alt} className="block h-auto w-auto object-contain" />
+          ) : null}
           <p id={captionId} className="text-center font-sans text-meta text-ink-2">
             {caption}
           </p>

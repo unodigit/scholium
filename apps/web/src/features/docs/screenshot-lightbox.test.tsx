@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ScreenshotLightbox, type ScreenshotLightboxProps } from "./screenshot-lightbox";
@@ -49,7 +49,9 @@ describe("screenshot lightbox", () => {
     renderShot();
     const link = screen.getByRole("link", { name: /full-size image/i });
     const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
-    link.dispatchEvent(event);
+    act(() => {
+      link.dispatchEvent(event);
+    });
     // fireEvent easier:
     // already dispatched; check defaultPrevented
     const dialog = document.querySelector("dialog") as HTMLDialogElement;
@@ -91,5 +93,15 @@ describe("screenshot lightbox", () => {
     const dialog = document.querySelector("dialog") as HTMLDialogElement;
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(document.activeElement).toBe(link);
+  });
+
+  it("holds one image per screenshot until the overlay opens, and drops the full-size copy on close", () => {
+    renderShot();
+    expect(screen.getAllByRole("img", { hidden: true })).toHaveLength(1);
+    const link = screen.getByRole("link", { name: /full-size image/i });
+    fireEvent.click(link);
+    expect(screen.getAllByRole("img", { hidden: true })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Close image" }));
+    expect(screen.getAllByRole("img", { hidden: true })).toHaveLength(1);
   });
 });
