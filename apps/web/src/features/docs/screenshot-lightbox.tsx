@@ -118,7 +118,12 @@ export function ScreenshotLightbox(props: ScreenshotLightboxProps) {
         ref={linkRef}
         href={src}
         aria-label={`Open full-size image: ${alt}`}
-        className="block w-fit max-w-full cursor-zoom-in overflow-hidden rounded-card border border-rule bg-surface"
+        className="block max-w-full cursor-zoom-in overflow-hidden rounded-card border border-rule bg-surface"
+        // The box is sized before the lazy image loads, so the page does not
+        // grow as screenshots arrive (with width and height both auto, an
+        // unloaded image is 0x0): the column's width, the image's own width,
+        // or the width at which it is 40rem tall, whichever is least.
+        style={{ width: `min(100%, ${width}px, calc(40rem * ${width} / ${height}))` }}
         onClick={handleClick}
       >
         <img
@@ -128,7 +133,8 @@ export function ScreenshotLightbox(props: ScreenshotLightboxProps) {
           height={height}
           loading="lazy"
           decoding="async"
-          className="block h-auto max-h-[40rem] w-auto max-w-full"
+          className="block h-auto w-full"
+          style={{ aspectRatio: `${width} / ${height}` }}
         />
       </a>
       <figcaption className="mt-2 max-w-measure font-sans text-meta text-ink-2">

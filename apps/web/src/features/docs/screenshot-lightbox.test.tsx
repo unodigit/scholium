@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { renderToStaticMarkup } from "react-dom/server";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -103,5 +104,17 @@ describe("screenshot lightbox", () => {
     expect(screen.getAllByRole("img", { hidden: true })).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Close image" }));
     expect(screen.getAllByRole("img", { hidden: true })).toHaveLength(1);
+  });
+
+  it("reserves the screenshot's box before the lazy image loads", () => {
+    // Server markup: jsdom's style parser drops min() and aspect-ratio.
+    const html = renderToStaticMarkup(
+      <ScreenshotLightbox screenshot={{ ...SHOT, heading: "h", source: "s" }} />,
+    );
+    expect(html).toContain(
+      `width:min(100%, ${SHOT.width}px, calc(40rem * ${SHOT.width} / ${SHOT.height}))`,
+    );
+    expect(html).toContain(`aspect-ratio:${SHOT.width} / ${SHOT.height}`);
+    expect(html).toMatch(/<img[^>]*class="block h-auto w-full"/);
   });
 });
