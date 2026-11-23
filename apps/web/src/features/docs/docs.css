@@ -225,3 +225,87 @@
     display: none;
   }
 }
+
+/* ---- Docs screenshot lightbox (native <dialog>) -------------------------- */
+dialog.screenshot-lightbox {
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 95vw;
+  max-height: 90vh;
+  margin: auto;
+  border: none;
+  padding: calc(var(--space-unit) * 4);
+  border-radius: var(--corner-card);
+  background-color: var(--surface);
+  color: var(--ink);
+  overscroll-behavior: contain;
+}
+
+dialog.screenshot-lightbox img {
+  /* Fit the dialog's content box, not the viewport: the dialog is the
+     95vw × 90vh frame (border-box, 32px padding), so a viewport-unit cap
+     here overflows it by the padding and scrolls sideways at 375px. */
+  max-width: 100%;
+  /* Leave room for the caption, the close button and the padding so the
+     whole overlay fits the viewport without an inner scrollbar. */
+  max-height: calc(90vh - 11rem);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+dialog.screenshot-lightbox::backdrop {
+  background-color: var(--scrim);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog.screenshot-lightbox,
+  dialog.screenshot-lightbox::backdrop {
+    transition:
+      opacity var(--duration-base) var(--ease-decel),
+      transform var(--duration-base) var(--ease-decel),
+      overlay var(--duration-base) var(--ease-decel),
+      display var(--duration-base) var(--ease-decel);
+    transition-behavior: allow-discrete;
+  }
+
+  dialog.screenshot-lightbox {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+
+  dialog.screenshot-lightbox[open] {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  @starting-style {
+    dialog.screenshot-lightbox[open] {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+  }
+
+  dialog.screenshot-lightbox::backdrop {
+    opacity: 0;
+  }
+
+  dialog.screenshot-lightbox[open]::backdrop {
+    opacity: 1;
+  }
+
+  @starting-style {
+    dialog.screenshot-lightbox[open]::backdrop {
+      opacity: 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.screenshot-lightbox,
+  dialog.screenshot-lightbox::backdrop {
+    transition: none;
+  }
+}

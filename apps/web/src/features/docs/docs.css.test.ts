@@ -67,4 +67,22 @@ describe("docs.css", () => {
     expect(rules).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
     expect(rules).toMatch(/\.ds-content\s*\{[^}]*min-width:\s*0/);
   });
+
+  it("frames the screenshot lightbox at the viewport and its image inside the frame", () => {
+    // The dialog is the 95vw × 90vh border-box frame; the image inside must
+    // be capped against the dialog's content box (max-width: 100%), not
+    // against viewport units — a 95vw image in a 95vw box with 32px padding
+    // overflows it by exactly that padding and scrolls sideways at 375px.
+    expect(rules).toMatch(/dialog\.screenshot-lightbox\s*\{[^}]*max-width:\s*95vw/);
+    expect(rules).toMatch(/dialog\.screenshot-lightbox\s*\{[^}]*max-height:\s*90vh/);
+    expect(rules).toMatch(/dialog\.screenshot-lightbox img\s*\{[^}]*max-width:\s*100%/);
+    expect(rules).not.toMatch(
+      /dialog\.screenshot-lightbox img\s*\{[^}]*max-width:\s*(?:95vw|100vw)/,
+    );
+    // The image leaves room for the caption, close button and padding, so the
+    // whole overlay fits without an inner scrollbar.
+    expect(rules).toMatch(
+      /dialog\.screenshot-lightbox img\s*\{[^}]*max-height:\s*calc\(90vh\s*-\s*11rem\)/,
+    );
+  });
 });

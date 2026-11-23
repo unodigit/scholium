@@ -10,6 +10,7 @@ import {
   type HandbookHeading,
   type HandbookScreenshot,
 } from "./handbook";
+import { ScreenshotLightbox } from "./screenshot-lightbox";
 
 /**
  * A handbook chapter's Markdown, rendered for the docs pages.
@@ -191,28 +192,7 @@ function SectionHeading({
  * later screenshots cost nothing until they are scrolled to.
  */
 function ScreenshotFigure({ screenshot }: { screenshot: HandbookScreenshot }) {
-  return (
-    <figure className="my-6">
-      <a
-        href={screenshot.src}
-        aria-label={`Open full-size image: ${screenshot.alt}`}
-        className="block w-fit max-w-full cursor-zoom-in overflow-hidden rounded-card border border-rule bg-surface"
-      >
-        <img
-          src={screenshot.src}
-          alt={screenshot.alt}
-          width={screenshot.width}
-          height={screenshot.height}
-          loading="lazy"
-          decoding="async"
-          className="block h-auto max-h-[40rem] w-auto max-w-full"
-        />
-      </a>
-      <figcaption className="mt-2 max-w-measure font-sans text-meta text-ink-2">
-        {screenshot.caption}
-      </figcaption>
-    </figure>
-  );
+  return <ScreenshotLightbox screenshot={screenshot} />;
 }
 
 /** A link the docs do not serve: its text, with the path it pointed at in code. */
