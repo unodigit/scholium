@@ -335,6 +335,85 @@ describe("On this page at the bottom of the chapter", () => {
     setMetric(window, "innerHeight", 768);
     delete (document.documentElement as { scrollHeight?: number }).scrollHeight;
   });
+
+  it("marks the section being read after a jump straight to the bottom", () => {
+    const chapter = chapterAt("your-account");
+    const headingByText = new Map(
+      chapter.headings.map((heading) => [heading.text, heading]),
+    );
+    const last = headingByText.get("Your dashboard");
+    if (!last) throw new Error("the chapter's last heading moved");
+
+    // The observer is a stub that never delivers: a jump like the End key
+    // lands past the band before any entry arrives.
+    class FakeObserver {
+      constructor(_callback: IntersectionObserverCallback) {}
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+
+    // The report's 900px viewport and a chapter long enough that the End
+    // key scrolls all the way down in one jump.
+    setMetric(window, "innerHeight", 900);
+    setMetric(window, "scrollY", 2100);
+    setMetric(document.documentElement, "scrollHeight", 3000);
+
+    render(
+      <ChapterPage
+        number={chapter.number}
+        title={chapter.title}
+        summary={chapter.summary}
+        headings={chapter.headings}
+        video={chapter.video}
+        transcript={[]}
+        previous={null}
+        next={null}
+      >
+        {chapter.headings.map((heading) => (
+          <h2 key={heading.id} id={heading.id}>
+            {heading.text}
+          </h2>
+        ))}
+      </ChapterPage>,
+    );
+
+    // After the jump every heading has scrolled out above the viewport,
+    // the last one 447px above the top, as on /docs/your-account.
+    for (const heading of chapter.headings) {
+      const element = document.getElementById(heading.id);
+      if (element === null) throw new Error(`no #${heading.id} in the body`);
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+        top: heading.id === last.id ? -447 : -1200,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+    }
+
+    const contents = screen.getByRole("navigation", { name: "On this page" });
+    const current = () =>
+      within(contents)
+        .getAllByRole("link")
+        .filter((link) => link.getAttribute("aria-current") === "location")
+        .map((link) => link.textContent);
+
+    // The jump's own scroll event: the section being read is the chapter's
+    // last one, even though its heading sits above the viewport.
+    fireEvent.scroll(window);
+    expect(current()).toEqual(["Your dashboard"]);
+
+    // jsdom's own metrics back for the rest of the file.
+    setMetric(window, "scrollY", 0);
+    setMetric(window, "innerHeight", 768);
+    delete (document.documentElement as { scrollHeight?: number }).scrollHeight;
+  });
 });
 
 /* ---------------------------------------------------------------------------

@@ -166,7 +166,11 @@ function ContentsList({ headings }: { headings: readonly HandbookHeading[] }) {
         let last: string | null = null;
         for (const element of elements) {
           const top = element.getBoundingClientRect().top;
-          if (top >= 0 && top <= window.innerHeight) last = element.id;
+          // A heading counts when its top is at or above the viewport's
+          // bottom, so a section whose heading has already scrolled above the
+          // top of the viewport (common after jumping straight to the bottom)
+          // is still the one being read.
+          if (top <= window.innerHeight) last = element.id;
         }
         if (last !== null) setActiveId(last);
         return;
