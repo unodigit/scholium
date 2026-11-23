@@ -571,6 +571,16 @@ export function checksSummary(items: readonly CheckItem[]): string {
   if (items.every((item) => item.state === "pending")) {
     return "No check results yet.";
   }
+  // A scan hold is a verdict, not a wait: the failed file is the result and the
+  // other checks will never run, so neither "N passed" nor "not run yet" fits.
+  const advisory = items.filter((item) => item.id !== "files");
+  if (
+    advisory.length > 0 &&
+    advisory.every((item) => item.summary === HELD_AT_SCAN) &&
+    items.some((item) => item.id === "files" && item.state === "attention")
+  ) {
+    return "A file failed the safety scan; the other checks did not run.";
+  }
   const passed = items.filter((item) => item.state === "passed").length;
   const attention = items.filter((item) => item.state === "attention").length;
   const running = items.filter((item) => item.state === "running").length;

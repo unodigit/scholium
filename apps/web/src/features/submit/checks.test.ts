@@ -503,6 +503,64 @@ describe("checksSummary", () => {
       "3 of 4 checks passed, 1 to fix or look at.",
     );
   });
+
+  it("names the failed file, and not a wait, when the safety scan held the version", () => {
+    const held = checks({
+      state: "held",
+      checksRan: false,
+      files: [
+        file({
+          path: "code.zip",
+          cid: ZIP,
+          role: "code",
+          status: "failed",
+          failedChecks: ["av_unavailable"],
+        }),
+      ],
+      referencesTotal: null,
+      referencesUnresolved: null,
+      similarityPct: null,
+      metadataMatch: null,
+    });
+    // The three advisory checks never ran and never will: no "yet", no count of passes.
+    expect(checksSummary(checkItems(held))).toBe(
+      "A file failed the safety scan; the other checks did not run.",
+    );
+  });
+
+  it("gives the same sentence however many files the safety scan failed", () => {
+    const held = checks({
+      state: "held",
+      checksRan: false,
+      files: [
+        file({ path: "code.zip", cid: ZIP, role: "code", status: "failed", failedChecks: ["av_unavailable"] }),
+        file({ path: "paper.pdf", status: "failed", failedChecks: ["javascript"] }),
+      ],
+      referencesTotal: null,
+      referencesUnresolved: null,
+      similarityPct: null,
+      metadataMatch: null,
+    });
+    expect(checksSummary(checkItems(held))).toBe(
+      "A file failed the safety scan; the other checks did not run.",
+    );
+  });
+
+  it("still calls an ordinary report that is waiting on its checks pending", () => {
+    // checksRan true (or absent) with the advisory results still null is a wait, not a hold.
+    const waiting = {
+      referencesTotal: null,
+      referencesUnresolved: null,
+      similarityPct: null,
+      metadataMatch: null,
+    };
+    expect(checksSummary(checkItems(checks({ ...waiting, checksRan: true })))).toBe(
+      "1 of 4 checks passed, 3 not run yet.",
+    );
+    expect(checksSummary(checkItems(checks({ ...waiting, checksRan: undefined })))).toBe(
+      "1 of 4 checks passed, 3 not run yet.",
+    );
+  });
 });
 
 describe("checksErrorMessage", () => {
