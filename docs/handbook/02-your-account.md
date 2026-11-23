@@ -147,7 +147,7 @@ If you see "We couldn't find an account linked to that ORCID iD", the ORCID was 
 
 ### A recovery you did not start
 
-When anyone starts a recovery of your account, you get a **Recovery of your account** notification ("Someone started a recovery of your account. Unless you cancel it, it can complete after {date}."), and an email if your email is confirmed. If you did not start it:
+When anyone starts a recovery of your account, you get a **Recovery of your account** notification ("Someone started a recovery of your account. If 3 of your guardians approve, it can complete 72 hours later unless you cancel it."; once three have approved, it names the date the recovery can complete), and an email if your email is confirmed. If you did not start it:
 
 1. Sign in and open **/me/security** (the notification links there).
 2. In the **Recovery in progress** section, choose **Cancel this recovery**.
@@ -155,8 +155,6 @@ When anyone starts a recovery of your account, you get a **Recovery of your acco
 You can cancel until the 72-hour safety window ends, including after a key rotation. Also tell your guardians not to approve: without three approvals the recovery never completes.
 
 A recovery can also be cancelled from **/recover?request={request id}** on a device that holds your passkey: choose **Cancel this recovery**, which asks for your passkey.
-
-> **Known issue:** while a recovery of your own account is open, your dashboard also lists it as if you were a guardian: "Approve the recovery of {your name}" under **Needs your attention**, and an entry under **Recovery requests** on `/me/security`. Do not approve it. Cancel it as described above.
 
 ### If you are someone's guardian
 

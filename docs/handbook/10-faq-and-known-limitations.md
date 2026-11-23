@@ -96,6 +96,4 @@ These are deliberate limits of the first release. Plan around them.
 
 ## Known issues
 
-These are bugs we know about in this release.
-
-- **A recovery of your own account is also listed as a guardian request** on your dashboard ("Approve the recovery of {your name}") and under **Recovery requests** on `/me/security`. Do not approve it; cancel it as described in [A recovery you did not start](02-your-account.md#a-recovery-you-did-not-start).
+There are no known bugs in this release.
