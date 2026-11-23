@@ -15,6 +15,10 @@ const TRANSCRIPT = [
   "This chapter covers sign-in, account setup and trust tiers.",
 ];
 const LABEL = "Watch the chapter video (4 min 33 s)";
+/** Where the poster link goes before any JavaScript runs. */
+const WATCH_URL = `https://www.youtube.com/watch?v=${ID}`;
+/** Where a click plays the video in place. */
+const PLAYER_SRC = `https://www.youtube-nocookie.com/embed/${ID}?autoplay=1&rel=0&cc_load_policy=1`;
 
 function props(youtube: string, extra: Partial<ChapterVideoProps> = {}): ChapterVideoProps {
   return {
@@ -31,6 +35,11 @@ function view(youtube: string, extra: Partial<ChapterVideoProps> = {}) {
 
 function iframe(): HTMLIFrameElement | null {
   return document.querySelector("iframe");
+}
+
+/** The poster control: a link to the watch page, which JavaScript enhances. */
+function link(): HTMLElement {
+  return screen.getByRole("link", { name: LABEL });
 }
 
 describe("extractYouTubeId", () => {
@@ -115,18 +124,31 @@ describe("formatVideoDuration", () => {
   });
 });
 
-describe("ChapterVideo before the click", () => {
-  it("has no iframe and no YouTube address in the markup", () => {
+describe("ChapterVideo without JavaScript", () => {
+  it("serves a poster link to the watch page, and no player", () => {
     const markup = renderToString(createElement(ChapterVideo, props(`https://youtu.be/${ID}`)));
-    expect(markup).not.toMatch(/<iframe/i);
-    expect(markup).not.toMatch(/youtube/i);
-    expect(markup).not.toContain(ID);
-    // What the reader sees instead: the poster behind the button.
-    expect(markup).toContain(POSTER.src);
-    expect(markup).toContain(LABEL);
-  });
 
-  it("has none in the document either, whichever address form the owner pasted", () => {
+    // The server markup alone reaches the video: a plain link, same tab.
+    expect(markup).toMatch(
+      /<a [^>]*href="https:\/\/www\.youtube\.com\/watch\?v=dQw4w9WgXcQ"/,
+    );
+    expect(markup).not.toMatch(/<a [^>]*target=/);
+    expect(markup).toContain(LABEL);
+
+    // Nothing is fetched from YouTube before the click: no frame, no embed
+    // address, no autoplay hint.
+    expect(markup).not.toMatch(/<iframe/i);
+    expect(markup).not.toMatch(/youtube-nocookie/i);
+    expect(markup).not.toMatch(/\/embed\//);
+    expect(markup).not.toMatch(/autoplay/i);
+
+    // What the reader sees instead: the poster behind the link.
+    expect(markup).toContain(POSTER.src);
+  });
+});
+
+describe("ChapterVideo before the click", () => {
+  it("has no player in the document either, whichever address form the owner pasted", () => {
     for (const url of [
       `https://www.youtube.com/watch?v=${ID}`,
       `https://youtu.be/${ID}`,
@@ -135,27 +157,32 @@ describe("ChapterVideo before the click", () => {
     ]) {
       const { container, unmount } = view(url);
       expect(iframe(), url).toBeNull();
-      expect(container.innerHTML, url).not.toMatch(/youtube/i);
+      expect(container.innerHTML, url).not.toMatch(/youtube-nocookie/i);
+      expect(container.innerHTML, url).not.toMatch(/\/embed\//);
+      // Every form becomes the same canonical watch page.
+      expect(link().getAttribute("href"), url).toBe(WATCH_URL);
       unmount();
     }
   });
 
-  it("shows the poster, a play icon and the label inside one button", () => {
+  it("shows the poster, a play icon and the label inside one link", () => {
     const { container } = view(`https://youtu.be/${ID}`);
-    const button = screen.getByRole("button", { name: LABEL });
-    expect(button.getAttribute("type")).toBe("button");
+    const anchor = link();
+    expect(anchor.tagName).toBe("A");
+    expect(anchor.getAttribute("href")).toBe(WATCH_URL);
+    expect(anchor.hasAttribute("target")).toBe(false);
 
-    const poster = button.parentElement?.querySelector("img");
+    const poster = anchor.parentElement?.querySelector("img");
     expect(poster?.getAttribute("src")).toBe(POSTER.src);
     expect(poster?.getAttribute("width")).toBe("1280");
     expect(poster?.getAttribute("height")).toBe("720");
     expect(poster?.getAttribute("alt")).toBe("");
 
-    const icon = button.querySelector("svg");
+    const icon = anchor.querySelector("svg");
     expect(icon).not.toBeNull();
     expect(icon?.getAttribute("aria-hidden")).toBe("true");
 
-    expect(button.textContent).toBe(LABEL);
+    expect(anchor.textContent).toBe(LABEL);
     expect(container.querySelector("[data-state]")?.getAttribute("data-state")).toBe("ready");
     expect(screen.queryByText("Video coming soon")).toBeNull();
   });
@@ -164,14 +191,14 @@ describe("ChapterVideo before the click", () => {
     view(`https://youtu.be/${ID}`, {
       video: { youtube: `https://youtu.be/${ID}`, duration_seconds: 356, poster: POSTER },
     });
-    expect(screen.getByRole("button", { name: "Watch the chapter video (5 min 56 s)" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watch the chapter video (5 min 56 s)" })).toBeTruthy();
   });
 
   it("drops the parentheses when the duration is not usable", () => {
     view(`https://youtu.be/${ID}`, {
       video: { youtube: `https://youtu.be/${ID}`, duration_seconds: 0, poster: POSTER },
     });
-    expect(screen.getByRole("button", { name: "Watch the chapter video" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watch the chapter video" })).toBeTruthy();
   });
 
   it("holds the poster in a 16:9 frame", () => {
@@ -181,11 +208,48 @@ describe("ChapterVideo before the click", () => {
 });
 
 describe("ChapterVideo after the click", () => {
-  it("replaces the button with the player iframe", () => {
+  it("opens the player in place on a plain click instead of following the link", () => {
     const { container } = view(`https://www.youtube.com/watch?v=${ID}`);
-    fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    let defaultPrevented: boolean | null = null;
+    document.addEventListener(
+      "click",
+      (event) => {
+        // Read after React's handler at the root has had its say.
+        defaultPrevented = event.defaultPrevented;
+      },
+      { once: true },
+    );
 
-    expect(screen.queryByRole("button")).toBeNull();
+    fireEvent.click(link());
+
+    // The reader asked for the video, not for YouTube's page.
+    expect(defaultPrevented).toBe(true);
+    expect(iframe()?.getAttribute("src")).toBe(PLAYER_SRC);
+    expect(container.querySelectorAll("a")).toHaveLength(0);
+  });
+
+  it("leaves a modified click to the browser, so the watch page can open in a new tab", () => {
+    view(`https://youtu.be/${ID}`);
+    let defaultPrevented: boolean | null = null;
+    document.addEventListener(
+      "click",
+      (event) => {
+        defaultPrevented = event.defaultPrevented;
+      },
+      { once: true },
+    );
+
+    fireEvent.click(link(), { metaKey: true });
+
+    expect(defaultPrevented).toBe(false);
+    expect(iframe()).toBeNull();
+  });
+
+  it("replaces the link with the player iframe", () => {
+    const { container } = view(`https://www.youtube.com/watch?v=${ID}`);
+    fireEvent.click(link());
+
+    expect(screen.queryByRole("link")).toBeNull();
     const frame = iframe();
     expect(frame).not.toBeNull();
     expect(container.querySelectorAll("iframe")).toHaveLength(1);
@@ -194,16 +258,14 @@ describe("ChapterVideo after the click", () => {
 
   it("embeds the cookieless player with autoplay, no related videos and captions on", () => {
     view(`https://youtu.be/${ID}?si=tracking`);
-    fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    fireEvent.click(link());
 
-    expect(iframe()?.getAttribute("src")).toBe(
-      `https://www.youtube-nocookie.com/embed/${ID}?autoplay=1&rel=0&cc_load_policy=1`,
-    );
+    expect(iframe()?.getAttribute("src")).toBe(PLAYER_SRC);
   });
 
   it("titles, permits and refers the iframe as specified", () => {
     view(`https://www.youtube.com/shorts/${ID}`);
-    fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    fireEvent.click(link());
 
     const frame = iframe();
     expect(frame?.getAttribute("title")).toBe("Chapter video: Your account");
@@ -216,13 +278,13 @@ describe("ChapterVideo after the click", () => {
 
   it("keeps the title as text, whatever characters it holds", () => {
     view(`https://youtu.be/${ID}`, { title: `Fish & "chips" <b>` });
-    fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    fireEvent.click(link());
     expect(iframe()?.title).toBe(`Chapter video: Fish & "chips" <b>`);
   });
 
   it("keeps the poster behind the player and the frame 16:9", () => {
     const { container } = view(`https://youtu.be/${ID}`);
-    fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    fireEvent.click(link());
 
     const frame = iframe()!;
     expect(frame.parentElement?.querySelector("img")?.getAttribute("src")).toBe(POSTER.src);
@@ -230,24 +292,24 @@ describe("ChapterVideo after the click", () => {
     expect(container.querySelectorAll("button")).toHaveLength(0);
   });
 
-  it("moves keyboard focus into the player when the button disappears", () => {
+  it("moves keyboard focus into the player when the link disappears", () => {
     view(`https://youtu.be/${ID}`);
-    const button = screen.getByRole("button", { name: LABEL });
-    button.focus();
-    expect(document.activeElement).toBe(button);
+    const anchor = link();
+    anchor.focus();
+    expect(document.activeElement).toBe(anchor);
 
-    fireEvent.click(button);
+    fireEvent.click(anchor);
     expect(document.activeElement).toBe(iframe());
   });
 
   it("does not load another chapter's video when the instance is reused for it", () => {
     const { rerender } = view(`https://youtu.be/${ID}`);
-    fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    fireEvent.click(link());
     expect(iframe()).not.toBeNull();
 
     rerender(createElement(ChapterVideo, props("https://youtu.be/abcdefghijk")));
     expect(iframe()).toBeNull();
-    expect(screen.getByRole("button", { name: LABEL })).toBeTruthy();
+    expect(screen.getByRole("link", { name: LABEL })).toBeTruthy();
   });
 
   it("does not play on its own after a re-render with the same video", () => {
@@ -264,13 +326,14 @@ describe("ChapterVideo with no usable address", () => {
     ["an invalid", "https://example.com/not-a-video"],
     ["a malformed", "not a url"],
     ["a playlist", "https://www.youtube.com/playlist?list=PLabcdefghijk"],
-  ])("shows the poster and the coming-soon note, and no button, for %s address", (_what, url) => {
+  ])("shows the poster and the coming-soon note, and no control, for %s address", (_what, url) => {
     const { container } = view(url);
 
     expect(screen.getByText("Video coming soon")).toBeTruthy();
     expect(container.querySelector("img")?.getAttribute("src")).toBe(POSTER.src);
     expect(screen.queryByRole("button")).toBeNull();
-    expect(container.querySelector("button")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(container.querySelector("a")).toBeNull();
     expect(iframe()).toBeNull();
     expect(container.querySelector("[data-state]")?.getAttribute("data-state")).toBe("unavailable");
     expect(container.innerHTML).not.toMatch(/youtube/i);
@@ -300,7 +363,7 @@ describe("the transcript disclosure", () => {
 
   it.each(cases)("holds the transcript %s", (_when, url, clicked) => {
     const { container } = view(url);
-    if (clicked) fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    if (clicked) fireEvent.click(link());
 
     const details = container.querySelector("details");
     expect(details).not.toBeNull();
@@ -334,7 +397,7 @@ describe("the transcript disclosure", () => {
     const { container } = view(`https://youtu.be/${ID}`);
     const details = container.querySelector("details")!;
     details.open = true;
-    fireEvent.click(screen.getByRole("button", { name: LABEL }));
+    fireEvent.click(link());
     expect(container.querySelector("details")).toBe(details);
     expect(details.open).toBe(true);
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import type { HandbookVideo } from "./handbook";
 
@@ -9,15 +9,18 @@ import type { HandbookVideo } from "./handbook";
  *
  * Nothing from YouTube is requested until the reader asks for the video: the
  * page shows the chapter's own poster (a file under `public/docs/posters/`)
- * inside a button, and only a click swaps in the player, an iframe of the
- * cookieless embed host. The markup before the click holds no iframe and no
- * YouTube address, and the CSP (`frame-src`, next.config.js) allows exactly
- * that host.
+ * inside a link to the video's watch page. With JavaScript, a plain click on
+ * that link is prevented and the player — an iframe of the cookieless embed
+ * host — takes its place; without JavaScript the same link opens the watch
+ * page in the same tab. Either way the markup before the click holds no
+ * iframe and no embed address, so no request reaches YouTube until the click,
+ * and the CSP (`frame-src`, next.config.js) allows exactly that host.
  *
- * - A valid video id in `video.youtube`: the poster is a button, "Watch the
- *   chapter video (4 min 33 s)", with a play icon.
+ * - A valid video id in `video.youtube`: the poster is a link to
+ *   `https://www.youtube.com/watch?v=ID`, "Watch the chapter video (4 min
+ *   33 s)", with a play icon.
  * - An empty or invalid address (the owner has not uploaded the video yet):
- *   the poster with the note "Video coming soon" and no button.
+ *   the poster with the note "Video coming soon" and no link.
  * - Either way a "Read the transcript" disclosure holds the transcript, so the
  *   chapter is usable without playing anything. It is a native `details`
  *   element, so it works before the page hydrates. Given no paragraphs it
@@ -125,9 +128,17 @@ export function formatVideoDuration(seconds: number): string | null {
   return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
 }
 
-/** The player address for a video id; the only YouTube address in the app. */
+/** The player address for a video id, on the cookieless embed host. */
 function embedUrl(id: string): string {
   return `${EMBED_ORIGIN}/embed/${encodeURIComponent(id)}?autoplay=1&rel=0&cc_load_policy=1`;
+}
+
+/**
+ * The video's watch page, which the poster links to: the whole control without
+ * JavaScript, and where a modified click still sends the reader.
+ */
+function watchUrl(id: string): string {
+  return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
 }
 
 export type ChapterVideoProps = {
@@ -203,10 +214,20 @@ export function ChapterVideo({ title, video, transcript = [], className }: Chapt
 
   const frameRef = useRef<HTMLIFrameElement>(null);
   useEffect(() => {
-    // The button the reader pressed is gone; keep keyboard focus in the player
+    // The link the reader pressed is gone; keep keyboard focus in the player
     // instead of dropping it to the page.
     if (playing) frameRef.current?.focus();
   }, [playing]);
+
+  const activate = (event: MouseEvent<HTMLAnchorElement>) => {
+    // A plain click plays in place. A modifier key or another button means the
+    // reader is asking the browser for the watch page (usually in a new tab),
+    // so the link keeps its own behaviour.
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setStartedId(id);
+  };
 
   const state = id === null ? "unavailable" : playing ? "playing" : "ready";
   const duration = formatVideoDuration(video.duration_seconds);
@@ -231,10 +252,10 @@ export function ChapterVideo({ title, video, transcript = [], className }: Chapt
           className="absolute inset-0 h-full w-full object-cover"
         />
 
-        {state === "ready" && (
-          <button
-            type="button"
-            onClick={() => setStartedId(id)}
+        {state === "ready" && id !== null && (
+          <a
+            href={watchUrl(id)}
+            onClick={activate}
             className="group/play absolute inset-0 block h-full w-full cursor-pointer text-left"
           >
             <span
@@ -245,7 +266,7 @@ export function ChapterVideo({ title, video, transcript = [], className }: Chapt
               </span>
               <span className="text-balance">{label}</span>
             </span>
-          </button>
+          </a>
         )}
 
         {state === "unavailable" && <p className={`${PILL} m-0 px-4 py-2`}>Video coming soon</p>}
