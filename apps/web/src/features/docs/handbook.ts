@@ -18,25 +18,25 @@ import { fileURLToPath } from "node:url";
 function locateHandbookDir(): string {
   const candidates = [
     // The normal case: `npm run build` / vitest run with apps/web as the cwd.
-    path.resolve(process.cwd(), "../../docs/handbook"),
+    path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../../docs/handbook"),
     // `npm test` from the repository root.
-    path.resolve(process.cwd(), "docs/handbook"),
+    path.resolve(/*turbopackIgnore: true*/ process.cwd(), "docs/handbook"),
   ];
   // Anywhere below the repository root, e.g. a test run from a nested folder.
   for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
-    candidates.push(path.join(dir, "docs/handbook"));
+    candidates.push(path.join(/*turbopackIgnore: true*/ dir, "docs/handbook"));
     if (path.dirname(dir) === dir) break;
   }
   try {
     // Resolving from this source file: docs -> features -> src -> apps/web.
     candidates.push(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../../docs/handbook"),
+      path.resolve(/*turbopackIgnore: true*/ path.dirname(fileURLToPath(import.meta.url)), "../../../../../docs/handbook"),
     );
   } catch {
     // A bundle may replace import.meta.url; the cwd candidates already cover it.
   }
   for (const candidate of candidates) {
-    if (existsSync(path.join(candidate, "README.md"))) return candidate;
+    if (existsSync(/*turbopackIgnore: true*/ path.join(candidate, "README.md"))) return candidate;
   }
   throw new Error(
     `Cannot find docs/handbook (looked in ${candidates.join(", ")}). ` +
@@ -120,7 +120,7 @@ export type QuickStartSection = {
 const CHAPTER_FILE = /^(\d+)-(.+)\.md$/;
 
 function read(file: string): string {
-  return readFileSync(path.join(HANDBOOK_DIR, file), "utf8").replace(/\r\n?/g, "\n");
+  return readFileSync(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ HANDBOOK_DIR, file), "utf8").replace(/\r\n?/g, "\n");
 }
 
 /** Remove inline Markdown markers so an anchor is made from the visible text. */
@@ -295,7 +295,7 @@ function loadChapters(): HandbookChapter[] {
   const screenshots = readJson<Record<string, HandbookScreenshot[]>>("screenshots.json");
   const videos = readJson<Record<string, HandbookVideo>>("videos.json");
 
-  const files = readdirSync(HANDBOOK_DIR)
+  const files = readdirSync(/*turbopackIgnore: true*/ HANDBOOK_DIR)
     .map((file) => ({ file, match: CHAPTER_FILE.exec(file) }))
     .filter((entry): entry is { file: string; match: RegExpExecArray } => entry.match !== null)
     .sort((a, b) => Number(a.match[1]) - Number(b.match[1]));

@@ -296,6 +296,13 @@ const nextConfig = {
   // so the image serves exactly the policy these tests assert.
   output: "standalone",
   outputFileTracingRoot: WORKSPACE_ROOT,
+  // The sitemap revalidates at runtime and lists the docs chapters, which
+  // features/docs/handbook.ts reads from docs/handbook/ (its file reads are
+  // marked turbopackIgnore so they do not trace the whole project). Ship that
+  // folder with the standalone server; the /docs pages themselves are static.
+  outputFileTracingIncludes: {
+    "/sitemap.xml": ["../../docs/handbook/**/*"],
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders() }];
   },
