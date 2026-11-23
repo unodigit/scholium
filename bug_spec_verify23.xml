@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 23: findings of the sweep-22b re-check of round 22 (2026-11-23, main @ 8430f68; all 9 round-22 fixes verified;
+  npm test API 6151 / web 6200, e2e 61/61). Evidence: .claw-forge/journeys/screenshots/<journey>/40-r22-*.
+  Decision (recorded here):
+  D1  A notice that a newer one replaced says so; it never claims the reader did something. The notice-facts pattern
+      applies (notifications.service.resolve_for_subject: facts in the payload, the client words the notice from them).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/profiles/service.py,apps/api/src/app/modules/profiles/tests/test_verify_email.py,apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts">
+    <title>An email-verification notice replaced by a newer one reads "You confirmed your email address." although the address is not confirmed</title>
+    <symptoms>Round 22 bug 8 (608b459) settles older unread email-verification notices with mark_read in _settle_verification_notices (profiles/service.py ~L277-300); dashboard.ts answeredSummary (~L1001) words every read "email.verify" notice "You confirmed your email address.". Evidence screenshots/03-new-member-onboarding/40-r22-bug8d-superseded-notice-reads-confirmed.png</symptoms>
+    <reproduction_steps>As a new member, save the profile twice with the same unconfirmed email and open /me notifications: the older notice reads "You confirmed your email address."</reproduction_steps>
+    <expected>Per D1: a notice settled because a newer link replaced it gets a payload fact superseded: true (written like resolve_for_subject's facts, a new dict) and is marked read; a notice settled by redeeming a link gets verified: true. answeredSummary words "email.verify": verified → "You confirmed your email address."; superseded → "A newer confirmation link replaced this one."; read with neither fact (older rows) → "You confirmed your email address." only if the payload says verified, otherwise "Email confirmation reminder." Tests: test_verify_email.py (two saves → the older notice read with superseded true, the newer unread; redeeming → verified true on what it settles); dashboard.test.ts for the three wordings</expected>
+    <actual>The member is told they confirmed an address they have not</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/docs/chapter-page.tsx,apps/web/src/features/docs/chapter-page.test.tsx">
+    <title>Docs "On this page" marks nothing after jumping straight to the bottom of a chapter (End key)</title>
+    <symptoms>Round 22 bug 5 (b48fec3) marks the last heading whose top is in the viewport when the page is at the bottom; after End from the top, the last heading is above the viewport (~447px on /docs/your-account) and no heading is in the band, so no entry is current. Evidence screenshots/18-docs/40-r22-bug5b-end-key-stale-current.png</symptoms>
+    <reproduction_steps>Open /docs/your-account at 1440x900 and press End</reproduction_steps>
+    <expected>At the bottom of the page the current entry is the last heading in document order whose top is at or above the viewport's bottom (so the section being read, even if its heading scrolled above the top); mid-page behaviour and contents-link clicks are unchanged. chapter-page.test.tsx covers a jump to the bottom with the last heading above the viewport</expected>
+    <actual>No entry is marked</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-page/paper-page.css,apps/web/src/features/paper-page/paper-page.css.test.ts">
+    <title>Paper margin tabs: the selected tab's outline touches its label ("Discussion (3)") with no inner space</title>
+    <symptoms>After round 22 bug 7 (3d398d1) made the tab row wrap, .ppg-tab (paper-page.css ~L945-1020) fits its label exactly, so the selected tab's border sits against the text. Evidence screenshots/04-discussion/40-r22-bug7d-1440-discussion-3-label-fits.png</symptoms>
+    <reproduction_steps>Open a paper with 3 discussion posts at 1440x900 with the margin panel scrolling; select Discussion</reproduction_steps>
+    <expected>Each tab keeps an inner inline padding of at least calc(var(--space-unit) * 2) on both sides inside its outline, also in the narrow-panel media rules; labels still never clip or ellipsize (the row wraps as now) and there is no horizontal scroll. paper-page.css.test.ts asserts the padding</expected>
+    <actual>The outline touches the label</actual>
+  </bug>
+
+</bug_spec>
