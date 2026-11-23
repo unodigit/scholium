@@ -1,0 +1,224 @@
+/*
+ * The `/docs` shell — the chapter navigation and reading frame every docs
+ * page shares. The layout (`app/(docs)/layout.tsx`) renders the outer frame
+ * (`.ds-main`); the shell component (`features/docs/docs-shell.tsx`) renders
+ * the chapter list and the content column.
+ *
+ * Every value is a design token from `src/styles/tokens.css`, so light, dark
+ * and a forced `data-theme` all re-theme the docs with no extra classes. The
+ * one raw value is the 64px height of the sticky global header
+ * (`components/nav`), the same offset the policy pages give their anchors.
+ * Rules are prefixed `ds-` (docs shell) so nothing leaks into other features.
+ *
+ * Shape, decided by the 1100px breakpoint:
+ *
+ * - below it, the chapters collapse into a "Chapters" disclosure above the
+ *   content — a native <details>, so it opens and closes without JavaScript;
+ * - at 1100px and wider, the disclosure's summary is hidden and the same
+ *   list becomes a sticky left sidebar beside the reading column.
+ */
+
+/* ---- Page frame ---------------------------------------------------------- */
+
+.ds-main {
+  box-sizing: border-box;
+  width: 100%;
+  /* Reading column + sidebar + gutters; the sidebar's share borrows the
+     margin-panel token (docs/design.md §3). */
+  max-width: calc(
+    var(--reading-column) + var(--margin-panel) + var(--space-unit) * 12
+  );
+  margin-inline: auto;
+  padding-block: calc(var(--space-unit) * 8) calc(var(--space-unit) * 16);
+  padding-inline: calc(var(--space-unit) * 4);
+}
+
+@media (min-width: 40rem) {
+  .ds-main {
+    padding-inline: calc(var(--space-unit) * 6);
+  }
+}
+
+/* ---- Shell ---------------------------------------------------------------- */
+
+.ds-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space-unit) * 6);
+}
+
+/* The article column holds the docs home and the chapters at the reading
+   measure of docs/design.md §3: about 72 characters, the width the design
+   pairs --measure-reading (72ch) with --reading-column (its 720px form).
+   min-width: 0 lets the column shrink inside the grid, so a long word or
+   code line wraps instead of pushing the page sideways. */
+.ds-content {
+  min-width: 0;
+  max-width: var(--reading-column);
+}
+
+/* ---- Chapter navigation ---------------------------------------------------- */
+
+.ds-nav {
+  min-width: 0;
+}
+
+.ds-title {
+  margin: 0 0 calc(var(--space-unit) * 2);
+  font-family: var(--family-sans);
+  font-size: var(--type-ui);
+  line-height: var(--leading-ui);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* The heading is the way back to the docs index: a chrome link, not prose. */
+.ds-title-link {
+  color: var(--ink);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-decel);
+}
+
+.ds-title-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+/* The "Chapters" disclosure trigger. */
+.ds-toggle {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  min-height: 44px;
+  margin-inline: calc(var(--space-unit) * -2);
+  padding-inline: calc(var(--space-unit) * 2);
+  border-radius: var(--corner-control);
+  color: var(--ink);
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-decel);
+}
+
+.ds-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.ds-toggle:hover {
+  background-color: var(--bg-2);
+}
+
+.ds-chevron {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  /* Closed, the chevron points the way the list opens from; it settles
+     down once open. Transform only, so the turn stays cheap. */
+  rotate: -90deg;
+  transition: rotate var(--duration-base) var(--ease-decel);
+}
+
+.ds-chapters[open] > .ds-toggle .ds-chevron {
+  rotate: 0deg;
+}
+
+.ds-list {
+  margin: 0;
+  /* The padding keeps a focused link's outline clear of the disclosure's
+     clip edge (see ::details-content below). */
+  padding: calc(var(--space-unit) * 1.5) calc(var(--space-unit) * 2)
+    calc(var(--space-unit) * 2) calc(var(--space-unit) * 6);
+}
+
+.ds-item::marker {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-item:has(.ds-link[aria-current="page"])::marker {
+  color: var(--accent);
+}
+
+.ds-link {
+  display: block;
+  padding-block: calc(var(--space-unit) * 1.5);
+  color: var(--ink);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-decel);
+}
+
+.ds-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+/* The current chapter: accent and semibold together, never colour alone. */
+.ds-link[aria-current="page"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Touch targets are at least 44px (docs/design.md §9). */
+@media (pointer: coarse) {
+  .ds-link {
+    padding-block: calc(var(--space-unit) * 3);
+  }
+}
+
+/* Opening and closing slides the chapter list. Progressive enhancement:
+   without interpolate-size the list snaps between the same two states, and
+   reduced motion is neutralised globally in base.css. */
+.ds-chapters::details-content {
+  overflow: clip;
+  contain: layout;
+}
+
+.ds-chapters:not([open])::details-content {
+  block-size: 0;
+}
+
+@supports (interpolate-size: allow-keywords) {
+  .ds-chapters::details-content {
+    interpolate-size: allow-keywords;
+    transition:
+      block-size var(--duration-base) var(--ease-decel),
+      content-visibility var(--duration-base) var(--ease-decel),
+      display var(--duration-base) var(--ease-decel);
+    transition-behavior: allow-discrete;
+  }
+}
+
+/* ---- Sidebar: 1100px and wider -------------------------------------------- */
+
+@media (min-width: 1100px) {
+  .ds-shell {
+    grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
+    column-gap: calc(var(--space-unit) * 10);
+    align-items: start;
+  }
+
+  /* The list stays in view beside the reading column. align-items: start
+     above keeps the nav from stretching to the article's height, which
+     would leave the sticky list nowhere to travel. */
+  .ds-nav {
+    position: sticky;
+    /* Clears the 64px sticky global header (components/nav), the same
+       header height the policy pages offset their anchor targets by. */
+    top: calc(64px + var(--space-unit) * 6);
+    max-height: calc(100vh - 64px - var(--space-unit) * 12);
+    /* dvh keeps the box inside the viewport as mobile browser toolbars
+       come and go; the vh line above is the fallback. */
+    max-height: calc(100dvh - 64px - var(--space-unit) * 12);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    /* Room for a focused link's outline inside the scroll box. */
+    padding-inline: calc(var(--space-unit) * 1);
+  }
+
+  /* The sidebar list is always open; the disclosure trigger is not needed. */
+  .ds-toggle {
+    display: none;
+  }
+}
