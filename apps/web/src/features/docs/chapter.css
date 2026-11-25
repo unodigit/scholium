@@ -32,6 +32,13 @@
   min-width: 0;
 }
 
+/* No contents list (a chapter without sections): no empty row and gap above
+   the article on a narrow screen. The wide layout keeps its right column, so
+   the article stays at the same measure as every other chapter. */
+.chapter-page--no-toc {
+  grid-template-areas: "article";
+}
+
 .chapter-article {
   grid-area: article;
   /* Grid items refuse to shrink below their content without this; a long

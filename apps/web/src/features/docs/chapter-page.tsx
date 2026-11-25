@@ -320,9 +320,13 @@ export function ChapterPage({
   next,
   children,
 }: ChapterPageProps) {
+  // A chapter without sections (the Glossary is one table) has nothing to
+  // list, so it gets no "On this page" heading over an empty list.
+  const hasContents = headings.length > 0;
+
   return (
-    <div className="chapter-page">
-      <ContentsList headings={headings} />
+    <div className={hasContents ? "chapter-page" : "chapter-page chapter-page--no-toc"}>
+      {hasContents && <ContentsList headings={headings} />}
 
       <article className="chapter-article" aria-labelledby="chapter-title">
         <p className="chapter-eyebrow">Chapter {number}</p>

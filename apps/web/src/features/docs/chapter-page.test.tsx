@@ -189,6 +189,20 @@ describe("chapter page", () => {
     );
   });
 
+  it("has no On this page list for a chapter without sections (the Glossary)", () => {
+    const chapter = chapterAt("glossary");
+    expect(chapter.headings).toHaveLength(0);
+    const { container } = renderChapter("glossary");
+
+    // An empty "On this page" heading over an empty list is noise: leave it out.
+    expect(screen.queryByRole("navigation", { name: "On this page" })).toBeNull();
+    expect(container.querySelector(".chapter-toc")).toBeNull();
+    expect(container.querySelector(".chapter-page--no-toc")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { level: 1, name: chapter.title }),
+    ).toBeTruthy();
+  });
+
   it("shows the chapter video block and the server-rendered body", () => {
     const chapter = chapterAt("your-account");
     const { container } = renderChapter("your-account");
