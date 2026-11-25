@@ -62,17 +62,17 @@ import "./nav.css";
 export const NOTIFICATIONS_PATH = "/me#notifications";
 
 /**
- * The feed's address. `components/` keeps to `features/ui-kit`, so this mirrors
- * `FEED_PATH` in `features/feed/feed.ts` rather than importing the feed module
- * into the nav every route group mounts.
- */
-/**
  * Mirrors `SEARCH_URL_CHANGED_EVENT` in
  * `features/search-page/search-page.tsx` (the nav does not import from
  * features/); keep the two strings in sync.
  */
 export const SEARCH_URL_CHANGED_EVENT = "scholium:search-url-changed";
 
+/**
+ * The feed's address. `components/` keeps to `features/ui-kit`, so this mirrors
+ * `FEED_PATH` in `features/feed/feed.ts` rather than importing the feed module
+ * into the nav every route group mounts.
+ */
 const FEED_PATH = "/papers";
 
 /** Placeholder from the feed header mock (design.md §5.1). */
