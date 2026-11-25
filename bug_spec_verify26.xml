@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 26: finding of the round-25 browser check (2026-11-26, verify app @ c5f5bf6, sweep-23 data; round-25 Back/Forward
+  verified with Playwright: one search request per step, the page box, heading and results always match the URL).
+  Decision (recorded here):
+  D1  The search page tells the rest of the page that it rewrote the address bar with one window Event,
+      SEARCH_URL_CHANGED_EVENT = "scholium:search-url-changed", dispatched by search-page.tsx defaultUpdateUrl after
+      each history.pushState / replaceState of a /search URL. The global nav's header box listens for it (as it does
+      for popstate) and re-reads ?q=. The string is duplicated in both modules with a comment naming the other (the nav
+      component does not import from features/). Never dispatch a synthetic popstate: the Next router handles popstate.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx,apps/web/src/components/nav/global-nav.tsx,apps/web/src/components/nav/global-nav.test.tsx">
+    <title>After a search from the search page's own box, the header search box still shows the previous query (empty, or the query the page was loaded with)</title>
+    <symptoms>global-nav.tsx useSearchQuery (~L107-125) reads ?q= from location.search only when the pathname changes or on popstate. A search typed in the page's own box changes only ?q= with window.history.pushState (search-page.tsx defaultUpdateUrl, ~L132-160), so the header box is not told. Seen with Playwright on the verify app @ c5f5bf6: full load of /search?q=calibration, page-box search "Rafael Silva" → the page shows "3 results for “Rafael Silva”" while the header box still reads "calibration" (from an empty /search it stays empty). Back/Forward afterwards resync it (popstate)</symptoms>
+    <reproduction_steps>Open /search?q=calibration. In the page's own search box type "Rafael Silva" and press Enter: the results are for "Rafael Silva", the header search box says "calibration"</reproduction_steps>
+    <expected>Per D1: after any search, filter or mode change the search page writes to the address bar, the header box shows the URL's q (the same as after a full load of that URL), unless the reader is typing in the header box at that moment (focused field: do not overwrite the draft). Back/Forward behaviour from round 25 is unchanged; no extra search requests; no synthetic popstate. Tests: search-page.test.tsx asserts the event is dispatched once per URL write (push and replace) and not when the URL is unchanged; global-nav.test.tsx asserts the header box follows the event to the new ?q=, ignores it while focused, and removes the listener on unmount</expected>
+    <actual>The header box shows a different query from the one on the page</actual>
+  </bug>
+
+</bug_spec>
