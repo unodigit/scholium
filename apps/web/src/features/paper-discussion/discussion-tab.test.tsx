@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, NetworkError } from "../../lib/api";
 import { PasskeyCancelledError } from "../web-auth/errors";
 import type { SignedRecord } from "../web-auth/sign-record";
+import { ANNOTATION_CREATED_EVENT } from "./annotations";
 import { DiscussionTab, type DiscussionActions } from "./discussion-tab";
 import {
   authorLabel,
@@ -986,6 +987,85 @@ describe("DiscussionTab: loading", () => {
     );
     // Same post id on another paper's list: not marked helpful there.
     expect(within(card("quiet")).getByRole("button", { name: /^Mark helpful/ })).toBeTruthy();
+  });
+});
+
+describe("DiscussionTab: an annotation saved in the reading column", () => {
+  /** An empty discussion, as the server seeds a paper nobody has written on. */
+  function empty(): DiscussionData {
+    return { paper: SHORT, paperCid: "bafyrei-genesis", threads: [] };
+  }
+
+  /** What the reading column says on `window` after a save (bug_spec_verify24 D2). */
+  function savedInTheText(paperId: string, annotation: DiscussionPost = post("bafyrei-annotation")): void {
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(ANNOTATION_CREATED_EVENT, {
+          detail: { paperId, versionCid: "bafyrei-v1", annotation },
+        }),
+      );
+    });
+  }
+
+  it("lists the saved annotation and counts it, without a reload", async () => {
+    const annotation = post("bafyrei-annotation", {
+      quote: "the paragraph the reader annotated",
+      text: "A note on this paragraph.",
+    });
+    // The reload the tab does itself sees what a page reload would: the
+    // annotation is a `discussion.post` among the paper's threads.
+    const load = vi.fn<LoadThreads>().mockResolvedValue({
+      paper: SHORT,
+      paperCid: "bafyrei-genesis",
+      threads: [annotation],
+    });
+    const onCountChange = vi.fn();
+    render(
+      <DiscussionTab paperId={SHORT} signedIn initial={empty()} load={load} onCountChange={onCountChange} />,
+    );
+    expect(screen.getByText(/No discussion yet/)).toBeTruthy();
+    expect(onCountChange).toHaveBeenLastCalledWith(0);
+
+    savedInTheText(SHORT);
+
+    await waitFor(() => expect(screen.getByText("A note on this paragraph.")).toBeTruthy());
+    expect(screen.getByText("1 post · most helpful first")).toBeTruthy();
+    expect(screen.queryByText(/No discussion yet/)).toBeNull();
+    expect(onCountChange).toHaveBeenLastCalledWith(1);
+    expect(load).toHaveBeenCalledWith(SHORT, expect.any(AbortSignal));
+  });
+
+  it("ignores an annotation saved on another paper", async () => {
+    const load = vi.fn<LoadThreads>().mockResolvedValue(empty());
+    render(<DiscussionTab paperId={SHORT} signedIn initial={empty()} load={load} />);
+
+    savedInTheText("sch:bbbb-bbbb-bbbb");
+    // Let any read a listener wrongly started settle.
+    await act(async () => Promise.resolve());
+
+    expect(load).not.toHaveBeenCalled();
+    expect(screen.getByText(/No discussion yet/)).toBeTruthy();
+  });
+
+  it("stops hearing once the tab is unmounted", () => {
+    const added = vi.spyOn(window, "addEventListener");
+    const removed = vi.spyOn(window, "removeEventListener");
+    try {
+      const view = render(<DiscussionTab paperId={SHORT} signedIn initial={empty()} />);
+      const listening = added.mock.calls
+        .filter(([type]) => type === ANNOTATION_CREATED_EVENT)
+        .map(([, listener]) => listener);
+      expect(listening.length).toBeGreaterThan(0);
+
+      view.unmount();
+
+      for (const listener of listening) {
+        expect(removed).toHaveBeenCalledWith(ANNOTATION_CREATED_EVENT, listener);
+      }
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+    }
   });
 });
 

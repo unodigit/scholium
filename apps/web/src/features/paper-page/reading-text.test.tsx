@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ANNOTATION_CREATED_EVENT } from "../paper-discussion/annotations";
 import { loadKatex, type LoadMath } from "./math-typeset";
 import { stubApi } from "./paper-page-fixtures";
 import { ReadingText } from "./reading-text";
@@ -105,12 +106,23 @@ function jsonResponse(payload: unknown): Response {
  * annotation, so the reload that follows it returns the list with the note in
  * it, as the real endpoint would.
  */
-function stubAnnotationApi() {
+function stubAnnotationApi(options: { refuseSave?: boolean } = {}) {
   const state = { posted: false };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input)).pathname;
     if (/\/annotations$/.test(path)) {
       if (init?.method === "POST") {
+        if (options.refuseSave === true) {
+          return new Response(
+            JSON.stringify({
+              type: "about:blank",
+              title: "Problem",
+              status: 500,
+              detail: "The annotation could not be saved.",
+            }),
+            { status: 500, headers: { "content-type": "application/problem+json" } },
+          );
+        }
         state.posted = true;
         return jsonResponse({ id: "bafyrei-posted-annotation" });
       }
@@ -427,5 +439,61 @@ describe("ReadingText: the annotation margin column", () => {
     // paragraph it belongs to opens.
     await waitFor(() => expect(marker.getAttribute("aria-expanded")).toBe("true"));
     expect(await screen.findByText(POSTED_NOTE)).toBeTruthy();
+  });
+});
+
+describe("ReadingText: announcing a saved annotation", () => {
+  /** Hear what the reading column says on `window`; returns the stop function. */
+  function hear(listener: (event: Event) => void): () => void {
+    window.addEventListener(ANNOTATION_CREATED_EVENT, listener);
+    return () => window.removeEventListener(ANNOTATION_CREATED_EVENT, listener);
+  }
+
+  async function saveNote(): Promise<void> {
+    const paragraph = paragraphElement("p1");
+    fireEvent.focus(paragraph);
+    fireEvent.keyDown(paragraph, { key: "a" });
+    const textarea = await screen.findByRole("textbox");
+    fireEvent.change(textarea, { target: { value: POSTED_NOTE } });
+    fireEvent.click(screen.getByRole("button", { name: "Save annotation" }));
+  }
+
+  it("says so once, naming the paper, after the annotation is saved", async () => {
+    stubAnnotationApi();
+    const heard = vi.fn();
+    const stop = hear(heard);
+    try {
+      renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+      await saveNote();
+
+      await waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+      const detail = (heard.mock.calls[0][0] as CustomEvent).detail;
+      expect(detail).toMatchObject({
+        paperId: "sch:6sel-2dio-orm6",
+        versionCid: "bafyrei-version-2",
+      });
+      expect(detail.annotation).toMatchObject({ paragraphId: "p1", text: POSTED_NOTE });
+
+      // The save itself still works: the paragraph's list opens with the note.
+      expect(await screen.findByText(POSTED_NOTE)).toBeTruthy();
+    } finally {
+      stop();
+    }
+  });
+
+  it("says nothing when the save fails", async () => {
+    stubAnnotationApi({ refuseSave: true });
+    const heard = vi.fn();
+    const stop = hear(heard);
+    try {
+      renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+      await saveNote();
+
+      // The composer says why, and no one is told a save happened.
+      expect((await screen.findByRole("alert")).textContent).toMatch(/could not be saved/);
+      expect(heard).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
   });
 });

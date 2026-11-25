@@ -306,6 +306,44 @@ export const loadPaperAnnotations = loadAnnotations;
 export const fetchAnnotations = loadAnnotations;
 
 /* -------------------------------------------------------------------------- */
+/* Announcing a saved annotation                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a saved annotation says on `window` (bug_spec_verify24 D2).
+ *
+ * The reading column and the margin panel share no state. An annotation is a
+ * `discussion.post` the Discussion tab lists and counts, so after a successful
+ * save the reading column says so here and a tab for the same paper re-reads
+ * its threads: the list and the count move without a page reload. Listeners
+ * ignore an event for another paper.
+ */
+export const ANNOTATION_CREATED_EVENT = "scholium:annotation-created";
+
+/** The detail of {@link ANNOTATION_CREATED_EVENT}. */
+export interface AnnotationCreatedEventDetail {
+  /** Canonical paper id, `sch:xxxx-xxxx-xxxx`: only this paper's tab answers. */
+  readonly paperId: string;
+  /** The version record the annotation is anchored to. */
+  readonly versionCid: string;
+  /** The annotation as the node accepted it. */
+  readonly annotation: Annotation;
+}
+
+/**
+ * Tell the page an annotation was just saved. Does nothing on the server.
+ *
+ * Call it only once the save succeeded: a listener re-reads the paper's
+ * threads, so announcing a failure would claim a post that does not exist.
+ */
+export function announceAnnotationCreated(detail: AnnotationCreatedEventDetail): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<AnnotationCreatedEventDetail>(ANNOTATION_CREATED_EVENT, { detail }),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /* Creating an annotation                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -660,6 +698,10 @@ export function MarginMarkers(props: MarginMarkersProps) {
         (newAnnotation as { paragraphId?: string; paragraph_id?: string }).paragraphId = paragraphId;
         (newAnnotation as { paragraphId?: string; paragraph_id?: string }).paragraph_id = paragraphId;
       }
+      // The annotation is also a `discussion.post` an open Discussion tab
+      // lists; that tab shares no state with this column, so it hears the save
+      // here and re-reads its threads.
+      announceAnnotationCreated({ paperId, versionCid, annotation: newAnnotation });
       setGroups((prev) => {
         const next = { ...prev };
         const list = [...(next[paragraphId] ?? [])];

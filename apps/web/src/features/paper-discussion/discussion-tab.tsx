@@ -49,6 +49,10 @@ import { useViewer } from "../review-form/use-viewer";
 import type { Viewer } from "../review-form/viewer";
 import { ComposeForm } from "./compose-form";
 import {
+  ANNOTATION_CREATED_EVENT,
+  type AnnotationCreatedEventDetail,
+} from "./annotations";
+import {
   addPost,
   countHiddenPosts,
   countPosts,
@@ -249,6 +253,25 @@ export function DiscussionTab({
       setRequestSeq((count) => count + 1);
     }
   }, [viewerKey]);
+
+  // An annotation saved in the reading column is a `discussion.post` this tab
+  // lists, but the column and the margin panel share no state: the column
+  // announces a successful save on `window`. Hear it for this paper and re-read
+  // the threads, so the annotation and its count appear without a page reload.
+  // Another paper's event is ignored, and the listener goes with the tab.
+  useEffect(() => {
+    const hear = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | Partial<AnnotationCreatedEventDetail>
+        | undefined;
+      if (detail === null || typeof detail !== "object") return;
+      if (typeof detail.paperId !== "string") return;
+      if (detail.paperId.trim() !== paperId.trim()) return;
+      setRequestSeq((count) => count + 1);
+    };
+    window.addEventListener(ANNOTATION_CREATED_EVENT, hear);
+    return () => window.removeEventListener(ANNOTATION_CREATED_EVENT, hear);
+  }, [paperId]);
 
   useEffect(() => {
     // 0 means "the server's anonymous answer stands and nothing has changed":
