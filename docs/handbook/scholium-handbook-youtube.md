@@ -3,7 +3,7 @@
 - **Channel:** Tech Guy (@techguy31337), bowensyd@gmail.com
 - **Playlist:** [Scholium Handbook](https://www.youtube.com/playlist?list=PLSw_WOAQbDD8). Unlisted, ordered by chapter (date published, oldest first).
 - **Visibility:** every video is **Unlisted**. Anyone with the link can watch, but the videos do not show in search or on the channel page.
-- **Uploaded:** 2026-11-23
+- **Uploaded:** 2026-11-23 (chapters 1–10); chapter 11 later, because of the channel's 10-uploads-a-day limit
 - **Captions:** each video's main English subtitle track is the chapter's narration `.vtt`, the exact script with original timings. YouTube's automatic captions are kept as a separate track.
 
 | # | Chapter | YouTube URL |
@@ -18,6 +18,6 @@
 | 8 | AI pre-review | https://youtu.be/_WXSHzlfpAM |
 | 9 | Moderation, appeals and reports | https://youtu.be/M_fSoDxFms4 |
 | 10 | FAQ and known limitations | https://youtu.be/TtQkx0BS8N4 |
-| 11 | Glossary | _not uploaded yet: the channel is limited to 10 uploads a day until it is phone-verified (checked twice on 2026-11-23)_ |
+| 11 | Glossary | https://youtu.be/xpy6G757Zkg |
 
 Each video is titled `Scholium Handbook — Chapter N: <name>`. Its description is the opening paragraph of the chapter's `narration.md`.

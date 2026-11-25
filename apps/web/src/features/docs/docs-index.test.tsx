@@ -120,7 +120,7 @@ describe("chapter cards", () => {
       expect(image.getAttribute("loading")).toBe("lazy");
 
       // A chapter with a YouTube address gives the video's length; one
-      // without (chapter 11 until it is uploaded) says it is coming.
+      // without (a chapter not uploaded yet) says it is coming.
       if (chapters[index].video?.youtube) {
         expect(card.textContent).toMatch(/Video, \d+ min( \d+ s)?/);
         expect(card.textContent).not.toContain("Video coming soon");
