@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 25: finding of the sweep-23c re-check of round 24 (2026-11-26, main @ 124cd0e; round-24 bugs 1-3 and hand fix
+  a4922c8 verified; npm test API 6153 / web 6222, e2e 61/61). Evidence: .claw-forge/journeys/screenshots/02-search-and-discover/50-r24-*.
+  Likely older than round 24 (the URL sync in search-page.tsx is unchanged since 3783c4b).
+  Decision (recorded here):
+  D1  The address bar is the truth for /search: whatever the history entry's URL says (q, mode, filters) is the search
+      shown, after Back/Forward as after a full load. jsdom cannot reproduce the Next router's history handling, so the
+      regression test is a Playwright test in the browser.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx,apps/web/src/app/(search-page)/search/page.tsx"
+       creates="apps/web/tests/e2e/search-history.spec.ts">
+    <title>Back to a search typed in the search page's own box, after a search from the header box, shows the wrong search: an empty page ("Enter a term above…") or the search the page was first loaded with</title>
+    <symptoms>The page's own box records its search with window.history.pushState (search-page.tsx defaultUpdateUrl, ~L132-160), while the header box navigates through the Next router, which re-renders SearchPage with a new initialState. On Back, the popstate handler (~L300-316) sets the state from the URL, but the route-adoption effect keyed on searchStateKey(initialState) (~L281-298) then applies the route's initialState for that entry, which is the search the page was first loaded with (empty /search, or ?q=calibration), not the URL's. The header box shows the URL's query; the page box and results do not. Evidence: screenshots/02-search-and-discover/50-r24-new-back-to-pagebox-search-shows-empty-page.png, 50-r24-new-back-url-rafael-silva-page-shows-calibration.png, 50-r24-bug1f-back-to-rafael-silva-shows-empty-search.png</symptoms>
+    <reproduction_steps>Open /search (full load). Type "Rafael Silva" in the page's own box and press Enter (3 results). Type "1260 tasks" in the header search box and press Enter (1 result). Press Back: the URL is /search?q=Rafael+Silva and the header box says "Rafael Silva", but the page box is empty and the page reads "Enter a term above to search the listed papers." Variant: start from a full load of /search?q=calibration; Back shows "1 result for “calibration”" under ?q=Rafael+Silva. A reload shows the right search</reproduction_steps>
+    <expected>Per D1: after Back or Forward between any mix of page-box searches, header-box searches and full loads, the page box, the results heading, the results, the filters and the facet column all describe the search in the URL (the same as a full load of that URL); Forward returns to the later search the same way; one fetch per search answered, no loops. Searches typed in the page box still add one history entry each (Back returns to the previous search). Tests: search-page.test.tsx covers the component side (a popstate to a URL whose route props are stale still shows the URL's search); tests/e2e/search-history.spec.ts reproduces the steps above in Chromium with queries that need no seeded papers (asserting the page box value and the "No results"/results heading for the URL's query, never the idle "Enter a term above" text) for the empty-start and ?q= start variants, Back and Forward</expected>
+    <actual>The page shows the search the page was loaded with, not the one in the URL</actual>
+  </bug>
+
+</bug_spec>
