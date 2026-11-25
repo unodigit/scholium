@@ -183,6 +183,82 @@ describe("GlobalNav search field", () => {
   });
 });
 
+describe("GlobalNav search field follows page-box searches", () => {
+  // The search page writes its own box's query straight into the address bar
+  // with `history.pushState`/`replaceState`. Neither fires an event the header
+  // can hear, so the page announces each write on `window`. The bug: after a
+  // search in the page's own box the header kept the previous query (empty, or
+  // the query the page was loaded with) until a Back/Forward resynced it.
+  const SEARCH_URL_CHANGED = "scholium:search-url-changed";
+
+  function announce(href: string): void {
+    window.history.replaceState(null, "", href);
+    act(() => {
+      window.dispatchEvent(new Event(SEARCH_URL_CHANGED));
+    });
+  }
+
+  it("adopts the new ?q= from a page-box search", async () => {
+    render(<GlobalNav />);
+    const input = within(screen.getByRole("search")).getByLabelText(
+      /Search papers/,
+    ) as HTMLInputElement;
+    expect(input.value).toBe("");
+
+    announce("/search?q=Rafael+Silva");
+
+    await waitFor(() => expect(input.value).toBe("Rafael Silva"));
+  });
+
+  it("replaces the query the page was loaded with", async () => {
+    window.history.replaceState(null, "", "/search?q=calibration");
+    pathnameValue = "/search";
+    render(<GlobalNav />);
+    const input = within(screen.getByRole("search")).getByLabelText(
+      /Search papers/,
+    ) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("calibration"));
+
+    announce("/search?q=Rafael+Silva");
+
+    await waitFor(() => expect(input.value).toBe("Rafael Silva"));
+  });
+
+  it("leaves a focused header field's draft alone", async () => {
+    render(<GlobalNav />);
+    const input = within(screen.getByRole("search")).getByLabelText(
+      /Search papers/,
+    ) as HTMLInputElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: "draft" } });
+    expect(document.activeElement).toBe(input);
+
+    announce("/search?q=Rafael+Silva");
+
+    expect(input.value).toBe("draft");
+
+    // Once the field is no longer focused, the next write syncs it again.
+    input.blur();
+    announce("/search?q=calibration");
+    await waitFor(() => expect(input.value).toBe("calibration"));
+  });
+
+  it("stops listening for page-box searches on unmount", () => {
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
+
+    const { unmount } = render(<GlobalNav />);
+    const listener = add.mock.calls.find(
+      ([type]) => type === SEARCH_URL_CHANGED,
+    )?.[1];
+    expect(typeof listener).toBe("function");
+
+    unmount();
+
+    expect(remove).toHaveBeenCalledWith(SEARCH_URL_CHANGED, listener);
+  });
+});
+
 describe("GlobalNav categories menu", () => {
   it("opens on demand and lists categories linking to /c/{id}", () => {
     render(<GlobalNav />);

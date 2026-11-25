@@ -768,6 +768,100 @@ describe("SearchPage back and forward", () => {
   });
 });
 
+describe("SearchPage address-bar announcement", () => {
+  // The header search box knows only that the address bar moved through
+  // `history.pushState`/`replaceState`, which fires no event of its own. The
+  // page announces each `/search` rewrite on `window` so the header can follow
+  // a search typed in the page's own box. The bug: a page-box search moved the
+  // results but never told the header, which kept showing the query the page
+  // was loaded with (or nothing).
+  const EVENT = "scholium:search-url-changed";
+
+  function listen(): { readings: string[]; stop: () => void } {
+    const readings: string[] = [];
+    const listener = (): void => {
+      // Read at dispatch time: the URL must already be the new one.
+      readings.push(window.location.search);
+    };
+    window.addEventListener(EVENT, listener);
+    return {
+      readings,
+      stop: () => window.removeEventListener(EVENT, listener),
+    };
+  }
+
+  it("announces a page-box search once, after the URL is rewritten", async () => {
+    window.history.replaceState(null, "", "/search?q=calibration");
+    const { readings, stop } = listen();
+    const loadKeyword = vi.fn(async (_next: SearchState) => RESULT);
+    try {
+      render(
+        <SearchPage
+          initialState={state({ q: "calibration" })}
+          initialResult={RESULT}
+          loadKeyword={loadKeyword}
+        />,
+      );
+
+      fireEvent.change(screen.getByLabelText("Search papers"), {
+        target: { value: "Rafael Silva" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+      await waitFor(() => expect(readings).toEqual(["?q=Rafael+Silva"]));
+    } finally {
+      stop();
+    }
+  });
+
+  it("announces a filter change (replace) once", async () => {
+    window.history.replaceState(null, "", "/search?q=pulsar");
+    const { readings, stop } = listen();
+    try {
+      render(
+        <SearchPage
+          initialState={state()}
+          initialResult={RESULT}
+          loadKeyword={vi.fn(async (_next: SearchState) => RESULT)}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+
+      await waitFor(() => expect(readings).toHaveLength(1));
+      expect(readings[0]).toContain("category=cs.LG");
+    } finally {
+      stop();
+    }
+  });
+
+  it("stays quiet when the search URL would not change", () => {
+    window.history.replaceState(null, "", "/search?q=pulsar");
+    const { readings, stop } = listen();
+    try {
+      render(
+        <SearchPage
+          initialState={state()}
+          initialResult={RESULT}
+          loadKeyword={vi.fn(async (_next: SearchState) => RESULT)}
+        />,
+      );
+
+      // Same term as the one already in the URL: no rewrite, so no event.
+      // `apply()` rewrites (and would announce) synchronously on submit.
+      fireEvent.change(screen.getByLabelText("Search papers"), {
+        target: { value: "pulsar" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+      expect(readings).toEqual([]);
+      expect(window.location.search).toBe("?q=pulsar");
+    } finally {
+      stop();
+    }
+  });
+});
+
 describe("SearchPage semantic toggle", () => {
   it("calls GET /v1/search/semantic through the semantic loader", async () => {
     const updateUrl = vi.fn();

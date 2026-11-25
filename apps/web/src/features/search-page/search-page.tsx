@@ -71,6 +71,15 @@ import {
 } from "./search";
 import "./search-page.css";
 
+/**
+ * Fired on `window` after the search page rewrites the address bar for a
+ * `/search` URL (push or replace). The header's search box listens for it so
+ * its field follows a search typed in the page's own box. The same string is
+ * duplicated in `components/nav/global-nav.tsx` (the nav does not import from
+ * features/); keep the two in sync.
+ */
+export const SEARCH_URL_CHANGED_EVENT = "scholium:search-url-changed";
+
 /** Loads a keyword result; replaceable in tests. */
 export type LoadKeywordSearch = (state: SearchState) => Promise<SearchResult>;
 
@@ -129,7 +138,7 @@ function isSearchHref(href: string): boolean {
  * route — the paper page a `sch:` id names — is a real navigation: only the
  * browser (or the router injected in tests) can render that page.
  */
-function defaultUpdateUrl(href: string, mode: UrlUpdateMode): void {
+export function defaultUpdateUrl(href: string, mode: UrlUpdateMode): void {
   if (typeof window === "undefined") {
     return;
   }
@@ -154,6 +163,11 @@ function defaultUpdateUrl(href: string, mode: UrlUpdateMode): void {
     } else {
       window.history.replaceState(null, "", href);
     }
+    // Tell the header search box (and any other listener) that the address
+    // bar's `?q=` moved. Only `/search` URLs reach this branch; a hop to a
+    // paper page is a real navigation and needs no announcement. Dispatch
+    // after the history write so listeners read the new URL.
+    window.dispatchEvent(new Event(SEARCH_URL_CHANGED_EVENT));
   } catch {
     // History may be unavailable (sandboxed frame); local state still works.
   }

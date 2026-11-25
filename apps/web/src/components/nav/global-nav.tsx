@@ -35,7 +35,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 
 import { BrandLogo } from "../../features/ui-kit/brand-logo";
 import { BrandMark } from "../../features/ui-kit/brand-mark";
@@ -66,6 +66,13 @@ export const NOTIFICATIONS_PATH = "/me#notifications";
  * `FEED_PATH` in `features/feed/feed.ts` rather than importing the feed module
  * into the nav every route group mounts.
  */
+/**
+ * Mirrors `SEARCH_URL_CHANGED_EVENT` in
+ * `features/search-page/search-page.tsx` (the nav does not import from
+ * features/); keep the two strings in sync.
+ */
+export const SEARCH_URL_CHANGED_EVENT = "scholium:search-url-changed";
+
 const FEED_PATH = "/papers";
 
 /** Placeholder from the feed header mock (design.md §5.1). */
@@ -104,7 +111,9 @@ function isInside(pathname: string | null, prefix: string): boolean {
  * field follow back/forward and route changes. Before mount the field is
  * empty, exactly as the server rendered it.
  */
-function useSearchQuery(): [string, (value: string) => void] {
+export function useSearchQuery(
+  inputRef?: RefObject<HTMLInputElement | null>,
+): [string, (value: string) => void] {
   const pathname = usePathname();
   const [query, setQuery] = useState("");
 
@@ -115,12 +124,23 @@ function useSearchQuery(): [string, (value: string) => void] {
     const read = (): void => {
       setQuery(new URLSearchParams(window.location.search).get("q") ?? "");
     };
+    const onSearchUrlChanged = (): void => {
+      // Do not overwrite a draft the reader is actively typing in the header
+      // box: the field is focused, so leave it alone.
+      const focusedInput = inputRef?.current ?? null;
+      if (focusedInput !== null && document.activeElement === focusedInput) {
+        return;
+      }
+      read();
+    };
     read();
     window.addEventListener("popstate", read);
+    window.addEventListener(SEARCH_URL_CHANGED_EVENT, onSearchUrlChanged);
     return () => {
       window.removeEventListener("popstate", read);
+      window.removeEventListener(SEARCH_URL_CHANGED_EVENT, onSearchUrlChanged);
     };
-  }, [pathname]);
+  }, [pathname, inputRef]);
 
   return [query, setQuery];
 }
@@ -323,7 +343,8 @@ function DesktopHeader({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [query, setQuery] = useSearchQuery();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useSearchQuery(searchInputRef);
 
   // Soft-navigate on submit; the `action` keeps the form working without JS.
   const onSearchSubmit = (event: FormEvent<HTMLFormElement>): void => {
@@ -352,6 +373,7 @@ function DesktopHeader({
           <SearchIcon size={16} />
         </button>
         <input
+          ref={searchInputRef}
           className="gn-search-input"
           type="search"
           name="q"
