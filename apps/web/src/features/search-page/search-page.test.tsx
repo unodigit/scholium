@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -529,6 +530,241 @@ describe("SearchPage facets across queries", () => {
       screen.getByRole("checkbox", { name: /astro-ph\.HE\s*2/ }),
     ).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: /cs\.LG\s*1/ })).toBeTruthy();
+  });
+});
+
+describe("SearchPage back and forward", () => {
+  // The page's own box records its search with `history.pushState`, while the
+  // header box goes through the Next router, which re-renders this component
+  // with the route's `initialState`. On Back/Forward the router can hand down
+  // the search the page was *first loaded with* rather than the one in the
+  // address bar (the reported bug: an empty page, or the query from the first
+  // load). These tests reproduce those steps with the props the router passes.
+  const PAGE_BOX_HREF = "/search?q=Rafael+Silva";
+  const HEADER_HREF = "/search?q=1260+tasks";
+
+  const PAGE_BOX_ANSWER: SearchResult = {
+    query: "Rafael Silva",
+    total: 0,
+    results: [],
+    facets: { category: {}, status: {} },
+  };
+
+  const HEADER_ANSWER: SearchResult = {
+    query: "1260 tasks",
+    total: 1,
+    results: [{ ...HIT, title: "Doing 1260 tasks at once" }],
+    facets: { category: { "cs.AI": 1 }, status: { reviewed: 1 } },
+  };
+
+  const CALIBRATION_ANSWER: SearchResult = {
+    ...HEADER_ANSWER,
+    query: "calibration",
+    results: [{ ...HIT, title: "Calibration of a timing model" }],
+  };
+
+  function answerFor(next: SearchState): SearchResult {
+    switch (next.q) {
+      case "Rafael Silva":
+        return PAGE_BOX_ANSWER;
+      case "1260 tasks":
+        return HEADER_ANSWER;
+      default:
+        return CALIBRATION_ANSWER;
+    }
+  }
+
+  /**
+   * The browser moves to `href` and fires what Back/Forward fires. The
+   * component's popstate listener runs inside `act`, so its state update and
+   * the fetch it starts are committed before the caller re-renders with the
+   * (possibly stale) route props.
+   */
+  function travel(href: string): void {
+    window.history.pushState(null, "", href);
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+  }
+
+  /** Type a term in the page's own box and submit it. */
+  function searchFromPageBox(term: string): void {
+    fireEvent.change(screen.getByLabelText("Search papers"), {
+      target: { value: term },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  }
+
+  it("shows the URL's search after Back to a page-box search, not the empty search the page was loaded with", async () => {
+    window.history.replaceState(null, "", "/search");
+    const loadKeyword = vi.fn(async (next: SearchState) => answerFor(next));
+
+    const { rerender } = render(
+      <SearchPage
+        initialState={EMPTY_SEARCH_STATE}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+    expect(
+      screen.getByText("Enter a term above to search the listed papers."),
+    ).toBeTruthy();
+
+    // 1. A full load of /search, then "Rafael Silva" in the page's own box:
+    // one history entry, answered by the browser-side loader.
+    searchFromPageBox("Rafael Silva");
+    expect(
+      await screen.findByText("No listed papers match this search."),
+    ).toBeTruthy();
+    window.history.pushState(null, "", PAGE_BOX_HREF);
+
+    // 2. "1260 tasks" in the header box: the router re-renders the page with
+    // the new search and its server answer.
+    window.history.pushState(null, "", HEADER_HREF);
+    rerender(
+      <SearchPage
+        initialState={state({ q: "1260 tasks" })}
+        initialResult={HEADER_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+    expect(await screen.findByText("1 result for “1260 tasks”")).toBeTruthy();
+
+    // 3. Back: the address bar returns to the page-box search, but the router
+    // hands down the search the page was first loaded with — empty.
+    travel(PAGE_BOX_HREF);
+    rerender(
+      <SearchPage
+        initialState={EMPTY_SEARCH_STATE}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    // The box, the heading and the results all describe the URL's query.
+    expect(
+      (screen.getByLabelText("Search papers") as HTMLInputElement).value,
+    ).toBe("Rafael Silva");
+    expect(
+      await screen.findByText("0 results for “Rafael Silva”"),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("Enter a term above to search the listed papers."),
+    ).toBeNull();
+    expect(screen.queryByText("1 result for “1260 tasks”")).toBeNull();
+  });
+
+  it("shows the URL's search after Back when the page was loaded with another query", async () => {
+    window.history.replaceState(null, "", "/search?q=calibration");
+    const loadKeyword = vi.fn(async (next: SearchState) => answerFor(next));
+
+    const { rerender } = render(
+      <SearchPage
+        initialState={state({ q: "calibration" })}
+        initialResult={CALIBRATION_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+    expect(screen.getByText("1 result for “calibration”")).toBeTruthy();
+
+    searchFromPageBox("Rafael Silva");
+    expect(
+      await screen.findByText("No listed papers match this search."),
+    ).toBeTruthy();
+    window.history.pushState(null, "", PAGE_BOX_HREF);
+
+    window.history.pushState(null, "", HEADER_HREF);
+    rerender(
+      <SearchPage
+        initialState={state({ q: "1260 tasks" })}
+        initialResult={HEADER_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+    expect(await screen.findByText("1 result for “1260 tasks”")).toBeTruthy();
+
+    // Back: the route still describes the first load (calibration).
+    travel(PAGE_BOX_HREF);
+    rerender(
+      <SearchPage
+        initialState={state({ q: "calibration" })}
+        initialResult={CALIBRATION_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    expect(
+      (screen.getByLabelText("Search papers") as HTMLInputElement).value,
+    ).toBe("Rafael Silva");
+    expect(
+      await screen.findByText("0 results for “Rafael Silva”"),
+    ).toBeTruthy();
+    expect(screen.queryByText("1 result for “calibration”")).toBeNull();
+    expect(screen.queryByText("Calibration of a timing model")).toBeNull();
+  });
+
+  it("returns to the later header search on Forward, whatever the route props say", async () => {
+    window.history.replaceState(null, "", "/search?q=calibration");
+    const loadKeyword = vi.fn(async (next: SearchState) => answerFor(next));
+
+    const { rerender } = render(
+      <SearchPage
+        initialState={state({ q: "calibration" })}
+        initialResult={CALIBRATION_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    // Page-box search, then a header-box search: two more history entries.
+    searchFromPageBox("Rafael Silva");
+    expect(
+      await screen.findByText("No listed papers match this search."),
+    ).toBeTruthy();
+    window.history.pushState(null, "", PAGE_BOX_HREF);
+    window.history.pushState(null, "", HEADER_HREF);
+    rerender(
+      <SearchPage
+        initialState={state({ q: "1260 tasks" })}
+        initialResult={HEADER_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+    expect(await screen.findByText("1 result for “1260 tasks”")).toBeTruthy();
+
+    // Back to the page-box search.
+    travel(PAGE_BOX_HREF);
+    rerender(
+      <SearchPage
+        initialState={state({ q: "calibration" })}
+        initialResult={CALIBRATION_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+    expect(await screen.findByText("0 results for “Rafael Silva”")).toBeTruthy();
+
+    // Forward to "1260 tasks": the URL wins over the stale route props too.
+    travel(HEADER_HREF);
+    rerender(
+      <SearchPage
+        initialState={state({ q: "calibration" })}
+        initialResult={CALIBRATION_ANSWER}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    expect(
+      (screen.getByLabelText("Search papers") as HTMLInputElement).value,
+    ).toBe("1260 tasks");
+    expect(await screen.findByText("1 result for “1260 tasks”")).toBeTruthy();
+    expect(screen.queryByText("1 result for “calibration”")).toBeNull();
   });
 });
 

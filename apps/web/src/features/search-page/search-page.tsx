@@ -268,6 +268,18 @@ export function SearchPage({
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  // The address bar seen at mount and at the last route adoption. A Back,
+  // Forward or router navigation moves it; comparing it with the route's
+  // `initialState` distinguishes a fresh render of the URL from one that
+  // still carries the search the page was first loaded with — which is what
+  // the router hands down for a `pushState` history entry. The URL, not the
+  // props, describes the entry the reader returned to.
+  const lastUrlRef = useRef<string | null>(null);
+  // Skip the URL check on the very first mount: the server's `initialState`
+  // is authoritative there, and jsdom (and any host that renders without a
+  // matching address bar) must not be overridden by `window.location`.
+  const mountedRef = useRef(false);
+
   const navigate = updateUrl ?? defaultUpdateUrl;
 
   const apply = useCallback(
@@ -282,12 +294,80 @@ export function SearchPage({
   // remounting this component; adopt the route's state when it moves.
   const routeKey = searchStateKey(initialState);
   useEffect(() => {
-    if (routeKey === searchStateKey(stateRef.current)) {
+    // On the first mount the server's props are authoritative; do not let a
+    // stale address bar (jsdom, or a host that renders without a matching URL)
+    // override them.
+    const firstMount = !mountedRef.current;
+    mountedRef.current = true;
+
+    let desiredState = initialState;
+    let desiredResult = initialResult;
+    let desiredError = initialError;
+    let staleOverride = false;
+
+    if (typeof window !== "undefined") {
+      const urlSearch = window.location.search;
+      if (firstMount || lastUrlRef.current === null) {
+        // Remember the address bar the server's props came from, so a later
+        // move (Back, Forward, a router navigation) is visible here.
+        lastUrlRef.current = urlSearch;
+      } else {
+        const urlMoved = urlSearch !== lastUrlRef.current;
+        lastUrlRef.current = urlSearch;
+
+        // A back/forward leaves the address bar on the entry the reader
+        // returned to, but the router may re-render this page with the search
+        // it was first loaded with — the RSC payload it holds for `/search`.
+        // When the address bar has moved and does not describe the route's
+        // props, the URL wins: parse it and fetch its answer instead of
+        // trusting the stale props. When they agree (a header search, or a
+        // fresh render of the returned entry), keep the route's result so no
+        // extra fetch is made. Comparing the address bar itself, rather than
+        // a popstate flag, does not depend on listener order or on when the
+        // router's re-render happens to commit.
+        if (urlMoved) {
+          const params: Record<string, string[]> = {};
+          new URLSearchParams(urlSearch).forEach((value, key) => {
+            (params[key] ??= []).push(value);
+          });
+          const urlState = parseSearchParams(params);
+          if (searchStateKey(urlState) !== routeKey) {
+            desiredState = urlState;
+            desiredResult = undefined;
+            desiredError = undefined;
+            staleOverride = true;
+          }
+        }
+      }
+    }
+
+    const desiredKey = searchStateKey(desiredState);
+    const currentKey = searchStateKey(stateRef.current);
+
+    // If the route hands us a fresh server answer for the search already on
+    // screen (a forward/back to a header-loaded entry), adopt it without a
+    // client fetch, but only on a subsequent render.
+    if (
+      !firstMount &&
+      !staleOverride &&
+      (initialResult !== undefined || initialError !== undefined) &&
+      desiredKey === currentKey &&
+      requestedRef.current !== desiredKey
+    ) {
+      const next = initialView(desiredState, desiredResult, desiredError);
+      requestedRef.current =
+        next.status === "ready" || next.status === "error" ? next.key : null;
+      setView(next);
       return;
     }
-    setState(initialState);
-    setDraft(initialState.q);
-    const next = initialView(initialState, initialResult, initialError);
+
+    if (desiredKey === currentKey) {
+      return;
+    }
+
+    setState(desiredState);
+    setDraft(desiredState.q);
+    const next = initialView(desiredState, desiredResult, desiredError);
     requestedRef.current =
       next.status === "ready" || next.status === "error" ? next.key : null;
     setView(next);
@@ -308,6 +388,9 @@ export function SearchPage({
         (params[key] ??= []).push(value);
       });
       const next = parseSearchParams(params);
+      if (searchStateKey(next) === searchStateKey(stateRef.current)) {
+        return;
+      }
       setState(next);
       setDraft(next.q);
     };
