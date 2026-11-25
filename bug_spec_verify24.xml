@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 24: findings of verify sweep 23 (2026-11-26, full regression on a fresh seed of main @ 04c3b27; 18/18 journeys
+  pass; all round-22/23 fixes verified). Evidence: .claw-forge/journeys/screenshots/<journey>/.
+  Decisions (recorded here):
+  D1  A new search (query text or mode changes) starts the facet column afresh. Within one search, values seen in
+      earlier answers stay listed so an OR filter can still be widened (the reason seenFacets exists).
+  D2  The reading column and the margin panel share no state. An annotation saved in the reading column announces
+      itself with one window CustomEvent, ANNOTATION_CREATED_EVENT = "scholium:annotation-created", detail
+      { paperId, versionCid, annotation }, exported from paper-discussion/annotations.tsx and re-exported from
+      paper-discussion/index.ts. Listeners ignore events for another paper. No polling.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx">
+    <title>Search facet counts carry over from the previous query: after a new search the facet column still lists the old answer's categories and statuses</title>
+    <symptoms>search-page.tsx keeps seenFacets (~L210-215) and merges every answer's facets into it (~L366-384); nothing clears it when the query changes, so values and counts from an earlier query stay listed. Ticking a stale value gives "0 results". The API answer for the new query carries only its own facets, and a full load of the same URL shows the right column. Evidence screenshots/02-search-and-discover/11a-11d (and 10a-10b, same sequence)</symptoms>
+    <reproduction_steps>On /search, search "Rafael Silva" (3 results: cs.AI, cs.LG, cs.MA; Under review, Corrected, Retracted). Then type "1260 tasks" in the header search box and press Enter: "1 result", but the facets still show cs.AI 1, cs.LG 1, cs.MA 1, Under review 1, Corrected 1, Retracted 1. Tick cs.LG: 0 results</reproduction_steps>
+    <expected>Per D1: when the query text or the mode differs from the previous answer's (header box, the page's own box, back/forward), the remembered facets are reset, so the column shows exactly the new answer's facet values and counts, plus any currently selected filter values (still listed so they can be unticked, as now). Within one query, ticking and unticking filters keeps the earlier values listed, as now. Tests in search-page.test.tsx: two queries in a row (the second answer has fewer facet values) → only the second answer's values are listed with its counts; within one query, selecting a category still leaves the others listed</expected>
+    <actual>Facets from earlier queries stay listed with their old counts</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-discussion/annotations.tsx,apps/web/src/features/paper-discussion/discussion-tab.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx,apps/web/src/features/paper-page/reading-text.test.tsx">
+    <title>Posting an annotation from the paper text does not update an open Discussion tab: its list and its count change only after a reload</title>
+    <symptoms>Annotations are listed and counted in the Discussion tab, and round 22 bug 7 (3d398d1) made posts made inside the tab update the count at once. But an annotation is saved by the reading column (annotations.tsx createAnnotation, ~L339), which shares no state with the margin panel's DiscussionTab (discussion-tab.tsx), so the open tab keeps its old list and count. Evidence screenshots/04-discussion/43-annotation-posted-discussion-count-not-updated.png, 43b-annotation-counted-after-reload.png; 20b/20c (5) against 20d/20e (6)</symptoms>
+    <reproduction_steps>On a listed paper with no discussion, open the Discussion tab ("No discussion yet."), select a paragraph, press A, save an annotation: the tab still reads "Discussion" and "No discussion yet." until a reload shows "Discussion (1)" and the annotation</reproduction_steps>
+    <expected>Per D2: after an annotation is saved successfully, annotations.tsx dispatches ANNOTATION_CREATED_EVENT on window (not on failure). A mounted DiscussionTab for the same paper reloads its threads (or adds the annotation) and so lists it and reports the new count through onCountChange, with no page reload; events for another paper are ignored and the listener is removed on unmount. Tests: reading-text.test.tsx (or the annotations test that covers saving) asserts the event fires once with the paper id on success and not on failure; discussion-tab.test.tsx asserts the tab lists the new annotation and onCountChange goes 0 → 1 after the event, and ignores another paper's event</expected>
+    <actual>The open tab shows the old list and count until a reload</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low" depends_on="2"
+       touches_files="apps/web/src/features/paper-page/margin-panel.tsx,apps/web/src/features/paper-page/margin-panel.test.tsx,apps/web/src/features/paper-discussion/index.ts">
+    <title>Posting an annotation while the Discussion tab has not been opened leaves its label count unchanged ("Discussion (5)" after the sixth post)</title>
+    <symptoms>margin-panel.tsx computes the Discussion label from the server's seed (countPosts, ~L137-146) until the tab is first opened and its DiscussionTab reports through onCountChange (~L306). An annotation saved from the reading column before the tab has been opened is not counted until a reload. Evidence screenshots/04-discussion/20b-20e ((5) until a reload shows (6))</symptoms>
+    <reproduction_steps>Open a listed paper with 5 discussion posts and keep the Reviews tab selected (Discussion never opened); save an annotation; the tab still reads "Discussion (5)" until a reload</reproduction_steps>
+    <expected>Per D2: paper-discussion/index.ts re-exports ANNOTATION_CREATED_EVENT. MarginPanel listens for it for its own paper; while the Discussion tab has not been opened it raises the label count by one per event (from no badge to (1) when it was 0); once the tab is open the tab's onCountChange alone sets the count, so nothing is counted twice. The listener is removed on unmount. margin-panel.test.tsx covers: not opened, 5 → 6 after one event; another paper's event ignored; opened tab → the count comes only from onCountChange</expected>
+    <actual>The label keeps the old count until a reload</actual>
+  </bug>
+
+</bug_spec>
