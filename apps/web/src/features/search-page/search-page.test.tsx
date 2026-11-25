@@ -388,6 +388,150 @@ describe("SearchPage filters", () => {
   });
 });
 
+describe("SearchPage facets across queries", () => {
+  const NARROWER: SearchResult = {
+    query: "1260 tasks",
+    total: 1,
+    results: [
+      {
+        ...HIT,
+        versionCid: "bafy-version-3",
+        title: "Doing 1260 tasks at once",
+        categories: ["cs.AI"],
+        status: "under_review",
+      },
+    ],
+    facets: {
+      category: { "cs.AI": 1 },
+      status: { under_review: 1 },
+    },
+  };
+
+  it("lists only the new answer's facet values and counts after a new search", async () => {
+    const loadKeyword = vi.fn(async (_next: SearchState) => NARROWER);
+
+    render(
+      <SearchPage
+        initialState={state()}
+        initialResult={RESULT}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    // The first search's categories are on screen before the second one.
+    expect(screen.getByRole("checkbox", { name: /cs\.LG\s*1/ })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search papers"), {
+      target: { value: "1260 tasks" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    // The second answer's values, with its counts.
+    expect(
+      await screen.findByRole("checkbox", { name: /cs\.AI\s*1/ }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("checkbox", { name: /Under review\s*1/ }),
+    ).toBeTruthy();
+
+    // The first answer's categories are gone rather than carried over.
+    expect(screen.queryByRole("checkbox", { name: /cs\.LG/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /astro-ph\.HE/ })).toBeNull();
+
+    // Status rows are always listed, but the old counts must not survive.
+    expect(
+      screen.queryByRole("checkbox", { name: /Reviewed\s*1/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: /Preprint\s*1/ }),
+    ).toBeNull();
+  });
+
+  it("drops the previous query's facets when the route answers a new query", () => {
+    const { rerender } = render(
+      <SearchPage
+        initialState={state()}
+        initialResult={RESULT}
+        updateUrl={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: /cs\.LG\s*1/ })).toBeTruthy();
+
+    // The header's search box submits to the route, so the next answer
+    // arrives as new initial props rather than through the page's own loader.
+    rerender(
+      <SearchPage
+        initialState={state({ q: "1260 tasks" })}
+        initialResult={NARROWER}
+        updateUrl={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: /cs\.AI\s*1/ })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /cs\.LG/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /astro-ph\.HE/ })).toBeNull();
+  });
+
+  it("drops the previous keyword facets when the mode changes", async () => {
+    const loadSemantic = vi.fn(async (_next: SearchState) => SEMANTIC);
+
+    render(
+      <SearchPage
+        initialState={state()}
+        initialResult={RESULT}
+        updateUrl={vi.fn()}
+        loadSemantic={loadSemantic}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: /cs\.LG\s*1/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Semantic" }));
+
+    await waitFor(() => expect(loadSemantic).toHaveBeenCalledTimes(1));
+
+    // Semantic answers carry no facets, and the keyword answer's must not
+    // remain listed beside them.
+    expect(screen.queryByRole("checkbox", { name: /cs\.LG/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /astro-ph\.HE/ })).toBeNull();
+  });
+
+  it("keeps the earlier facet values listed while filters stay within one query", async () => {
+    const filtered: SearchResult = {
+      ...RESULT,
+      total: 1,
+      results: [HIT],
+      facets: {
+        category: { "cs.LG": 1 },
+        status: { reviewed: 1 },
+      },
+    };
+    const loadKeyword = vi.fn(async (_next: SearchState) => filtered);
+
+    render(
+      <SearchPage
+        initialState={state()}
+        initialResult={RESULT}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+
+    // The answer no longer counts astro-ph.HE, but its row stays so the
+    // reader can add it to the OR filter.
+    expect(
+      screen.getByRole("checkbox", { name: /astro-ph\.HE\s*2/ }),
+    ).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /cs\.LG\s*1/ })).toBeTruthy();
+  });
+});
+
 describe("SearchPage semantic toggle", () => {
   it("calls GET /v1/search/semantic through the semantic loader", async () => {
     const updateUrl = vi.fn();

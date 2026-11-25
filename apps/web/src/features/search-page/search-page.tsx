@@ -190,6 +190,38 @@ function statusValueLabel(status: string): string {
 /** The empty facet counts shown before the first keyword answer. */
 const NO_FACETS: FacetCounts = { category: {}, status: {} };
 
+/**
+ * Facet values remembered for one query, and the answer they came from.
+ *
+ * The query is the text and the mode: a new one starts a fresh set, so an
+ * earlier query's categories and statuses cannot survive into the next
+ * answer. Within one query the values accumulate, because the API counts
+ * facets over the filtered matches.
+ */
+interface FacetMemory {
+  /** Query text and mode, as {@link queryKeyOf} renders them. */
+  readonly query: string;
+  /** `searchStateKey` of the answer merged last; null before the first. */
+  readonly answer: string | null;
+  readonly facets: FacetCounts;
+}
+
+/** The identity of a query, without its filters. */
+function queryKeyOf(state: SearchState): string {
+  return `${state.q.trim()}\u0000${state.mode}`;
+}
+
+function copyFacets(facets: FacetCounts): FacetCounts {
+  return { category: { ...facets.category }, status: { ...facets.status } };
+}
+
+function mergeFacets(remembered: FacetCounts, answer: FacetCounts): FacetCounts {
+  return {
+    category: { ...remembered.category, ...answer.category },
+    status: { ...remembered.status, ...answer.status },
+  };
+}
+
 /** Search page with results, facet filters and a semantic toggle. */
 export function SearchPage({
   initialState = EMPTY_SEARCH_STATE,
@@ -207,10 +239,23 @@ export function SearchPage({
     initialView(initialState, initialResult, initialError),
   );
   const [attempt, setAttempt] = useState(0);
-  // Facet values seen in any answer. The API counts facets over the filtered
-  // matches, so selecting `cs.LG` would otherwise make `cs.AI` disappear and
-  // leave no way to add it to the OR filter.
-  const [seenFacets, setSeenFacets] = useState<FacetCounts>(NO_FACETS);
+  // Facet values seen for the current query. The API counts facets over the
+  // filtered matches, so selecting `cs.LG` would otherwise make `cs.AI`
+  // disappear and leave no way to add it to the OR filter. A new query text
+  // or mode starts a fresh set; within one query the values accumulate.
+  const [facetMemory, setFacetMemory] = useState<FacetMemory>(() => {
+    let initial: SearchResult | undefined;
+    let answer: string | null = null;
+    if (view.status === "ready" && isResults(view.result)) {
+      initial = view.result;
+      answer = view.key;
+    }
+    return {
+      query: queryKeyOf(initialState),
+      answer,
+      facets: initial !== undefined ? copyFacets(initial.facets) : NO_FACETS,
+    };
+  });
 
   // The key of the request already answered or in flight. A ref rather than
   // state so the fetch effect can tell "same search" from "new search"
@@ -360,28 +405,41 @@ export function SearchPage({
 
   const semantic = state.mode === "semantic";
   const filtersDisabled = semantic;
-  const ready = view.status === "ready" ? view.result : undefined;
+  // Only treat the view's result as the current answer when it actually
+  // answers the state on screen; a stale result from the previous query must
+  // not seed the facet memory while the new answer loads.
+  const answered = view.status === "ready" ? view.result : undefined;
+  const ready =
+    view.status === "ready" && view.key === key ? view.result : undefined;
   const keywordFacets =
     ready !== undefined && isResults(ready) ? ready.facets : undefined;
 
-  useEffect(() => {
-    if (keywordFacets === undefined) {
-      return;
-    }
-    setSeenFacets((current) => ({
-      category: { ...current.category, ...keywordFacets.category },
-      status: { ...current.status, ...keywordFacets.status },
-    }));
-  }, [keywordFacets]);
+  const queryKey = queryKeyOf(state);
 
-  const facets: FacetCounts =
-    keywordFacets === undefined
-      ? seenFacets
-      : {
-          category: { ...seenFacets.category, ...keywordFacets.category },
-          status: { ...seenFacets.status, ...keywordFacets.status },
-        };
-  const results = ready?.results ?? [];
+  // Keep the remembered facets in step with the state and answer on screen.
+  // Adjusting the state during render (rather than in an effect) means a new
+  // query never paints with the previous query's column: React re-renders
+  // before committing, and the guards settle after one pass.
+  let memory = facetMemory;
+  if (memory.query !== queryKey) {
+    memory = { query: queryKey, answer: null, facets: NO_FACETS };
+  }
+  if (keywordFacets !== undefined && memory.answer !== key) {
+    memory = {
+      query: memory.query,
+      answer: key,
+      facets:
+        memory.answer === null
+          ? copyFacets(keywordFacets)
+          : mergeFacets(memory.facets, keywordFacets),
+    };
+  }
+  if (memory !== facetMemory) {
+    setFacetMemory(memory);
+  }
+
+  const facets = memory.facets;
+  const results = answered?.results ?? [];
   const categoryChoices = facetOptions(facets.category, state.categories);
   const statusChoices = statusOptions(facets.status, state.statuses);
   const showClear = hasActiveFilters(state);
