@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseManifest, parseVersions } from "../paper-meta/meta";
 import { parseReviews } from "../paper-reviews/review";
+import { ANNOTATION_CREATED_EVENT } from "../paper-discussion";
 import { parseThreads } from "../paper-discussion/discussion";
 import { MarginPanel, type MarginPanelProps } from "./margin-panel";
 import {
@@ -275,6 +276,124 @@ describe("the Discussion count", () => {
     fireEvent.click(tab("Discussion"));
 
     expect(stubs.props.discussion.onCountChange).toBeTypeOf("function");
+  });
+});
+
+/** The reading column saying an annotation was saved (annotations.tsx). */
+const announce = (paperId: string) =>
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(ANNOTATION_CREATED_EVENT, {
+        detail: { paperId, versionCid: VERSION_CID, annotation: {} },
+      }),
+    );
+  });
+
+describe("the Discussion count and an annotation saved in the reading column", () => {
+  // An annotation is a discussion post, but the reading column and this panel
+  // share no state. Until the Discussion tab has been opened the server's read
+  // is the count, so the saved annotation has to be added to it here.
+  it("rises by one per annotation while the Discussion tab has not been opened", () => {
+    render(<MarginPanel {...props()} />);
+    expect(tab("Discussion").textContent).toBe("Discussion (8)");
+
+    announce(SHORT_ID);
+    expect(tab("Discussion").textContent).toBe("Discussion (9)");
+
+    announce(SHORT_ID);
+    expect(tab("Discussion").textContent).toBe("Discussion (10)");
+  });
+
+  it("goes from no badge to (1) when the paper had no discussion", () => {
+    render(
+      <MarginPanel
+        {...props({
+          discussion: ok({ paper: SHORT_ID, paperCid: VERSION_CID, threads: [] }),
+        })}
+      />,
+    );
+    expect(tab("Discussion").textContent).toBe("Discussion");
+
+    announce(SHORT_ID);
+
+    expect(tab("Discussion").textContent).toBe("Discussion (1)");
+  });
+
+  it("ignores an annotation saved on another paper", () => {
+    render(<MarginPanel {...props()} />);
+
+    announce("sch:aaaa-bbbb-cccc");
+
+    expect(tab("Discussion").textContent).toBe("Discussion (8)");
+  });
+
+  it("does not invent a count when the server could not read the discussion", () => {
+    render(
+      <MarginPanel
+        {...props({ discussion: { ok: false, error: "The server could not answer." } })}
+      />,
+    );
+
+    announce(SHORT_ID);
+
+    expect(tab("Discussion").textContent).toBe("Discussion");
+  });
+
+  it("leaves the count to the open tab: its report alone sets it, nothing is counted twice", () => {
+    render(<MarginPanel {...props()} />);
+    fireEvent.click(tab("Discussion"));
+    const report = stubs.props.discussion.onCountChange as (count: number) => void;
+
+    // The open tab re-reads its threads on the same event and reports the new
+    // total itself; the panel adding one as well would read (10), not (9).
+    announce(SHORT_ID);
+    expect(tab("Discussion").textContent).toBe("Discussion (8)");
+
+    act(() => report(9));
+    expect(tab("Discussion").textContent).toBe("Discussion (9)");
+
+    announce(SHORT_ID);
+    expect(tab("Discussion").textContent).toBe("Discussion (9)");
+  });
+
+  it("keeps the count when the tab is opened after the annotation, and has the tab read it fresh", () => {
+    render(<MarginPanel {...props()} />);
+    announce(SHORT_ID);
+    expect(tab("Discussion").textContent).toBe("Discussion (9)");
+
+    fireEvent.click(tab("Discussion"));
+
+    // The server's read is older than the annotation: handing it to the tab
+    // would list eight posts and report (8) back. The tab reads for itself.
+    expect(stubs.props.discussion.initial).toBeUndefined();
+    expect(stubs.props.discussion.initialError).toBeUndefined();
+    expect(tab("Discussion").textContent).toBe("Discussion (9)");
+  });
+
+  it("still seeds the tab with the server's read when no annotation was saved", () => {
+    render(<MarginPanel {...props()} />);
+    announce("sch:aaaa-bbbb-cccc");
+
+    fireEvent.click(tab("Discussion"));
+
+    expect(stubs.props.discussion.initial).toMatchObject({ threads: expect.any(Array) });
+  });
+
+  it("stops listening when the panel unmounts", () => {
+    const added = vi.spyOn(window, "addEventListener");
+    const removed = vi.spyOn(window, "removeEventListener");
+    try {
+      const { unmount } = render(<MarginPanel {...props()} />);
+      const heard = added.mock.calls.filter(([type]) => type === ANNOTATION_CREATED_EVENT);
+      expect(heard).toHaveLength(1);
+
+      unmount();
+
+      expect(removed).toHaveBeenCalledWith(ANNOTATION_CREATED_EVENT, heard[0][1]);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+    }
   });
 });
 

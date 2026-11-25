@@ -49,7 +49,12 @@ import {
 } from "react";
 
 import { AiTab } from "../paper-ai";
-import { DiscussionTab, countPosts } from "../paper-discussion";
+import {
+  ANNOTATION_CREATED_EVENT,
+  DiscussionTab,
+  countPosts,
+  type AnnotationCreatedEventDetail,
+} from "../paper-discussion";
 import { FilesTab, VersionsTab, anchorSpec } from "../paper-meta";
 import type {
   ManifestData,
@@ -138,12 +143,43 @@ export function MarginPanel({
   const [discussionCount, setDiscussionCount] = useState<number | null>(() =>
     discussion.ok ? countPosts(discussion.data.threads) : null,
   );
+  // An annotation saved in the reading column before the tab was opened: the
+  // server's read no longer lists everything, so the tab must not be seeded
+  // with it (it would show, and report, the old count).
+  const [seedStale, setSeedStale] = useState(false);
   if (countSource !== discussion) {
     // A host swapped the paper without remounting the panel: the old count is
     // not this paper's.
     setCountSource(discussion);
     setDiscussionCount(discussion.ok ? countPosts(discussion.data.threads) : null);
+    setSeedStale(false);
   }
+  const discussionOpened = opened.has("discussion");
+
+  // An annotation is a post the Discussion tab lists, but it is saved by the
+  // reading column, which shares no state with this panel: the column says so
+  // on `window`. Until the tab has been opened nothing else reports it, so the
+  // label counts it here, once per event, for this paper only. Once the tab is
+  // open it hears the same event, re-reads and reports the total through
+  // `onCountChange`; that report alone sets the count, so this listener leaves
+  // (counting as well would count the annotation twice).
+  useEffect(() => {
+    if (discussionOpened) return;
+    const hear = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | Partial<AnnotationCreatedEventDetail>
+        | null
+        | undefined;
+      if (detail === null || typeof detail !== "object") return;
+      if (typeof detail.paperId !== "string") return;
+      if (detail.paperId.trim() !== shortId.trim()) return;
+      // A count the server never read stays unknown: there is nothing to add to.
+      setDiscussionCount((count) => (count === null ? count : count + 1));
+      setSeedStale(true);
+    };
+    window.addEventListener(ANNOTATION_CREATED_EVENT, hear);
+    return () => window.removeEventListener(ANNOTATION_CREATED_EVENT, hear);
+  }, [shortId, discussionOpened]);
 
   const open = useCallback((tab: MarginTabId) => {
     setActive(tab);
@@ -304,7 +340,7 @@ export function MarginPanel({
                   paperId={shortId}
                   versionCid={versionCid}
                   onCountChange={setDiscussionCount}
-                  {...seed(discussion)}
+                  {...(seedStale ? {} : seed(discussion))}
                 />
               ) : null}
               {tab === "versions" ? (

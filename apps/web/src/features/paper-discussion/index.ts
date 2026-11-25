@@ -105,6 +105,9 @@ export {
   type MarginAnnotationsProps,
 } from "./annotations";
 
+/** What the reading column says on `window` after an annotation is saved. */
+export { ANNOTATION_CREATED_EVENT, type AnnotationCreatedEventDetail } from "./annotations";
+
 export {
   parseAnnotations,
   loadAnnotations,
