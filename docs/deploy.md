@@ -811,7 +811,15 @@ Run it through `op run`, which resolves the 1Password references in `deploy/llm-
 op run --env-file=deploy/llm-live.env.tpl -- npm run test:llm-live
 ```
 
-It needs the 1Password CLI signed in (or a service account token in the environment) and network access to the endpoint. The template holds `op://` references and no secret; edit them, and the model id, to point at your own item. It sets:
+It needs the 1Password CLI signed in (or a service account token in the environment) and network access to the endpoint. The template is not in the repository: `*.env.tpl` is gitignored, so that vault and item names stay out of git. Create `deploy/llm-live.env.tpl` yourself, with `op://` references to your own item and no secret:
+
+```sh
+LLM_LIVE_BASE_URL=op://<vault>/<item>/<base-url field>
+LLM_LIVE_API_KEY=op://<vault>/<item>/<key field>
+LLM_LIVE_MODEL=<model id>
+```
+
+It sets:
 
 | Variable | Meaning |
 | --- | --- |

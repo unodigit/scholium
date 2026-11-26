@@ -607,7 +607,7 @@ scholium/
 ├── deploy/
 │   ├── containers/       # api.Containerfile, web.Containerfile
 │   ├── compose/          # compose.test.yaml, minio-init.sh
-│   └── llm-live.env.tpl  # 1Password references for npm run test:llm-live
+│   └── llm-live.env.tpl  # 1Password references for npm run test:llm-live (gitignored, local only)
 ├── infra/                # OpenTofu: modules/ and envs/staging
 ├── scripts/              # test-pg.sh, stack-compose.sh, stack-up-staged.sh, stack-smoke.sh, infra-check.sh
 ├── compose.yaml          # the local stack (also the staging host's stack)
@@ -627,7 +627,7 @@ scholium/
 | `compose.yaml` | The cloud shape in miniature: `web`, `api`, `worker`, `db` (PostgreSQL 16 with pgvector), `minio` with a one-shot `minio-init` that creates the bucket, `mailpit`, and an opt-in `sandbox` profile. The api and worker always run `STORAGE_BACKEND=s3` and `JOBS_MODE=external`. Ports bind to `127.0.0.1`. The same file runs on the staging host under systemd. `npm run stack:deps` starts only `db`, `minio`, `mailpit` and `minio-init`, so the API can run on the host against PostgreSQL and S3. |
 | `deploy/compose/compose.test.yaml` | A single throwaway PostgreSQL 16 service on tmpfs for `npm run test:pg`, started by `scripts/test-pg.sh` under a unique project name and loopback port. |
 | `deploy/compose/minio-init.sh` | Idempotent bucket creation for the `minio-init` service. |
-| `deploy/llm-live.env.tpl` | 1Password references (`op://…`, no secret) for the opt-in live LLM check: `op run --env-file=deploy/llm-live.env.tpl -- npm run test:llm-live` sends one request through each hosted AI provider to a real endpoint. The variables are `LLM_LIVE_*`, never `ANTHROPIC_*` or `OPENAI_*`, so injecting them reroutes no other tool. |
+| `deploy/llm-live.env.tpl` | Gitignored and created locally ([deploy.md section 9.1](deploy.md#91-the-live-llm-check)). 1Password references (`op://…`, no secret) for the opt-in live LLM check: `op run --env-file=deploy/llm-live.env.tpl -- npm run test:llm-live` sends one request through each hosted AI provider to a real endpoint. The variables are `LLM_LIVE_*`, never `ANTHROPIC_*` or `OPENAI_*`, so injecting them reroutes no other tool. |
 | `.containerignore` | Build-context filter; dependencies and build output come from `uv` and `npm` inside the build, never from the developer's tree. Podman and buildah read it; `docker build` reads `.dockerignore`, which does not exist yet, so a docker build sends the whole tree as context (the Containerfiles copy only what they need). |
 
 Containers and compose files work with rootless podman 4.9 and `podman-compose` 1.6.0 or newer (the nested variable defaults and `COMPOSE_PROFILES` of `compose.yaml` need it; `scripts/stack-compose.sh` refuses an older one) as well as with docker and `docker compose`: health checks are shell strings, `depends_on` waits only for what is certain to finish (the database and the one-shot bucket job), and neither Scholium image runs as root. podman 4.9 cannot start a service whose `depends_on` names an exited one-shot such as `minio-init`, so `npm run stack:up` starts the services in stages and never relies on `depends_on` (`scripts/stack-up-staged.sh`; `deploy.md` section 4.4). `scripts/` holds the opt-in commands (`test:pg`, `stack:up`, `stack:deps`, `stack:smoke`, `infra:check`) that need a container engine or OpenTofu; `test:llm-live` needs a network and a real LLM endpoint. None of them is part of `npm test`.

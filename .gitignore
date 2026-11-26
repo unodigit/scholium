@@ -9,6 +9,7 @@ __pycache__/
 .demo-keys.json
 .env
 .env.tpl
+*.env.tpl
 *.tsbuildinfo
 pnpm-lock.yaml
 *.log
