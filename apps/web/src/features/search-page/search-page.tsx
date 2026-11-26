@@ -204,6 +204,25 @@ function statusValueLabel(status: string): string {
 /** The empty facet counts shown before the first keyword answer. */
 const NO_FACETS: FacetCounts = { category: {}, status: {} };
 
+/**
+ * The facet counts of an answer, and the query text and mode they answer.
+ *
+ * While the next answer for the *same* query loads (a filter tick or untick)
+ * the column keeps showing these, so it does not collapse to the selected
+ * values and re-expand when the counts arrive. A different query text or a
+ * mode change makes them unusable: their counts describe another search.
+ */
+interface FacetSnapshot {
+  /** Query text and mode, as {@link queryKeyOf} renders them. */
+  readonly query: string;
+  readonly facets: FacetCounts;
+}
+
+/** The identity of a query, without its filters. */
+function queryKeyOf(state: SearchState): string {
+  return `${state.q.trim()}\u0000${state.mode}`;
+}
+
 /** Search page with results, facet filters and a semantic toggle. */
 export function SearchPage({
   initialState = EMPTY_SEARCH_STATE,
@@ -221,6 +240,15 @@ export function SearchPage({
     initialView(initialState, initialResult, initialError),
   );
   const [attempt, setAttempt] = useState(0);
+  // The facet counts of the last answer for the current query text and mode.
+  // They stay on screen while the next answer for the same query loads, so a
+  // filter tick does not collapse the column and re-expand it; a different
+  // query text or mode starts a fresh column (see `facets` below).
+  const [facetsFor, setFacetsFor] = useState<FacetSnapshot | null>(() =>
+    view.status === "ready" && isResults(view.result)
+      ? { query: queryKeyOf(initialState), facets: view.result.facets }
+      : null,
+  );
   // The key of the request already answered or in flight. A ref rather than
   // state so the fetch effect can tell "same search" from "new search"
   // without depending on `view` and re-running in a loop.
@@ -418,6 +446,27 @@ export function SearchPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, attempt]);
 
+  // Remember each answer's facet counts with the query they answer, so the
+  // next request on the same query can keep showing them while it loads.
+  useEffect(() => {
+    if (view.status === "ready" && view.key === key && isResults(view.result)) {
+      setFacetsFor({ query: queryKeyOf(state), facets: view.result.facets });
+    }
+    // `state` is read for the query identity only; the guards above decide
+    // whether the view is the answer to it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, key, state.q, state.mode]);
+
+  // A mode change starts a fresh column: the previous mode's counts must not
+  // reappear while the new mode's answer loads, even for the same query text.
+  const lastModeRef = useRef(state.mode);
+  useEffect(() => {
+    if (lastModeRef.current !== state.mode) {
+      lastModeRef.current = state.mode;
+      setFacetsFor(null);
+    }
+  }, [state.mode]);
+
   const retry = useCallback(() => {
     requestedRef.current = null;
     setAttempt((count) => count + 1);
@@ -454,15 +503,30 @@ export function SearchPage({
   const filtersDisabled = semantic;
   // The answer on screen, whatever it answers (the list shows it as is).
   const answered = view.status === "ready" ? view.result : undefined;
-  // The facet column reads only the answer to the state on screen. The API
-  // counts each facet over the matches that pass every filter except that
-  // facet's own, so these counts are exactly what ticking a value would
-  // return: nothing is remembered from an earlier answer, whose counts would
-  // describe a different filter set. While an answer is loading the column
-  // lists only the selected values, so they can still be unticked.
-  const ready =
-    view.status === "ready" && view.key === key ? view.result : undefined;
-  const facets = ready !== undefined && isResults(ready) ? ready.facets : NO_FACETS;
+  // Whether the answer on screen answers the state on screen. A filter step
+  // repaints once with the previous answer before the fetch effect marks the
+  // new request loading; both that paint and the loading one count as
+  // awaiting, so the column does not collapse in between.
+  const answeredNow = view.status === "ready" && view.key === key;
+  const awaitingAnswer =
+    view.status === "loading" || (view.status === "ready" && !answeredNow);
+  // The facet column reads the answer to the state on screen. The API counts
+  // each facet over the matches that pass every filter except that facet's
+  // own, so these counts are exactly what ticking a value would return. While
+  // the next answer for the same query text and mode loads, the previous
+  // answer's values and counts stay listed (marked as updating) instead of
+  // collapsing to the selected values; a different query or mode never
+  // borrows another search's counts.
+  const queryId = queryKeyOf(state);
+  const ready = answeredNow ? view.result : undefined;
+  const retained =
+    awaitingAnswer && facetsFor !== null && facetsFor.query === queryId
+      ? facetsFor.facets
+      : undefined;
+  const facets =
+    ready !== undefined && isResults(ready)
+      ? ready.facets
+      : retained ?? NO_FACETS;
   const results = answered?.results ?? [];
   const categoryChoices = facetOptions(facets.category, state.categories);
   // `statusOptions` lists every known status; here a status the answer does
@@ -543,7 +607,11 @@ export function SearchPage({
             </p>
           ) : null}
 
-          <fieldset className="sp-filter-group" disabled={filtersDisabled}>
+          <fieldset
+            className="sp-filter-group"
+            disabled={filtersDisabled}
+            aria-busy={awaitingAnswer}
+          >
             <legend className="sp-filter-legend">Category</legend>
             {categoryChoices.length === 0 ? (
               <p className="sp-filter-none">Categories appear with results.</p>
@@ -572,7 +640,11 @@ export function SearchPage({
             )}
           </fieldset>
 
-          <fieldset className="sp-filter-group" disabled={filtersDisabled}>
+          <fieldset
+            className="sp-filter-group"
+            disabled={filtersDisabled}
+            aria-busy={awaitingAnswer}
+          >
             <legend className="sp-filter-legend">Date listed</legend>
             <div className="sp-date-row">
               <label className="sp-date-field">
@@ -596,7 +668,11 @@ export function SearchPage({
             </div>
           </fieldset>
 
-          <fieldset className="sp-filter-group" disabled={filtersDisabled}>
+          <fieldset
+            className="sp-filter-group"
+            disabled={filtersDisabled}
+            aria-busy={awaitingAnswer}
+          >
             <legend className="sp-filter-legend">Status</legend>
             {statusChoices.length === 0 ? (
               <p className="sp-filter-none">Statuses appear with results.</p>
@@ -627,7 +703,11 @@ export function SearchPage({
             )}
           </fieldset>
 
-          <fieldset className="sp-filter-group" disabled={filtersDisabled}>
+          <fieldset
+            className="sp-filter-group"
+            disabled={filtersDisabled}
+            aria-busy={awaitingAnswer}
+          >
             <legend className="sp-filter-legend">Code</legend>
             <ul className="sp-filter-list">
               <li>

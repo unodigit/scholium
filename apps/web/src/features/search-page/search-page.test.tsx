@@ -539,6 +539,81 @@ describe("SearchPage facets across queries", () => {
     );
   }
 
+  /** A promise whose answer the test releases when it wants to. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  it("keeps the previous values and counts while the next answer for the same query loads", async () => {
+    const answer = deferred<SearchResult>();
+    const loadKeyword = vi.fn(() => answer.promise);
+    renderRafael(loadKeyword);
+
+    const categoryGroup = screen.getByRole("group", { name: "Category" });
+    const statusGroup = screen.getByRole("group", { name: "Status" });
+    expect(categoryGroup.getAttribute("aria-busy")).toBe("false");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+
+    // Until the answer arrives the column keeps the previous answer's values
+    // and counts (no collapse then re-expand), with the tick applied, and the
+    // groups say they are updating.
+    const lg = screen.getByRole("checkbox", { name: /cs\.LG\s*1/ }) as HTMLInputElement;
+    expect(lg.checked).toBe(true);
+    expect(screen.getByRole("checkbox", { name: /cs\.AI\s*2/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /cs\.MA\s*1/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /Preprint\s*1/ })).toBeTruthy();
+    expect(categoryGroup.getAttribute("aria-busy")).toBe("true");
+    expect(statusGroup.getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => {
+      answer.resolve(RAFAEL_LG);
+    });
+
+    // The new answer's counts replace the old ones, and the column settles.
+    await screen.findByRole("checkbox", { name: /Under review\s*1/ });
+    expect(screen.queryByRole("checkbox", { name: /Preprint/ })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /cs\.AI\s*2/ })).toBeTruthy();
+    expect(categoryGroup.getAttribute("aria-busy")).toBe("false");
+    expect(statusGroup.getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("lists only the selected values while a new query's first answer loads", async () => {
+    const answer = deferred<SearchResult>();
+    const loadKeyword = vi.fn(() => answer.promise);
+    renderRafael(loadKeyword);
+
+    expect(screen.getByRole("checkbox", { name: /cs\.LG\s*1/ })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search papers"), {
+      target: { value: "1260 tasks" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+
+    // Nothing from the previous query's answer is carried into the new query.
+    expect(screen.queryByRole("checkbox", { name: /cs\.LG/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /cs\.AI/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Preprint/ })).toBeNull();
+    expect(
+      screen.getByRole("group", { name: "Category" }).getAttribute("aria-busy"),
+    ).toBe("true");
+
+    await act(async () => {
+      answer.resolve(NARROWER);
+    });
+
+    await screen.findByRole("checkbox", { name: /cs\.AI\s*1/ });
+    expect(
+      screen.getByRole("group", { name: "Category" }).getAttribute("aria-busy"),
+    ).toBe("false");
+  });
+
   it("within one query, selecting a category still lists the others, from the answer's own counts", async () => {
     const loadKeyword = vi.fn(async (_next: SearchState) => RAFAEL_LG);
     renderRafael(loadKeyword);
