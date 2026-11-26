@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 29: findings of verify sweep 24 (2026-11-26, full regression on a fresh seed of main @ 3a5304a with a real
+  ClamAV; 18/18 journeys pass; rounds 24-28 and hand fixes verified). Evidence: .claw-forge/journeys/screenshots/<journey>/.
+  Decisions (recorded here):
+  D1  An archive verification names every signed public decision that explains a paper's state, the way round 27
+      named "not listed yet" and round 28 named a withdrawal: a moderator's hold, rejection or delisting in force gets
+      a line with its policy clause and reason. (Moderation decisions are public, signed and counted by clause on
+      /network; only pre-publication screening is confidential, round 27 D1.)
+  D2  Search facets use disjunctive counting, the standard for faceted search in catalogues and stores: each facet's
+      counts are computed over the matches filtered by every OTHER facet's selection but not its own. Values in the
+      facet being filtered keep counts that say what widening the OR would add; values in other facets say exactly
+      what ticking them would give. The API computes this, so the web no longer remembers counts from earlier
+      answers (round 24 D1's facet memory is replaced; a new query still starts afresh).
+  D3  A hidden annotation is called an annotation wherever its author is told about it, as its attention item already
+      does ("Appeal the removal of your annotation").
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/src/scholium_cli/checklist.py,apps/api/packages/cli/src/scholium_cli/verify.py,apps/api/packages/cli/tests/test_cli_verify_api_export.py,apps/api/packages/cli/tests/test_cli_verify_command.py">
+    <title>`scholium verify` counts a moderator-held paper as "held" in its summary but the paper's own section never says it is held, or why</title>
+    <symptoms>verify.py _paper_verdict sets status "held" from _held_in_force, and the summary counts "1 held", but the per-paper items (checklist.py) carry no line for the moderation decision in force; a "not listed yet" paper (round 27) and a withdrawal (round 28) each get a line, so a reader cannot tell which paper is held. Evidence: screenshots/09-preserve-and-transparency/05b2-export-cli-verify-statuses-and-summary.png; verifier terminal text s24-b/cli09.txt (sch:qcfk-chun-2tvj)</symptoms>
+    <reproduction_steps>Hold a queued paper as a moderator (citing a clause, with a reason), export the node, run `scholium verify archive.car`</reproduction_steps>
+    <expected>Per D1: a paper whose newest version's moderation decision in force is a hold gets one WARN line "Held from listing by a moderator (&lt;clause&gt;): &lt;reason&gt;" (reason on one line, truncated to ~200 characters; "(reason in record &lt;cid&gt;)" when only reasonCid is given; the clause omitted with its parentheses when absent), with "moderation.decision &lt;id&gt; signed by &lt;did&gt;" in the detail; a rejection in force reads "Not listed: a moderator rejected it (&lt;clause&gt;): &lt;reason&gt;", a delisting "Removed from the catalog by a moderator (&lt;clause&gt;): &lt;reason&gt;". A release, or a later decision that lists the version, removes the line. Statuses, summary counts and exit codes unchanged. Tests in the two test files: held, rejected, delisted, held-then-released (no line), and a decision signed by a non-moderator key is not shown as applying if verify already distinguishes authorities (otherwise it is shown as recorded)</expected>
+    <actual>The held paper's section is silent about the hold</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/search/query.py,apps/api/src/app/modules/search/tests/test_search_api.py">
+    <title>Search facet counts are computed over the fully filtered matches, so a selected category hides how many results the other categories and statuses would add</title>
+    <symptoms>query.py _facets(matched) (~L336-348, called ~L464) counts categories and statuses over the matches after every filter, so with category=cs.LG selected the answer is {"category":{"cs.LG":1},"status":{"under_review":1}}: other categories vanish (the web papered over this with a memory of earlier answers, round 24) and nothing says what widening the OR would add. Evidence: screenshots/02-search-and-discover/11d (sweep 24)</symptoms>
+    <reproduction_steps>GET /v1/search?q=Rafael+Silva (3 results: cs.AI 2, cs.LG 1, cs.MA 1; Under review, Corrected, Preprint...), then GET /v1/search?q=Rafael+Silva&amp;category=cs.LG</reproduction_steps>
+    <expected>Per D2: the category counts are computed over the matches that pass every filter except the category filter (status, has_code and the rest still apply), and the status counts over the matches that pass every filter except the status filter; both still count one hit per paper (the same representative-version rule as the results). With no selection in a facet its counts equal today's. results and total are unchanged. Tests in test_search_api.py: with category=cs.LG selected, category counts include cs.AI and cs.MA with their unfiltered-by-category counts and status counts reflect cs.LG only; with a status selected, status counts ignore it but category counts reflect it; both selected; no selection → unchanged</expected>
+    <actual>Counts describe only the fully filtered answer</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low" depends_on="2"
+       touches_files="apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx">
+    <title>Within one search, facet values remembered from an earlier answer keep that answer's counts: "Preprint 1" stays listed under cs.LG although ticking it gives 0 results</title>
+    <symptoms>search-page.tsx keeps a facetMemory per query (round 24, 2190308) and shows remembered values with the counts of the answer they came from. After "Rafael Silva" → tick cs.LG (1 result), Status still lists "Preprint 1"; ticking it as well gives 0 results. Evidence: screenshots/02-search-and-discover/11d (sweep 24)</symptoms>
+    <reproduction_steps>/search?q=Rafael+Silva, tick cs.LG; Status still shows Preprint 1; tick it: 0 results</reproduction_steps>
+    <expected>Per D2: with bug 2's disjunctive counts the facet column shows exactly the current answer's category and status values and counts, plus any selected value missing from the answer (listed with no count or 0, so it can be unticked); the per-query facet memory is removed. Every listed unselected value, when ticked, gives at least one result. A new query, Back/Forward (round 25) and the header box (round 26) behave as now; one /v1/search per step. Tests in search-page.test.tsx replace the facet-memory tests: within one query, selecting cs.LG still lists cs.AI and cs.MA (from the answer's disjunctive counts); a status absent from the answer is not listed unless selected; a selected value absent from the answer stays listed to untick</expected>
+    <actual>Stale counts invite a click that returns nothing</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-discussion/discussion.ts,apps/web/src/features/paper-discussion/discussion.test.ts,apps/web/src/features/paper-discussion/post-card.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx">
+    <title>The author of a hidden annotation reads "Your post was hidden: …" and "Show my post" in the discussion, while their attention item says "Appeal the removal of your annotation"</title>
+    <symptoms>discussion.ts hiddenOwnNotice (~L907-912) always says "Your post was hidden"; post-card.tsx (~L240, ~L277) shows it and "Show my post"/"Hide my post" for every hidden post, annotations included (a post whose anchor is an object: a paragraph anchor, with or without a quote). Evidence: screenshots/07-flag-and-dispute/21a-21c (sweep 24, last row; also in sweep 23)</symptoms>
+    <reproduction_steps>As sam, post an annotation; as priya hide it; as sam open the paper's Discussion tab</reproduction_steps>
+    <expected>Per D3: for a hidden annotation the row reads "Your annotation was hidden: &lt;reason&gt;" (same punctuation rule) and the buttons "Show my annotation" / "Hide my annotation"; a hidden thread post or reply keeps "Your post was hidden" and "Show my post". hiddenOwnNotice takes the kind (or a flag) and post-card passes it from the parsed post. Tests: discussion.test.ts (both wordings, with and without a reason) and discussion-tab.test.tsx (an author's hidden annotation row and a hidden thread row side by side)</expected>
+    <actual>An annotation is called a post</actual>
+  </bug>
+
+</bug_spec>
