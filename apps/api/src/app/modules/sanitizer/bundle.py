@@ -449,7 +449,9 @@ def _clamd_scan(socket_path: str, raw: bytes) -> str:
     sock = _clamd_connect(socket_path)
     sock.settimeout(60)
     try:
-        sock.sendall(b"INSTREAM\n")
+        # clamd refuses INSTREAM without its delimiter prefix ("UNKNOWN COMMAND");
+        # the z form is NUL-terminated, and so is the reply.
+        sock.sendall(b"zINSTREAM\0")
         offset = 0
         chunk_size = 8192
         while offset < len(raw):

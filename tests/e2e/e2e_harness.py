@@ -778,13 +778,27 @@ class FakeClamd:
         daemon = self
 
         class Handler(socketserver.StreamRequestHandler):
+            def _command(self) -> tuple[bytes, bool]:
+                # As clamd reads it: zCMD\0 and nCMD\n are delimited, anything
+                # else is a legacy newline-terminated command.
+                first = self.rfile.read(1)
+                if first in (b"z", b"n"):
+                    end = b"\0" if first == b"z" else b"\n"
+                    command = b""
+                    while (byte := self.rfile.read(1)) not in (end, b""):
+                        command += byte
+                    return command, True
+                return (first + self.rfile.readline()).strip(), False
+
             def handle(self) -> None:
-                command = self.rfile.readline().strip().lstrip(b"z").rstrip(b"\0")
+                command, prefixed = self._command()
                 if command == b"VERSION":
                     self.wfile.write(b"ClamAV 1.4.2/27500/Wed Nov 18 06:00:00 2026\0")
                 elif command == b"PING":
                     self.wfile.write(b"PONG\0")
-                elif command == b"INSTREAM":
+                elif command == b"INSTREAM" and prefixed:
+                    # Real clamd (1.4.7) answers "UNKNOWN COMMAND" to an
+                    # unprefixed INSTREAM, so this fake does too.
                     data = io.BytesIO()
                     while True:
                         header = self.rfile.read(4)

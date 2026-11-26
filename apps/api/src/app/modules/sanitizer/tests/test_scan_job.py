@@ -250,20 +250,43 @@ def no_clamd(monkeypatch):
     monkeypatch.delenv("CLAMD_SOCKET", raising=False)
 
 
+def _read_clamd_command(rfile) -> tuple[bytes, bytes, bool]:
+    """``(command, reply terminator, prefixed)`` read the way clamd reads it.
+
+    ``zCMD\\0`` and ``nCMD\\n`` are the delimited forms; anything else is a
+    legacy newline-terminated command.
+    """
+    first = rfile.read(1)
+    if first in (b"z", b"n"):
+        end = b"\0" if first == b"z" else b"\n"
+        command = b""
+        while (byte := rfile.read(1)) not in (end, b""):
+            command += byte
+        return command, end, True
+    return (first + rfile.readline()).strip(), b"\n", False
+
+
 class _FakeClamd(socketserver.StreamRequestHandler):
-    """Enough of clamd's protocol for a scan: ``VERSION`` and ``INSTREAM``."""
+    """Enough of clamd's protocol for a scan: ``VERSION`` and ``INSTREAM``.
+
+    Like the real clamd (checked against ClamAV 1.4.7), INSTREAM is refused
+    without its ``z``/``n`` prefix: the node sent the legacy ``INSTREAM\\n``
+    until 2026-11-26 and every real scan answered "UNKNOWN COMMAND".
+    """
 
     def handle(self) -> None:
-        command = self.rfile.readline().strip()
+        command, end, prefixed = _read_clamd_command(self.rfile)
         if command == b"VERSION":
-            self.wfile.write(b"ClamAV 1.4.2/27500/Mon Nov 10 08:00:00 2026\n")
-        elif command == b"INSTREAM":
+            self.wfile.write(b"ClamAV 1.4.2/27500/Mon Nov 10 08:00:00 2026" + end)
+        elif command == b"INSTREAM" and prefixed:
             while True:
                 (size,) = struct.unpack("!I", self.rfile.read(4))
                 if size == 0:
                     break
                 self.rfile.read(size)
-            self.wfile.write(self.server.reply + b"\n")
+            self.wfile.write(self.server.reply + end)
+        else:
+            self.wfile.write(b"UNKNOWN COMMAND\n")
 
 
 @pytest.fixture
