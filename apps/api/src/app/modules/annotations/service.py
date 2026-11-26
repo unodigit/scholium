@@ -209,7 +209,20 @@ def _paragraph_id(anchor: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def _annotation_entry(entry: Any, anchor: Mapping[str, Any], paragraph_id: str) -> dict[str, Any]:
+def _own_hidden_text(entry: Any) -> Optional[str]:
+    """The hidden annotation body for its author."""
+    text = _body(entry).get("text")
+    if isinstance(text, str) and text.strip():
+        return text
+    return None
+
+
+def _annotation_entry(
+    entry: Any,
+    anchor: Mapping[str, Any],
+    paragraph_id: str,
+    viewer_did: Optional[str] = None,
+) -> dict[str, Any]:
     """One annotation in the wire shape served inside a paragraph's group.
 
     A ``hide`` decision withdraws the annotation's body from public reads while
@@ -228,7 +241,8 @@ def _annotation_entry(entry: Any, anchor: Mapping[str, Any], paragraph_id: str) 
         reason = getattr(hidden, "reason", None)
         hidden_at = getattr(hidden, "hidden_at", None)
         decision_cid = getattr(hidden, "decision_cid", None)
-        return {
+        is_own = viewer_did is not None and str(getattr(entry, "author_did", None)) == str(viewer_did)
+        placeholder = {
             "id": entry.record_cid,
             "author": entry.author_did,
             "created": _created(entry),
@@ -251,6 +265,13 @@ def _annotation_entry(entry: Any, anchor: Mapping[str, Any], paragraph_id: str) 
             "decision_cid": decision_cid,
             "decisionCid": decision_cid,
         }
+        if is_own:
+            own_text = _own_hidden_text(entry)
+            placeholder["own_text"] = own_text
+            placeholder["ownText"] = own_text
+            placeholder["is_own"] = True
+            placeholder["isOwn"] = True
+        return placeholder
     return {
         "id": entry.record_cid,
         "author": entry.author_did,
@@ -283,14 +304,25 @@ def _created(entry: Any) -> Optional[str]:
         return None
 
 
-def annotations_for_version(version_cid: str) -> dict[str, list[dict[str, Any]]]:
-    """Return the version's annotations grouped by ``paragraph_id``.
-
-    Only ``discussion.post`` records whose anchor names ``version_cid`` and a
-    non-empty paragraph id are included; a plain thread post (a cid anchor) is
-    not an annotation.  Groups are inserted in ledger order, so each
-    paragraph's annotations come back in the order they were posted.
-    """
+def annotations_for_version(
+    version_cid: str,
+    viewer_did: Optional[str] = None,
+    *,
+    viewer: Any = None,
+    principal: Any = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return the version's annotations grouped by paragraph_id."""
+    if viewer is not None and viewer_did is None:
+        viewer_did = getattr(viewer, "did", None)
+        if not isinstance(viewer_did, str):
+            viewer_did = viewer if isinstance(viewer, str) else None
+    if principal is not None and viewer_did is None:
+        viewer_did = getattr(principal, "did", None)
+        if not isinstance(viewer_did, str):
+            viewer_did = principal if isinstance(principal, str) else None
+    # normalize
+    if not isinstance(viewer_did, str) or not viewer_did:
+        viewer_did = None
     from sqlalchemy import select
 
     from app import db
@@ -328,7 +360,7 @@ def annotations_for_version(version_cid: str) -> dict[str, list[dict[str, Any]]]
             continue
 
         groups.setdefault(paragraph_id, []).append(
-            _annotation_entry(entry, anchor, paragraph_id)
+            _annotation_entry(entry, anchor, paragraph_id, viewer_did=viewer_did)
         )
 
     return groups

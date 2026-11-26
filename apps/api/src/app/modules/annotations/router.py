@@ -35,10 +35,16 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
 
-from app.security import require_tier
+from app.security import (
+    InvalidAccessToken,
+    Principal,
+    decode_access_token,
+    require_tier,
+)
 
 from app.modules.ingest.router import RecordAccepted
 from app.modules.ingest.service import ingest
@@ -52,6 +58,26 @@ annotations_router = APIRouter(prefix="/annotations", tags=["annotations"])
 
 #: The paper-scoped annotation route (``GET /v1/papers/{id}/v/{n}/annotations``).
 papers_router = APIRouter(tags=["annotations"])
+
+#: Bearer credentials for routes that read differently when signed in.
+_optional_bearer = HTTPBearer(auto_error=False)
+
+
+def _optional_principal(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_optional_bearer),
+) -> Optional[Principal]:
+    """The caller when the request carries a usable token, otherwise ``None``.
+
+    Reading a paper's annotations is public; a token is only needed to serve
+    the caller's own hidden annotation text.  A token that is present but
+    unusable is ignored rather than turning a readable page into a ``401``.
+    """
+    if credentials is None:
+        return None
+    try:
+        return decode_access_token(credentials.credentials)
+    except InvalidAccessToken:
+        return None
 
 
 class AnnotationOut(BaseModel):
@@ -139,7 +165,12 @@ def post_annotation(
     response_model=PaperAnnotations,
     summary="List a paper version's annotations grouped by paragraph",
 )
-def get_paper_annotations(paper_id: str, n: int) -> PaperAnnotations:
+def get_paper_annotations(
+    paper_id: str,
+    n: int,
+    response: Response,
+    principal: Optional[Principal] = Depends(_optional_principal),
+) -> PaperAnnotations:
     """Return version ``n``'s annotations, grouped under their paragraph ids."""
     try:
         version = service.resolve_version(paper_id, n)
@@ -148,7 +179,7 @@ def get_paper_annotations(paper_id: str, n: int) -> PaperAnnotations:
         version = None
     if version is None:
         raise _not_found(paper_id, n)
-    return _version_annotations(version)
+    return _version_annotations(version, viewer_did=None if principal is None else principal.did, response=response)
 
 
 @papers_router.get(
@@ -156,7 +187,11 @@ def get_paper_annotations(paper_id: str, n: int) -> PaperAnnotations:
     response_model=PaperAnnotations,
     summary="List a paper's latest version's annotations grouped by paragraph",
 )
-def get_latest_paper_annotations(paper_id: str) -> PaperAnnotations:
+def get_latest_paper_annotations(
+    paper_id: str,
+    response: Response,
+    principal: Optional[Principal] = Depends(_optional_principal),
+) -> PaperAnnotations:
     """Return the latest version's annotations, grouped under their paragraph ids."""
     try:
         version = service.resolve_latest_version(paper_id)
@@ -165,12 +200,23 @@ def get_latest_paper_annotations(paper_id: str) -> PaperAnnotations:
         version = None
     if version is None:
         raise _not_found(paper_id)
-    return _version_annotations(version)
+    return _version_annotations(version, viewer_did=None if principal is None else principal.did, response=response)
 
 
-def _version_annotations(version: service.VersionRef) -> PaperAnnotations:
+def _version_annotations(
+    version: service.VersionRef,
+    viewer_did: Optional[str] = None,
+    response: Optional[Response] = None,
+) -> PaperAnnotations:
     """The wire response for one resolved paper version."""
-    groups = service.annotations_for_version(version.version_cid)
+    groups = service.annotations_for_version(version.version_cid, viewer_did=viewer_did)
+    has_own = any(
+        bool(item.get("is_own") or item.get("isOwn") or item.get("own_text") or item.get("ownText"))
+        for items in groups.values()
+        for item in items
+    )
+    if has_own and response is not None:
+        response.headers["Cache-Control"] = "private, no-store"
     return PaperAnnotations(
         paper=version.paper,
         version=version.n,
