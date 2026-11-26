@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 31: findings of the sweep-24d re-check of round 30 (2026-11-26, verify app @ 922a561, sweep-24 data; round 30
+  bugs 1 and 3 verified; bug 2 verified only right after sign-in). npm test API 6210 / web 6260, e2e 63/63, system 160.
+  Evidence: .claw-forge/journeys/screenshots/07-flag-and-dispute/75-r30-*, 02-search-and-discover/75-r30-*.
+  Decisions (recorded here):
+  D1  A client read whose answer depends on who is signed in is repeated once the session is known, the way the
+      Discussion tab already does (useViewer + viewerKey, discussion-tab.tsx ~L168-240) and the bell does since
+      round 19: the first read may go out before /v1/auth/refresh restores the token.
+  D2  A link to a post lands on that post: every post card carries the stable anchor id post-<cid>, and a discussion
+      view that renders its posts after load scrolls to and focuses the hash target once it exists.
+  D3  Within one search (same query text and mode), the previous results stay on screen, marked busy, while a
+      filter change loads (stale-while-loading, as round 30 D2 does for the facet column); a new query keeps today's
+      "Searching…".
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/web/src/features/paper-discussion/annotations.tsx,apps/web/src/features/paper-page/reading-text.test.tsx">
+    <title>On a normal page load the author of a hidden annotation still sees only "Hidden by moderation" in the margin: the annotations read goes out before the session is restored and is never repeated</title>
+    <symptoms>Round 30 (f1fba4c, 922a561) serves the author's own hidden text to a signed-in read, and the margin shows "Your annotation was hidden…" with Show my annotation and Appeal. But annotations.tsx loads once on mount; on a typed URL, a reload or an in-app link the read is sent before /v1/auth/refresh, without a token, so the answer has no ownText and the margin shows the anonymous placeholder; it works only when the page is reached straight from sign-in. Evidence: 07-flag-and-dispute/75-r30-01g-sam-after-full-load-anonymous-placeholder-only.png, 75-r30-02-…</symptoms>
+    <reproduction_steps>As sam (author of a hidden annotation, already signed in), reload /p/sch:a4gc-nxee-pqsr and open that paragraph's annotations</reproduction_steps>
+    <expected>Per D1: MarginMarkers (annotations.tsx) keys its load on the viewer (useViewer from review-form/use-viewer, the same signed-in/viewer DID key the Discussion tab uses): when the viewer key changes after mount (session restored, sign-in, sign-out, another account) it reads the annotations again and replaces the list, keeping the open paragraphs open; a read already answered for the same key is not repeated (one read per key, no loop); an earlier read's late answer never overwrites a newer key's. Tests in reading-text.test.tsx: mounted signed out then the viewer becomes sam → a second read and the own notice appears; same key re-render → no extra read; sign-out → the anonymous placeholder returns</expected>
+    <actual>The author's notice depends on how the page was reached</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-discussion/post-card.tsx,apps/web/src/features/paper-discussion/discussion-tab.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx">
+    <title>The margin's "Appeal" link for a hidden annotation opens the discussion page at the top: its #post-&lt;cid&gt; anchor matches no element</title>
+    <symptoms>annotations.tsx (~L904) links to /discussion/&lt;id&gt;/v&lt;n&gt;#post-&lt;cid&gt;, but post-card.tsx gives a post no id of that form (only its own-text, appeal, reply and report panels have ids), and the discussion view renders its posts after loading, so the browser has nothing to scroll to. The post with its Appeal control is ~1000 px down. Evidence: 07-flag-and-dispute/75-r30-01d-…anchor-missing.png, 75-r30-01e-…appeal-control.png</symptoms>
+    <reproduction_steps>As sam, in the margin of his hidden annotation, follow "Appeal"</reproduction_steps>
+    <expected>Per D2: each post card's root element has id="post-&lt;cid&gt;" (the record cid as the API sends it; replies too) with scroll-margin-top clearing the sticky header; the discussion view, once its threads have rendered, scrolls the element named by location.hash into view (block start) and moves focus to it (tabIndex -1, no outline flash on mouse), once per hash, also on a later hashchange; an unknown hash does nothing. Tests in discussion-tab.test.tsx: a rendered post has the id; with location.hash set before the threads load, the post is scrolled into view (scrollIntoView called on it) after they render; unknown hash → no call</expected>
+    <actual>The link lands at the top of the page</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx,apps/web/src/features/search-page/search-page.css">
+    <title>Ticking a search filter replaces the results with "Searching…" while the answer loads, so a scrolled page shortens and jumps</title>
+    <symptoms>search-page.tsx renders "Searching…" (~L676-680) instead of the list while any answer loads; after round 30 (1d8b0cd) the facet column stays, but the results list collapses, so the page height drops and the whole page, column included, jumps (34 px at scrollY 380 during loading, 56 px after). Evidence: 02-search-and-discover/75-r30-02b, 02c (1500 ms emulated latency)</symptoms>
+    <reproduction_steps>/search?q=Rafael+Silva, scroll down, slow network, tick cs.LG</reproduction_steps>
+    <expected>Per D3: while an answer for the same query text and mode loads, the previous results stay rendered, the list marked aria-busy="true" and visibly de-emphasised (search-page.css, design tokens only), with a polite status "Updating results…" that does not change the page height; when the answer arrives it replaces them (aria-busy false). A new query text or mode keeps today's "Searching…" and does not show the previous query's results. Latest answer wins, as now. Tests: same-query filter change keeps the old results with aria-busy true until resolve; new query shows "Searching…" without old results</expected>
+    <actual>The page jumps on every tick</actual>
+  </bug>
+
+</bug_spec>
