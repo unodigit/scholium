@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 28: found while checking round 27's archive wording (2026-11-26, verify app @ 3742d0d, sweep-23 data;
+  scratchpad r27cli/verify.txt). sch:dokj-s3m5-3vlz was withdrawn by its author in sweep 23 (journey 15/10 notes),
+  yet `scholium verify` says only "No retraction, correction or tombstone applies".
+  Decision (recorded here):
+  D1  A withdrawal never changes a paper's status (handbook ch05: "status does not change, and the paper and its files
+      stay available"), so counts, statuses and exit codes stay as they are. But it is a signed public notice that the
+      authors no longer stand behind the paper, and an archive verification must show it, as the paper page's
+      "Withdrawn by the authors" banner does. Only a withdrawal signed by one of the paper's listed authors applies;
+      any other signer's is shown as not applied, the way retraction/correction notices already are.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/src/scholium_cli/checklist.py,apps/api/packages/cli/src/scholium_cli/verify.py,apps/api/packages/cli/tests/test_cli_verify_api_export.py,apps/api/packages/cli/tests/test_cli_verify_command.py">
+    <title>`scholium verify` does not mention a paper's withdrawal: a withdrawn paper reads "No retraction, correction or tombstone applies" and nothing else</title>
+    <symptoms>checklist.py _supersession_item (~L248-266) words only retraction, tombstone and correction (from record-core's supersessions); withdrawal records (record type `withdrawal`, body target/paper/reason or reasonCid) are never read by the CLI. On the verify app's export, sch:dokj-s3m5-3vlz (withdrawn by its author, with a reason) verifies as an ordinary listed paper</symptoms>
+    <reproduction_steps>Withdraw a listed paper through the UI (as one of its authors, with a reason), export the node (/v1/export/archive.car) and run `scholium verify archive.car`</reproduction_steps>
+    <expected>Per D1: for each paper, a withdrawal record whose target is the paper's genesis or one of its versions and which is signed by one of the paper's listed authors adds one WARN line under the paper: "Withdrawn by the authors: <reason>" (reason truncated to ~200 characters on one line; "(reason in record <cid>)" when only reasonCid is given), followed by "withdrawal <id> signed by <did> (applies)" in the notices detail like the other notices; a withdrawal signed by anyone else is listed in the detail as "(not applied: not signed by an author of this paper)" and adds no line. The "No retraction, correction or tombstone applies" line stays when true. The paper's status, the whole-archive summary counts and the exit code do not change; the summary appends ", 1 withdrawn by its authors" (plural: "N withdrawn by their authors") after the counts when any apply. A single-paper `scholium verify` on a paper file shows the same line. Tests: test_cli_verify_api_export.py (an export with an author-signed withdrawal: the line, the summary suffix, exit 0, status unchanged; an outsider-signed withdrawal: not applied, no line); test_cli_verify_command.py (single paper with a withdrawal)</expected>
+    <actual>The archive verification is silent about a signed withdrawal notice</actual>
+  </bug>
+
+</bug_spec>
