@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 27: the open issues after sweep 23 (2026-11-26, main @ 61824da), decided from the scholarly-publishing
+  practice the product follows (screening before posting; confidential pre-publication screening; never charge the
+  author for the platform's failure; preservation events recorded as facts).
+  Evidence: .claw-forge/journeys/09-preserve-and-transparency.md (sweep 22/23 spec question: the export calls a version
+  held by the safety scan "awaiting moderation"); journey 10 (a bundle version held with av_unavailable on a node
+  without ClamAV, and the author told to publish a new version); docs/deploy.md CLAMD_SOCKET row; compose.yaml has no
+  ClamAV, so dev.scholium.fyi (compose) holds every bundle version for good.
+  Decisions (recorded here):
+  D1  Pre-publication screening is confidential. The public archive states only what its signed records prove: a paper
+      none of whose versions is listed, with no moderation decision in force on its newest version, is "not listed yet"
+      (never "awaiting moderation", which claims a queue position the records cannot show); a decision in force says
+      what it is (held, rejected, delisted). No new public record type for scan outcomes: a passed scan keeps its
+      node-signed rendition; a failed one stays between the node, the authors and the moderators.
+  D2  A check the node could not run is not a finding against the author. av_unavailable (no CLAMD_SOCKET, clamd
+      unreachable, no or unexpected response) is INCONCLUSIVE: the version stays in `scanning` (fail closed: nothing is
+      served or listed) and is re-scanned automatically. Every other finding is CONCLUSIVE and holds the version as now.
+      A clamd answer that a size limit was exceeded is conclusive, with its own check `too_large_to_scan`
+      ("too large for the malware scan"), so a file clamd will never accept does not wait forever.
+  D3  The author of a waiting version is told plainly that the node is waiting, and that there is nothing to do.
+  D4  The shipped stack runs ClamAV, as docs/deploy.md already requires of any node that accepts bundles.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="medium"
+       touches_files="apps/api/src/app/modules/sanitizer/scan_job.py,apps/api/src/app/modules/sanitizer/bundle.py,apps/api/src/app/modules/sanitizer/__init__.py,apps/api/src/app/modules/sanitizer/tests/test_scan_job.py">
+    <title>When the node's antivirus cannot run, the author's version is held for good and the author must publish a new version, although nothing was found in their files</title>
+    <symptoms>bundle.py _av_scan (~L474-500) returns an av_unavailable finding when CLAMD_SOCKET is unset, clamd is unreachable, or answers ERROR/nothing/unexpected; scan_job.py treats any finding as a failure and moves the version to `held` (~L590), with no automatic re-scan. On a node without ClamAV (the verify app, dev.scholium.fyi) every version with a code or data bundle is held: the author sees "Needs fixing … Publish a new version", and the paper's history keeps a held v1 for an outage of the node</symptoms>
+    <reproduction_steps>With CLAMD_SOCKET unset, submit a version with a small .zip bundle and let every co-author consent: the version goes to `held` with "a malware scan that could not run (the antivirus is unavailable)"</reproduction_steps>
+    <expected>Per D2: findings are split into inconclusive (av_unavailable only) and conclusive (everything else). clamd ERROR answers that name a size limit (e.g. "INSTREAM size limit exceeded", "Size limit reached") become a conclusive finding with the new check id `too_large_to_scan` (label "too large for the malware scan"), not av_unavailable. scan_version: any conclusive finding → held exactly as now; only inconclusive findings → the version stays `scanning`, gets no rendition and no state change, and the latest scan report of each such file keeps its av_unavailable finding (the blob's scan_status is not `failed`). A scheduled job `sanitizer.rescan`, registered like the appeals.panels job but every 15 minutes, re-runs scan_version for every version in `scanning` with a readable manifest; when clamd answers, the version moves on (moderation, or held on a conclusive finding). The same job returns to `scanning` (state event reason "re-scan: the antivirus was unavailable") any version that is `held` only because of inconclusive findings, is still its paper's newest version and has no moderation decision, and scans it in that pass. Each pass that leaves versions waiting logs one WARNING naming the count and CLAMD_SOCKET. Tests in test_scan_job.py: no CLAMD_SOCKET → stays scanning, no rendition; a fake clamd that then answers OK → the rescan job moves it to moderation with a rendition; a FOUND answer → held (malware); a size-limit ERROR → held (too_large_to_scan); a version held only for av_unavailable → re-opened and scanned; one held for a conclusive finding, or superseded by a newer version, or with a moderation decision → untouched</expected>
+    <actual>An outage of the node's antivirus holds the author's version permanently</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="medium" depends_on="1"
+       touches_files="apps/api/src/app/modules/checks/router.py,apps/api/src/app/modules/checks/tests/test_pipeline.py,apps/api/src/app/modules/me/service.py,apps/api/src/app/modules/me/tests/test_me_attention.py">
+    <title>The API cannot tell an author that their version is waiting for the safety scan because the node's antivirus is unavailable</title>
+    <symptoms>After bug 1 a version whose only findings are inconclusive stays in `scanning`. GET /v1/papers/{id}/v/{n}/checks (checks/router.py) reports such a version like any scan in progress, and /v1/me (me/service.py, round 22 bug 2, 8430f68) only knows the scan-held attention item, so the web cannot say why the scan is not finishing</symptoms>
+    <reproduction_steps>With CLAMD_SOCKET unset, submit a version with a bundle and let co-authors consent; GET its checks and /v1/me as the author</reproduction_steps>
+    <expected>Per D2/D3: the checks answer for a version in `scanning` whose files' latest findings include av_unavailable and no conclusive finding carries top-level scanWaiting: true (and scan_waiting) with waitingReason "antivirus_unavailable" (and waiting_reason), and each such file reports status "waiting" (other files keep their status). A conclusive hold is unchanged (round 22 fa8324b). /v1/me: no "Needs your attention" scan-hold item for a waiting version (the round-22 item stays for real holds only); the author's My papers row for it carries scanWaiting: true. Tests: test_pipeline.py (waiting answer; a held answer unchanged; a normal scan in progress has scanWaiting false); test_me_attention.py (waiting → no attention item, row flag set; held → item as now)</expected>
+    <actual>Nothing distinguishes a stalled scan from one in progress</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="medium" depends_on="2"
+       touches_files="apps/web/src/features/submit/checks.ts,apps/web/src/features/submit/checks.test.ts,apps/web/src/features/submit/status-tracker.tsx,apps/web/src/features/submit/status-tracker.test.tsx">
+    <title>The status tracker shows a version waiting for the node's antivirus as a scan in progress (or, before round 27, as "Needs fixing" with "Publish a new version")</title>
+    <symptoms>checks.ts (~L239-275) knows passed/failed/scanning/pending files; status-tracker.tsx (round 22, 6b2b1ca) shows "Needs fixing" and a "Publish a new version" link for a scan hold. A waiting version (bug 2: scanWaiting, file status "waiting") has no wording</symptoms>
+    <reproduction_steps>As the author of a version waiting for the antivirus, open its status tracker</reproduction_steps>
+    <expected>Per D3: the Scan step reads label "Waiting" and "Waiting for the safety scan: this node's antivirus is unavailable. The scan runs again automatically; you don't need to do anything." (no "Needs fixing", no "Publish a new version" link, no failed-file sentence); Moderation stays "Not reached"; the step keeps polling as for a scan in progress. describeFailedCheck words too_large_to_scan "too large for the malware scan" (so a held file reads "bundle.zip failed the safety scan: too large for the malware scan."). A real scan hold is unchanged. Tests in checks.test.ts and status-tracker.test.tsx for the waiting step, the new check wording, and an unchanged hold</expected>
+    <actual>No honest wording for a scan the node could not run</actual>
+  </bug>
+
+  <bug index="4" shape="core" severity="low" depends_on="2"
+       touches_files="apps/web/src/features/dashboard/dashboard.ts,apps/web/src/features/dashboard/dashboard.test.ts,docs/handbook/05-publishing-a-paper.md,docs/handbook/09-moderation-appeals-and-reports.md">
+    <title>My papers and the handbook do not describe a version waiting for the node's antivirus</title>
+    <symptoms>dashboard.ts words My papers rows by version state; a waiting version (bug 2 row flag scanWaiting) reads like any scan. docs/handbook/05-publishing-a-paper.md "The safety scan" (~L143-150) and 09-moderation-appeals-and-reports.md (~L62) describe only pass and hold</symptoms>
+    <reproduction_steps>As the author of a waiting version, open /me; read the handbook's safety-scan section</reproduction_steps>
+    <expected>Per D3: a My papers row with scanWaiting reads "Waiting for the safety scan" (dashboard.test.ts covers it; other rows unchanged). Handbook ch05 "The safety scan" adds one short paragraph: if the node cannot run its malware scan, the version waits and is scanned again automatically, with nothing for the author to do; files are never opened or listed before they pass. It names the new hold reason "too large for the malware scan". Ch09 ~L62 says versions still waiting for the safety scan are not in the moderation queue yet. Plain handbook style, no internal names (no CLAMD_SOCKET, no state ids)</expected>
+    <actual>Authors and readers of the handbook are not told what a waiting scan means</actual>
+  </bug>
+
+  <bug index="5" shape="core" severity="low"
+       touches_files="apps/api/packages/cli/src/scholium_cli/verify.py,apps/api/packages/cli/src/scholium_cli/rebuild.py,apps/api/packages/cli/tests/test_cli_verify_api_export.py,apps/api/packages/cli/tests/test_cli_rebuild_command.py">
+    <title>`scholium verify` and `scholium rebuild` call every unlisted paper "awaiting moderation", including versions held by the safety scan and ones a moderator rejected or delisted</title>
+    <symptoms>verify.py _paper_verdict (~L588-628) sets status "awaiting moderation" for a verified paper with no listed version, whatever the decision in force on its newest version; the summary counts "N awaiting moderation" (~L800-818) and the newer-version line says "awaiting moderation" (~L603-608); rebuild reuses this classification (round 15 D3). The archive holds no record of the safety scan's verdict (by design, D1), so "awaiting moderation" claims a queue position the records cannot show. Evidence: journey 09 sweep 22/23 (sch:qqm3-ea7u-janz), verifier s23-b cli09.txt / rebuild09.txt</symptoms>
+    <reproduction_steps>Export a node that has a paper whose only version was held by the safety scan, and one a moderator rejected; run `scholium verify archive.car` and `scholium rebuild archive.car --db r.db`</reproduction_steps>
+    <expected>Per D1, in both commands' human output: a paper with no listed version and no moderation decision in force on its newest version is "not listed yet" (summary "N not listed yet"), and its per-paper output carries one line: "No public decision yet: the safety scan and the moderation queue are not part of the public record."; a paper whose newest version's decision in force is reject or delist (and no version is listed) is "rejected" / "delisted" and counted as such; a moderator's hold stays "held"; listed, corrected, retracted, tombstoned unchanged. The newer-version line reads "1 newer version not listed yet (its file is not in this archive)" (plural likewise). Exit codes unchanged. The machine-readable paper_status values written by rebuild stay as they are (no contract change). Tests updated and added in the two test files (queued, rejected, delisted, held; summary line; newer-version line)</expected>
+    <actual>The archive states a moderation-queue position it cannot know, and mislabels rejected papers</actual>
+  </bug>
+
+  <bug index="6" shape="core" severity="medium" depends_on="1"
+       touches_files="compose.yaml,docs/deploy.md,tests/e2e/test_delivery_wiring.py,scripts/stack-up-staged.sh"
+       creates="deploy/compose/clamd.conf">
+    <title>The shipped container stack has no ClamAV, so a node started from compose.yaml (dev.scholium.fyi) can never complete the malware scan of a bundle</title>
+    <symptoms>docs/deploy.md (CLAMD_SOCKET row, ~L251) says to set CLAMD_SOCKET on any node where authors upload bundles, but compose.yaml defines no ClamAV service and passes no CLAMD_SOCKET to api or worker. dev.scholium.fyi runs this stack</symptoms>
+    <reproduction_steps>npm run stack:up; submit a version with a .zip bundle; the bundle is never malware-scanned</reproduction_steps>
+    <expected>Per D4: compose.yaml gains a `clamav` service: image ${CLAMAV_IMAGE:-docker.io/clamav/clamav:1.4} (a pinned stable tag), restart unless-stopped, a named volume `clamav-db` for the signature database (freshclam keeps it updated), the config deploy/compose/clamd.conf mounted read-only (TCPSocket 3310 listening on the compose network only, never published on the host; StreamMaxLength, MaxScanSize and MaxFileSize at clamd's maximum of 4000M; Foreground yes; the other lines the image needs), and a CMD-SHELL healthcheck using the image's clamdcheck.sh with a start period long enough for the first signature download. api and worker get CLAMD_SOCKET: ${CLAMD_SOCKET:-clamav:3310} and depend on clamav with service_started only (never healthy: per bug 1 a scan that runs before clamd is ready simply waits and is retried). scripts/stack-up-staged.sh starts clamav with the application stage, before api and worker. docs/deploy.md: the CLAMD_SOCKET row says compose sets it to the clamav service and that, unset, versions with bundles wait for the safety scan and are re-scanned every 15 minutes (not held); a short ClamAV paragraph (memory about 1.2 GB, first start downloads the signatures, so bundle scans wait until clamd is up; size limits). tests/e2e/test_delivery_wiring.py: api and worker receive CLAMD_SOCKET naming the clamav service, the clamav service publishes no ports, and its config file exists. Both podman-compose and docker compose syntax as the file already uses</expected>
+    <actual>No node started from the shipped stack can scan a bundle for malware</actual>
+  </bug>
+
+</bug_spec>
