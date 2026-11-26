@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1895,13 +1899,8 @@ describe("DiscussionTab: post anchors (#post-<cid>)", () => {
     }
   });
 
-  it("scrolls once per hash: re-reading the threads does not move the reader again", async () => {
-    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
-    const load = vi.fn<LoadThreads>(async () => threads());
-    renderTab({ load, viewerDid: ME });
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
-
-    // The reader scrolls away, then an annotation saved elsewhere re-reads.
+  /** Trigger the tab's own re-read, as a viewer change or a save elsewhere does. */
+  async function reread(load: ReturnType<typeof vi.fn>): Promise<void> {
     act(() => {
       window.dispatchEvent(
         new CustomEvent(ANNOTATION_CREATED_EVENT, { detail: { paperId: SHORT } }),
@@ -1909,8 +1908,106 @@ describe("DiscussionTab: post anchors (#post-<cid>)", () => {
     });
     await waitFor(() => expect(load).toHaveBeenCalled());
     await act(async () => undefined);
+  }
 
+  it("re-aligns the landed post once when a later read makes the posts above it taller", async () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    // The signed-in re-read that follows the first jump: the post above the
+    // target now carries much more text, so the target is pushed down.
+    const taller: DiscussionData = {
+      ...threads(),
+      threads: threads().threads.map((thread) =>
+        thread.cid === "loud"
+          ? { ...thread, text: "A longer post that takes many more lines. ".repeat(20).trim() }
+          : thread,
+      ),
+    };
+    const load = vi.fn<LoadThreads>(async () => taller);
+    renderTab({ load, viewerDid: ME });
+    expect(scrolledTo()).toEqual([card("middle")]);
+
+    await reread(load);
+
+    // Put back where the reader was taken, with the same call.
+    expect(scrolledTo()).toEqual([card("middle"), card("middle")]);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "start" });
+  });
+
+  it.each(["wheel", "touchmove", "keydown", "pointerdown"])(
+    "leaves the reader where they are once they have sent a %s since the jump",
+    async (type) => {
+      stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+      const load = vi.fn<LoadThreads>(async () => threads());
+      renderTab({ load, viewerDid: ME });
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+      // The reader takes over the scroll position.
+      act(() => {
+        window.dispatchEvent(new Event(type, { bubbles: true }));
+      });
+
+      await reread(load);
+
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("still re-aligns when only a scroll event arrives: a reflow fires one too", async () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    const load = vi.fn<LoadThreads>(async () => threads());
+    renderTab({ load, viewerDid: ME });
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // Growing the posts above the target moves the scroll position without
+    // the reader touching anything; that must not read as the reader leaving.
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+    });
+
+    await reread(load);
+
+    expect(scrolledTo()).toEqual([card("middle"), card("middle")]);
+  });
+
+  it("marks the landed post as the link's target, and only that post", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    renderTab();
+    // D2: the mark, not a forced focus ring, tells a pointer reader where the
+    // link took them.
+    expect(card("middle").getAttribute("data-targeted")).toBe("true");
+    expect(card("loud").hasAttribute("data-targeted")).toBe(false);
+    expect(card("quiet").hasAttribute("data-targeted")).toBe(false);
+  });
+
+  it("clears the target mark after about two seconds", () => {
+    vi.useFakeTimers();
+    try {
+      stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+      renderTab();
+      expect(card("middle").hasAttribute("data-targeted")).toBe(true);
+
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(card("middle").hasAttribute("data-targeted")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("moves focus to the landed post without asking for a focus ring", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      renderTab();
+      expect(document.activeElement).toBe(card("middle"));
+      // Focus only follows the jump; the ring would outlive the click that
+      // caused it, so the platform is told not to draw one.
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true, focusVisible: false });
+    } finally {
+      focus.mockRestore();
+    }
   });
 
   it("scrolls again on a later hashchange to another post", () => {
@@ -1942,5 +2039,34 @@ describe("DiscussionTab: post anchors (#post-<cid>)", () => {
     window.location.hash = "#post-quiet";
     window.dispatchEvent(new Event("hashchange"));
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DiscussionTab: the stylesheet", () => {
+  // Read the stylesheet as shipped, as the other contract tests do, so a
+  // hard-coded colour or a ring that survives a mouse click fails here.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const css = readFileSync(join(here, "paper-discussion.css"), "utf8");
+  /** Rules only: the header comment deliberately names colours and tokens. */
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("marks the landed post with a design-token highlight, not a hardcoded colour", () => {
+    const rule = /\.pd-post\[data-targeted="true"\]\s*\{([^}]*)\}/.exec(rules);
+    expect(rule).not.toBeNull();
+    const body = rule?.[1] ?? "";
+    expect(body).toContain("var(--accent-soft)");
+    expect(body).toContain("var(--ease-decel)");
+    expect(body).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+
+  it("fades the target highlight away and respects a request for less motion", () => {
+    expect(rules).toMatch(/@keyframes\s+pd-target-fade\s*\{/);
+    expect(rules).toMatch(/prefers-reduced-motion:\s*reduce\)[\s\S]*?\.pd-post\[data-targeted="true"\]/);
+  });
+
+  it("puts the post card's focus outline under :focus-visible, never plain :focus", () => {
+    // D2: a mouse click on the margin's link must not leave a ring behind.
+    expect(rules).toMatch(/\.pd-post:focus-visible/);
+    expect(rules).not.toMatch(/\.pd-post:focus(?!-visible)/);
   });
 });

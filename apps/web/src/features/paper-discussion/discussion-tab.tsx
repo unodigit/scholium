@@ -83,6 +83,9 @@ import { SignInNote } from "./notes";
 import { PostCard, type PostActions } from "./post-card";
 import "./paper-discussion.css";
 
+/** How long the post a link landed on stays marked, in ms (D2). */
+const TARGET_MARK_MS = 2000;
+
 /** The things the tab does besides read. Each defaults to the real call. */
 export interface DiscussionActions {
   /** Signs the `discussion.post` behind a passkey prompt; web-auth's `signRecord`. */
@@ -240,9 +243,14 @@ export function DiscussionTab({
 
   // The tab's own element: a hash is only ours when it names something inside.
   const rootRef = useRef<HTMLElement>(null);
-  // The hash already scrolled to, so a re-render or a re-read does not move the
-  // reader a second time for the same hash.
-  const handledHashRef = useRef<string | null>(null);
+  // The hash the reader was last landed on, the post carrying the landing mark,
+  // and whether the reader has since taken the page over. The landing is only
+  // final once they wheel, touch, press a key, click or type; until then a
+  // later read may re-align the target (D1).
+  const landedHashRef = useRef<string | null>(null);
+  const markedPostRef = useRef<HTMLElement | null>(null);
+  const markTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readerTookOverRef = useRef(false);
 
   // The server already asked: with an answer, or with a failure the reader is
   // looking at. Either way only a retry asks again, so an error the server
@@ -414,17 +422,69 @@ export function DiscussionTab({
     appeal,
   };
 
+  // A landing holds while the page settles around it: once the reader wheels,
+  // touches, presses a key, clicks or types, the scroll position is theirs and
+  // no later read may move them (D1). A bare `scroll` event is not enough to
+  // say that: scroll anchoring fires one too when a later read changes the
+  // height of the posts above, which is exactly the drift being corrected.
+  useEffect(() => {
+    const takeOver = () => {
+      readerTookOverRef.current = true;
+    };
+    const options: AddEventListenerOptions = { passive: true };
+    window.addEventListener("wheel", takeOver, options);
+    window.addEventListener("touchstart", takeOver, options);
+    window.addEventListener("touchmove", takeOver, options);
+    window.addEventListener("keydown", takeOver, options);
+    window.addEventListener("pointerdown", takeOver, options);
+    return () => {
+      window.removeEventListener("wheel", takeOver);
+      window.removeEventListener("touchstart", takeOver);
+      window.removeEventListener("touchmove", takeOver);
+      window.removeEventListener("keydown", takeOver);
+      window.removeEventListener("pointerdown", takeOver);
+      if (markTimerRef.current !== null) {
+        clearTimeout(markTimerRef.current);
+        markTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Bring the post a link names (`#post-<cid>`, as the margin's "Appeal" link
-  // writes it) into view and move focus to it. The posts only exist once the
-  // threads have loaded, so this waits for the ready view, and it runs once per
-  // hash: a re-read does not move the reader back, a later `hashchange` does.
-  // A hash that names nothing inside this tab does nothing. It re-runs when the
-  // threads change, so a post that only arrives in a later read is found too.
+  // writes it) into view, mark it as the link's target, and move focus to it.
+  // The posts only exist once the threads have loaded, so this waits for the
+  // ready view; a later `hashchange` lands the reader on the new post too.
+  //
+  // The first jump happens against the layout the page has then; a re-read for
+  // the viewer can make the posts above the target taller and push it down. So
+  // the same `scrollIntoView` (block start, honouring the card's scroll margin)
+  // runs once more for each later change of the threads — unless the reader has
+  // taken over since, in which case nothing moves them. A hash that names
+  // nothing inside this tab does nothing.
   useEffect(() => {
     if (view.kind !== "ready") return;
+
+    const mark = (target: HTMLElement) => {
+      if (markTimerRef.current !== null) clearTimeout(markTimerRef.current);
+      if (markedPostRef.current !== null && markedPostRef.current !== target) {
+        markedPostRef.current.removeAttribute("data-targeted");
+      }
+      markedPostRef.current = target;
+      target.setAttribute("data-targeted", "true");
+      markTimerRef.current = setTimeout(() => {
+        target.removeAttribute("data-targeted");
+        if (markedPostRef.current === target) markedPostRef.current = null;
+        markTimerRef.current = null;
+      }, TARGET_MARK_MS);
+    };
+
+    const align = (target: HTMLElement) => {
+      target.scrollIntoView?.({ block: "start" });
+    };
+
     const follow = () => {
       const hash = window.location.hash;
-      if (hash === "" || hash === handledHashRef.current) return;
+      if (hash === "") return;
       let id = hash.slice(1);
       try {
         // The margin link percent-encodes the cid; the element id is the cid.
@@ -434,12 +494,33 @@ export function DiscussionTab({
       }
       const target = document.getElementById(id);
       if (target === null || rootRef.current?.contains(target) !== true) return;
-      handledHashRef.current = hash;
-      target.scrollIntoView?.({ block: "start" });
-      // The scroll above is the one that counts (it honours the card's scroll
-      // margin); focus must not move the page again.
-      target.focus({ preventScroll: true });
+
+      if (hash !== landedHashRef.current) {
+        // A new target: the link's landing, whether its hash was already on
+        // the address when the threads arrived or changed afterwards.
+        landedHashRef.current = hash;
+        readerTookOverRef.current = false;
+        align(target);
+        // Focus follows the jump for keyboard and screen-reader users. The
+        // mark, not a focus ring, is what a pointer reader sees (D2): focus
+        // must not move the page again, and must not outlive the click that
+        // brought them here with a ring.
+        const focusOptions: FocusOptions & { focusVisible?: boolean } = {
+          preventScroll: true,
+          focusVisible: false,
+        };
+        target.focus(focusOptions);
+        mark(target);
+        return;
+      }
+
+      // The same target in a later read: put it back where the reader was
+      // taken, unless they have taken the page over since.
+      if (readerTookOverRef.current) return;
+      align(target);
+      mark(target);
     };
+
     follow();
     window.addEventListener("hashchange", follow);
     return () => window.removeEventListener("hashchange", follow);

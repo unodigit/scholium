@@ -240,6 +240,28 @@
   min-inline-size: 0;
 }
 
+/* The post a link brought the reader to (the margin's "Appeal" link writes
+   #post-<cid>): a quiet accent tint marks it as the link's target, then fades.
+   The mark — not a focus ring — is what a pointer reader sees, so the click
+   that brought them here leaves no ring behind (D1/D2). The tab sets the
+   attribute and clears it after about 2 s; a reader who asks for less motion
+   gets the same mark, still. */
+.pd-post[data-targeted="true"] {
+  border-radius: var(--corner-card);
+  background-color: var(--accent-soft);
+  animation: pd-target-fade 2000ms var(--ease-decel) forwards;
+}
+
+@keyframes pd-target-fade {
+  from {
+    background-color: var(--accent-soft);
+  }
+
+  to {
+    background-color: transparent;
+  }
+}
+
 .pd-post__head {
   display: flex;
   flex-wrap: wrap;
@@ -489,6 +511,11 @@
   .pd-loading__icon {
     animation: none;
   }
+
+  /* The landing mark still shows; it just does not fade. */
+  .pd-post[data-targeted="true"] {
+    animation: none;
+  }
 }
 
 @media (forced-colors: active) {
@@ -513,6 +540,12 @@
   .pd-error-text,
   .pd-note {
     border-color: CanvasText;
+  }
+
+  /* Forced colours drop the tint: mark the link's target with an edge. */
+  .pd-post[data-targeted="true"] {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
   }
 }
 
