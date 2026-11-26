@@ -524,15 +524,17 @@ def release(name, target, *, state="listed", created="2026-11-14T05:35:00Z"):
     )
 
 
-def test_a_whole_node_archive_counts_a_queued_paper_as_awaiting_moderation(
+def test_a_whole_node_archive_counts_a_queued_paper_as_not_listed_yet(
     car_file, capsys
 ):
-    """A paper with no decision yet is in the queue, not listed.
+    """A paper with no decision yet is not listed, and no queue is claimed.
 
     The node serves no page for it -- ``GET /v1/papers/{id}`` answers 404 until
     a moderator lists a version -- so the archive summary must not sweep it into
     the listed papers (bug_spec_verify14, bug 2).  The listed paper carries the
-    ``list`` decision that put it in the catalog.
+    ``list`` decision that put it in the catalog.  Since the archive holds no
+    record of the safety scan, the summary says only that no version is listed
+    yet rather than claiming a moderation-queue position (bug_spec_verify27, D1).
     """
     listed, queued = make_paper(seed="one"), make_paper(seed="two")
     listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
@@ -542,7 +544,7 @@ def test_a_whole_node_archive_counts_a_queued_paper_as_awaiting_moderation(
 
     assert code == 0, out
     assert err == ""
-    assert "Result: VERIFIED — 2 papers (1 listed, 1 awaiting moderation)" in out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 not listed yet)" in out
 
 
 def test_a_whole_node_archive_counts_a_held_paper_as_held(car_file, capsys):

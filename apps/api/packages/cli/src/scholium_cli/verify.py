@@ -113,6 +113,10 @@ _STATE_SETTING_ACTIONS = frozenset(
 _RELEASE_ACTION = "release"
 _HELD_STATE = "held"
 _REJECTED_STATE = "rejected"
+_REJECT_ACTION = "reject"
+_DELIST_ACTION = "delist"
+_REJECTED_STATUS = "rejected"
+_DELISTED_STATUS = "delisted"
 
 #: The version state each plain state-setting action asks for, as
 #: ``app.modules.moderation.decisions.ACTION_STATES`` maps them.  A ``release``
@@ -133,10 +137,12 @@ _RELEASE_STATES = frozenset(
     {_LISTED_STATE, _MODERATION_STATE, _HELD_STATE, _REJECTED_STATE}
 )
 
-#: The state of a paper no version of which a moderator has listed (or held,
-#: rejected, ...): it is in the moderation queue, and the node serves no page
-#: for it.
-_AWAITING_MODERATION = "awaiting moderation"
+#: The state of a paper no version of which a moderator has listed: the
+#: archive cannot tell a version held by the safety scan from one still in
+#: the moderation queue (both leave no public decision), so it says only that
+#: no version is listed yet -- never "awaiting moderation", which claims a
+#: queue position the records cannot show (bug_spec_verify27, D1).
+_NOT_LISTED_YET = "not listed yet"
 
 #: An unreadable ``created`` sorts before every real time.
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
@@ -517,6 +523,63 @@ def _held_in_force(archive: Archive, paper_id: str) -> bool:
     return _HELD_STATE in states.values()
 
 
+def _newest_version_id(archive: Archive, paper_id: str) -> str | None:
+    """The record id of the paper's newest posted version, when it has one."""
+    versions = _posted_versions(archive, paper_id)
+    return versions[-1] if versions else None
+
+
+def _decision_in_force(archive: Archive, target: str) -> tuple[str | None, str | None]:
+    """The newest state-setting decision on ``target``: ``(action, state)``.
+
+    The action distinguishes a ``reject`` from a ``delist`` (both leave the
+    version in the rejected state), which the summary names separately.
+    ``(None, None)`` means no decision sets the target -- the records show no
+    public decision at all.
+    """
+    current: tuple[tuple[datetime, str], str | None, str] | None = None
+    for record in archive.records:
+        if record.get("type") != "moderation.decision":
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping) or body.get("target") != target:
+            continue
+        state = _state_of_decision(body)
+        if state is None:
+            continue
+        record_id = record.get("id")
+        order = (
+            _created(record.get("created")),
+            record_id if isinstance(record_id, str) else "",
+        )
+        if current is None or order > current[0]:
+            current = (order, _action(body.get("action")), state)
+    if current is None:
+        return None, None
+    return current[1], current[2]
+
+
+def _unlisted_status(archive: Archive, paper_id: str) -> tuple[str, bool]:
+    """How an unlisted paper reads, and whether a public decision is in force.
+
+    No public decision is "not listed yet": the archive cannot tell a version
+    held by the safety scan from one still in the moderation queue (D1), so it
+    never claims "awaiting moderation".  A ``reject`` or ``delist`` decision in
+    force is named as such; a hold is settled by ``_held_in_force`` first.
+    """
+    target = _newest_version_id(archive, paper_id) or paper_id
+    action, state = _decision_in_force(archive, target)
+    if action is None and state is None:
+        return _NOT_LISTED_YET, False
+    if action == _DELIST_ACTION:
+        return _DELISTED_STATUS, True
+    if action == _REJECT_ACTION or state == _REJECTED_STATE:
+        return _REJECTED_STATUS, True
+    if state == _HELD_STATE:  # a hold on the newest version, should one slip past
+        return _HELD_STATE, True
+    return _NOT_LISTED_YET, True
+
+
 def _any_version_listed(archive: Archive, paper_id: str) -> bool:
     """Whether any of the paper's versions is listed.
 
@@ -599,12 +662,12 @@ def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) 
     verdict = build_verdict(archive, report)
     items = tuple(item for item in verdict.items if item.key in _PAPER_ITEM_KEYS)
     if newer:
-        # The archive holds the listed version's file, not the queued newer
+        # The archive holds the listed version's file, not the newer, unlisted
         # one's: say so on one line rather than muting the whole files check.
         text = (
-            "1 newer version awaiting moderation (its file is not in this archive)"
+            "1 newer version not listed yet (its file is not in this archive)"
             if newer == 1
-            else f"{newer} newer versions awaiting moderation "
+            else f"{newer} newer versions not listed yet "
             "(their files are not in this archive)"
         )
         items += (Item("version", WARN, text),)
@@ -614,15 +677,25 @@ def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) 
     # node's current moderation state of it and outranks a correction, but
     # never a retraction or tombstone (nor an invalid history).
     if not failed and status in ("verified", "corrected") and _held_in_force(archive, paper_id):
-        status = "held"
+        status = _HELD_STATE
     elif (
         not failed
         and status == "verified"
         and not _any_version_listed(archive, paper_id)
     ):
-        # Verified history, but no moderator has listed any of its versions:
-        # the paper is in the queue, and the node serves no page for it.
-        status = _AWAITING_MODERATION
+        # Verified history, but no moderator has listed any of its versions.
+        # The records say only what the decision in force says -- a reject or
+        # delist, or nothing public yet.
+        status, decided = _unlisted_status(archive, paper_id)
+        if not decided:
+            items += (
+                Item(
+                    "listing",
+                    PENDING,
+                    "No public decision yet: the safety scan and the moderation "
+                    "queue are not part of the public record.",
+                ),
+            )
     return PaperVerdict(
         label=verdict.version or report.short_id or label,
         report=report,
@@ -800,21 +873,31 @@ def _whole_node_result_line(verdict: ArchiveVerdict) -> str:
     counts = {status: 0 for status in _STATUS_SEVERITY if status != "invalid"}
     listed = 0
     held = 0
-    awaiting = 0
+    not_listed = 0
+    rejected = 0
+    delisted = 0
     for paper in verdict.papers:
         if paper.status == "verified":
             listed += 1
-        elif paper.status == "held":
+        elif paper.status == _HELD_STATE:
             held += 1
-        elif paper.status == _AWAITING_MODERATION:
-            awaiting += 1
+        elif paper.status == _NOT_LISTED_YET:
+            not_listed += 1
+        elif paper.status == _REJECTED_STATUS:
+            rejected += 1
+        elif paper.status == _DELISTED_STATUS:
+            delisted += 1
         else:
             counts[paper.status] = counts.get(paper.status, 0) + 1
     parts = [f"{listed} listed"]
     if held:
         parts.append(f"{held} held")
-    if awaiting:
-        parts.append(f"{awaiting} awaiting moderation")
+    if rejected:
+        parts.append(f"{rejected} rejected")
+    if delisted:
+        parts.append(f"{delisted} delisted")
+    if not_listed:
+        parts.append(f"{not_listed} {_NOT_LISTED_YET}")
     for status in ("corrected", "retracted", "tombstoned"):
         if counts.get(status):
             parts.append(f"{counts[status]} {status}")

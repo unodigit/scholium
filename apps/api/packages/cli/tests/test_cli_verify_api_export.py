@@ -20,7 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from car_helpers import flip, write_car
+import pytest
+from car_helpers import archive_car, flip, make_paper, signed, write_car
 from scholium_cli.car import read_car
 from scholium_cli.main import main
 
@@ -106,7 +107,7 @@ with TestClient(create_app()) as client:
 #: Build a paper whose v1 is listed and whose v2 is still in the queue, beside
 #: a paper with no listed version at all, then export.  The node keeps serving
 #: the listed v1 (``GET /v1/papers/{id}`` resolves to it), so the summary must
-#: count the first paper as listed and only the second as awaiting moderation.
+#: count the first paper as listed and only the second as not listed yet.
 #:
 #: v2 names a manuscript of its own.  No listed version names those bytes, so
 #: an anonymous export leaves v2's file out while v1's stays in: the archive
@@ -272,6 +273,95 @@ def paper_block(out: str, short_id: str) -> str:
     return rest[: end if end != -1 else len(rest)]
 
 
+def listing_decision(action: str, target: str):
+    """A moderator's ``action`` decision on a version, as the node records it."""
+    return signed(
+        "committee",
+        "moderation.decision",
+        {
+            "target": target,
+            "action": action,
+            "clause": "MOD-01",
+            "reason": "decided.",
+        },
+        created="2026-11-14T05:32:00Z",
+    )
+
+
+def verify_papers(tmp_path: Path, capsys, *papers) -> tuple[int, str]:
+    """Verify a whole-node archive holding ``papers``; return code and output."""
+    archive = tmp_path / "node.car"
+    archive.write_bytes(archive_car(list(papers)))
+    code = main(["verify", str(archive)])
+    return code, capsys.readouterr().out
+
+
+def test_an_unlisted_paper_with_no_decision_is_not_listed_yet(tmp_path, capsys):
+    """No moderation decision is not a queue position (bug_spec_verify27, D1).
+
+    The archive holds no record of the safety scan, so a version no moderator
+    has decided on could be waiting for either the scan or the queue.  The
+    summary says only that no version is listed yet, and the paper's block
+    says why the public record is silent.
+    """
+    listed = make_paper(seed="listed")
+    listed.extra.append(listing_decision("list", listed.versions[0]["id"]))
+    queued = make_paper(seed="queued")
+
+    code, out = verify_papers(tmp_path, capsys, listed, queued)
+
+    assert code == 0, out
+    assert (
+        "Result: VERIFIED — 2 papers (1 listed, 1 not listed yet)" in out
+    )
+    assert "awaiting moderation" not in out
+    block = paper_block(out, queued.short_id)
+    assert (
+        "No public decision yet: the safety scan and the moderation queue are "
+        "not part of the public record." in block
+    )
+
+
+@pytest.mark.parametrize(
+    ("action", "word"),
+    [("reject", "rejected"), ("delist", "delisted"), ("hold", "held")],
+)
+def test_an_unlisted_paper_is_named_by_the_decision_in_force(
+    tmp_path, capsys, action, word
+):
+    """A reject, delist or hold in force is named, not swept into a queue."""
+    listed = make_paper(seed="listed")
+    listed.extra.append(listing_decision("list", listed.versions[0]["id"]))
+    decided = make_paper(seed="decided")
+    decided.extra.append(listing_decision(action, decided.versions[0]["id"]))
+
+    code, out = verify_papers(tmp_path, capsys, listed, decided)
+
+    assert code == 0, out
+    assert f"Result: VERIFIED — 2 papers (1 listed, 1 {word})" in out
+    assert "awaiting moderation" not in out
+    block = paper_block(out, decided.short_id)
+    assert "No public decision yet" not in block
+
+
+def test_the_newer_version_note_counts_the_versions_not_listed_yet(tmp_path, capsys):
+    """The one-line note about an archive's missing newer files has D1 wording."""
+    mixed = make_paper(versions=3, seed="mixed")
+    mixed.extra.append(listing_decision("list", mixed.versions[0]["id"]))
+    other = make_paper(seed="other")
+    other.extra.append(listing_decision("list", other.versions[0]["id"]))
+
+    code, out = verify_papers(tmp_path, capsys, mixed, other)
+
+    assert code == 0, out
+    block = paper_block(out, mixed.short_id)
+    assert (
+        "2 newer versions not listed yet (their files are not in this archive)"
+        in block
+    )
+    assert "awaiting moderation" not in out
+
+
 def export_a_whole_node(
     tmp_path: Path, script_text: str = BUILD_AND_EXPORT
 ) -> tuple[Path, list[dict[str, str]]]:
@@ -327,7 +417,7 @@ def test_the_documented_command_verifies_the_api_export(tmp_path, capsys):
 
     assert code == 0, out
     assert "Result: VERIFIED" in out
-    assert "Result: VERIFIED — 2 papers (1 listed, 1 awaiting moderation)" in out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 not listed yet)" in out
     for paper in papers:
         assert paper["short_id"] in out
 
@@ -339,8 +429,7 @@ def test_a_listed_earlier_version_keeps_the_paper_listed(tmp_path, capsys):
     resolves ``GET /v1/papers/{id}`` to the newest *listed* version and counts
     a paper with at least one listed version on ``/network``).  So a paper
     whose v1 is listed and whose v2 is still in the queue stays "listed" in
-    the summary, and only a paper with no listed version is "awaiting
-    moderation".
+    the summary, and only a paper with no listed version is "not listed yet".
     """
     archive, papers = export_a_whole_node(tmp_path, BUILD_LISTED_V1_WITH_QUEUED_V2)
     assert len(papers) == 2
@@ -349,8 +438,8 @@ def test_a_listed_earlier_version_keeps_the_paper_listed(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert code == 0, out
-    assert "Result: VERIFIED — 2 papers (1 listed, 1 awaiting moderation)" in out
-    assert "2 awaiting moderation" not in out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 not listed yet)" in out
+    assert "2 not listed yet" not in out
     for paper in papers:
         assert paper["short_id"] in out
 
@@ -376,7 +465,7 @@ def test_a_listed_version_is_verified_when_a_newer_one_is_queued(tmp_path, capsy
     assert "The file matches the signed manifest" in block
     assert "The file contents are not in this archive" not in block
     assert (
-        "1 newer version awaiting moderation (its file is not in this archive)"
+        "1 newer version not listed yet (its file is not in this archive)"
         in block
     )
 
@@ -384,9 +473,9 @@ def test_a_listed_version_is_verified_when_a_newer_one_is_queued(tmp_path, capsy
     # archive, and there is no newer version to note.
     queued_block = paper_block(out, queued["short_id"])
     assert "The file contents are not in this archive" in queued_block
-    assert "newer version awaiting moderation" not in queued_block
+    assert "newer version not listed yet" not in queued_block
 
-    assert "Result: VERIFIED — 2 papers (1 listed, 1 awaiting moderation)" in out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 not listed yet)" in out
 
 
 def test_a_corrupt_listed_version_file_in_the_export_fails(tmp_path, capsys):

@@ -224,6 +224,16 @@ def list_decision(name, target, *, created="2026-11-14T05:33:00Z"):
     )
 
 
+def decision(name, target, action, *, created="2026-11-14T05:33:00Z"):
+    """A moderator's ``action`` decision on a version, as the node records it."""
+    return signed(
+        name,
+        "moderation.decision",
+        {"target": target, "action": action, "clause": "MOD-01", "reasonCid": "x"},
+        created=created,
+    )
+
+
 def statuses_by_paper(db):
     return {
         row["paper_cid"]: (row["status"], row["rule"])
@@ -276,6 +286,66 @@ def test_only_the_newest_version_decides_whether_the_paper_is_queued(
     )
 
 
+def test_the_summary_does_not_call_an_unlisted_paper_awaiting_moderation(
+    car_file, db_path, capsys
+):
+    """No public decision is "not listed yet", not a claimed queue position.
+
+    The archive holds no record of the safety scan (bug_spec_verify27, D1), so
+    the human summary says only that no version is listed yet.  The rebuilt
+    ``paper_status`` view keeps the node's own vocabulary, unchanged.
+    """
+    listed, queued = make_paper(seed="one"), make_paper(seed="two")
+    listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
+    code, out, _ = rebuild(car_file, archive_car([listed, queued]), db_path, capsys)
+    assert code == 0, out
+
+    assert "Papers: 1 listed, 1 not listed yet" in out
+    assert "awaiting moderation" not in out
+    assert statuses_by_paper(db_path)[queued.paper_id] == (
+        "awaiting_moderation",
+        "awaiting_moderation",
+    )
+
+
+@pytest.mark.parametrize(
+    ("action", "label"),
+    [("reject", "rejected"), ("delist", "delisted")],
+)
+def test_the_summary_names_a_reject_or_delist_in_force(
+    car_file, db_path, capsys, action, label
+):
+    """A rejected or delisted version is counted as such, not as a queue entry."""
+    listed, decided = make_paper(seed="one"), make_paper(seed="two")
+    listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
+    decided.extra.append(decision("committee", decided.versions[0]["id"], action))
+    code, out, _ = rebuild(car_file, archive_car([listed, decided]), db_path, capsys)
+    assert code == 0, out
+
+    assert f"Papers: 1 listed, 1 {label}" in out
+    assert "awaiting moderation" not in out
+    # The machine-readable status is unchanged (no contract change).
+    assert statuses_by_paper(db_path)[decided.paper_id] == (
+        "awaiting_moderation",
+        "awaiting_moderation",
+    )
+
+
+def test_the_summary_keeps_a_held_paper_held(car_file, db_path, capsys):
+    """A moderator's hold stays "held" in the human summary."""
+    listed, held = make_paper(seed="one"), make_paper(seed="two")
+    listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
+    held.extra.append(decision("committee", held.versions[0]["id"], "hold"))
+    code, out, _ = rebuild(car_file, archive_car([listed, held]), db_path, capsys)
+    assert code == 0, out
+
+    assert "Papers: 1 listed, 1 held" in out
+    assert statuses_by_paper(db_path)[held.paper_id] == (
+        "contested",
+        "moderation_hold",
+    )
+
+
 def test_listed_held_corrected_and_retracted_papers_keep_their_status(
     car_file, db_path, capsys
 ):
@@ -307,6 +377,7 @@ def test_listed_held_corrected_and_retracted_papers_keep_their_status(
         capsys,
     )
     assert code == 0, out
+    assert "Papers: 1 listed, 1 held, 1 corrected, 1 retracted" in out
     statuses = statuses_by_paper(db_path)
     assert statuses[listed.paper_id] == ("preprint", "default")
     assert statuses[held.paper_id] == ("contested", "moderation_hold")

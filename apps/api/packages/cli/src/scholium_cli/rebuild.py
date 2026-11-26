@@ -64,6 +64,7 @@ import sqlite3
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -353,8 +354,15 @@ def _short(paper_id: str) -> str | None:
         return None
 
 
-def _paper_problems(records: Sequence[Mapping[str, Any]]) -> list[str]:
-    """Verify every paper the archive describes, as ``scholium verify`` does."""
+def _paper_problems(
+    records: Sequence[Mapping[str, Any]], reports: dict[str, Any] | None = None
+) -> list[str]:
+    """Verify every paper the archive describes, as ``scholium verify`` does.
+
+    When ``reports`` is given, each valid paper's
+    :class:`~scholium_record_core.VerificationReport` is stored in it, so the
+    human summary can read the paper's own status without verifying it twice.
+    """
     problems = []
     for paper_id in _paper_ids(records):
         label = _short(paper_id) or paper_id
@@ -366,11 +374,192 @@ def _paper_problems(records: Sequence[Mapping[str, Any]]) -> list[str]:
                 "which is not a valid record id"
             )
             continue
+        if reports is not None:
+            reports[paper_id] = report
         if report.valid:
             continue
         failing = [check for check in report.checks.values() if not check.passed]
         problems.append(f"{label}: {failing[0].message}")
     return problems
+
+
+# --- how each paper reads in the human summary ------------------------------
+
+#: The listing words the human summary counts, in the order it prints them.
+_LISTING_ORDER = (
+    "listed",
+    "held",
+    "rejected",
+    "delisted",
+    "not listed yet",
+    "corrected",
+    "retracted",
+    "tombstoned",
+)
+
+#: A paper no version of which is listed and whose newest version no decision
+#: settles.  The archive cannot tell a version held by the safety scan from
+#: one still in the moderation queue, so the human output claims neither
+#: (bug_spec_verify27, D1).
+_NOT_LISTED_YET = "not listed yet"
+
+_LISTED_STATE = "listed"
+_HELD_STATE = "held"
+_REJECTED_STATE = "rejected"
+_REJECT_ACTION = "reject"
+_DELIST_ACTION = "delist"
+_RELEASE_ACTION = "release"
+
+_STATE_SETTING_ACTIONS = frozenset(
+    {"list", "hold", _REJECT_ACTION, _DELIST_ACTION, "tombstone", _RELEASE_ACTION}
+)
+_ACTION_STATES = {
+    "list": _LISTED_STATE,
+    "hold": _HELD_STATE,
+    _REJECT_ACTION: _REJECTED_STATE,
+    _DELIST_ACTION: _REJECTED_STATE,
+    "tombstone": _REJECTED_STATE,
+}
+_RELEASE_STATES = frozenset(
+    {_LISTED_STATE, "moderation", _HELD_STATE, _REJECTED_STATE}
+)
+
+#: An unreadable ``created`` sorts before every real time.
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _decision_time(value: Any) -> datetime:
+    """Read a record's ``created``; anything unreadable sorts first."""
+    if not isinstance(value, str):
+        return _EPOCH
+    try:
+        when = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return _EPOCH
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
+def _decision_action(value: Any) -> str | None:
+    return value.strip().lower() if isinstance(value, str) and value.strip() else None
+
+
+def _decision_state(body: Mapping[str, Any]) -> str | None:
+    """The version state the decision in ``body`` asks for, if it sets one."""
+    action = _decision_action(body.get("action"))
+    if action not in _STATE_SETTING_ACTIONS:
+        return None
+    if action == _RELEASE_ACTION:
+        state = _decision_action(body.get("state"))
+        return state if state in _RELEASE_STATES else None
+    return _ACTION_STATES.get(action)
+
+
+def _version_targets(records: Sequence[Mapping[str, Any]], paper_id: str) -> set[str]:
+    """The paper's genesis and every version record id a decision may name."""
+    targets = {paper_id}
+    for record in records:
+        if record.get("type") != VERSION_TYPE:
+            continue
+        body = record.get("body")
+        if isinstance(body, Mapping) and body.get("paper") == paper_id:
+            record_id = record.get("id")
+            if isinstance(record_id, str):
+                targets.add(record_id)
+    return targets
+
+
+def _decisions_in_force(
+    records: Sequence[Mapping[str, Any]], targets: set[str]
+) -> dict[str, tuple[str | None, str]]:
+    """Per target, the newest state-setting decision's ``(action, state)``."""
+    current: dict[str, tuple[tuple[datetime, str], str | None, str]] = {}
+    for record in records:
+        if record.get("type") != "moderation.decision":
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping):
+            continue
+        target = body.get("target")
+        if not isinstance(target, str) or target not in targets:
+            continue
+        state = _decision_state(body)
+        if state is None:
+            continue
+        record_id = record.get("id")
+        order = (
+            _decision_time(record.get("created")),
+            record_id if isinstance(record_id, str) else "",
+        )
+        if target not in current or order > current[target][0]:
+            current[target] = (order, _decision_action(body.get("action")), state)
+    return {
+        target: (action, state)
+        for target, (_order, action, state) in current.items()
+    }
+
+
+def _newest_version_of(
+    records: Sequence[Mapping[str, Any]], paper_id: str
+) -> str | None:
+    """The record id of the newest posted version, ordered as ``verify`` does."""
+    newest: tuple[tuple[int, datetime, str], str] | None = None
+    for record in records:
+        if record.get("type") != VERSION_TYPE:
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping) or body.get("paper") != paper_id:
+            continue
+        record_id = record.get("id")
+        if not isinstance(record_id, str):
+            continue
+        key = (
+            _version_number(record),
+            _decision_time(record.get("created")),
+            record_id,
+        )
+        if newest is None or key > newest[0]:
+            newest = (key, record_id)
+    return newest[1] if newest is not None else None
+
+
+def _paper_listing(
+    records: Sequence[Mapping[str, Any]], paper_id: str, report: Any
+) -> str:
+    """How one paper reads in the human summary, from its records alone.
+
+    The rebuilt ``paper_status`` view keeps the node's vocabulary
+    (``awaiting_moderation``); this is only the honest human wording D1 asks
+    for.  No public decision is "not listed yet" -- the archive cannot tell
+    the safety scan from the moderation queue -- while a reject or delist is
+    named, and a hold, retraction, correction or tombstone reads as before.
+    """
+    report_status = getattr(report, "status", None)
+    if report_status in ("retracted", "tombstoned"):
+        return report_status
+    states = _decisions_in_force(records, _version_targets(records, paper_id))
+    if any(state == _HELD_STATE for _action, state in states.values()):
+        return _HELD_STATE
+    if report_status == "corrected":
+        return "corrected"
+    if any(state == _LISTED_STATE for _action, state in states.values()):
+        return "listed"
+    newest = _newest_version_of(records, paper_id)
+    action, state = states.get(newest or paper_id, (None, None))
+    if action == _DELIST_ACTION:
+        return "delisted"
+    if action == _REJECT_ACTION or state == _REJECTED_STATE:
+        return "rejected"
+    return _NOT_LISTED_YET
+
+
+def _listing_summary(labels: Sequence[str]) -> str:
+    """``"1 listed, 1 not listed yet"``: the human summary of the papers."""
+    counts: dict[str, int] = {}
+    for label in labels:
+        counts[label] = counts.get(label, 0) + 1
+    return ", ".join(
+        f"{counts[label]} {label}" for label in _LISTING_ORDER if counts.get(label)
+    )
 
 
 # --- the views --------------------------------------------------------------
@@ -673,6 +862,13 @@ class RebuildResult:
     db_path: str | None = None
     legacy_count: int = 0
     """Unsigned ``erasure.request`` records accepted as legacy (D1)."""
+    paper_listings: tuple[str, ...] = ()
+    """Each paper's human listing (D1), in ``_paper_ids`` order.
+
+    The ``paper_status`` view keeps the node's own vocabulary; this is only the
+    summary's wording, so a paper with no public decision reads "not listed
+    yet" rather than claiming a place in the moderation queue.
+    """
 
 
 def rebuild_car_bytes(data: bytes, db_path: str | Path) -> RebuildResult:
@@ -706,7 +902,8 @@ def rebuild_car_bytes(data: bytes, db_path: str | Path) -> RebuildResult:
     problems.extend(_chain_problems(entries))
     problems.extend(_log_binding_problems(entries, archive.records))
     problems.extend(_record_problems(archive.records))
-    problems.extend(_paper_problems(archive.records))
+    reports: dict[str, Any] = {}
+    problems.extend(_paper_problems(archive.records, reports))
 
     if problems:
         return RebuildResult(
@@ -718,6 +915,10 @@ def rebuild_car_bytes(data: bytes, db_path: str | Path) -> RebuildResult:
 
     papers, versions, statuses = build_views(archive.records)
     write_database(Path(db_path), papers, versions, statuses)
+    listings = tuple(
+        _paper_listing(archive.records, paper_id, reports.get(paper_id))
+        for paper_id in _paper_ids(archive.records)
+    )
     return RebuildResult(
         ok=True,
         entry_count=len(entries),
@@ -728,6 +929,7 @@ def rebuild_car_bytes(data: bytes, db_path: str | Path) -> RebuildResult:
         version_count=len(versions),
         db_path=str(db_path),
         legacy_count=_legacy_erasure_count(archive.records),
+        paper_listings=listings,
     )
 
 
@@ -765,6 +967,12 @@ def render(result: RebuildResult) -> list[str]:
         [
             f"Rebuilt {_plural(result.paper_count, 'paper')} "
             f"({_plural(result.version_count, 'version')}) into {result.db_path}",
+        ]
+    )
+    if result.paper_listings:
+        lines.append(f"Papers: {_listing_summary(result.paper_listings)}")
+    lines.extend(
+        [
             "",
             f"Result: REBUILT ({_plural(result.paper_count, 'paper')})",
         ]
