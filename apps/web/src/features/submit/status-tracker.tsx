@@ -21,6 +21,12 @@
  * report names the file that failed, so the Scan step carries the attention
  * ("Needs fixing", the reason, and a link to publish a corrected version),
  * Moderation reads "Not reached", and the advisory checks say they did not run.
+ *
+ * A version waiting for the node's antivirus is not held either: nothing was
+ * found, the node could not run the scan. Its Scan step reads "Waiting" and
+ * says the scan runs again automatically with nothing for the author to do;
+ * there is no new version to publish, Moderation reads "Not reached", and the
+ * step keeps polling as for a scan in progress.
  */
 
 import Link from "next/link";
@@ -29,7 +35,7 @@ import type { ReactElement, ReactNode } from "react";
 import { ConsentTracker } from "./consent-tracker";
 import { countConsents, consentSummary, trackerFromDraft, trackerFromReport, type ConsentReport, type TrackerEntry } from "./consents";
 import { CHECK_STATE_TONES } from "./checks-step";
-import { checkItems, checksSummary, fileProblem, type VersionChecks } from "./checks";
+import { checkItems, checksSummary, fileProblem, WAITING_FOR_SCAN, type VersionChecks } from "./checks";
 import { newVersionHref } from "./new-version";
 import type { DraftAuthor } from "./authors";
 import { CheckIcon, WarningIcon } from "./icons";
@@ -100,9 +106,12 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
     PAST_CONSENTS.has(state) || (counts.total > 0 && counts.signed === counts.total && counts.declined === 0);
 
   // The scan only passed when it ran: a report naming a failed file is the
-  // scan's own verdict, and it stops the version before moderation.
+  // scan's own verdict, and it stops the version before moderation. A version
+  // waiting for the node's antivirus is a wait, not a verdict: nothing failed
+  // and there is nothing to fix, so it never takes the attention path.
   const failedFiles = props.checks?.files.filter((file) => file.status === "failed") ?? [];
   const scanFailed = failedFiles.length > 0;
+  const scanWaiting = !scanFailed && props.checks?.scanWaiting === true;
 
   const stages: Stage[] = [
     { key: "submitted", label: "Submitted", done: props.submitted ?? true },
@@ -119,8 +128,10 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
       label: "Scan",
       detail: scanFailed
         ? failedFiles.map((file) => fileProblem(file)).join(" ")
-        : "Files and references are checked",
-      done: PAST_SCAN.has(state) && !scanFailed,
+        : scanWaiting
+          ? WAITING_FOR_SCAN
+          : "Files and references are checked",
+      done: PAST_SCAN.has(state) && !scanFailed && !scanWaiting,
       attention: scanFailed,
     },
     {
@@ -164,17 +175,20 @@ export function StatusTracker(props: StatusTrackerProps): ReactElement {
               : "upcoming";
           // After listing, the AI pre-review is on its way rather than "in
           // progress"; a hold is said as "Held"; a failed scan is something to
-          // fix; and moderation behind a failed scan was never reached.
+          // fix; a scan the node could not run is a wait; and moderation
+          // behind a failed or waiting scan was never reached.
           const stateWords =
             stage.key === "ai" && stageState === "current"
               ? "Pending"
               : stage.key === "scan" && stageState === "attention"
                 ? "Needs fixing"
-                : stage.key === "moderation" && stageState === "attention"
-                  ? "Held"
-                  : stage.key === "moderation" && scanFailed && !stage.done
-                    ? "Not reached"
-                    : STATE_WORDS[stageState];
+                : stage.key === "scan" && scanWaiting
+                  ? "Waiting"
+                  : stage.key === "moderation" && stageState === "attention"
+                    ? "Held"
+                    : stage.key === "moderation" && (scanFailed || scanWaiting) && !stage.done
+                      ? "Not reached"
+                      : STATE_WORDS[stageState];
           return (
             <li
               key={stage.key}

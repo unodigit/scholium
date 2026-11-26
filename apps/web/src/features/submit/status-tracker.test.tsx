@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { VersionChecks } from "./checks";
+import { normalizeVersionChecks, type VersionChecks } from "./checks";
 import type { ConsentReport, TrackerEntry } from "./consents";
 import { StatusTracker } from "./status-tracker";
 
@@ -333,6 +333,126 @@ describe("StatusTracker — a version the safety scan held", () => {
     expect(stage("moderation").querySelector(".sw-status-tracker__detail")?.textContent).toBe(
       "Not listed while the hold stands",
     );
+  });
+});
+
+describe("StatusTracker — a version waiting for the node's antivirus", () => {
+  const done = [mei({ status: "signed" }), ada({ status: "signed" })];
+  const scanning = report({ state: "scanning", signed: 2, waiting: 0 });
+
+  // The checks answer for a waiting version (round 27): the scan could not
+  // run, so no file failed and the advisory checks have not run. Normalized
+  // from the node's own payload, so this is the shape the tracker really gets.
+  const waitingChecks = (): VersionChecks =>
+    normalizeVersionChecks(
+      {
+        state: "scanning",
+        scanWaiting: true,
+        scan_waiting: true,
+        waitingReason: "antivirus_unavailable",
+        checksRan: false,
+        files: [
+          { path: "paper.pdf", cid: "bafkreipdf", role: "pdf", status: "passed", failedChecks: [], detail: null },
+          {
+            path: "bundle.zip",
+            cid: "bafkreizip",
+            role: "code",
+            status: "waiting",
+            failedChecks: ["av_unavailable"],
+            detail: "the antivirus is unavailable",
+          },
+        ],
+        referencesTotal: null,
+        referencesUnresolved: null,
+        similarityPct: null,
+        metadataMatch: null,
+      },
+      { paper: "sch:abcd-efgh-ijkl", version: 1 },
+    );
+
+  const renderWaiting = (checksReport: VersionChecks): void => {
+    render(
+      <StatusTracker
+        submitted
+        trackerEntries={done}
+        report={scanning}
+        paper="sch:abcd-efgh-ijkl"
+        checks={checksReport}
+      />,
+    );
+  };
+
+  it("says the node is waiting, with nothing for the author to do", () => {
+    renderWaiting(waitingChecks());
+
+    const scan = stage("scan");
+    expect(scan.dataset.state).toBe("current");
+    expect(scan.dataset.done).toBe("false");
+    expect(scan.querySelector(".sw-status-tracker__state")?.textContent).toBe("Waiting");
+    expect(scan.querySelector(".sw-status-tracker__detail")?.textContent).toBe(
+      "Waiting for the safety scan: this node's antivirus is unavailable. " +
+        "The scan runs again automatically; you don't need to do anything.",
+    );
+    // Nothing failed, so there is nothing to fix and no new version to publish.
+    expect(scan.textContent).not.toContain("Needs fixing");
+    expect(scan.textContent).not.toContain("failed the safety scan");
+    expect(within(scan).queryByRole("link", { name: "Publish a new version" })).toBeNull();
+    // The step is still polling, exactly as for a scan in progress.
+    expect(scan.getAttribute("aria-current")).toBe("step");
+  });
+
+  it("keeps Moderation at Not reached while the scan waits", () => {
+    renderWaiting(waitingChecks());
+
+    const moderation = stage("moderation");
+    expect(moderation.dataset.done).toBe("false");
+    expect(moderation.querySelector(".sw-status-tracker__state")?.textContent).toBe("Not reached");
+    expect(moderation.textContent).not.toContain("Held");
+  });
+
+  it("describes the file safety wait without calling the checks held", () => {
+    renderWaiting(waitingChecks());
+
+    const rows = new Map(
+      [...document.querySelectorAll<HTMLElement>("[data-check]")].map((row) => [row.dataset.check, row]),
+    );
+    expect(rows.get("files")?.textContent).toContain("Waiting for the safety scan");
+    expect(document.querySelector(".sw-tracker__summary")?.textContent).toBe("Waiting for the safety scan.");
+    for (const id of ["references", "similarity", "metadata"]) {
+      expect(rows.get(id)?.textContent).toContain("Not run yet");
+      expect(rows.get(id)?.textContent).not.toContain("held at the safety scan");
+    }
+  });
+
+  it("leaves a real scan hold as Needs fixing and offers a new version", () => {
+    renderWaiting(
+      checks({
+        state: "held",
+        checksRan: false,
+        scanWaiting: false,
+        files: [
+          {
+            path: "bundle.zip",
+            cid: "bafkreizip",
+            role: "code",
+            status: "failed",
+            failedChecks: ["too_large_to_scan"],
+            detail: null,
+          },
+        ],
+        referencesTotal: null,
+        referencesUnresolved: null,
+        similarityPct: null,
+        metadataMatch: null,
+      }),
+    );
+
+    const scan = stage("scan");
+    expect(scan.querySelector(".sw-status-tracker__state")?.textContent).toBe("Needs fixing");
+    expect(scan.querySelector(".sw-status-tracker__detail")?.textContent).toBe(
+      "bundle.zip failed the safety scan: too large for the malware scan.",
+    );
+    expect(within(scan).getByRole("link", { name: "Publish a new version" })).toBeTruthy();
   });
 });
 

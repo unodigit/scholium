@@ -198,6 +198,44 @@ describe("normalizeVersionChecks", () => {
     expect(normalizeVersionChecks({ checks_ran: false }, REF).checksRan).toBe(false);
     expect(normalizeVersionChecks({ checks_ran: "false" }, REF).checksRan).toBe(false);
   });
+
+  it("reads the waiting answer: the node could not run the scan, so no file is failed", () => {
+    const report = normalizeVersionChecks(
+      {
+        state: "scanning",
+        scanWaiting: true,
+        scan_waiting: true,
+        waitingReason: "antivirus_unavailable",
+        waiting_reason: "antivirus_unavailable",
+        checksRan: false,
+        files: [
+          { path: "paper.pdf", cid: PDF, role: "pdf", status: "passed", failedChecks: [], detail: null },
+          {
+            path: "bundle.zip",
+            cid: ZIP,
+            role: "code",
+            status: "waiting",
+            failedChecks: ["av_unavailable"],
+            detail: "the antivirus is unavailable",
+          },
+        ],
+      },
+      REF,
+    );
+
+    expect(report.scanWaiting).toBe(true);
+    // av_unavailable is inconclusive (D2): the file waits, it did not fail.
+    expect(report.files.map((entry) => [entry.path, entry.status])).toEqual([
+      ["paper.pdf", "passed"],
+      ["bundle.zip", "pending"],
+    ]);
+  });
+
+  it("treats an older report without scanWaiting as not waiting", () => {
+    expect(normalizeVersionChecks({ state: "moderation" }, REF).scanWaiting).toBe(false);
+    expect(normalizeVersionChecks({ scanWaiting: false }, REF).scanWaiting).toBe(false);
+    expect(normalizeVersionChecks({ scan_waiting: "false" }, REF).scanWaiting).toBe(false);
+  });
 });
 
 describe("fetchVersionChecks", () => {
@@ -261,6 +299,20 @@ describe("file safety", () => {
     expect(fileProblem(failed)).toBe("paper.pdf failed the safety scan: JavaScript and embedded files.");
     expect(describeFailedCheck("path_traversal")).toBe("a path that escapes the archive");
     expect(describeFailedCheck("some_new_check")).toBe("some new check");
+  });
+
+  it("words an oversize file as too large for the malware scan", () => {
+    // D2: a size-limit answer is conclusive, with its own check, so a file
+    // the scanner can never accept is held rather than waiting forever.
+    expect(describeFailedCheck("too_large_to_scan")).toBe("too large for the malware scan");
+    const held = file({
+      path: "bundle.zip",
+      cid: ZIP,
+      role: "code",
+      status: "failed",
+      failedChecks: ["too_large_to_scan"],
+    });
+    expect(fileProblem(held)).toBe("bundle.zip failed the safety scan: too large for the malware scan.");
   });
 });
 
@@ -410,6 +462,59 @@ describe("checkItems", () => {
     expect(items[0].summary).toBe("Scanning 1 of 2 files…");
     expect(items[0].detail).toBe("Results appear here as each file finishes.");
   });
+
+  it("says the version is waiting for the safety scan, not that a scan is running", () => {
+    // D3: the node's antivirus is unavailable, so there is nothing the author
+    // can fix and nothing to publish; the node retries the scan itself.
+    const items = checkItems(
+      checks({
+        state: "scanning",
+        scanWaiting: true,
+        checksRan: false,
+        files: [file(), file({ path: "bundle.zip", cid: ZIP, role: "code", status: "pending" })],
+        referencesTotal: null,
+        referencesUnresolved: null,
+        similarityPct: null,
+        metadataMatch: null,
+      }),
+    );
+    expect(items[0]).toMatchObject({ state: "running", label: "Waiting", fix: null });
+    expect(items[0].summary).toBe("Waiting for the safety scan");
+    expect(items[0].detail).toBe(
+      "Waiting for the safety scan: this node's antivirus is unavailable. " +
+        "The scan runs again automatically; you don't need to do anything.",
+    );
+    // The advisory checks have not run yet; "held at the safety scan" is a verdict, not a wait.
+    expect(items.slice(1).map((item) => item.label)).toEqual(["Not run yet", "Not run yet", "Not run yet"]);
+    expect(items.every((item) => item.label !== "Needs fixing")).toBe(true);
+    // The summary says what the node is waiting for, not that a check is running.
+    expect(checksSummary(items)).toBe("Waiting for the safety scan.");
+  });
+
+  it("leaves a real scan hold as a failure", () => {
+    // The new waiting wording must not swallow a conclusive hold (round 22).
+    const items = checkItems(
+      checks({
+        state: "held",
+        scanWaiting: false,
+        checksRan: false,
+        files: [
+          file({
+            path: "bundle.zip",
+            cid: ZIP,
+            role: "code",
+            status: "failed",
+            failedChecks: ["too_large_to_scan"],
+          }),
+        ],
+        referencesTotal: null,
+        referencesUnresolved: null,
+        similarityPct: null,
+        metadataMatch: null,
+      }),
+    );
+    expect(items[0]).toMatchObject({ state: "attention", label: "Needs fixing", fix: "files" });
+  });
 });
 
 describe("checksFinished and checksAreRunning", () => {
@@ -430,6 +535,23 @@ describe("checksFinished and checksAreRunning", () => {
     expect(checksAreRunning(checks())).toBe(false);
     expect(checksAreRunning(checks({ state: "scanning" }))).toBe(true);
     expect(checksAreRunning(checks({ files: [file({ status: "scanning" })] }))).toBe(true);
+  });
+
+  it("keeps polling a version waiting for the node's antivirus", () => {
+    // A waiting scan is not finished: the node retries it on its own, so the
+    // step must keep asking, exactly as for a scan in progress.
+    const waiting = checks({
+      state: "scanning",
+      scanWaiting: true,
+      checksRan: false,
+      files: [file({ status: "pending" })],
+      referencesTotal: null,
+      referencesUnresolved: null,
+      similarityPct: null,
+      metadataMatch: null,
+    });
+    expect(checksAreRunning(waiting)).toBe(true);
+    expect(checksFinished(waiting)).toBe(false);
   });
 });
 

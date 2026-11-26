@@ -39,7 +39,13 @@ export interface ChecksVersionRef {
   version: number;
 }
 
-/** What the sanitizer has decided about one file. */
+/**
+ * What the sanitizer has decided about one file.
+ *
+ * A node's own `waiting` status (the scan could not run, so the node re-tries
+ * it; round 27) has no verdict yet, so it normalizes to `pending`: the report's
+ * {@link VersionChecks.scanWaiting} carries the reason.
+ */
 export type FileScanStatus = "passed" | "failed" | "scanning" | "pending";
 
 /** One file of the version's manifest, with its safety verdict. */
@@ -90,6 +96,14 @@ export interface VersionChecks {
    * reads as `true`.
    */
   checksRan?: boolean;
+  /**
+   * Whether the version is waiting for the node's antivirus: the safety scan
+   * could not run, so the node re-tries it on its own and there is nothing the
+   * author can do (round 27, D2/D3). The node sets this (`scanWaiting` /
+   * `scan_waiting`); absent (an older node, or any other report) reads as
+   * `false`.
+   */
+  scanWaiting?: boolean;
 }
 
 /** A draft file shown before a version exists, so step 4 can say what will be scanned. */
@@ -173,6 +187,7 @@ const FAILED_CHECK_WORDS: Record<string, string> = {
   absolute_path: "an absolute path",
   malware: "malware",
   av_unavailable: "a malware scan that could not run (the antivirus is unavailable)",
+  too_large_to_scan: "too large for the malware scan",
   bundle_unreadable: "an archive that could not be read",
   file_missing: "a file missing from this node",
   file_unreadable: "a file that could not be read",
@@ -222,8 +237,21 @@ function excerpt(text: string, max = 120): string {
   return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1)}…`;
 }
 
+/**
+ * What the author is told while the node's antivirus cannot run the safety
+ * scan (round 27, D3): the node is waiting, the scan is re-tried on its own,
+ * and there is nothing to fix or publish.
+ */
+export const WAITING_FOR_SCAN =
+  "Waiting for the safety scan: this node's antivirus is unavailable. " +
+  "The scan runs again automatically; you don't need to do anything.";
+
+/** The chip word for a version whose safety scan the node has not been able to run. */
+const WAITING_LABEL = "Waiting";
+
 function fileItems(
   files: readonly FileSafety[],
+  scanWaiting = false,
 ): { state: CheckState; label: string; summary: string; detail: string; fix: CheckFix | null } {
   if (files.length === 0) {
     return {
@@ -250,6 +278,18 @@ function fileItems(
           : `${failed.length} of ${files.length} files failed the safety scan`,
       detail: `${joinWords(names)}. Replace ${failed.length === 1 ? "it" : "them"} in Files, then run the checks again.`,
       fix: "files",
+    };
+  }
+
+  if (scanWaiting) {
+    // The node could not run the malware scan. That is a wait, not a verdict
+    // and not something the author can fix: the node re-tries it by itself.
+    return {
+      state: "running",
+      label: WAITING_LABEL,
+      summary: "Waiting for the safety scan",
+      detail: WAITING_FOR_SCAN,
+      fix: null,
     };
   }
 
@@ -427,7 +467,9 @@ function heldAtScanRow(id: keyof typeof HELD_AT_SCAN_DETAILS): {
  * With a report, the report's own file list decides — it is what the node
  * signed and scanned. A report whose `checksRan` is false (the safety scan
  * held the version) keeps the file verdict but says the advisory checks did
- * not run, rather than that they are pending.
+ * not run, rather than that they are pending. A report whose `scanWaiting` is
+ * true is not a hold: the file row says the node is waiting, and the advisory
+ * checks have simply not run yet.
  */
 export function checkItems(report: VersionChecks | null, draftFiles: readonly DraftCheckFile[] = []): CheckItem[] {
   const files =
@@ -441,10 +483,13 @@ export function checkItems(report: VersionChecks | null, draftFiles: readonly Dr
           failedChecks: [],
           detail: null,
         }));
-  const filesRow = fileItems(files);
+  const filesRow = fileItems(files, report?.scanWaiting === true);
   // The advisory checks run only after a clean scan. When the scan held the
-  // version they never ran, so they say so instead of "Not run yet".
-  const ran = report?.checksRan !== false;
+  // version they never ran, so they say so instead of "Not run yet". A version
+  // waiting for the node's antivirus is different: its scan did not run yet
+  // either, but it is a wait, not a verdict that stopped them.
+  const waiting = report?.scanWaiting === true;
+  const ran = waiting || report?.checksRan !== false;
   const referencesRow = ran
     ? referenceItems(report?.referencesTotal ?? null, report?.referencesUnresolved ?? null)
     : heldAtScanRow("references");
@@ -505,7 +550,13 @@ export function checksAreRunning(report: VersionChecks | null): boolean {
   if (report === null) {
     return false;
   }
-  return report.state === "scanning" || report.files.some((file) => file.status === "scanning");
+  // A waiting version is not finished: the node re-tries the scan on its own,
+  // so the step keeps asking just as it does for a scan in progress.
+  return (
+    report.state === "scanning" ||
+    report.scanWaiting === true ||
+    report.files.some((file) => file.status === "scanning")
+  );
 }
 
 /** The sentence to show while the checks are not finished. */
@@ -570,6 +621,12 @@ export function checksWarnings(report: VersionChecks | null): string[] {
 export function checksSummary(items: readonly CheckItem[]): string {
   if (items.every((item) => item.state === "pending")) {
     return "No check results yet.";
+  }
+  // A version waiting for the node's antivirus has no verdict yet: its scan
+  // could not run, so "still running" would say the node is working on it now
+  // rather than waiting to be able to.
+  if (items.some((item) => item.id === "files" && item.label === WAITING_LABEL)) {
+    return "Waiting for the safety scan.";
   }
   // A scan hold is a verdict, not a wait: the failed file is the result and the
   // other checks will never run, so neither "N passed" nor "not run yet" fits.
@@ -669,7 +726,14 @@ function scanStatusOf(value: unknown): FileScanStatus {
   if (["scanning", "running", "in_progress", "in-progress", "pending_scan"].includes(text)) {
     return "scanning";
   }
+  // `waiting` (the node could not run the scan) has no verdict yet.
   return "pending";
+}
+
+/** The wire's "waiting" scan status: the node could not run the scan, so it re-tries it. */
+function isScanWaitingStatus(value: unknown): boolean {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ["waiting", "scan_waiting", "waiting_for_av"].includes(text);
 }
 
 const FILE_PATHS = ["path", "name", "filePath", "file_path"] as const;
@@ -703,11 +767,11 @@ function normalizeFile(raw: unknown): FileSafety | null {
 
   const scanRaw = firstDefined(raw, SCAN_KEYS);
   const scanRecord = isRecord(scanRaw) ? scanRaw : null;
-  let status = scanStatusOf(
+  const scanStatusRaw =
     scanRecord === null
       ? scanRaw
-      : firstDefined(scanRecord, ["result", "status", "scanStatus", "scan_status"]),
-  );
+      : firstDefined(scanRecord, ["result", "status", "scanStatus", "scan_status"]);
+  let status = scanStatusOf(scanStatusRaw);
 
   const failedChecks: string[] = [];
   const checksRaw = firstDefined(raw, CHECK_LIST_KEYS);
@@ -730,7 +794,12 @@ function normalizeFile(raw: unknown): FileSafety | null {
     failedChecks.push(checksRaw);
   }
   const uniqueChecks = [...new Set(failedChecks)];
-  if (uniqueChecks.length > 0) {
+  // A file the node could not scan is waiting, not failed: its av_unavailable
+  // finding is inconclusive (D2), so it is a wait rather than a verdict. A
+  // conclusive finding, or a names-only list, still makes the file a failure.
+  const stillWaiting =
+    isScanWaitingStatus(scanStatusRaw) && uniqueChecks.every((name) => name === "av_unavailable");
+  if (uniqueChecks.length > 0 && !stillWaiting) {
     status = "failed";
   }
 
@@ -859,5 +928,8 @@ export function normalizeVersionChecks(payload: unknown, ref: ChecksVersionRef):
     // A node that does not say ran the advisory checks; only a held version's
     // report says otherwise.
     checksRan: boolOf(firstDefined(payload, ["checksRan", "checks_ran"])) ?? true,
+    // A waiting version's report says so at the top level; a node that does
+    // not know the field is not waiting.
+    scanWaiting: boolOf(firstDefined(payload, ["scanWaiting", "scan_waiting"])) ?? false,
   };
 }
