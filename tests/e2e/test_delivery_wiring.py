@@ -103,6 +103,79 @@ def test_the_stack_pins_the_backends_it_exists_to_exercise(compose):
     assert "STORAGE_BACKEND" in compose["services"]["sandbox"]["environment"]
 
 
+# --- ClamAV: a node started from compose.yaml can scan the bundles it is sent --------------
+
+
+CLAMD_CONF = REPO_ROOT / "deploy" / "compose" / "clamd.conf"
+
+
+def clamd_settings() -> dict[str, str]:
+    """``Option value`` lines of deploy/compose/clamd.conf (comments and blank lines left out)."""
+    settings = {}
+    for line in CLAMD_CONF.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            key, _, value = line.partition(" ")
+            settings[key] = value.strip()
+    return settings
+
+
+def test_api_and_worker_are_pointed_at_the_clamav_service(compose):
+    """Without CLAMD_SOCKET every bundle scan reports "antivirus unavailable" and the version
+    waits for ever; the stack's own clamav service is what the default names."""
+    assert "clamav" in compose["services"], "compose.yaml defines no clamav service"
+    for name in ("api", "worker"):
+        service = compose["services"][name]
+        assert service["environment"].get("CLAMD_SOCKET") == "${CLAMD_SOCKET:-clamav:3310}", name
+        # service_started only: a scan that runs before clamd is ready waits and is retried,
+        # and podman-compose waits for a healthy dependency with no timeout.
+        assert service["depends_on"]["clamav"]["condition"] == "service_started", name
+
+
+def test_the_clamav_service_keeps_its_signatures_and_publishes_no_port(compose):
+    clamav = compose["services"]["clamav"]
+    assert clamav["image"] == "${CLAMAV_IMAGE:-docker.io/clamav/clamav:1.4}"
+    assert clamav["restart"] == "unless-stopped"
+    assert not clamav.get("ports"), f"clamd has no authentication; it must stay on the compose network: {clamav.get('ports')}"
+    assert "clamav-db:/var/lib/clamav" in clamav["volumes"], "freshclam's signature database is not on a volume"
+    assert "clamav-db" in compose["volumes"]
+    # The image's own check, with a start period for the first signature download.
+    assert "clamdcheck.sh" in clamav["healthcheck"]["test"]
+    start_period = clamav["healthcheck"]["start_period"]
+    assert re.fullmatch(r"\d+[ms]", start_period), start_period
+    assert int(start_period[:-1]) * (60 if start_period.endswith("m") else 1) >= 300, start_period
+
+
+def test_the_clamd_config_is_mounted_read_only_and_listens_on_the_stack_network_only(compose):
+    mounts = [v for v in compose["services"]["clamav"]["volumes"] if "clamd.conf" in v]
+    assert len(mounts) == 1, mounts
+    source, target, *options = mounts[0].split(":")
+    assert (REPO_ROOT / source).resolve() == CLAMD_CONF, source
+    assert target == "/etc/clamav/clamd.conf"
+    assert "ro" in ",".join(options).split(","), f"the config must be mounted read-only: {mounts[0]}"
+
+    assert CLAMD_CONF.is_file(), "deploy/compose/clamd.conf does not exist"
+    settings = clamd_settings()
+    assert settings.get("TCPSocket") == "3310"
+    # TCPAddr unset or 0.0.0.0 reaches the other containers; 127.0.0.1 would not.
+    assert settings.get("TCPAddr", "0.0.0.0") == "0.0.0.0"
+    assert settings.get("Foreground") == "yes"
+    # clamd's maximum, so the node's 5 GiB upload limit is the only practical bound.
+    for option in ("StreamMaxLength", "MaxScanSize", "MaxFileSize"):
+        assert settings.get(option) == "4000M", option
+    # The image's entrypoint waits for this socket before it reports clamd started.
+    assert settings.get("LocalSocket") == "/run/clamav/clamd.sock"
+
+
+def test_the_staged_start_brings_clamav_up_before_api_and_worker():
+    text = (REPO_ROOT / "scripts" / "stack-up-staged.sh").read_text()
+    application = re.search(r"^application=\(([^)]*)\)", text, re.MULTILINE)
+    assert application, "stack-up-staged.sh no longer defines the application stage"
+    services = application.group(1).split()
+    assert "clamav" in services, services
+    assert services.index("clamav") < services.index("api") < services.index("worker"), services
+
+
 def test_images_do_not_run_as_root():
     for containerfile in sorted((REPO_ROOT / "deploy" / "containers").glob("*.Containerfile")):
         users = re.findall(r"^USER\s+(\S+)", containerfile.read_text(), re.MULTILINE)

@@ -233,7 +233,7 @@ The model id is left out on purpose: model ids change, so copy the one you want 
 | `PORT` | `8000` | Port `python -m app` listens on. |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Peers whose `X-Forwarded-*` headers `python -m app` honours. Set it to the proxy's or tunnel connector's address when TLS ends in front of the api. |
 
-**Local stack only:** `API_PORT` (8000), `WEB_PORT` (3000), `MAILPIT_SMTP_PORT` (1025) and `MAILPIT_UI_PORT` (8025) are host ports, all bound to `127.0.0.1`. After changing `API_PORT` or `WEB_PORT`, also set `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` and `WEB_ORIGINS` to match and run `npm run stack:up` again. `SCHOLIUM_API_IMAGE`, `SCHOLIUM_WEB_IMAGE` and `MAILPIT_IMAGE` rename or re-tag the images.
+**Local stack only:** `API_PORT` (8000), `WEB_PORT` (3000), `MAILPIT_SMTP_PORT` (1025) and `MAILPIT_UI_PORT` (8025) are host ports, all bound to `127.0.0.1`. After changing `API_PORT` or `WEB_PORT`, also set `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` and `WEB_ORIGINS` to match and run `npm run stack:up` again. `SCHOLIUM_API_IMAGE`, `SCHOLIUM_WEB_IMAGE`, `MAILPIT_IMAGE` and `CLAMAV_IMAGE` rename or re-tag the images.
 
 ### 2.9 Application tuning
 
@@ -248,9 +248,11 @@ None of these is tied to a backend; all have safe defaults. The `UPLOAD_*` varia
 | `UPLOAD_DAILY_QUOTA_BYTES_ESTABLISHED` | 20 GiB | The same allowance for accounts 90 days or older. |
 | `REFRESH_REUSE_GRACE_SECONDS` | `30` | How long after a refresh token was rotated the same value is still accepted and receives its successor (concurrent tabs refreshing together). |
 | `REFRESH_COOKIE_SAMESITE` | `lax` | `SameSite` attribute of the refresh cookie (`lax`, `strict` or `none`). |
-| `CLAMD_SOCKET` | *(unset)* | Unix socket of a ClamAV daemon. Unset, bundle scans report that antivirus is unavailable, and that counts as a failed scan: every version with a code or data bundle is held and never listed. Set it on any node where authors upload bundles. |
+| `CLAMD_SOCKET` | *(unset)*; `clamav:3310` in the local stack | Where the ClamAV daemon (clamd) is: the path of a Unix socket, or `host:port`. `compose.yaml` sets it to its `clamav` service. Unset, bundle scans report that the antivirus is unavailable: that is not a failed scan, so a version with a code or data bundle waits for its safety scan (it is not held) and is re-scanned every 15 minutes. Set it on any node where authors upload bundles. |
 | `MODERATION_POLICIES_YAML` | the bundled file | Path of the moderation policies file. `POLICIES_YAML` is an alias. |
 | `OAI_ADMIN_EMAIL` | `admin@scholium.local` | Contact address OAI-PMH reports to harvesters. |
+
+**ClamAV in the local stack.** The `clamav` service runs the official ClamAV image (`CLAMAV_IMAGE`, default `docker.io/clamav/clamav:1.4`): clamd, which the api and the worker reach at `clamav:3310` on the compose network, and freshclam, which keeps the signature database on the `clamav-db` volume up to date. Nothing is published on the host: clamd has no authentication, so keep it on the compose network. clamd holds the signatures in memory, about 1.2 GB. The first start downloads them, which takes minutes, so bundle scans wait until clamd is up and are retried every 15 minutes; the api and the worker do not wait for it to start. `deploy/compose/clamd.conf` sets `StreamMaxLength`, `MaxScanSize` and `MaxFileSize` to 4000M, clamd's maximum: a bundle above that is held as too large for the malware scan. A node that does not use the stack runs its own clamd and sets `CLAMD_SOCKET` to it.
 
 ### 2.10 Test and migration variables
 
@@ -371,7 +373,7 @@ If your `.env` changes any of these (a different port, other credentials), use y
 - **podman 4.9 or newer with `podman-compose` 1.6.0 or newer**, rootless is fine; or **docker with the compose plugin**. The scripts use `podman-compose` when it is installed and `docker compose` otherwise. `STACK_COMPOSE="docker compose" npm run stack:up` picks one explicitly.
 - **Why 1.6.0.** `compose.yaml` uses nested variable defaults (`${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-scholium-minio}}`) and `COMPOSE_PROFILES`, which podman-compose only understands from 1.6.0. Every `stack:*` script goes through `scripts/stack-compose.sh`, which reads `podman-compose --version` and refuses an older one with exit status 1, naming the version it found. Upgrade with `pipx install podman-compose`, or use docker compose (`STACK_COMPOSE="docker compose"`), whose version is not checked.
 - Node and npm (the scripts are npm scripts), and `curl` for `stack:smoke`.
-- Network access for the first build: it pulls `python:3.12-slim`, `node:22-alpine`, PostgreSQL, MinIO and Mailpit images, and installs the dependencies inside the build.
+- Network access for the first build: it pulls `python:3.12-slim`, `node:22-alpine`, PostgreSQL, MinIO, Mailpit and ClamAV images, and the `clamav` service then downloads the virus signatures (a few hundred MB), and installs the dependencies inside the build.
 - Free host ports 3000, 8000, 5433, 9000, 9001, 1025 and 8025 (all configurable, [section 2](#2-environment-variables)).
 
 ### 4.2 First start
@@ -404,21 +406,22 @@ podman-compose restart api worker
 | `minio` | S3-compatible object store | http://localhost:9000 (API), http://localhost:9001 (console) |
 | `minio-init` | one-shot job that creates the bucket, then exits | none |
 | `mailpit` | SMTP sink with a web inbox | http://localhost:8025 (inbox), `127.0.0.1:1025` (SMTP) |
+| `clamav` | ClamAV daemon that scans bundles for malware (`clamav:3310`, [section 2.9](#29-application-tuning)) | none: not published |
 | `sandbox` | reproducibility runner, opt-in (`COMPOSE_PROFILES=sandbox`) | not published |
 
 The api and worker are the same image started with different commands, and share the database, the bucket and a `/data` volume (the node key). Every published port is bound to `127.0.0.1`; put a proxy or tunnel in front to reach the stack from elsewhere. Containers run as unprivileged users (uid 10001 in the api image, `node` in the web image).
 
-Named volumes `db-data`, `minio-data`, `mailpit-data`, `app-data` and `sandbox-work` hold the state.
+Named volumes `db-data`, `minio-data`, `mailpit-data`, `clamav-db`, `app-data` and `sandbox-work` hold the state.
 
 ### 4.4 npm scripts
 
 | Script | What it does |
 | --- | --- |
 | `npm run stack:up` | Build the images and start the stack detached, **in three stages** (below). |
-| `npm run stack:deps` | The first two stages only: `db`, `minio`, `mailpit` and the `minio-init` bucket job, with no api, worker or web. For running the API on the host ([section 3.2](#32-against-postgresql-and-s3-with-npm-run-stackdeps)) and for moving a node into the stack's database ([section 7.5](#75-example-a-host-install-into-the-local-stack)). |
+| `npm run stack:deps` | The first two stages only: `db`, `minio`, `mailpit` and the `minio-init` bucket job, with no api, worker, web or clamav (the host API then has no `CLAMD_SOCKET`, so bundle scans wait). For running the API on the host ([section 3.2](#32-against-postgresql-and-s3-with-npm-run-stackdeps)) and for moving a node into the stack's database ([section 7.5](#75-example-a-host-install-into-the-local-stack)). |
 | `npm run stack:down` | `down --remove-orphans`: stop and remove the containers. **The volumes stay.** Extra arguments are appended: `npm run stack:down -- --volumes` also deletes them. |
 | `npm run stack:logs` | Follow the logs, 100 lines back. One service: `npm run stack:logs -- api`. |
-| `npm run stack:reset` | `down --volumes`, then a plain `up -d --build --remove-orphans` in one step, not in stages: deletes the database, the bucket, the inbox and the node key, and starts from scratch. On podman 4.9 prefer `npm run stack:down -- --volumes` followed by `npm run stack:up` (see the next subsection). |
+| `npm run stack:reset` | `down --volumes`, then a plain `up -d --build --remove-orphans` in one step, not in stages: deletes the database, the bucket, the inbox, the ClamAV signatures and the node key, and starts from scratch. On podman 4.9 prefer `npm run stack:down -- --volumes` followed by `npm run stack:up` (see the next subsection). |
 | `npm run stack:smoke` | Verify the running stack (below). Exit status 0 only if every step passed. |
 
 All of them honour `COMPOSE_PROFILES` and `STACK_COMPOSE`. They are not part of `npm test`.
@@ -429,7 +432,7 @@ All of them honour `COMPOSE_PROFILES` and `STACK_COMPOSE`. They are not part of 
 | --- | --- | --- |
 | 1 | `up -d --no-deps db minio mailpit` | each of the three reports `(healthy)` |
 | 2 | `up -d --no-deps minio-init` | `minio-init` has exited with status 0: the bucket exists |
-| 3 | `up -d --no-deps --build --remove-orphans api worker web`, plus `sandbox` when `COMPOSE_PROFILES` enables it | nothing: it returns once they are started. `npm run stack:smoke` waits for readiness. |
+| 3 | `up -d --no-deps --build --remove-orphans clamav api worker web`, plus `sandbox` when `COMPOSE_PROFILES` enables it | nothing: it returns once they are started. `clamav` is listed first so it starts before the api and the worker, but they do not wait for it (a scan before clamd is ready is retried). `npm run stack:smoke` waits for readiness. |
 
 `npm run stack:deps` stops after stage 2. Each wait gives up after `STACK_UP_TIMEOUT` seconds (default 300), naming the service and the last status it saw; `STACK_UP_POLL_INTERVAL` (default 2) is the time between two status checks. A `minio-init` that exits with a non-zero status fails the run at once, because it does not run again; read its output with `npm run stack:logs -- minio-init`. A compose command that fails ends the script with that command's exit status. `depends_on` stays in `compose.yaml` for plain `docker compose up` and for anyone who runs the file directly.
 

@@ -17,6 +17,7 @@
 #   minio         S3-compatible object store                      :9000 API, :9001 console
 #   minio-init    one-shot: creates the bucket, then exits        -
 #   mailpit       SMTP sink with a web inbox                      :8025 inbox, :1025 SMTP
+#   clamav        ClamAV daemon that scans bundles (clamav:3310)  -  (not published)
 #   sandbox       reproducibility runner, opt-in: profile "sandbox"  (not published)
 #
 # Configuration comes from a .env file next to this one (see .env.example) or
@@ -96,6 +97,10 @@ x-app-environment: &app-environment
   SANDBOX_BACKEND: ${SANDBOX_BACKEND:-none}
   SANDBOX_URL: ${SANDBOX_URL:-http://sandbox:8001}
   SANDBOX_TOKEN: ${SANDBOX_TOKEN:-}
+  # Where bundles are scanned for malware: the clamav service below. Without a
+  # daemon a version with a bundle waits for its safety scan and is re-scanned
+  # every 15 minutes.
+  CLAMD_SOCKET: ${CLAMD_SOCKET:-clamav:3310}
 
 # --- services ------------------------------------------------------------------
 #
@@ -187,6 +192,28 @@ services:
       retries: 6
       start_period: 10s
 
+  # The malware scanner the api and the worker send every bundle to
+  # (CLAMD_SOCKET=clamav:3310). The image runs freshclam, which keeps the signature
+  # database on the clamav-db volume up to date, and clamd. The first start downloads
+  # the signatures, which takes minutes; until clamd answers, bundle scans wait and
+  # are retried, so nothing depends on this service being healthy. clamd needs about
+  # 1.2 GB of memory. Configuration: deploy/compose/clamd.conf. It listens on the
+  # compose network only: clamd has no authentication, so never publish its port.
+  clamav:
+    image: ${CLAMAV_IMAGE:-docker.io/clamav/clamav:1.4}
+    restart: unless-stopped
+    volumes:
+      - clamav-db:/var/lib/clamav
+      - ./deploy/compose/clamd.conf:/etc/clamav/clamd.conf:ro,z
+    healthcheck:
+      # The image's own check: PING answered with PONG. The start period covers the
+      # first signature download, during which clamd is not up yet.
+      test: clamdcheck.sh
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10m
+
   api:
     <<: *api-service
     depends_on:
@@ -195,6 +222,8 @@ services:
       minio-init:
         condition: service_completed_successfully
       mailpit:
+        condition: service_started
+      clamav:
         condition: service_started
     environment:
       <<: *app-environment
@@ -227,6 +256,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      clamav:
+        condition: service_started
     environment: *app-environment
     volumes:
       - app-data:/data
@@ -310,5 +341,6 @@ volumes:
   db-data:
   minio-data:
   mailpit-data:
+  clamav-db:
   app-data:
   sandbox-work:

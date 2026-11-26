@@ -12,8 +12,11 @@
 #                 then poll `ps` until each of the three reports (healthy);
 #   2. up -d --no-deps minio-init
 #                 then poll `ps` until it has exited with status 0 (the bucket exists);
-#   3. up -d --no-deps --build --remove-orphans api worker web       (stack:up only)
+#   3. up -d --no-deps --build --remove-orphans clamav api worker web   (stack:up only)
 #                 plus sandbox when COMPOSE_PROFILES (environment or .env) enables it.
+#                 clamav comes first so it is started before api and worker, but nothing
+#                 waits for it: a bundle scan that runs before clamd is ready (its first
+#                 start downloads the signatures) is retried, and stack:deps leaves it out.
 #
 # Why not one `up -d`, with the depends_on of compose.yaml ordering it: podman-compose
 # 1.6 creates each container with --requires for every depends_on entry, and podman
@@ -226,9 +229,10 @@ if [ "$mode" = deps ]; then
   exit 0
 fi
 
-# Stage 3: the application. The sandbox joins it when its profile is enabled, as it
-# did when one `up` started everything.
-application=(api worker web)
+# Stage 3: the application, and the ClamAV daemon its bundle scans need (started
+# first; the api and the worker do not wait for it to be ready). The sandbox joins
+# it when its profile is enabled, as it did when one `up` started everything.
+application=(clamav api worker web)
 profiles=",$(setting COMPOSE_PROFILES ''),"
 profiles="${profiles// /}"
 case "$profiles" in
