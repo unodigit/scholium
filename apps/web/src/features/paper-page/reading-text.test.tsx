@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { tokenStore } from "../../lib/api";
 import { ANNOTATION_CREATED_EVENT } from "../paper-discussion/annotations";
 import { loadKatex, type LoadMath } from "./math-typeset";
 import { stubApi } from "./paper-page-fixtures";
@@ -140,11 +141,14 @@ function stubAnnotationApi(options: { refuseSave?: boolean } = {}) {
 beforeEach(() => {
   // The annotation component reads its markers on mount; this node has none.
   stubApi({});
+  // The token store is shared by every test: start each one signed out.
+  tokenStore.clear();
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  tokenStore.clear();
 });
 
 describe("ReadingText: paragraphs", () => {
@@ -481,6 +485,68 @@ describe("ReadingText: an author's own hidden annotation", () => {
       quote: "Every note on this paragraph was hidden by a moderator.",
     },
   ];
+  /** The same annotation as every other reader's read returns it. */
+  const ANONYMOUS_HIDDEN = [
+    {
+      id: "own-hidden",
+      paragraph_id: "p2",
+      hidden: true,
+      hidden_reason: "Off topic",
+    },
+  ];
+
+  const ANONYMOUS_PLACEHOLDER = "Hidden by moderation: Off topic";
+  const OWN_NOTICE = /Your annotation was hidden: Off topic\./;
+
+  /** A JWT-shaped access token whose payload carries the API's `sub` claim. */
+  function accessJwt(sub: string): string {
+    const segment = (value: unknown) =>
+      btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return `${segment({ alg: "none" })}.${segment({ sub, tier: 1 })}.signature`;
+  }
+
+  const SAM = "did:key:z6MkSamTheAuthor";
+
+  /**
+   * Answer the annotations read the way the node does for the session that
+   * made it: a read with a bearer token is the author's and carries `is_own`
+   * and `own_text`; a read without one is any other reader's. Every read's
+   * authorization header is recorded so a test can see what was sent.
+   */
+  function stubAuthAwareAnnotationRead() {
+    const reads: Array<string | null> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        if (/\/annotations$/.test(path) && init?.method !== "POST") {
+          const authorization = new Headers(init?.headers).get("authorization");
+          reads.push(authorization);
+          return jsonResponse({
+            annotations: authorization === null ? { p2: ANONYMOUS_HIDDEN } : { p2: OWN_HIDDEN },
+          });
+        }
+        return new Response("{}", {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    return { reads };
+  }
+
+  /** The reading column as `renderText` renders it, for a rerender. */
+  function readingText() {
+    return (
+      <ReadingText
+        paperId="sch:6sel-2dio-orm6"
+        version={2}
+        versionCid="bafyrei-version-2"
+        paragraphs={ANNOTATED_PARAGRAPHS}
+        loadMath={loadKatex}
+      />
+    );
+  }
 
   it("tells the author it is theirs, reveals their text on request and links to the appeal", async () => {
     stubAnnotationRead({ p2: OWN_HIDDEN });
@@ -542,6 +608,111 @@ describe("ReadingText: an author's own hidden annotation", () => {
     expect(within(list).queryByText(OWN_NOTE)).toBeNull();
     expect(within(list).queryByRole("button", { name: /my annotation/ })).toBeNull();
     expect(within(list).queryByRole("link", { name: "Appeal" })).toBeNull();
+  });
+
+  it("re-reads once the session is restored after a normal page load", async () => {
+    // A reload: the component mounts before /v1/auth/refresh has put the
+    // session's token back, so the first read goes out without one and the
+    // node answers as it would to any reader.
+    const { reads } = stubAuthAwareAnnotationRead();
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    const marker = await screen.findByTestId("margin-marker-p2");
+    fireEvent.click(marker);
+    expect(await screen.findByText(ANONYMOUS_PLACEHOLDER)).toBeTruthy();
+    expect(reads).toEqual([null]);
+
+    // The session is restored: the viewer becomes sam, the annotation's
+    // author. The margin reads again with the token the store now holds.
+    act(() => tokenStore.set({ accessToken: accessJwt(SAM) }));
+
+    await waitFor(() => expect(reads.length).toBe(2));
+    expect(reads[1]).toMatch(/^Bearer /);
+
+    // The author's notice replaces the anonymous placeholder, and the
+    // paragraph the reader had opened stays open.
+    expect(await screen.findByText(OWN_NOTICE)).toBeTruthy();
+    expect(screen.queryByText(ANONYMOUS_PLACEHOLDER)).toBeNull();
+    expect(marker.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show my annotation" }));
+    expect(await screen.findByText(OWN_TEXT)).toBeTruthy();
+  });
+
+  it("does not read again when the same viewer renders the column again", async () => {
+    const { reads } = stubAuthAwareAnnotationRead();
+    // Signed in before the page runs, as when it is reached from sign-in.
+    tokenStore.set({ accessToken: accessJwt(SAM) });
+    const view = renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    // The reads the mount needs have answered: the viewer resolved, and the
+    // margin shows the author's notice.
+    fireEvent.click(await screen.findByTestId("margin-marker-p2"));
+    expect(await screen.findByText(OWN_NOTICE)).toBeTruthy();
+    const answered = reads.length;
+
+    // A rerender with the same viewer is not a reason to ask the node again.
+    view.rerender(readingText());
+    await act(async () => {});
+    expect(reads.length).toBe(answered);
+  });
+
+  it("keeps the newer viewer's answer when an earlier read answers late", async () => {
+    // The first, tokenless read hangs; the read for the restored session
+    // answers at once. When the first finally answers, it is stale and must
+    // not put the anonymous placeholder back over the author's notice.
+    let releaseFirstRead: (() => void) | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        if (/\/annotations$/.test(path) && init?.method !== "POST") {
+          const authorization = new Headers(init?.headers).get("authorization");
+          if (authorization === null) {
+            await new Promise<void>((resolve) => {
+              releaseFirstRead = resolve;
+            });
+            return jsonResponse({ annotations: { p2: ANONYMOUS_HIDDEN } });
+          }
+          return jsonResponse({ annotations: { p2: OWN_HIDDEN } });
+        }
+        return new Response("{}", {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+    // The tokenless read is in flight, holding back the whole answer.
+    await waitFor(() => expect(releaseFirstRead).not.toBeNull());
+
+    act(() => tokenStore.set({ accessToken: accessJwt(SAM) }));
+    fireEvent.click(await screen.findByTestId("margin-marker-p2"));
+    expect(await screen.findByText(OWN_NOTICE)).toBeTruthy();
+
+    await act(async () => releaseFirstRead?.());
+
+    expect(screen.queryByText(ANONYMOUS_PLACEHOLDER)).toBeNull();
+    expect(screen.getByText(OWN_NOTICE)).toBeTruthy();
+  });
+
+  it("goes back to the anonymous placeholder when the viewer signs out", async () => {
+    const { reads } = stubAuthAwareAnnotationRead();
+    tokenStore.set({ accessToken: accessJwt(SAM) });
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    fireEvent.click(await screen.findByTestId("margin-marker-p2"));
+    expect(await screen.findByText(OWN_NOTICE)).toBeTruthy();
+
+    // Signing out is another viewer: the margin reads again, with no token,
+    // and the answer replaces the author's notice.
+    act(() => tokenStore.clear());
+
+    expect(await screen.findByText(ANONYMOUS_PLACEHOLDER)).toBeTruthy();
+    expect(screen.queryByText(OWN_NOTICE)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show my annotation" })).toBeNull();
+    expect(reads[reads.length - 1]).toBeNull();
   });
 });
 

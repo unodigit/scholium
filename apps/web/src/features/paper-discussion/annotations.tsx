@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { ApiError, NetworkError, api, type ApiClient, type ApiRequestOptions } from "../../lib/api";
+import { useViewer } from "../review-form/use-viewer";
 import { signRecord, type SignedRecord } from "../web-auth/sign-record";
 import { isPasskeyCancellation, isRecordSigningError, isDeviceKeyError } from "../web-auth/errors";
 import { discussionPath, hiddenOwnNotice } from "./discussion";
@@ -568,6 +569,14 @@ export function MarginMarkers(props: MarginMarkersProps) {
   // version's cid: an annotation's appeal is filed on its version's page.
   const discussionVersion = typeof version === "number" ? version : undefined;
 
+  // Who this read is for: the same signed-in/viewer DID key the Discussion tab
+  // uses. The token lives in memory, so on a normal page load the viewer is
+  // only known after mount, once `/v1/auth/refresh` has restored the session;
+  // keying the read on it is what makes the margin ask again and show the
+  // author their own hidden annotation, whichever way the page was reached.
+  const viewer = useViewer();
+  const viewerKey = viewer.signedIn ? (viewer.did ?? "\u0001signed-in") : null;
+
   const paragraphs = useMemo<AnnotationParagraph[]>(() => {
     const source = paragraphsProp ?? paragraphList ?? text ?? data;
     if (Array.isArray(source)) {
@@ -625,30 +634,59 @@ export function MarginMarkers(props: MarginMarkersProps) {
   const loader =
     loadAnnotationsProp ?? load ?? loaderProp ?? loadReport ?? actions?.load ?? null;
 
+  // The latest loader, without making an inline function restart the read.
+  const loaderRef = useRef(loader);
+  useEffect(() => {
+    loaderRef.current = loader;
+  }, [loader]);
+
+  // Which read is newest. An earlier read's late answer — for another viewer
+  // or another paper — must never replace a newer one's.
+  const requestSeq = useRef(0);
+  // The key whose answer is on screen. A read already answered for the same
+  // viewer, paper and version is not sent again, so a rerender of the same
+  // viewer costs no request.
+  const readKey = `${paperId}\u0000${String(version)}\u0000${viewerKey ?? ""}`;
+  const readKeyRef = useRef(readKey);
+  readKeyRef.current = readKey;
+  const answeredKeyRef = useRef<string | null>(null);
+
   const reload = async () => {
-    if (!loader) return;
+    const read = loaderRef.current;
+    if (!read) return;
+    const seq = ++requestSeq.current;
     try {
-      const result = await loader(paperId, version);
+      const result = await read(paperId, version);
+      if (requestSeq.current !== seq) return;
       const parsed = (result && typeof result === "object" && (result as any).annotations)
         ? (result as AnnotationsData)
         : parseAnnotations(result);
       setGroups((parsed.annotations ?? {}) as Record<string, Annotation[]>);
+      answeredKeyRef.current = readKeyRef.current;
     } catch {
       // Keep the current markers on a failed reload.
     }
   };
 
+  // A read whose answer depends on who is signed in is repeated when the
+  // viewer key changes after mount — the session restored on a reload, a
+  // sign-in, a sign-out, another account — and the answer replaces the list.
+  // The open paragraphs are component state, so they stay open.
   useEffect(() => {
-    if (!loader) return;
+    const read = loaderRef.current;
+    if (!read) return;
+    if (answeredKeyRef.current === readKey) return;
+    const seq = ++requestSeq.current;
     let cancelled = false;
     (async () => {
       try {
-        const result = await loader(paperId, version);
-        if (cancelled) return;
+        const result = await read(paperId, version);
+        if (cancelled || requestSeq.current !== seq) return;
         const parsed = (result && typeof result === "object" && (result as any).annotations)
           ? (result as AnnotationsData)
           : parseAnnotations(result);
         setGroups((parsed.annotations ?? {}) as Record<string, Annotation[]>);
+        answeredKeyRef.current = readKey;
       } catch {
         // ignore
       }
@@ -656,7 +694,7 @@ export function MarginMarkers(props: MarginMarkersProps) {
     return () => {
       cancelled = true;
     };
-  }, [paperId, version, loader]);
+  }, [paperId, version, readKey]);
 
   const highLevelCreate =
     createAnnotationProp ?? create ?? onCreate ?? submitAnnotationProp ?? actions?.create ?? null;
