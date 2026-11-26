@@ -11,12 +11,17 @@ caller, each naming the paper and linking to where the action is taken:
   reviewer updates the review;
 * an unverified email address is asked to be confirmed until it is verified;
 * a version the safety scan held is one item per author naming the file, until
-  a later version is listed or a moderator decides (bug spec round 22, item 2).
+  a later version is listed or a moderator decides (bug spec round 22, item 2);
+* a version waiting for the node's antivirus is none of these: it was never
+  held and there is nothing to do, so it is no item at all -- its paper's row
+  carries ``scanWaiting`` instead (bug spec round 27, item 2).
 """
 
 from __future__ import annotations
 
+import io
 import uuid
+import zipfile
 from datetime import datetime, timezone
 
 from nacl.signing import SigningKey
@@ -683,3 +688,114 @@ def test_a_listed_later_version_ends_the_scan_item():
     )
 
     assert [item for item in _items(author) if item.get("kind") == "scan_hold"] == []
+
+
+# --------------------------------------------------------------------------- #
+# A version waiting for the node's antivirus is news on the row, not an
+# action (round 27, bug 2)
+# --------------------------------------------------------------------------- #
+
+
+def _clean_zip() -> bytes:
+    """A structurally clean archive: only the malware scan can judge it."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("data/notes.txt", f"notes {uuid.uuid4().hex}")
+    return buffer.getvalue()
+
+
+def _scan_waiting_scene(*, authors: tuple[str, ...], title: str) -> tuple[str, str]:
+    """A paper whose first version waits for the node's antivirus.
+
+    What the scanner leaves behind on a node without ``CLAMD_SOCKET`` (round
+    27, bug 1): the clean archive's only finding is the inconclusive
+    ``av_unavailable``, so the version stays in ``scanning`` and the bundle's
+    blob keeps its ``scanning`` verdict -- an inconclusive finding is not a
+    failure.
+    """
+    bundle_bytes = _clean_zip()
+    bundle = content.store_bytes(bundle_bytes, media_type="application/zip")
+    # The finding the scan leaves on record -- the eager file scan records it
+    # itself when its subscription is live; recording it here keeps the scene
+    # whatever the subscriber state.
+    sanitizer.record_finding(
+        str(bundle.cid),
+        sanitizer.CHECK_AV_UNAVAILABLE,
+        "ClamAV (clamd) is unavailable: CLAMD_SOCKET is not set",
+    )
+    manifest_cid = _append_manifest(
+        [
+            {
+                "path": "code.zip",
+                "cid": str(bundle.cid),
+                "size": len(bundle_bytes),
+                "mediaType": "application/zip",
+                "role": "code",
+            }
+        ]
+    )
+    paper_cid = _new_paper_cid(title)
+    version_cid = f"cid-{uuid.uuid4().hex}"
+    save_paper(paper_cid=paper_cid, categories=("cs.CR",))
+    save_version(
+        version_cid=version_cid,
+        paper_cid=paper_cid,
+        n=1,
+        title=title,
+        abstract="",
+        manifest_cid=manifest_cid,
+        licence="CC-BY-4.0",
+        prev_cid=paper_cid,
+        authors=tuple(
+            VersionAuthor(did, position, ("Conceptualization",))
+            for position, did in enumerate(authors, start=1)
+        ),
+        state="scanning",
+    )
+    return paper_cid, version_cid
+
+
+def _paper_row(did: str, paper_cid: str) -> dict:
+    """The caller's My papers row for ``paper_cid``."""
+    body = client.get(DASHBOARD_URL, headers=_auth(did)).json()
+    rows = [row for row in body["my_papers"] if row["paperCid"] == paper_cid]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_a_waiting_version_is_no_attention_item_but_flags_the_row():
+    author = _did()
+    paper_cid, version_cid = _scan_waiting_scene(
+        authors=(author,), title="A paper the scan waits on"
+    )
+
+    items = _items(author)
+
+    # The node is waiting and there is nothing for the author to do (D3), so a
+    # waiting version is no "Needs your attention" item: not the scan hold --
+    # the version was never held -- and nothing new in its place.
+    assert [item for item in items if item.get("kind") == "scan_hold"] == []
+    assert [item for item in items if item.get("versionCid") == version_cid] == []
+
+    row = _paper_row(author, paper_cid)
+    # The row says why the paper is not moving: its scan waits on the antivirus.
+    assert row["state"] == "scanning"
+    assert row["scanWaiting"] is True
+    assert row["scan_waiting"] is True
+
+
+def test_a_held_version_keeps_its_item_and_never_flags_the_row():
+    author = _did()
+    paper_cid, _version_cid = _scan_held_scene(
+        authors=(author,), title="A paper the scan held"
+    )
+
+    # A real hold keeps its round-22 attention item...
+    assert len(
+        [item for item in _items(author) if item.get("kind") == "scan_hold"]
+    ) == 1
+
+    # ...and its row is not flagged as waiting: the scan decided, it did not stall.
+    row = _paper_row(author, paper_cid)
+    assert row["scanWaiting"] is False
+    assert row["scan_waiting"] is False

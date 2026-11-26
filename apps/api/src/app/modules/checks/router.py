@@ -30,8 +30,19 @@ A version the safety scan held never reaches the advisory checks, so it has
 no ``check_results`` row.  For a ``held`` or ``rejected`` version with a file
 its scan could not clear, the per-file scan verdicts are the report: it
 answers ``200`` with the failed file, its failed checks and detail, the
-advisory columns null, and ``checksRan`` false.  A version still scanning, or
-in moderation with no results yet, keeps the checks-pending ``404``.
+advisory columns null, and ``checksRan`` false.  A version still scanning
+keeps the checks-pending ``404`` -- unless it is *waiting for the node's
+antivirus*: a version in ``scanning`` whose files' latest findings are
+``av_unavailable`` only (the malware scan could not run, so it is not a
+verdict against the author) answers ``200`` with ``scanWaiting`` true,
+``waitingReason`` ``antivirus_unavailable`` and each such file's status
+``waiting``, because the author must be told why the scan is not finishing
+when there is nothing they can do about it.  A version in moderation with no
+results yet keeps the checks-pending ``404``.
+
+Every report carries ``scanWaiting`` (and ``scan_waiting``) with
+``waitingReason`` (and ``waiting_reason``): true only for the waiting answer,
+so a client never has to guess whether a scan is stalled.
 
 The payload carries both the natural camelCase spelling and the flat
 snake_case spellings of the ``check_results`` columns, because the web
@@ -56,6 +67,12 @@ __all__ = ["router"]
 
 #: Router the module loader mounts under ``/v1``.
 router = APIRouter(tags=["checks"])
+
+#: The one reason a version can wait in ``scanning``: the node's antivirus
+#: could not run, so the malware scan is inconclusive and the node re-tries it
+#: on its own (round 27, D2/D3).  The author is told the node is waiting and
+#: that there is nothing to do.
+WAITING_REASON_ANTIVIRUS = "antivirus_unavailable"
 
 
 def _not_found(paper_id: str, n: int) -> ProblemException:
@@ -184,8 +201,44 @@ def _scan_held(version_cid: str, state: Optional[str]) -> bool:
     return False
 
 
-def _report(ref: Any, n: int, result: Any) -> dict[str, Any]:
-    """The checks report; ``result`` is ``None`` when the checks did not run."""
+def _waiting_file_cids(version_cid: str) -> Optional[frozenset[str]]:
+    """The manifest files waiting on the node's antivirus, or ``None``.
+
+    A file waits when its latest findings are inconclusive only: at least one
+    ``av_unavailable`` report (the antivirus could not run) and no other
+    failed check.  Any conclusive finding, on any file, means the version is
+    not waiting -- it holds, or is about to -- so ``None`` comes back and the
+    answer never says the scan is waiting.
+    """
+    from app.modules import sanitizer
+
+    waiting: set[str] = set()
+    for entry in manifest_entries(version_cid):
+        cid = entry.get("cid")
+        if not isinstance(cid, str) or not cid:
+            continue
+        for report in sanitizer.reports_for(cid):
+            if getattr(report, "result", None) != sanitizer.RESULT_FAILED:
+                # A check that passed is a verdict, not a finding.
+                continue
+            if getattr(report, "check_name", None) != sanitizer.CHECK_AV_UNAVAILABLE:
+                return None
+            waiting.add(cid)
+    return frozenset(waiting) if waiting else None
+
+
+def _report(
+    ref: Any,
+    n: int,
+    result: Any,
+    waiting_cids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """The checks report; ``result`` is ``None`` when the checks did not run.
+
+    ``waiting_cids`` names the files the node's antivirus could not scan: each
+    is reported as ``waiting`` rather than with its blob verdict, and the
+    report says the version is waiting for the antivirus.
+    """
     similarity_pct = getattr(result, "similarity_pct", None)
     references_total = getattr(result, "references_total", None)
     references_unresolved = getattr(result, "references_unresolved", None)
@@ -193,13 +246,28 @@ def _report(ref: Any, n: int, result: Any) -> dict[str, Any]:
     signed_title = _signed_title(ref.version_cid)
     checks_ran = result is not None
 
+    files: list[dict[str, Any]] = []
+    for entry in manifest_entries(ref.version_cid):
+        file_report = _file_report(dict(entry))
+        if file_report["cid"] in waiting_cids:
+            # The scan could not run on this file: that is a wait, not a
+            # verdict, so the file is neither pending nor failed.
+            file_report["status"] = "waiting"
+        files.append(file_report)
+    scan_waiting = bool(waiting_cids)
+    waiting_reason = WAITING_REASON_ANTIVIRUS if scan_waiting else None
+
     return {
         "paper": ref.paper,
         "version": n,
         "versionCid": ref.version_cid,
         "version_cid": ref.version_cid,
         "state": ref.state or "",
-        "files": [_file_report(dict(entry)) for entry in manifest_entries(ref.version_cid)],
+        "files": files,
+        "scanWaiting": scan_waiting,
+        "scan_waiting": scan_waiting,
+        "waitingReason": waiting_reason,
+        "waiting_reason": waiting_reason,
         "checksRan": checks_ran,
         "checks_ran": checks_ran,
         "similarity": {"pct": similarity_pct},
@@ -235,8 +303,13 @@ def get_paper_checks(
 
     A version the safety scan held answers with its per-file verdicts and
     ``checksRan`` false rather than the pending 404; see :func:`_scan_held`.
+    A version still in ``scanning`` whose files' latest findings are
+    ``av_unavailable`` only answers that it is waiting for the node's
+    antivirus (``scanWaiting`` true) rather than the pending 404; see
+    :func:`_waiting_file_cids`.
     """
     from app.modules.reading import visibility
+    from app.modules.submissions import SCANNING
 
     ref = _resolve(paper_id, n)
     if ref is None:
@@ -252,9 +325,15 @@ def get_paper_checks(
     if result is None:
         # The advisory checks run only after a clean scan.  A version the scan
         # held has its per-file verdicts instead, which say which file failed
-        # and why; anything else has no results yet.
+        # and why; a version waiting for the node's antivirus says so, because
+        # from the outside it looks exactly like a scan that never finishes;
+        # anything else has no results yet.
         if _scan_held(ref.version_cid, ref.state):
             return _report(ref, n, None)
+        if ref.state == SCANNING:
+            waiting = _waiting_file_cids(ref.version_cid)
+            if waiting is not None:
+                return _report(ref, n, None, waiting_cids=waiting)
         raise _checks_pending(ref.version_cid)
 
     return _report(ref, n, result)

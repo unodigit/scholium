@@ -48,7 +48,10 @@ that is *still open*: a notice about something finished is not an action.
     paper is listed.  The item names the file that failed and links to the
     version's status tracker; there is no decision, so there is no appeal
     wording.  A moderator's hold keeps its own ``moderation_outcomes`` item and
-    never this one.
+    never this one.  A version *waiting* for the node's antivirus is not held:
+    it gets no attention item (the node re-scans it on its own and there is
+    nothing for the author to do) -- its paper's row carries ``scanWaiting``
+    instead.
 
 ``appeal_panels``
     Every seat on ``appeal_panels`` the caller holds that is still unvoted on
@@ -70,7 +73,10 @@ A paper is the caller's when they are on the byline of any of its versions, or
 when they signed its ``paper.genesis`` (a paper may exist before its first
 version is accepted).  Each row reports the paper's stored lifecycle
 ``status``, its latest version's state, the number of versions, and how many
-reviews the whole paper has drawn -- committed and revealed.
+reviews the whole paper has drawn -- committed and revealed.  A latest version
+waiting for the node's antivirus (still ``scanning`` with inconclusive
+findings only) flags its row ``scanWaiting``: the node retries the scan on its
+own, so it is news for the row, never an action.
 
 My reviews
 ----------
@@ -122,7 +128,12 @@ from app.modules.reviews.models import (
     ReviewInvitation,
     ensure_tables as ensure_review_tables,
 )
-from app.modules.submissions import AWAITING_CONSENT, HELD as VERSION_HELD, LISTED
+from app.modules.submissions import (
+    AWAITING_CONSENT,
+    HELD as VERSION_HELD,
+    LISTED,
+    SCANNING,
+)
 from app.modules.submissions.models import (
     Authorship,
     Paper,
@@ -891,6 +902,37 @@ def _first_failed_manifest_file(version_cid: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def _version_waits_for_antivirus(version: PaperVersion) -> bool:
+    """Whether ``version`` waits in ``scanning`` for the node's antivirus.
+
+    True when the version is still in ``scanning`` and its files' latest
+    findings are inconclusive only: at least one ``av_unavailable`` (the
+    antivirus could not run) and no conclusive check anywhere.  The node
+    re-scans such a version on its own, so there is nothing for the author to
+    do: the row carries the news (``scanWaiting``), and no attention item is
+    filed for it.
+    """
+    if getattr(version, "state", None) != SCANNING:
+        return False
+    from app.modules import sanitizer
+    from app.modules.checks.pipeline import manifest_entries
+
+    waiting = False
+    for entry in manifest_entries(version.version_cid):
+        cid = entry.get("cid")
+        if not isinstance(cid, str) or not cid:
+            continue
+        for report in sanitizer.reports_for(cid):
+            if getattr(report, "result", None) != sanitizer.RESULT_FAILED:
+                # A check that passed is a verdict, not a finding.
+                continue
+            if getattr(report, "check_name", None) != sanitizer.CHECK_AV_UNAVAILABLE:
+                # A conclusive finding is the scan's verdict, not a wait.
+                return False
+            waiting = True
+    return waiting
+
+
 def _scan_holds(
     paper_by_cid: Mapping[str, Paper],
     versions_by_paper: Mapping[str, list[PaperVersion]],
@@ -1108,7 +1150,12 @@ def _my_papers(
     versions_by_paper: Mapping[str, list[PaperVersion]],
     reviews_by_version: Mapping[str, list[Review]],
 ) -> list[dict[str, Any]]:
-    """One row per paper the caller authored, with its status and review counts."""
+    """One row per paper the caller authored, with its status and review counts.
+
+    A paper whose latest version waits for the node's antivirus carries
+    ``scanWaiting`` (and ``scan_waiting``): the scan is not finishing because
+    the node's malware scanner cannot run, and the node retries it on its own.
+    """
     papers: list[dict[str, Any]] = []
     for paper_cid in paper_cids:
         paper = paper_by_cid.get(paper_cid)
@@ -1116,6 +1163,9 @@ def _my_papers(
             continue
         versions = versions_by_paper.get(paper_cid, [])
         latest = max(versions, key=lambda version: version.n) if versions else None
+        scan_waiting = (
+            _version_waits_for_antivirus(latest) if latest is not None else False
+        )
         paper_reviews = [
             review
             for version in versions
@@ -1137,6 +1187,8 @@ def _my_papers(
                 "latestVersion": latest.n if latest is not None else None,
                 "latestVersionCid": latest.version_cid if latest is not None else None,
                 "state": latest.state if latest is not None else None,
+                "scanWaiting": scan_waiting,
+                "scan_waiting": scan_waiting,
                 "reviewCount": len(paper_reviews),
                 "reviews": len(paper_reviews),
                 "revealedCount": sum(

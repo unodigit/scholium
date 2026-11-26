@@ -13,7 +13,12 @@ These tests drive the behaviour the node promises:
 * the job is idempotent per version;
 * ``GET /v1/papers/{id}/v/{n}/checks`` is mounted, is a 404 problem until the
   checks ran, and then returns the report shape
-  ``apps/web/src/features/submit/checks.ts`` parses.
+  ``apps/web/src/features/submit/checks.ts`` parses;
+* a version the safety scan held answers with its per-file verdicts (round 22),
+  and a version still ``scanning`` whose only findings are the inconclusive
+  ``av_unavailable`` answers that it is waiting for the node's antivirus
+  (``scanWaiting`` true, each such file ``waiting``) rather than the pending
+  404 (bug spec round 27, item 2).
 
 Isolation follows the rest of this suite: each test uses fresh record cids and
 asserts on its own rows.
@@ -22,7 +27,10 @@ asserts on its own rows.
 from __future__ import annotations
 
 import importlib
+import io
 import uuid
+import zipfile
+from typing import Optional
 
 import pytest
 from fastapi.testclient import TestClient
@@ -141,6 +149,18 @@ def store_version(state: str = "moderation") -> tuple[str, str, str]:
 ZIP = b"PK\x03\x04a code bundle no scan could clear"
 
 
+def clean_zip() -> bytes:
+    """A structurally clean archive: only the malware scan can judge it.
+
+    Fresh bytes per call, so every test's bundle has its own content cid and
+    its own scan reports.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("data/notes.txt", f"notes {uuid.uuid4().hex}")
+    return buffer.getvalue()
+
+
 def store_scan_held_version(state: str = "held") -> tuple[str, str, str]:
     """Store a version the safety scan held: a bundle blob whose scan failed.
 
@@ -196,6 +216,79 @@ def ensure_trigger() -> None:
     """Install the extraction trigger (normally done when the module loads)."""
     pipeline = importlib.import_module("app.modules.checks.pipeline")
     pipeline.ensure_subscribed()
+
+
+def store_waiting_version(*, with_pdf: bool = False) -> tuple[str, str, str, Optional[str]]:
+    """Store a version waiting for the node's antivirus to come back.
+
+    What the scanner leaves behind on a node without ``CLAMD_SOCKET`` (round
+    27, bug 1): the manifest's eager file scan can find nothing against a
+    clean archive except the inconclusive ``av_unavailable``, so the bundle's
+    blob keeps its ``scanning`` verdict -- an inconclusive finding is not a
+    failure -- and the version, stored in ``scanning``, never reaches the
+    advisory checks, so no ``check_results`` row exists.  With ``with_pdf``
+    the manifest also names a clean PDF, cleared to ``passed`` ahead of the
+    version.
+
+    Returns ``(version_cid, paper_cid, bundle_cid, pdf_cid)``; ``pdf_cid`` is
+    ``None`` unless ``with_pdf``.
+    """
+    from app.modules.submissions.models import ensure_tables
+
+    version_cid = new_record_cid()
+    paper_cid = new_record_cid("test.paper")
+    bundle_bytes = clean_zip()
+    bundle = content.store_bytes(bundle_bytes, media_type="application/zip")
+    files = [
+        {
+            "path": "code.zip",
+            "cid": str(bundle.cid),
+            "size": len(bundle_bytes),
+            "mediaType": "application/zip",
+            "role": "code",
+        }
+    ]
+    pdf_cid: Optional[str] = None
+    if with_pdf:
+        pdf = content.store_bytes(PDF, media_type="application/pdf")
+        pdf_cid = str(pdf.cid)
+        content.set_scan_status(pdf.cid, content.SCAN_PASSED)
+        files.append(
+            {
+                "path": "main.pdf",
+                "cid": pdf_cid,
+                "size": len(PDF),
+                "mediaType": "application/pdf",
+                "role": "manuscript",
+            }
+        )
+    manifest_cid = append_manifest(files)
+    # The finding the scan leaves on record -- the eager file scan records it
+    # itself when its subscription is live; recording it here keeps the scene
+    # whatever the subscriber state.
+    sanitizer.record_finding(
+        str(bundle.cid),
+        sanitizer.CHECK_AV_UNAVAILABLE,
+        "ClamAV (clamd) is unavailable: CLAMD_SOCKET is not set",
+    )
+
+    ensure_tables()
+    with db.SessionLocal() as session:
+        session.add(
+            PaperVersion(
+                version_cid=version_cid,
+                paper_cid=paper_cid,
+                n=1,
+                title=TITLE,
+                abstract="An abstract.",
+                manifest_cid=manifest_cid,
+                licence="CC-BY-4.0",
+                prev_cid=None,
+                state="scanning",
+            )
+        )
+        session.commit()
+    return version_cid, paper_cid, str(bundle.cid), pdf_cid
 
 
 def enter_moderation(version_cid: str, paper_cid: str) -> None:
@@ -419,6 +512,115 @@ def test_a_version_still_scanning_keeps_the_checks_pending_404(client):
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/problem+json")
     assert "have not run yet" in response.json()["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# A version waiting for the node's antivirus (round 27, bug 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_version_waiting_for_the_antivirus_answers_scan_waiting_true(client):
+    version_cid, paper_cid, bundle_cid, _ = store_waiting_version()
+
+    response = client.get(
+        f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator_headers()
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["versionCid"] == version_cid
+    assert report["state"] == "scanning"
+    # The answer says the scan is waiting on the node's antivirus, in both
+    # spellings, so the tracker can say why the scan is not finishing.
+    assert report["scanWaiting"] is True
+    assert report["scan_waiting"] is True
+    assert report["waitingReason"] == "antivirus_unavailable"
+    assert report["waiting_reason"] == "antivirus_unavailable"
+    # The advisory checks run only after a clean scan, so they did not run.
+    assert report["checksRan"] is False
+    assert report["checks_ran"] is False
+    assert report["similarityPct"] is None
+    assert report["referencesTotal"] is None
+    assert report["metadataMatch"] is None
+    # The file the scan could not clear is waiting, not failed: there is no
+    # finding against the author, and nothing for them to fix.
+    assert report["files"] == [
+        {
+            "path": "code.zip",
+            "cid": bundle_cid,
+            "role": "code",
+            "status": "waiting",
+            "failedChecks": ["av_unavailable"],
+            "detail": "ClamAV (clamd) is unavailable: CLAMD_SOCKET is not set",
+        }
+    ]
+
+
+def test_a_waiting_answer_keeps_the_other_files_statuses(client):
+    _version_cid, paper_cid, _bundle_cid, _pdf_cid = store_waiting_version(with_pdf=True)
+
+    response = client.get(
+        f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator_headers()
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["scanWaiting"] is True
+    # Only the file the antivirus could not scan waits; the cleared PDF keeps
+    # the verdict its own scan gave it.
+    assert {file["path"]: file["status"] for file in report["files"]} == {
+        "code.zip": "waiting",
+        "main.pdf": "passed",
+    }
+
+
+@pytest.mark.parametrize("state", ["held", "rejected"])
+def test_a_scan_held_answer_says_it_is_not_waiting(client, state):
+    # The same av_unavailable finding, but on a version the scan held: the
+    # conclusive-hold answer of round 22 is unchanged and never claims a wait.
+    _version_cid, paper_cid, _bundle_cid = store_scan_held_version(state)
+
+    response = client.get(
+        f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator_headers()
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["files"][0]["status"] == "failed"
+    assert report["scanWaiting"] is False
+    assert report["scan_waiting"] is False
+    assert report["waitingReason"] is None
+    assert report["waiting_reason"] is None
+
+
+def test_a_normal_scan_in_progress_is_never_reported_as_waiting(client):
+    # A scan progressing normally has no inconclusive finding on record, so it
+    # is not waiting on the antivirus: the version keeps the checks-pending 404.
+    _version_cid, paper_cid, _ = store_version(state="scanning")
+
+    response = client.get(
+        f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator_headers()
+    )
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert "have not run yet" in response.json()["detail"]
+
+    # And the answer the checks return once they ran carries scanWaiting false.
+    version_cid, paper_cid, _ = store_version()
+    ensure_trigger()
+    enter_moderation(version_cid, paper_cid)
+
+    response = client.get(
+        f"/v1/papers/{short_id_for(paper_cid)}/v/1/checks", headers=moderator_headers()
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["scanWaiting"] is False
+    assert report["scan_waiting"] is False
+    assert report["waitingReason"] is None
+    assert report["waiting_reason"] is None
 
 
 def derive_unknown_short_id() -> str:
