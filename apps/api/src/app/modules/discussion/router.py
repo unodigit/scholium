@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.errors import ProblemException
@@ -103,12 +103,17 @@ def _first(payload: Any, keys: tuple[str, ...]) -> Any:
 )
 def get_threads(
     paper_id: str,
+    response: Response,
     principal: Optional[Principal] = Depends(_optional_principal),
 ) -> dict[str, Any]:
     """Return the paper's threads, replies ordered by helpful votes then time."""
     ref = service.resolve_paper(paper_id)
     if ref is None:
         raise ProblemException(404, f"No paper {paper_id!r}.")
+    # A signed-in read is viewer-specific (muted DIDs, and a hidden post's
+    # own_text for its author), so it must not be served from a shared cache.
+    if principal is not None:
+        response.headers["Cache-Control"] = "private, no-store"
     return service.threads_for(ref, viewer_did=None if principal is None else principal.did)
 
 

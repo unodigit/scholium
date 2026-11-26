@@ -227,3 +227,31 @@ def test_a_release_restores_the_post_body(client):
     assert document["text"] == text
     assert not document.get("hidden")
     assert payload["count"] == 1
+
+
+def test_a_signed_in_threads_read_carries_no_store(client):
+    author = Member(tier=1)
+    paper = publish(author)
+    text = f"the hidden body {uuid.uuid4().hex}"
+    hidden = post(client, author, paper, text)
+    _hide(_moderator(), hidden["id"], "Off-topic and abusive.")
+
+    response = client.get(f"/v1/papers/{paper.short_id}/threads", headers=author.headers)
+
+    assert response.status_code == 200
+    assert _find(response.json(), hidden["id"])["own_text"] == text
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_an_anonymous_threads_read_does_not_add_no_store(client):
+    author = Member(tier=1)
+    paper = publish(author)
+    text = f"the hidden body {uuid.uuid4().hex}"
+    hidden = post(client, author, paper, text)
+    _hide(_moderator(), hidden["id"], "Off-topic and abusive.")
+
+    response = client.get(f"/v1/papers/{paper.short_id}/threads")
+
+    assert response.status_code == 200
+    assert _find(response.json(), hidden["id"]).get("own_text") is None
+    assert response.headers.get("cache-control") != "private, no-store"
