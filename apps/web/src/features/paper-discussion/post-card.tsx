@@ -39,6 +39,7 @@ import {
   describeActionError,
   helpfulLabel,
   hiddenOwnNotice,
+  isAnnotationPost,
   ownHiddenText,
   postAuthorLabel,
   profilePath,
@@ -154,6 +155,9 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
     own === null
       ? ""
       : `${own.full.slice(0, 40).trimEnd()}${own.full.length > 40 ? "…" : ""}`;
+  // D3: a hidden annotation names itself an annotation — "Show my annotation" —
+  // where a hidden thread post or reply says "post".
+  const ownNoun = isAnnotationPost(post) ? "annotation" : "post";
 
   const togglePanel = (next: Panel) => {
     setHelpfulFailure(null);
@@ -237,7 +241,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
                 </p>
               ) : (
                 <p className="pd-post__text pd-post__text--hidden" data-hidden="true">
-                  {hiddenOwnNotice(post.hiddenReason)}{" "}
+                  {hiddenOwnNotice(post.hiddenReason, post)}{" "}
                   {actions.appeal !== undefined ? (
                     <button
                       type="button"
@@ -274,7 +278,7 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
                       aria-controls={ownId}
                       onClick={() => setOwnOpen((current) => !current)}
                     >
-                      {ownOpen ? "Hide my post" : "Show my post"}
+                      {ownOpen ? `Hide my ${ownNoun}` : `Show my ${ownNoun}`}
                       <span className="pd-visually-hidden">{`, starting “${ownStart}”`}</span>
                     </button>
                   ) : null}

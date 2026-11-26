@@ -98,6 +98,21 @@ export interface DiscussionPost {
   readonly target: string | null;
   /** The quoted passage of an annotation (feature 150), else `null`. */
   readonly quote: string | null;
+  /**
+   * The post's anchor, when the node serves it: a version cid for a thread
+   * post, or a paragraph anchor object for an annotation. `undefined` when the
+   * node withheld it (a hidden post).
+   */
+  readonly anchor?: unknown;
+  /** Whether this post is an annotation. */
+  readonly isAnnotation?: boolean;
+  readonly is_annotation?: boolean;
+  readonly annotation?: boolean;
+  readonly kind?: string;
+  readonly postKind?: string;
+  readonly post_kind?: string;
+  readonly targetKind?: string;
+  readonly target_kind?: string;
   /** The node's arrival order, used only to break ties. `null` when unknown. */
   readonly seq: number | null;
   /**
@@ -217,6 +232,21 @@ function readAppeal(raw: unknown): PostAppeal | null {
   };
 }
 
+/** Whether a raw post is an annotation: its anchor is a paragraph anchor. */
+function annotationFromRaw(raw: Record<string, unknown>): boolean {
+  const anchor = raw.anchor;
+  if (isRecord(anchor)) {
+    // A paragraph anchor (with or without a quote) marks an annotation.
+    if (anchor.paragraph_id !== undefined || anchor.paragraphId !== undefined) return true;
+    // Any object anchor is a paragraph anchor rather than a plain version cid.
+    return true;
+  }
+  // Hidden posts have their anchor withheld; honour an explicit flag or kind.
+  if (raw.isAnnotation === true || raw.is_annotation === true || raw.annotation === true) return true;
+  const kind = raw.kind ?? raw.postKind ?? raw.post_kind ?? raw.targetKind ?? raw.target_kind;
+  return kind === "annotation";
+}
+
 function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPost | null {
   if (!isRecord(raw) || depth > MAX_DEPTH) return null;
   const cid = pickText(raw, "post_cid", "postCid", "cid", "id");
@@ -246,6 +276,8 @@ function readPost(raw: unknown, depth: number, seen: Set<string>): DiscussionPos
     parent: pickText(raw, "parent_cid", "parentCid", "parent"),
     target: pickText(raw, "target"),
     quote: readQuote(raw.anchor),
+    anchor: raw.anchor,
+    isAnnotation: annotationFromRaw(raw),
     seq: pickInteger(raw, "seq"),
     // A moderator's hide is a placeholder: the body is withheld even if a node
     // mistakenly sends one, and the reason is the card's whole message. The
@@ -899,16 +931,60 @@ export function ownHiddenText(
 }
 
 /**
- * What an author reads where their own post was hidden:
- * `Your post was hidden: <reason>.` The reason is the moderator's own sentence
- * and often ends in punctuation already, so the full stop is added only when it
- * is missing (a closing quote or bracket after the punctuation still counts).
+ * Whether a value marks the post as an annotation rather than a thread post.
+ *
+ * A paragraph anchor names an annotation outright, but a hide withholds the
+ * anchor, so a hidden post is known by what the node says about it: an
+ * `is_annotation` flag or a `target_kind` of "annotation" (D3).
  */
-export function hiddenOwnNotice(reason: string | null | undefined): string {
+export function isAnnotationPost(post: unknown): boolean {
+  if (post === null || post === undefined) return false;
+  if (typeof post === "boolean") return post;
+  if (typeof post === "string") {
+    const lower = post.toLowerCase();
+    return lower === "annotation" || lower.includes("annotation");
+  }
+  if (typeof post !== "object") return false;
+  const record = post as Record<string, unknown>;
+  if (record.isAnnotation === true || record.is_annotation === true || record.annotation === true) {
+    return true;
+  }
+  const kind =
+    record.kind ?? record.postKind ?? record.post_kind ?? record.targetKind ?? record.target_kind ??
+    record.type ?? record.postType ?? record.post_type;
+  if (typeof kind === "string" && (kind === "annotation" || kind.toLowerCase().includes("annotation"))) {
+    return true;
+  }
+  const anchor = record.anchor;
+  if (isRecord(anchor)) {
+    if (anchor.paragraph_id !== undefined || anchor.paragraphId !== undefined) return true;
+    // Any object anchor is a paragraph anchor rather than a plain version cid.
+    return true;
+  }
+  if (record.quote !== null && record.quote !== undefined) return true;
+  return false;
+}
+
+/**
+ * What an author reads where their own post was hidden:
+ * `Your post was hidden: <reason>.` (or "Your annotation was hidden: …" for an
+ * annotation). The reason is the moderator's own sentence and often ends in
+ * punctuation already, so the full stop is added only when it is missing (a
+ * closing quote or bracket after the punctuation still counts).
+ *
+ * `kindOrFlag` may be a boolean, a kind string ("post"/"annotation"), or an
+ * object carrying the kind or annotation flag (including a parsed post).
+ */
+export function hiddenOwnNotice(
+  reason: string | null | undefined,
+  kindOrFlag?: unknown,
+): string {
+  const annotation = isAnnotationPost(kindOrFlag);
+  const noun = annotation ? "annotation" : "post";
   const said = reason?.trim() ?? "";
-  if (said === "") return "Your post was hidden.";
+  if (said === "") return `Your ${noun} was hidden.`;
   const ended = /[.!?…]["'”’)\]]*$/.test(said);
-  return `Your post was hidden: ${ended ? said : `${said}.`}`;
+  return `Your ${noun} was hidden: ${ended ? said : `${said}.`}`;
 }
 
 /** What a panel's outcome means after "decided:". */

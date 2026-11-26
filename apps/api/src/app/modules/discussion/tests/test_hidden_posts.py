@@ -151,6 +151,56 @@ def test_only_the_author_reads_a_hidden_posts_body(client):
         assert text not in str(payload)
 
 
+def test_a_hidden_annotation_is_served_with_its_kind_not_its_anchor(client):
+    """D3: the author of a hidden annotation must read "annotation" wording.
+
+    The placeholder withholds the anchor (its ``quote`` is body), so the web
+    cannot tell an annotation from a thread post by its anchor once it is
+    hidden.  The document says which it was under ``is_annotation`` and
+    ``target_kind``, in both spellings, while a hidden thread post keeps the
+    plain "post" -- that is what lets the card say "Your annotation was
+    hidden: …" and "Show my annotation" where a hidden post says "post".
+    """
+    author = Member(tier=1)
+    paper = publish(author)
+    record = author.sign(
+        "discussion.post",
+        {
+            "target": paper.version_id,
+            "anchor": {
+                "version": paper.version_id,
+                "versionCid": paper.version_id,
+                "paragraph_id": "p-4",
+                "paragraphId": "p-4",
+                "quote": "the quoted passage",
+                "offset": 12,
+            },
+            "text": f"the hidden annotation body {uuid.uuid4().hex}",
+        },
+    )
+    response = client.post("/v1/annotations", json=record, headers=author.headers)
+    assert response.status_code == 201, response.text
+    thread = post(client, author, paper, f"a hidden thread post {uuid.uuid4().hex}")
+    moderator = _moderator()
+    _hide(moderator, record["id"], "Off topic.")
+    _hide(moderator, thread["id"], "Off topic.")
+
+    payload = threads(client, paper, author)
+
+    hidden_annotation = _find(payload, record["id"])
+    assert hidden_annotation["anchor"] is None
+    assert hidden_annotation["is_annotation"] is True
+    assert hidden_annotation["isAnnotation"] is True
+    assert hidden_annotation["target_kind"] == "annotation"
+    assert hidden_annotation["targetKind"] == "annotation"
+    hidden_post = _find(payload, thread["id"])
+    assert hidden_post["anchor"] is None
+    assert hidden_post["is_annotation"] is False
+    assert hidden_post["isAnnotation"] is False
+    assert hidden_post["target_kind"] == "post"
+    assert hidden_post["targetKind"] == "post"
+
+
 def test_a_release_restores_the_post_body(client):
     author = Member(tier=1)
     paper = publish(author)

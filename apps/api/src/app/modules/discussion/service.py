@@ -549,6 +549,10 @@ def _hidden_document(
     post_cid = row.post_cid
     author = row.author_did
     parent = row.parent_cid
+    anchor = getattr(row, "anchor", None)
+    is_annotation = isinstance(anchor, Mapping) and bool(
+        anchor.get("paragraph_id") or anchor.get("paragraphId")
+    )
     reason = getattr(hidden, "reason", None)
     hidden_at = getattr(hidden, "hidden_at", None)
     decision_cid = getattr(hidden, "decision_cid", None)
@@ -569,6 +573,10 @@ def _hidden_document(
         "target": None,
         "paper": None,
         "anchor": None,
+        "is_annotation": is_annotation,
+        "isAnnotation": is_annotation,
+        "target_kind": "annotation" if is_annotation else "post",
+        "targetKind": "annotation" if is_annotation else "post",
         "parent": parent,
         "parent_cid": parent,
         "parentCid": parent,

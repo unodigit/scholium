@@ -1271,6 +1271,67 @@ describe("DiscussionTab: the author's hidden post", () => {
     expect(within(card("mine")).queryByText(text)).toBeNull();
   });
 
+  it("calls the author's hidden annotation an annotation, and their hidden post a post", () => {
+    // D3: an annotation the moderators hid reads with its own noun, while a
+    // hidden thread post keeps the plain wording. The hide withholds the
+    // annotation's anchor, so the card knows its kind from the node's flag on
+    // the parsed post (`is_annotation`, read into `isAnnotation`).
+    const long = "The lemma's case n = 0 is missing from the proof. ".repeat(8).trim();
+    renderTab(
+      { viewerDid: ME },
+      {
+        paper: SHORT,
+        paperCid: "bafyrei-genesis",
+        threads: [
+          post("mine-annotation", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision-1",
+            text: null,
+            ownText: `An annotation on the lemma. ${long}`,
+            isAnnotation: true,
+          }),
+          post("mine-post", {
+            author: ME,
+            hidden: true,
+            hiddenReason: "Off topic.",
+            decisionCid: "bafyrei-decision-2",
+            text: null,
+            ownText: `A thread post about the lemma. ${long}`,
+          }),
+        ],
+      },
+    );
+
+    expect(
+      within(card("mine-annotation")).getByText("Your annotation was hidden: Off topic."),
+    ).toBeTruthy();
+    expect(within(card("mine-post")).getByText("Your post was hidden: Off topic.")).toBeTruthy();
+    // Neither row borrows the other's notice.
+    expect(within(card("mine-annotation")).queryByText(/Your post was hidden/)).toBeNull();
+    expect(within(card("mine-post")).queryByText(/Your annotation was hidden/)).toBeNull();
+
+    const showAnnotation = within(card("mine-annotation")).getByRole("button", {
+      name: /Show my annotation/,
+    });
+    const showPost = within(card("mine-post")).getByRole("button", { name: /Show my post/ });
+    expect(
+      within(card("mine-annotation")).queryByRole("button", { name: /Show my post/ }),
+    ).toBeNull();
+    expect(
+      within(card("mine-post")).queryByRole("button", { name: /Show my annotation/ }),
+    ).toBeNull();
+
+    fireEvent.click(showAnnotation);
+    fireEvent.click(showPost);
+
+    expect(
+      within(card("mine-annotation")).getByRole("button", { name: /Hide my annotation/ }),
+    ).toBeTruthy();
+    expect(within(card("mine-post")).getByRole("button", { name: /Hide my post/ })).toBeTruthy();
+  });
+
   it("offers no Show my post when the whole post already fits", () => {
     renderTab({ viewerDid: ME }, ownHiddenBody("Too short to hide."));
 

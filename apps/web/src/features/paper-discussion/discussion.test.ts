@@ -26,6 +26,7 @@ import {
   formatDateTime,
   helpfulEndpoint,
   helpfulLabel,
+  isAnnotationPost,
   loadThreads,
   markPostHelpful,
   orderThreads,
@@ -248,6 +249,38 @@ describe("parseThreads", () => {
       ],
     });
     expect(parsed.threads.map((thread) => thread.ownText)).toEqual([null, null]);
+  });
+
+  it("keeps an annotation's kind after a hide withholds its anchor", () => {
+    const parsed = parseThreads({
+      threads: [
+        // A hidden annotation: the node withholds the anchor (its quote is
+        // body) and says which it was, so the author's row can name it (D3).
+        {
+          post_cid: "hidden-annotation",
+          author: ME,
+          hidden: true,
+          hidden_reason: "Off topic.",
+          anchor: null,
+          is_annotation: true,
+        },
+        { post_cid: "hidden-post", author: ME, hidden: true, hidden_reason: "Off topic.", anchor: null },
+        // A visible annotation: the paragraph anchor itself says what it is,
+        // with or without a quote.
+        { post_cid: "visible-annotation", author: ME, text: "Check this.", anchor: { version: "bafyrei-v1", paragraph_id: "p-4", quote: "the passage" } },
+        { post_cid: "unquoted-annotation", author: ME, text: "Also this.", anchor: { paragraphId: "p-7" } },
+        // A thread post or reply anchors to a plain version cid.
+        { post_cid: "thread", author: ME, text: "Hi.", anchor: "bafyrei-v1" },
+      ],
+    });
+
+    expect(parsed.threads.map((thread) => thread.isAnnotation)).toEqual([
+      true,
+      false,
+      true,
+      true,
+      false,
+    ]);
   });
 
   it("treats an empty list as no discussion, not as an error", () => {
@@ -947,6 +980,55 @@ describe("words and formats", () => {
     expect(hiddenOwnNotice(null)).toBe("Your post was hidden.");
     expect(hiddenOwnNotice("   ")).toBe("Your post was hidden.");
     expect(hiddenOwnNotice(undefined)).toBe("Your post was hidden.");
+  });
+
+  it("calls the author's hidden annotation an annotation, their hidden post a post", () => {
+    // D3: the same punctuation rule, with the annotation's own noun — the row
+    // must name what the author is invited to appeal.
+    expect(hiddenOwnNotice("Needs the claim clarified", { isAnnotation: true })).toBe(
+      "Your annotation was hidden: Needs the claim clarified.",
+    );
+    expect(hiddenOwnNotice("Needs the claim clarified.", { isAnnotation: true })).toBe(
+      "Your annotation was hidden: Needs the claim clarified.",
+    );
+    expect(hiddenOwnNotice("Is this on topic?", { isAnnotation: true })).toBe(
+      "Your annotation was hidden: Is this on topic?",
+    );
+    expect(hiddenOwnNotice("  Off topic!  ", { isAnnotation: true })).toBe(
+      "Your annotation was hidden: Off topic!",
+    );
+    expect(hiddenOwnNotice("Quoted “as is.”", { isAnnotation: true })).toBe(
+      "Your annotation was hidden: Quoted “as is.”",
+    );
+    expect(hiddenOwnNotice(null, { isAnnotation: true })).toBe("Your annotation was hidden.");
+    expect(hiddenOwnNotice("   ", { isAnnotation: true })).toBe("Your annotation was hidden.");
+    expect(hiddenOwnNotice(undefined, { isAnnotation: true })).toBe("Your annotation was hidden.");
+    // A hidden thread post or reply keeps the plain wording — flag or no flag.
+    expect(hiddenOwnNotice("Off topic.", { isAnnotation: false })).toBe(
+      "Your post was hidden: Off topic.",
+    );
+    expect(hiddenOwnNotice(null, { isAnnotation: false })).toBe("Your post was hidden.");
+    expect(hiddenOwnNotice("Off topic.")).toBe("Your post was hidden: Off topic.");
+  });
+
+  it("tells an annotation from its anchor, its kind, or the node's flag", () => {
+    // A paragraph anchor, quoted or not, marks an annotation; a thread post's
+    // anchor is a plain version cid.
+    expect(isAnnotationPost({ anchor: { paragraph_id: "p-4", quote: "the passage" } })).toBe(true);
+    expect(isAnnotationPost({ anchor: { paragraphId: "p-7" } })).toBe(true);
+    expect(isAnnotationPost({ anchor: "bafyrei-v1" })).toBe(false);
+    // A hidden post's anchor is withheld, so the kind comes from the node.
+    expect(isAnnotationPost({ isAnnotation: true })).toBe(true);
+    expect(isAnnotationPost({ is_annotation: true })).toBe(true);
+    expect(isAnnotationPost({ annotation: true })).toBe(true);
+    expect(isAnnotationPost({ targetKind: "annotation" })).toBe(true);
+    expect(isAnnotationPost({ target_kind: "annotation" })).toBe(true);
+    expect(isAnnotationPost({ kind: "post" })).toBe(false);
+    // A parsed post carries the node's flag alongside a withheld anchor.
+    expect(isAnnotationPost({ cid: "a", anchor: null, isAnnotation: true })).toBe(true);
+    expect(isAnnotationPost({ cid: "p", anchor: null, isAnnotation: false })).toBe(false);
+    expect(isAnnotationPost(null)).toBe(false);
+    expect(isAnnotationPost(undefined)).toBe(false);
   });
 
   it("collapses the author's own hidden post to the opening words the card shows", () => {
