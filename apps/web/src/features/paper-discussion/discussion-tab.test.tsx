@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, NetworkError } from "../../lib/api";
 import { PasskeyCancelledError } from "../web-auth/errors";
@@ -1774,5 +1774,173 @@ describe("DiscussionTab: the region", () => {
     expect(live?.getAttribute("aria-live")).toBe("polite");
     expect(live?.getAttribute("role")).toBe("status");
     expect(live?.textContent).toBe("");
+  });
+});
+
+describe("DiscussionTab: post anchors (#post-<cid>)", () => {
+  // jsdom has no layout, so it does not implement scrollIntoView: install a
+  // recorder on the prototype for these tests, and take it away again.
+  const proto = Element.prototype as { scrollIntoView?: unknown };
+  const hadScrollIntoView = "scrollIntoView" in proto;
+  const originalScrollIntoView = proto.scrollIntoView;
+  let scrollIntoView: ReturnType<typeof vi.fn>;
+
+  /** The elements `scrollIntoView` was called on, in order. */
+  function scrolledTo(): Element[] {
+    return scrollIntoView.mock.contexts as Element[];
+  }
+
+  beforeEach(() => {
+    scrollIntoView = vi.fn();
+    proto.scrollIntoView = scrollIntoView;
+  });
+
+  afterEach(() => {
+    if (hadScrollIntoView) proto.scrollIntoView = originalScrollIntoView;
+    else delete proto.scrollIntoView;
+  });
+
+  it("gives every post's card an id of post-<cid>, replies included", () => {
+    renderTab();
+    for (const cid of ["quiet", "loud", "middle", "reply-low", "reply-high"]) {
+      expect(card(cid).id).toBe(`post-${cid}`);
+    }
+    expect(document.querySelectorAll("[id^='post-']")).toHaveLength(5);
+  });
+
+  it("uses the cid exactly as the API sent it", () => {
+    renderTab({}, {
+      paper: SHORT,
+      paperCid: "bafyrei-genesis",
+      threads: [post("bafyreiAbC123xyz")],
+    });
+    expect(document.getElementById("post-bafyreiAbC123xyz")).toBe(card("bafyreiAbC123xyz"));
+  });
+
+  it("makes the card focusable by script and keeps the sticky header off the target", () => {
+    renderTab();
+    expect(card("loud").getAttribute("tabindex")).toBe("-1");
+    // The 64px sticky nav plus 8px of air; jsdom folds the sum, a browser does too.
+    expect(card("loud").style.scrollMarginTop).toMatch(/^calc\((?:64px \+ 8px|72px)\)$/);
+  });
+
+  it("scrolls the named post into view once the threads have rendered", async () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    let resolve: (data: DiscussionData) => void = () => undefined;
+    const load = vi.fn<LoadThreads>(() => new Promise((done) => (resolve = done)));
+    render(<DiscussionTab paperId={SHORT} signedIn load={load} />);
+
+    // The posts do not exist yet: there is nothing to scroll to.
+    expect(document.getElementById("post-middle")).toBeNull();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    await act(async () => resolve(threads()));
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrolledTo()[0]).toBe(card("middle"));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+  });
+
+  it("scrolls to a post the server already rendered, on mount", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-loud`);
+    renderTab();
+    expect(scrolledTo()).toEqual([card("loud")]);
+  });
+
+  it("scrolls to a reply too", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-reply-high`);
+    renderTab();
+    expect(scrolledTo()).toEqual([card("reply-high")]);
+  });
+
+  it("moves focus to the post it scrolled to", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    renderTab();
+    expect(document.activeElement).toBe(card("middle"));
+  });
+
+  it("finds a post whose cid the margin link had to percent-encode", () => {
+    // annotations.tsx builds the link with encodeURIComponent(cid).
+    const cid = "cid with space/and slash";
+    stubLocation(`/discussion/${SHORT}/v1#post-${encodeURIComponent(cid)}`);
+    renderTab({}, { paper: SHORT, paperCid: "bafyrei-genesis", threads: [post(cid)] });
+    expect(scrolledTo()).toEqual([card(cid)]);
+  });
+
+  it("does nothing for a hash that names no post", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-nobody`);
+    const before = document.activeElement;
+    renderTab();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(before);
+  });
+
+  it("does nothing when there is no hash", () => {
+    stubLocation(`/discussion/${SHORT}/v1`);
+    renderTab();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("leaves alone an element it does not own that the hash happens to name", () => {
+    const outside = document.createElement("div");
+    outside.id = "discussion";
+    document.body.append(outside);
+    try {
+      stubLocation(`/papers/${SHORT}#discussion`);
+      renderTab();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(document.activeElement).not.toBe(outside);
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it("scrolls once per hash: re-reading the threads does not move the reader again", async () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    const load = vi.fn<LoadThreads>(async () => threads());
+    renderTab({ load, viewerDid: ME });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // The reader scrolls away, then an annotation saved elsewhere re-reads.
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(ANNOTATION_CREATED_EVENT, { detail: { paperId: SHORT } }),
+      );
+    });
+    await waitFor(() => expect(load).toHaveBeenCalled());
+    await act(async () => undefined);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrolls again on a later hashchange to another post", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    renderTab();
+    expect(scrolledTo()).toEqual([card("middle")]);
+
+    window.location.hash = "#post-quiet";
+    act(() => {
+      window.dispatchEvent(new Event("hashchange"));
+    });
+
+    expect(scrolledTo()).toEqual([card("middle"), card("quiet")]);
+    expect(document.activeElement).toBe(card("quiet"));
+  });
+
+  it("ignores a hashchange to an unknown hash, and stops listening when it unmounts", () => {
+    stubLocation(`/discussion/${SHORT}/v1#post-middle`);
+    const { unmount } = renderTab();
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    window.location.hash = "#post-nobody";
+    act(() => {
+      window.dispatchEvent(new Event("hashchange"));
+    });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    unmount();
+    window.location.hash = "#post-quiet";
+    window.dispatchEvent(new Event("hashchange"));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
 });

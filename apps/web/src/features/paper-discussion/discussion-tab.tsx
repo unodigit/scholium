@@ -238,6 +238,12 @@ export function DiscussionTab({
   const viewerKeyRef = useRef<string | null>(viewerKey);
   viewerKeyRef.current = viewerKey;
 
+  // The tab's own element: a hash is only ours when it names something inside.
+  const rootRef = useRef<HTMLElement>(null);
+  // The hash already scrolled to, so a re-render or a re-read does not move the
+  // reader a second time for the same hash.
+  const handledHashRef = useRef<string | null>(null);
+
   // The server already asked: with an answer, or with a failure the reader is
   // looking at. Either way only a retry asks again, so an error the server
   // reported is not replaced by a spinner the moment the page hydrates.
@@ -408,8 +414,40 @@ export function DiscussionTab({
     appeal,
   };
 
+  // Bring the post a link names (`#post-<cid>`, as the margin's "Appeal" link
+  // writes it) into view and move focus to it. The posts only exist once the
+  // threads have loaded, so this waits for the ready view, and it runs once per
+  // hash: a re-read does not move the reader back, a later `hashchange` does.
+  // A hash that names nothing inside this tab does nothing. It re-runs when the
+  // threads change, so a post that only arrives in a later read is found too.
+  useEffect(() => {
+    if (view.kind !== "ready") return;
+    const follow = () => {
+      const hash = window.location.hash;
+      if (hash === "" || hash === handledHashRef.current) return;
+      let id = hash.slice(1);
+      try {
+        // The margin link percent-encodes the cid; the element id is the cid.
+        id = decodeURIComponent(id);
+      } catch {
+        // A malformed escape is taken literally.
+      }
+      const target = document.getElementById(id);
+      if (target === null || rootRef.current?.contains(target) !== true) return;
+      handledHashRef.current = hash;
+      target.scrollIntoView?.({ block: "start" });
+      // The scroll above is the one that counts (it honours the card's scroll
+      // margin); focus must not move the page again.
+      target.focus({ preventScroll: true });
+    };
+    follow();
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, [view.kind, data]);
+
   return (
     <section
+      ref={rootRef}
       className="pd-tab"
       aria-label="Discussion"
       aria-busy={view.kind === "loading"}

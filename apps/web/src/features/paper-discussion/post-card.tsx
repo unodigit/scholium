@@ -87,6 +87,9 @@ export interface PostCardProps {
   actions: PostActions;
 }
 
+/** Clears the sticky global nav (64px bar) with 8px of air, as everywhere else. */
+const POST_SCROLL_MARGIN_TOP = "calc(64px + 8px)";
+
 type Panel = "reply" | "report";
 type FocusTarget = "reply" | "report" | "post" | "reported" | "appeal";
 
@@ -199,7 +202,15 @@ export function PostCard({ post, depth, actions }: PostCardProps) {
 
   return (
     <li className="pd-item" data-post={post.cid} data-depth={depth}>
-      <div className="pd-post" ref={postRef} tabIndex={-1}>
+      <div
+        className="pd-post"
+        ref={postRef}
+        tabIndex={-1}
+        // The anchor the margin's "Appeal" link points at (#post-<cid>): the
+        // record's cid as the API sent it. A reply is a post and has one too.
+        id={`post-${post.cid}`}
+        style={{ scrollMarginTop: POST_SCROLL_MARGIN_TOP }}
+      >
         <header className="pd-post__head">
           {authorName !== "" ? (
             <p className="pd-post__author">
