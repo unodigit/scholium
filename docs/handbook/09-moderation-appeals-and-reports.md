@@ -59,7 +59,7 @@ Open an item (**/mod/{id}**) to see the paper beside the decision form:
 4. Read the **Preview of what the author will see**.
 5. Choose **Sign decision**. The form reminds you: "This decision is a public signed record."
 
-Only versions that have finished co-author consent and the safety scan can be decided. Versions held by the safety scan wait for the author to submit a fixed version.
+Only versions that have finished co-author consent and the safety scan can be decided. Versions held by the safety scan wait for the author to submit a fixed version. Versions still waiting for the safety scan are not in the moderation queue yet.
 
 ## Appeals
 

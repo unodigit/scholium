@@ -135,6 +135,8 @@ export interface MyPaper {
   readonly latestVersion: number | null;
   readonly latestVersionCid: string | null;
   readonly state: string | null;
+  readonly scanWaiting?: boolean;
+  readonly scan_waiting?: boolean;
   readonly reviewCount: number;
   readonly reviews: number;
   readonly revealedCount: number;
@@ -308,6 +310,8 @@ function parseMyPaper(value: unknown, index: number): MyPaper {
         : Math.trunc(readNumber(value.latestVersion) as number),
     latestVersionCid: readText(value.latestVersionCid) ?? readText(value.latest_version_cid),
     state: readText(value.state),
+    scanWaiting: readBool(value.scanWaiting) || readBool(value.scan_waiting),
+    scan_waiting: readBool(value.scanWaiting) || readBool(value.scan_waiting),
     reviewCount: Math.max(0, Math.trunc(reviewCount)),
     reviews: Math.max(0, Math.trunc(reviewCount)),
     revealedCount: Math.max(0, Math.trunc(revealedCount)),
@@ -737,16 +741,20 @@ function sentenceCase(text: string): string {
  * says so instead of repeating the hold.
  */
 export function moderationChip(
-  paper: Pick<MyPaper, "state">,
-  options: { readonly appealPending?: boolean } = {},
+  paper: Pick<MyPaper, "state"> & { readonly scanWaiting?: boolean },
+  options: { readonly appealPending?: boolean; readonly scanWaiting?: boolean } = {},
 ): ModerationChip | null {
   const state = paper.state;
   if (state === null) {
     return null;
   }
+  const scanWaiting = paper.scanWaiting === true || options.scanWaiting === true;
   const stopped = state === "held" || state === "rejected";
   if (stopped && options.appealPending === true) {
     return { label: "Appeal pending", tone: "pending", state, stopped };
+  }
+  if (state === "scanning" && scanWaiting) {
+    return { label: "Waiting for the safety scan", tone: "neutral", state, stopped: false };
   }
   const known = MODERATION_STATES[state];
   return {

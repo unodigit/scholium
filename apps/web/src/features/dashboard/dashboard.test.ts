@@ -203,6 +203,37 @@ describe("parseDashboard", () => {
     expect(paper.link).toBe("/p/sch:k3f9-q2xz-7mwd");
   });
 
+  it("reads the row flag that its version is waiting for the safety scan", () => {
+    const waiting = parseDashboard({
+      did: "did:key:z6Mk",
+      needs_attention: { count: 0 },
+      my_papers: [{ state: "scanning", scanWaiting: true }],
+      my_reviews: [],
+    }).my_papers[0];
+
+    expect(waiting.scanWaiting).toBe(true);
+    expect(waiting.scan_waiting).toBe(true);
+
+    // The API serves the snake_case spelling beside the camelCase one; either
+    // one says the row is waiting.
+    const snake = parseDashboard({
+      did: "did:key:z6Mk",
+      needs_attention: { count: 0 },
+      my_papers: [{ state: "scanning", scan_waiting: true }],
+      my_reviews: [],
+    }).my_papers[0];
+    expect(snake.scanWaiting).toBe(true);
+
+    // A version whose scan is simply running is not waiting for it.
+    const scanning = parseDashboard({
+      did: "did:key:z6Mk",
+      needs_attention: { count: 0 },
+      my_papers: [{ state: "scanning" }],
+      my_reviews: [],
+    }).my_papers[0];
+    expect(scanning.scanWaiting).toBe(false);
+  });
+
   it("tells a sealed review awaiting the author from a revealed one", () => {
     const [sealedReview, revealedReview] = parseDashboard(PAYLOAD).my_reviews;
 
@@ -1203,6 +1234,29 @@ describe("moderationChip", () => {
     expect(moderationChip(paper("rejected"))?.label).toBe("Rejected");
     expect(moderationChip(paper("listed"))?.label).toBe("Listed");
     expect(moderationChip(paper("awaiting_consent"))?.label).toBe("Awaiting consent");
+  });
+
+  it("says Waiting for the safety scan while the node cannot run its scan", () => {
+    const waiting = { ...paper("scanning"), scanWaiting: true } as MyPaper;
+
+    const chip = moderationChip(waiting);
+    expect(chip?.label).toBe("Waiting for the safety scan");
+    expect(chip?.tone).toBe("neutral");
+    expect(chip?.stopped).toBe(false);
+
+    // The flag can also be passed beside the paper rather than on its row.
+    expect(moderationChip(paper("scanning"), { scanWaiting: true })?.label).toBe(
+      "Waiting for the safety scan",
+    );
+  });
+
+  it("still says Scanning for a scan that is running normally", () => {
+    expect(moderationChip(paper("scanning"))?.label).toBe("Scanning");
+    expect(moderationChip(paper("scanning"), { scanWaiting: false })?.label).toBe("Scanning");
+    // A waiting flag never changes an unrelated state's word.
+    expect(moderationChip({ ...paper("listed"), scanWaiting: true } as MyPaper)?.label).toBe(
+      "Listed",
+    );
   });
 
   it("says Appeal pending for a held or rejected paper whose appeal awaits a panel", () => {

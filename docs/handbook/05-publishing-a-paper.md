@@ -149,6 +149,8 @@ Before anyone can open your files, Scholium inspects them:
 
 Files are inspected, never altered. If a file fails, the version is **held** and the tracker shows, for example, "paper.pdf failed the safety scan: JavaScript…" with **Needs fixing** and **Replace in Files**. Fix the file and submit a new version.
 
+If this node cannot run its malware scan, the version waits instead of being held: it is scanned again automatically, and there is nothing for you to do. Files are never opened or listed before they pass. A file that is too large for the malware scan is the exception — it is held, and the tracker names it "too large for the malware scan".
+
 ## Automated checks
 
 When your version reaches moderation, Scholium runs three checks. You and the moderators see the results before listing; everyone sees them after.
