@@ -144,9 +144,16 @@ def test_an_api_with_a_remote_sandbox_sends_a_papers_bundle_to_it(nodes):
             timeout=120, what="the AI pre-review",
         )
         assert review["advisory"] is True
-        # The service's answer came back through the API into the review: where the
-        # code did not run (no container engine here, or no image), the reproducibility
-        # agent says so and quotes the line the *service* wrote for the run.
+        # The service's answer came back through the API into the review. Whether the
+        # code ran depends on this machine's container engine (as in the test above):
+        # where it did not run (no engine, or no image) the reproducibility agent quotes
+        # the line the *service* wrote for the run; where it ran, it quotes the
+        # bundle's own output. Either way every quoted line is one the run produced.
         reproducibility = next(g for g in review["agents"] if g["agent"] == "reproducibility")
         quoted = [f["evidence"].get("log_line", "") for f in reproducibility["findings"]]
-        assert all(line.startswith("[scholium-sandbox]") for line in quoted if line), reproducibility
+        bundle_output = {"reproduced 42"}
+        assert all(
+            line.startswith("[scholium-sandbox]") or line.strip() in bundle_output
+            for line in quoted
+            if line
+        ), reproducibility

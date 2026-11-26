@@ -2,7 +2,7 @@
 
 ``npm run stack:up`` and ``npm run stack:deps`` run it.  It starts db, minio and
 mailpit, waits until each is healthy, starts the one-shot minio-init and waits for
-it to exit 0, and (stack:up only) builds and starts api, worker and web.  Every
+it to exit 0, and (stack:up only) builds and starts clamav (round 27: the bundle scanner, first), api, worker and web.  Every
 ``up`` carries ``--no-deps``: podman-compose 1.6 creates containers with
 ``--requires`` and podman 4.9 then refuses to start api or worker once minio-init
 has exited, so the script does the ordering itself instead of depending on
@@ -227,7 +227,7 @@ def test_stack_up_runs_the_three_stages_in_order(tmp_path, style):
     events = stack.events()
     stage1 = index_of(events, is_up("db", "minio", "mailpit"))
     stage2 = index_of(events, is_up("minio-init"))
-    stage3 = index_of(events, is_up("api", "worker", "web"))
+    stage3 = index_of(events, is_up("clamav", "api", "worker", "web"))
     assert stage1 < stage2 < stage3, "the stages must run in dependency order"
     assert stage1 == 0, "nothing may be asked of the engine before the backing services are started"
 
@@ -240,7 +240,7 @@ def test_stack_up_runs_the_three_stages_in_order(tmp_path, style):
     # Stage 3 starts only after minio-init was seen to exit 0, not while it was still running.
     between = [event.get("shown", {}) for event in events[stage2:stage3]]
     assert any(shown.get("minio-init") == EXITED_OK for shown in between), (
-        "api, worker and web were started before minio-init exited with status 0"
+        "clamav, api, worker and web were started before minio-init exited with status 0"
     )
     assert [shown["minio-init"] for shown in between if "minio-init" in shown][:1] == [RUNNING], (
         "the scenario must show minio-init still running before it exits"
@@ -257,7 +257,7 @@ def test_every_up_passes_no_deps_and_the_last_one_builds(tmp_path, style):
     assert ups == [
         ["up", "-d", "--no-deps", "db", "minio", "mailpit"],
         ["up", "-d", "--no-deps", "minio-init"],
-        ["up", "-d", "--no-deps", "--build", "--remove-orphans", "api", "worker", "web"],
+        ["up", "-d", "--no-deps", "--build", "--remove-orphans", "clamav", "api", "worker", "web"],
     ]
     # Anything else the script asked of the engine is a status query.
     others = [call for call in stack.calls() if call[0] != "up"]
@@ -276,7 +276,7 @@ def test_deps_only_stops_after_minio_init_and_never_touches_the_application(tmp_
         ["up", "-d", "--no-deps", "minio-init"],
     ]
     everything = json.dumps(stack.events())
-    for service in ("api", "worker", "web"):
+    for service in ("clamav", "api", "worker", "web"):
         assert f'"{service}"' not in everything, f"--deps-only mentioned {service}"
     assert "--build" not in everything, "--deps-only must not build images"
     assert stack.events()[-1].get("shown", {}).get("minio-init") == EXITED_OK, (
@@ -290,7 +290,7 @@ def test_the_sandbox_joins_the_last_stage_when_its_profile_is_enabled(tmp_path):
     result = stack.run(env={"COMPOSE_PROFILES": "other, sandbox"})
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert stack.ups()[-1]["services"] == ["api", "worker", "web", "sandbox"]
+    assert stack.ups()[-1]["services"] == ["clamav", "api", "worker", "web", "sandbox"]
 
 
 def test_the_sandbox_profile_is_read_from_dot_env_like_compose_does(tmp_path):
@@ -300,7 +300,7 @@ def test_the_sandbox_profile_is_read_from_dot_env_like_compose_does(tmp_path):
     result = stack.run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert stack.ups()[-1]["services"] == ["api", "worker", "web", "sandbox"]
+    assert stack.ups()[-1]["services"] == ["clamav", "api", "worker", "web", "sandbox"]
 
 
 def test_the_sandbox_stays_out_without_its_profile(tmp_path):
@@ -310,7 +310,7 @@ def test_the_sandbox_stays_out_without_its_profile(tmp_path):
     result = stack.run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert stack.ups()[-1]["services"] == ["api", "worker", "web"]
+    assert stack.ups()[-1]["services"] == ["clamav", "api", "worker", "web"]
 
 
 # --- minio-init, which only `ps -a` shows under docker compose ----------------------------
@@ -353,7 +353,7 @@ def test_a_backing_service_that_never_turns_healthy_times_out_naming_it(tmp_path
     assert elapsed < 30, "it waited much longer than the timeout"
     # Nothing after the failed wait was started: neither the bucket job nor the application.
     assert not any(is_up("minio-init")(event) for event in stack.events())
-    assert not any(is_up("api", "worker", "web")(event) for event in stack.events())
+    assert not any(is_up("clamav", "api", "worker", "web")(event) for event in stack.events())
 
 
 def test_an_unhealthy_status_is_not_taken_for_healthy(tmp_path, style):
@@ -393,7 +393,7 @@ def test_a_minio_init_that_keeps_running_times_out_and_the_application_is_not_st
     assert result.returncode == 1, result.stdout + result.stderr
     assert "minio-init had not exited with status 0 after 2s" in result.stderr
     assert f"last status: {RUNNING}" in result.stderr
-    assert not any(is_up("api", "worker", "web")(event) for event in stack.events())
+    assert not any(is_up("clamav", "api", "worker", "web")(event) for event in stack.events())
 
 
 def test_a_minio_init_that_exited_non_zero_fails_at_once(tmp_path, style):
@@ -407,7 +407,7 @@ def test_a_minio_init_that_exited_non_zero_fails_at_once(tmp_path, style):
     assert "minio-init exited with a non-zero status" in result.stderr
     assert f"last status: {EXITED_FAILED}" in result.stderr
     assert elapsed < 30, "a bucket job that already failed cannot succeed later; the script must not wait"
-    assert not any(is_up("api", "worker", "web")(event) for event in stack.events())
+    assert not any(is_up("clamav", "api", "worker", "web")(event) for event in stack.events())
 
 
 def test_the_wait_ends_with_the_deps_only_mode_too(tmp_path):
