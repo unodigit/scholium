@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 32: findings of the sweep-24e re-check of round 31 (2026-11-26, verify app @ 03ec6d6, sweep-24 data; round 31
+  bugs 1 and 3 verified; bug 2 lands on the post but it drifts). npm test API 6210 / web 6281, e2e 63/63, system 160.
+  Evidence: .claw-forge/journeys/screenshots/07-flag-and-dispute/80-r31-08a..08e, 09a, 09b.
+  Decisions (recorded here):
+  D1  A link to a post keeps that post where it landed while the page settles: if content above it changes height
+      after the jump (the signed-in re-read of round 31 D1), the view re-aligns to the post once, unless the reader has
+      scrolled, typed or clicked since. A post too near the end of the page to reach the top stays as low as the page
+      allows (no artificial padding).
+  D2  The landed post is marked as the link's target by a :target-style highlight, not by a forced focus ring: focus
+      moves to it for keyboard and screen-reader users, and the focus ring shows only under :focus-visible.
+  D3  Every read that carries a member's own hidden text is private and uncached (Cache-Control: private, no-store),
+      the threads read as well as the annotations read (round 30 D1).
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/web/src/features/paper-discussion/discussion-tab.tsx,apps/web/src/features/paper-discussion/discussion-tab.test.tsx,apps/web/src/features/paper-discussion/paper-discussion.css">
+    <title>Following the margin's "Appeal" link, the post lands near the top and then drifts down to the lower part of the screen, and keeps a focus ring after a mouse click</title>
+    <symptoms>discussion-tab.tsx (round 31, 03ec6d6) scrolls to #post-&lt;cid&gt; once when the threads are ready (~130 ms after load, against the signed-out layout) and focuses the post. The signed-in re-read then makes posts above it taller (234 px), and nothing re-aligns, so the post ends at 706 of 900 px (574 of 768 at 1366x768); a reply target drifts from 72 to 150 px. After a mouse click on the link the post keeps a 2 px focus ring until the reader clicks elsewhere. Evidence: 07-flag-and-dispute/80-r31-08a, 08e</symptoms>
+    <reproduction_steps>As sam, in the margin of his hidden annotation, click "Appeal"; watch the post's position for 2 s</reproduction_steps>
+    <expected>Per D1/D2: after the first jump, while the same hash is current and the reader has not scrolled (wheel, touch, keys, scrollbar), typed or clicked, a later change of the threads (a re-read for the viewer) re-aligns the target once more with the same scrollIntoView({block: "start"}) honouring the card's scroll margin; after any reader input nothing moves them. The target gets a data-targeted (or :target) highlight from paper-discussion.css (design tokens only, a subtle accent edge or background that fades after ~2 s with prefers-reduced-motion respected), focus moves with preventScroll, and the card's focus outline appears only under :focus-visible (no ring after a mouse click on the link). Tests in discussion-tab.test.tsx: a re-render with taller content above re-aligns once; after a simulated wheel/keydown it does not; the highlight attribute is set on the target; the stylesheet's outline rule for the card is under :focus-visible</expected>
+    <actual>The post drifts away from where the reader was taken, with a stray focus ring</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/discussion/router.py,apps/api/src/app/modules/discussion/tests/test_hidden_posts.py">
+    <title>The threads read that carries a member's own hidden post texts is sent without Cache-Control, unlike the annotations read in the same case</title>
+    <symptoms>discussion/router.py get_threads (~L100-112) returns service.threads_for(..., viewer_did=...) with no cache header; for the author it includes own_text of their hidden posts (discussion/service.py ~L713-725). The annotations read (round 30, f1fba4c) sends Cache-Control: private, no-store when it carries own text. Seen in the sweep-24e re-check (diagnostic of sam's threads response)</symptoms>
+    <reproduction_steps>As sam (with hidden posts on sch:a4gc-nxee-pqsr), GET /v1/papers/sch:a4gc-nxee-pqsr/threads with his token; inspect the response headers</reproduction_steps>
+    <expected>Per D3: whenever the threads read is made by a signed-in viewer (the answer may carry own_text and viewer-specific muting), the response has Cache-Control: private, no-store; an anonymous read keeps today's headers. Tests in test_hidden_posts.py: author's read → private, no-store and own_text present; anonymous read → no own_text and no private/no-store requirement change</expected>
+    <actual>A member's own hidden text can be kept by a browser cache</actual>
+  </bug>
+
+</bug_spec>
