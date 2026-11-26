@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Round 30: findings of the sweep-24c re-check of round 29 (2026-11-26, verify app @ c82b8b8, sweep-24 data; round 29
+  bugs 1-4 verified; npm test API 6205 / web 6256, e2e 63/63, system 160/1 skipped).
+  Evidence: .claw-forge/journeys/screenshots/07-flag-and-dispute/70-r29-07-sam-margin-marker-own-hidden-annotation.png,
+  02-search-and-discover/70-r29-07-diagnostic-1500ms-latency-column-collapses-while-loading.png.
+  Decisions (recorded here):
+  D1  The author of a hidden annotation meets it first in the reading column's margin, so they are told there what
+      they are told in the Discussion tab (round 15 bug 7, round 29 D3): "Your annotation was hidden: <reason>", their
+      own text on request, and the way to appeal. Everyone else keeps the anonymous placeholder; the author's own text
+      is served only to them, uncached, as the discussion threads already do (discussion/service.py own_text).
+  D2  Faceted search keeps the previous answer's facet column visible, marked busy, while the next answer for the
+      SAME query loads (the common pattern: stale-while-loading), so the column does not collapse and re-expand on
+      every tick. A new query still starts the column afresh (round 24 D1); round 29 D2's counts are unchanged.
+-->
+<bug_spec>
+
+  <bug index="1" shape="core" severity="low"
+       touches_files="apps/api/src/app/modules/annotations/router.py,apps/api/src/app/modules/annotations/service.py"
+       creates="apps/api/src/app/modules/annotations/tests/test_own_hidden_annotation.py">
+    <title>The annotations API never gives a hidden annotation's author their own text, so the reading column can only show them the anonymous "Hidden by moderation" placeholder</title>
+    <symptoms>annotations/service.py (~L215-255) turns a hidden annotation into a placeholder (id, author, hidden_at, hidden_reason, decision_cid) for every reader; annotations/router.py (get_paper_annotations ~L142, get_latest_paper_annotations ~L159) takes no viewer. The discussion threads already serve the author's own hidden text under own_text to that author only (discussion/router.py get_threads with _optional_principal; discussion/service.py _own_hidden_text ~L713-725)</symptoms>
+    <reproduction_steps>As sam, annotate a paragraph; as priya, hide it; as sam, GET /v1/papers/{id}/v/{n}/annotations: the placeholder has no text</reproduction_steps>
+    <expected>Per D1: both annotations reads accept an optional signed-in viewer (the same optional-principal dependency the threads read uses). For the viewer's own hidden annotation the placeholder also carries own_text / ownText (the text of their signed annotation, as discussion's _own_hidden_text reads it) and is_own / isOwn true; the response is then sent with Cache-Control: private, no-store. Anonymous readers and other members get exactly today's placeholder (no text, no is_own). Tests in the new test_own_hidden_annotation.py: author sees own_text and no-store; another member and an anonymous reader see no text; a visible annotation is unchanged for everyone</expected>
+    <actual>The author's own hidden text is not available to the reading column</actual>
+  </bug>
+
+  <bug index="2" shape="core" severity="low" depends_on="1"
+       touches_files="apps/web/src/features/paper-discussion/annotations.tsx,apps/web/src/features/paper-page/reading-text.test.tsx">
+    <title>In the reading column, the author of a hidden annotation sees only "Hidden by moderation: …": not that it is theirs, not their text, and no way to appeal</title>
+    <symptoms>annotations.tsx (~L840-848) renders every hidden annotation as the anonymous "Hidden by moderation: &lt;reason&gt;" placeholder. The Discussion tab tells the same author "Your annotation was hidden: …" with "Show my annotation" and Appeal (round 29 bug 4, c82b8b8). Evidence: screenshots/07-flag-and-dispute/70-r29-07-sam-margin-marker-own-hidden-annotation.png</symptoms>
+    <reproduction_steps>As sam (author of a hidden annotation), open the paper and open that paragraph's annotations in the margin</reproduction_steps>
+    <expected>Per D1: the annotations are loaded with the signed-in viewer's session (as the Discussion tab's reads are), and for an annotation marked is_own the margin shows the author's notice from discussion.ts hiddenOwnNotice in its annotation wording ("Your annotation was hidden: &lt;reason&gt;"), a "Show my annotation" / "Hide my annotation" toggle revealing own_text (with its quote, if any), and an "Appeal" link to the place the appeal is filed for that post (the paper's discussion route anchored to the post, where post-card.tsx offers Appeal). Other readers' view is unchanged. Tests in reading-text.test.tsx: own hidden annotation (notice, toggle, link); someone else's hidden annotation (anonymous placeholder, no text)</expected>
+    <actual>The author cannot recognise or appeal their hidden annotation where they see it</actual>
+  </bug>
+
+  <bug index="3" shape="core" severity="low"
+       touches_files="apps/web/src/features/search-page/search-page.tsx,apps/web/src/features/search-page/search-page.test.tsx,apps/web/src/features/search-page/search-page.css">
+    <title>Ticking a search filter collapses the facet column to the selected values until the next answer arrives, so it flickers on every tick</title>
+    <symptoms>search-page.tsx (~L455-475, round 29 dc13b11) reads facets only from an answer whose key matches the state on screen; while the next answer loads the column lists only the selected values, then re-expands. Locally one or two frames; with a slow answer clearly visible. Evidence: screenshots/02-search-and-discover/70-r29-07-diagnostic-1500ms-latency-column-collapses-while-loading.png (1.5 s emulated latency)</symptoms>
+    <reproduction_steps>/search?q=Rafael+Silva with a slow network; tick cs.LG: the column shows only cs.LG until the answer arrives</reproduction_steps>
+    <expected>Per D2: while an answer for the same query text and mode is loading, the column keeps the previous answer's facet values and counts, with the selection on screen applied to the checkboxes, the facet groups marked aria-busy="true" and visibly de-emphasised (search-page.css, design tokens only, no layout shift); values can still be ticked (the latest answer wins, as now). When the answer arrives its counts replace the old ones. A new query text or mode still starts with only the selected values listed (no counts from another query). Tests: after a tick, before the answer resolves, the previous values are still listed and aria-busy is true; after it resolves, the new counts and aria-busy false; a new query does not show the previous query's values while loading</expected>
+    <actual>The column jumps on every tick</actual>
+  </bug>
+
+</bug_spec>
