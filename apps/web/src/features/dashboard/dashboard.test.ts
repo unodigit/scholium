@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError, NetworkError } from "../../lib/api";
+import { formatDate } from "../ui-kit/format-date";
 
 import {
   DASHBOARD_ENDPOINT,
@@ -1120,6 +1121,28 @@ describe("notification wording", () => {
         payload: { ...seat.payload, summary: 'Vote on the appeal of a hidden post on "A paper under appeal" by 2 Dec 2026.' },
       }),
     ).toBe('Vote on the appeal of a hidden post on "A paper under appeal" by 2 Dec 2026.');
+  });
+
+  it("writes an overdue panel notice's deadline as the reader's day, not the server's UTC day", () => {
+    // The server words the sentence with the UTC day; 21:08 UTC on 9 Dec is
+    // already 10 Dec in Sydney. The day comes from the deadline it carries.
+    const deadline = "2026-12-09T21:08:10+00:00";
+    const sentence = (day: string) =>
+      `No panel has decided the appeal of a hidden post on "A paper under appeal" yet: ` +
+      `the 3-member panel could not be formed and the deadline on ${day} has passed; ` +
+      "a tier-4 moderator who is not involved in the decision may decide it without a panel.";
+    const overdue = {
+      kind: "appeal.panel_overdue",
+      read: false,
+      payload: { deadline, overdue: true, summary: sentence("2026-12-09"), outcome: sentence("2026-12-09") },
+    };
+    const localDay = formatDate(deadline);
+    expect(localDay).not.toBeNull();
+    expect(notificationSummary(overdue)).toBe(sentence(localDay as string));
+    // Without a readable deadline the server's sentence stands.
+    expect(
+      notificationSummary({ ...overdue, payload: { ...overdue.payload, deadline: "soon" } }),
+    ).toBe(sentence("2026-12-09"));
   });
 
   it("does not repeat a reason the sentence already carries", () => {

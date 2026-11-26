@@ -188,6 +188,9 @@ export type MeDashboardData = DashboardData;
 /** `… by 2026-12-02.` or `… by 2 Dec 2026.` at the end of a sentence. */
 const TRAILING_DUE_DAY = / by (?:\d{4}-\d{2}-\d{2}|\d{1,2} [A-Za-z]{3,9} \d{4})(?=\.?$)/;
 
+/** `… the deadline on 9 Dec 2026 has passed …` in an overdue panel notice. */
+const PASSED_DUE_DAY = / on (?:\d{4}-\d{2}-\d{2}|\d{1,2} [A-Za-z]{3,9} \d{4})(?= has passed)/;
+
 /**
  * A sentence asking for something "by" a day, with the day written by the
  * shared formatter in the reader's own zone from the instant it was sent with.
@@ -200,7 +203,11 @@ const TRAILING_DUE_DAY = / by (?:\d{4}-\d{2}-\d{2}|\d{1,2} [A-Za-z]{3,9} \d{4})(
  */
 export function withLocalDueDay(summary: string, deadline: unknown): string {
   const day = formatDate(readText(deadline));
-  return day === null ? summary : summary.replace(TRAILING_DUE_DAY, ` by ${day}`);
+  return day === null
+    ? summary
+    : summary
+        .replace(TRAILING_DUE_DAY, ` by ${day}`)
+        .replace(PASSED_DUE_DAY, ` on ${day}`);
 }
 
 function parseAttentionItem(value: unknown, index: number): AttentionItem {
@@ -1161,6 +1168,13 @@ export function notificationSummary({ kind, payload, read }: NotificationLike): 
       const sentence = readText(payload.summary) ?? readText(payload.outcome);
       return sentence === null
         ? "You were drawn for an appeal panel."
+        : withLocalDueDay(sentence, payload.deadline);
+    }
+    case "appeal.panel_overdue": {
+      // The server words the passed deadline with its UTC day; show the reader's.
+      const sentence = readText(payload.summary) ?? readText(payload.outcome);
+      return sentence === null
+        ? "No panel has decided an appeal and its deadline has passed."
         : withLocalDueDay(sentence, payload.deadline);
     }
     case "flag.outcome":
