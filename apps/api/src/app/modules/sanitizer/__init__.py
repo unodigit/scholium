@@ -65,6 +65,7 @@ archive checks and :mod:`.scan_job` for the per-version background scan.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import FastAPI
@@ -115,6 +116,7 @@ from .bundle import (
     CHECK_ABSOLUTE_PATH,
     CHECK_ABSOLUTE_PATHS,
     CHECK_AV_UNAVAILABLE,
+    CHECK_TOO_LARGE_TO_SCAN,
     CHECK_BUNDLE_UNREADABLE,
     CHECK_MALWARE,
     CHECK_ORDER,
@@ -188,11 +190,17 @@ from .scan_job import (
     CHECK_FILE_UNREADABLE,
     CHECK_MANIFEST_UNREADABLE,
     JOB_KIND,
+    RESCAN_JOB,
+    RESCAN_JOB_KIND,
     FileScanResult,
     VersionScanResult,
     enqueue_file_scan,
     enqueue_scan,
     ensure_subscribed,
+    rescan,
+    rescan_job,
+    rescan_versions,
+    run_rescan_job,
     scan_stored_file,
     scan_stored_file_job,
     scan_pending_versions,
@@ -200,6 +208,8 @@ from .scan_job import (
     scan_version_job,
     versions_in_scanning_state,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CHECK_EMBEDDED_FILES",
@@ -243,6 +253,7 @@ __all__ = [
     "CHECK_ABSOLUTE_PATH",
     "CHECK_ABSOLUTE_PATHS",
     "CHECK_AV_UNAVAILABLE",
+    "CHECK_TOO_LARGE_TO_SCAN",
     "CHECK_BUNDLE_UNREADABLE",
     "CHECK_MALWARE",
     "CHECK_PATH_TRAVERSAL",
@@ -291,6 +302,8 @@ __all__ = [
     "CHECK_FILE_UNREADABLE",
     "CHECK_MANIFEST_UNREADABLE",
     "JOB_KIND",
+    "RESCAN_JOB",
+    "RESCAN_JOB_KIND",
     "FileScanResult",
     "VersionScanResult",
     "enqueue_file_scan",
@@ -301,6 +314,10 @@ __all__ = [
     "scan_pending_versions",
     "scan_version",
     "scan_version_job",
+    "rescan",
+    "rescan_job",
+    "rescan_versions",
+    "run_rescan_job",
     "versions_in_scanning_state",
     "CLAMAV_TOOL",
     "InvalidRendition",
@@ -322,5 +339,13 @@ def on_startup(app: Optional[FastAPI] = None) -> None:
     The subscriptions are also made at import time; doing it again here is
     harmless (registration is idempotent) and restores them after anything
     that clears the process-wide subscriber lists, such as a test fixture.
+    Also tick the periodic rescan schedule, like ``appeals.panels``.
     """
     ensure_subscribed()
+    try:
+        from app import jobs
+
+        if not jobs.is_eager():
+            jobs.schedule_registry.tick()
+    except Exception:  # pragma: no cover - starting the app must not depend on jobs
+        logger.exception("could not queue the sanitizer rescan")

@@ -47,6 +47,7 @@ __all__ = [
     "CHECK_SYMLINKS",
     "CHECK_UNREADABLE",
     "CHECK_BUNDLE_UNREADABLE",
+    "CHECK_TOO_LARGE_TO_SCAN",
     "CHECK_ORDER",
     "BundleScanResult",
     "ZipScanResult",
@@ -104,6 +105,7 @@ CHECK_MALWARE = "malware"
 CHECK_VIRUS = CHECK_MALWARE
 CHECK_CLAMAV = CHECK_MALWARE
 CHECK_AV_UNAVAILABLE = "av_unavailable"
+CHECK_TOO_LARGE_TO_SCAN = "too_large_to_scan"
 CHECK_BUNDLE_UNREADABLE = "bundle_unreadable"
 # Backwards/alias for the pdf unreadable name (kept distinct).
 CHECK_UNREADABLE = CHECK_BUNDLE_UNREADABLE
@@ -113,6 +115,7 @@ CHECK_ORDER = (
     CHECK_SYMLINK,
     CHECK_ABSOLUTE_PATH,
     CHECK_MALWARE,
+    CHECK_TOO_LARGE_TO_SCAN,
     CHECK_AV_UNAVAILABLE,
     CHECK_BUNDLE_UNREADABLE,
 )
@@ -122,6 +125,7 @@ _LABELS = {
     CHECK_SYMLINK: "symlink entry",
     CHECK_ABSOLUTE_PATH: "absolute path entry",
     CHECK_MALWARE: "malware",
+    CHECK_TOO_LARGE_TO_SCAN: "too large for the malware scan",
     CHECK_AV_UNAVAILABLE: "antivirus unavailable",
     CHECK_BUNDLE_UNREADABLE: "unreadable bundle",
 }
@@ -496,6 +500,11 @@ def _av_scan(raw: bytes) -> Optional[Finding]:
     if "OK" in upper or "CLEAN" in upper:
         return None
     if "ERROR" in upper:
+        if "SIZE" in upper and "LIMIT" in upper:
+            return Finding(
+                CHECK_TOO_LARGE_TO_SCAN,
+                _truncate(f"ClamAV (clamd) error: {response}", _MAX_DETAIL),
+            )
         return Finding(CHECK_AV_UNAVAILABLE, _truncate(f"ClamAV (clamd) error: {response}", _MAX_DETAIL))
     # Unknown response: treat as unavailable to be safe.
     return Finding(CHECK_AV_UNAVAILABLE, _truncate(f"ClamAV (clamd) unexpected response: {response}", _MAX_DETAIL))

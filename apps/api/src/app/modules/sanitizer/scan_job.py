@@ -57,6 +57,7 @@ it for a version already in ``moderation`` or ``held`` is a no-op.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -65,11 +66,11 @@ from sqlalchemy import select
 
 from app import db, jobs
 
-from .bundle import detect_bundle_kind, scan_bundle_bytes
+from .bundle import CHECK_AV_UNAVAILABLE, detect_bundle_kind, scan_bundle_bytes
 from .models import RESULT_FAILED, RESULT_PASSED
 from .pdf import Finding, scan_pdf_bytes
 from .rendition import create_rendition
-from .reports import record_finding
+from .reports import record_finding, reports_for
 from .tools import KIND_BUNDLE, KIND_OTHER, KIND_PDF, tool_versions
 
 __all__ = [
@@ -78,6 +79,8 @@ __all__ = [
     "CHECK_FILE_UNREADABLE",
     "CHECK_MANIFEST_UNREADABLE",
     "JOB_KIND",
+    "RESCAN_JOB",
+    "RESCAN_JOB_KIND",
     "FileScanResult",
     "VersionScanResult",
     "enqueue_file_scan",
@@ -88,6 +91,10 @@ __all__ = [
     "scan_pending_versions",
     "scan_version",
     "scan_version_job",
+    "rescan",
+    "rescan_job",
+    "rescan_versions",
+    "run_rescan_job",
     "versions_in_scanning_state",
 ]
 
@@ -471,13 +478,19 @@ def _scan_file(entry: Mapping[str, Any]) -> FileScanResult:
         )
 
     if findings:
-        _set_scan_status(cid, RESULT_FAILED)
+        check_names = tuple(finding.check_name for finding in findings)
+        # Inconclusive findings (the antivirus could not run) are not a
+        # verdict: keep the blob in ``scanning`` and leave the version waiting
+        # rather than holding it.  Only conclusive findings fail the file.
+        conclusive = any(name != CHECK_AV_UNAVAILABLE for name in check_names)
+        if conclusive:
+            _set_scan_status(cid, RESULT_FAILED)
         first = findings[0]
         return FileScanResult(
             cid=cid,
             path=path,
             result=RESULT_FAILED,
-            check_names=tuple(finding.check_name for finding in findings),
+            check_names=check_names,
             detail=first.detail,
             kind=kind,
         )
@@ -704,15 +717,38 @@ def scan_version(version_cid: str) -> VersionScanResult:
         )
 
     files = tuple(_scan_file(entry) for entry in entries)
-    failing = next((result for result in files if result.failed), None)
-    if failing is not None:
-        check_name = failing.check_names[0]
+
+    # Conclusive findings (everything except av_unavailable) hold the version
+    # exactly as before.  An inconclusive-only file (the antivirus could not
+    # run) does not hold it: the version stays in ``scanning``.
+    failing = None
+    failing_check_name: Optional[str] = None
+    for result in files:
+        conclusive = [name for name in result.check_names if name != CHECK_AV_UNAVAILABLE]
+        if conclusive:
+            failing = result
+            failing_check_name = conclusive[0]
+            break
+    if failing is not None and failing_check_name is not None:
         return _held(
             version_cid,
-            check_name,
+            failing_check_name,
             failing_cid=failing.cid,
             failing_path=failing.path,
             files=files,
+        )
+
+    # No conclusive finding.  If every file was inconclusive (or none), and at
+    # least one was inconclusive, the version stays scanning: no rendition and
+    # no state change.
+    has_inconclusive = any(CHECK_AV_UNAVAILABLE in result.check_names for result in files)
+    if has_inconclusive:
+        return VersionScanResult(
+            version_cid=version_cid,
+            files=files,
+            state=SCANNING,
+            reason="scan inconclusive: antivirus unavailable",
+            rendition_cid=None,
         )
 
     # The rendition is signed before the move so a ``moderation`` subscriber
@@ -795,6 +831,168 @@ def scan_version_job(payload: Any) -> None:
             )
         return
     scan_pending_versions()
+
+
+# ---------------------------------------------------------------------------
+# Rescanning versions that waited for an unavailable antivirus
+# ---------------------------------------------------------------------------
+
+
+#: Job kind for the periodic rescan of versions that could not be scanned
+#: because the node's antivirus was unavailable.
+RESCAN_JOB_KIND = "sanitizer.rescan"
+RESCAN_JOB = RESCAN_JOB_KIND
+
+
+def _held_version_refs() -> list[tuple[str, str]]:
+    """``(paper_cid, version_cid)`` for every version currently ``held``."""
+    from app.modules.submissions.models import PaperVersion, ensure_tables
+
+    ensure_tables()
+    with db.SessionLocal() as session:
+        rows = session.scalars(
+            select(PaperVersion).where(PaperVersion.state == HELD)
+        ).all()
+        return [(row.paper_cid, row.version_cid) for row in rows]
+
+
+def _has_moderation_decision(version_cid: str) -> bool:
+    """Whether a moderation decision targets ``version_cid``."""
+    try:
+        from app.modules.moderation.models import ModerationDecision, ensure_tables as ensure_mod_tables
+    except Exception:  # pragma: no cover - moderation is a shipped module
+        return False
+    ensure_mod_tables()
+    with db.SessionLocal() as session:
+        return (
+            session.query(ModerationDecision)
+            .filter(ModerationDecision.target_cid == version_cid)
+            .first()
+            is not None
+        )
+
+
+def _held_only_for_inconclusive(version_cid: str, row: Any = None) -> bool:
+    """Whether ``version_cid`` was held solely because the antivirus could not run.
+
+    A held version counts when at least one of its manifest files carries an
+    ``av_unavailable`` report and none carries a conclusive (non-
+    ``av_unavailable``) report.  An unreadable manifest counts as a conclusive
+    hold, and so does a version held without any scan report at all, so such a
+    version is never re-opened.
+    """
+    if row is None:
+        row = _get_version(version_cid)
+    if row is None:
+        return False
+    try:
+        entries = _manifest_files(version_cid, getattr(row, "manifest_cid", None))
+    except _Unscannable:
+        return False
+    inconclusive_seen = False
+    for entry in entries:
+        cid = entry.get("cid") if isinstance(entry, Mapping) else None
+        if not isinstance(cid, str):
+            continue
+        for report in reports_for(cid):
+            if report.check_name != CHECK_AV_UNAVAILABLE:
+                return False
+            inconclusive_seen = True
+    return inconclusive_seen
+
+
+def _reopen_for_rescan(version_cid: str) -> bool:
+    """Move a held, inconclusive-only version back to ``scanning`` if eligible."""
+    from app.modules import submissions
+
+    row = _get_version(version_cid)
+    if row is None or getattr(row, "state", None) != HELD:
+        return False
+    # Still its paper's newest version.
+    latest = submissions.latest_version(getattr(row, "paper_cid", None))
+    if latest is None or getattr(latest, "version_cid", None) != version_cid:
+        return False
+    if _has_moderation_decision(version_cid):
+        return False
+    if not _held_only_for_inconclusive(version_cid, row):
+        return False
+    try:
+        _move_version(version_cid, SCANNING, "re-scan: the antivirus was unavailable")
+    except Exception:  # noqa: BLE001 - one version must not stop the pass
+        logger.exception("could not re-open version %s for rescan", _show(version_cid))
+        return False
+    return True
+
+
+def rescan_versions() -> int:
+    """Re-open eligible held versions and scan every version in ``scanning``.
+
+    Returns the number of versions scanned in this pass.
+    """
+    # Re-open held versions that were held only because the antivirus could not
+    # run, are still their paper's newest and carry no moderation decision.
+    for _paper_cid, version_cid in _held_version_refs():
+        _reopen_for_rescan(version_cid)
+
+    from app.modules.submissions import UnknownVersion
+
+    scanned = 0
+    for version_cid in versions_in_scanning_state():
+        # Only versions whose manifest has reached this node are scanned; a
+        # version whose manifest has not arrived yet stays scanning rather than
+        # being held for a gap that may still resolve.
+        if not _manifest_ready(version_cid):
+            continue
+        try:
+            scan_version(version_cid)
+        except UnknownVersion:
+            continue
+        scanned += 1
+
+    waiting = versions_in_scanning_state()
+    if waiting:
+        logger.warning(
+            "sanitizer rescan: %d version(s) still waiting for the antivirus "
+            "(CLAMD_SOCKET=%r)",
+            len(waiting),
+            os.getenv("CLAMD_SOCKET", ""),
+        )
+    return scanned
+
+
+def rescan_job(payload: Any = None) -> None:
+    """Job handler: rescan versions waiting on an unavailable antivirus."""
+    payload = payload if isinstance(payload, Mapping) else {}
+    version_cid = (
+        payload.get("version_cid")
+        or payload.get("versionCid")
+        or payload.get("version")
+        or payload.get("id")
+    )
+    if isinstance(version_cid, str) and version_cid:
+        # Single-version rescan: re-open if eligible, then scan.
+        _reopen_for_rescan(version_cid)
+        from app.modules.submissions import UnknownVersion
+
+        try:
+            scan_version(version_cid)
+        except UnknownVersion:
+            logger.warning("sanitizer rescan for unknown version %s", _show(version_cid))
+        waiting = versions_in_scanning_state()
+        if waiting:
+            logger.warning(
+                "sanitizer rescan: %d version(s) still waiting for the antivirus "
+                "(CLAMD_SOCKET=%r)",
+                len(waiting),
+                os.getenv("CLAMD_SOCKET", ""),
+            )
+        return
+    rescan_versions()
+
+
+# Aliases, matching the naming used elsewhere.
+run_rescan_job = rescan_job
+rescan = rescan_job
 
 
 def enqueue_scan(version_cid: str) -> int:
@@ -881,4 +1079,11 @@ def ensure_subscribed() -> None:
 # version entering ``scanning`` schedules its scan without any further wiring.
 jobs.register(JOB_KIND, scan_version_job)
 jobs.register(FILE_JOB_KIND, scan_stored_file_job)
+jobs.register(RESCAN_JOB_KIND, rescan_job)
+try:
+    from datetime import timedelta
+
+    jobs.schedule_registry.register(RESCAN_JOB_KIND, timedelta(minutes=15))
+except Exception:  # pragma: no cover - jobs is a shipped module
+    logger.exception("could not register the sanitizer rescan job")
 ensure_subscribed()

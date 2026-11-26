@@ -14,9 +14,13 @@ the process-wide subscriber list.
 from __future__ import annotations
 
 import io
+import logging
+import socketserver
+import struct
+import threading
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from nacl.signing import SigningKey
@@ -24,13 +28,16 @@ from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, TextStringObject
 from scholium_record_core import did_key_from_signing_key, sign_record
 
-from app import jobs
+from app import db, jobs
 from app.modules import content, ledger, sanitizer
 from app.modules.sanitizer import (
+    CHECK_AV_UNAVAILABLE,
     CHECK_FILE_MISSING,
+    CHECK_MALWARE,
     CHECK_MANIFEST_UNREADABLE,
     CHECK_PATH_TRAVERSAL,
     JOB_KIND,
+    RENDITION_TYPE,
     RESULT_FAILED,
     RESULT_PASSED,
 )
@@ -45,6 +52,7 @@ from app.modules.submissions import (
     subscribe_version_state_changed,
     transition_version,
 )
+from app.settings import settings
 
 MANUSCRIPT = "application/pdf"
 BUNDLE = "application/zip"
@@ -188,6 +196,105 @@ def status_of(cid: str) -> str:
     blob = content.get_blob(cid)
     assert blob is not None
     return blob.scan_status
+
+
+def clean_zip() -> bytes:
+    """A structurally clean archive: only the malware scan can judge it."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("data/notes.txt", f"notes {uuid.uuid4().hex}")
+    return buffer.getvalue()
+
+
+def renditions_of(version_cid: str) -> list:
+    """Every ``rendition`` entry in the log whose ``source`` is the version."""
+    return [
+        logged
+        for logged in ledger.entries()
+        if logged.record_type == RENDITION_TYPE and logged.body.get("source") == version_cid
+    ]
+
+
+def make_version_in_chain(
+    paper_cid: str,
+    n: int,
+    entries: list[dict],
+    *,
+    state: str = AWAITING_CONSENT,
+) -> str:
+    """Save version ``n`` of ``paper_cid`` and return its cid."""
+    manifest = add_manifest(entries)
+    version_cid = f"bafyreiversion{uuid.uuid4().hex}"
+    save_version(
+        version_cid=version_cid,
+        paper_cid=paper_cid,
+        n=n,
+        title="A version that is scanned",
+        abstract="",
+        manifest_cid=manifest,
+        licence="CC-BY-4.0",
+        prev_cid=None,
+        state=state,
+    )
+    return version_cid
+
+
+# --------------------------------------------------------------------------- #
+# An unavailable antivirus (fake clamd)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def no_clamd(monkeypatch):
+    """Default to a node whose antivirus cannot run."""
+    monkeypatch.delenv("CLAMD_SOCKET", raising=False)
+
+
+class _FakeClamd(socketserver.StreamRequestHandler):
+    """Enough of clamd's protocol for a scan: ``VERSION`` and ``INSTREAM``."""
+
+    def handle(self) -> None:
+        command = self.rfile.readline().strip()
+        if command == b"VERSION":
+            self.wfile.write(b"ClamAV 1.4.2/27500/Mon Nov 10 08:00:00 2026\n")
+        elif command == b"INSTREAM":
+            while True:
+                (size,) = struct.unpack("!I", self.rfile.read(4))
+                if size == 0:
+                    break
+                self.rfile.read(size)
+            self.wfile.write(self.server.reply + b"\n")
+
+
+@pytest.fixture
+def clamd_factory(monkeypatch):
+    """Start a fake clamd that answers ``reply`` to every ``INSTREAM``."""
+    servers = []
+
+    def start(reply: bytes):
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _FakeClamd)
+        server.reply = reply
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        servers.append(server)
+        monkeypatch.setenv("CLAMD_SOCKET", f"127.0.0.1:{server.server_address[1]}")
+        return server
+
+    yield start
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+def node_key(tmp_path, monkeypatch) -> SigningKey:
+    """A node Ed25519 key so a passing rescan can sign a rendition."""
+    key = SigningKey.generate()
+    path = tmp_path / "node.key"
+    path.write_text(key.encode().hex())
+    monkeypatch.setattr(settings, "NODE_KEY_PATH", str(path))
+    return key
 
 
 # --------------------------------------------------------------------------- #
@@ -442,3 +549,279 @@ def test_a_listed_file_with_no_blob_row_is_held():
     assert state_of(version_cid) == HELD
     held = next(event for event in events if event.state == HELD)
     assert held.reason == f"scan failed: {CHECK_FILE_MISSING}"
+
+
+# --------------------------------------------------------------------------- #
+# An unavailable antivirus leaves the version waiting, never held (bug fix)
+# --------------------------------------------------------------------------- #
+
+
+def test_without_clamd_socket_the_version_stays_scanning_and_gets_no_rendition(
+    suspended,
+):
+    """The reported bug: a node without ClamAV held every submission.
+
+    A clean archive can only be cleared by the malware scan.  When clamd
+    cannot run, that is not a finding -- the version waits in ``scanning``
+    until the antivirus answers, with no rendition and no hold.
+    """
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=SCANNING
+    )
+
+    result = sanitizer.scan_version(version_cid)
+
+    assert result.state == SCANNING
+    assert result.failing_check is None
+    assert result.rendition_cid is None
+    assert state_of(version_cid) == SCANNING
+    # The finding is on record, but it is not a verdict: the blob still waits
+    # and the author is not told to publish a new version.
+    assert status_of(bundle.cid) == content.SCAN_SCANNING
+    assert [
+        (report.check_name, report.result)
+        for report in sanitizer.reports_for(bundle.cid)
+    ] == [(CHECK_AV_UNAVAILABLE, RESULT_FAILED)]
+    assert renditions_of(version_cid) == []
+
+
+def test_an_unnamed_clamd_error_is_inconclusive_too(suspended, clamd_factory):
+    clamd_factory(b"INSTREAM failed. ERROR")
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=SCANNING
+    )
+
+    result = sanitizer.scan_version(version_cid)
+
+    assert result.state == SCANNING
+    assert result.failing_check is None
+    assert state_of(version_cid) == SCANNING
+    assert status_of(bundle.cid) == content.SCAN_SCANNING
+
+
+def test_a_size_limit_error_is_conclusive_and_holds_the_version(
+    suspended, clamd_factory
+):
+    """A file larger than clamd's limit cannot be cleared, so it is held."""
+    from app.modules.sanitizer import CHECK_TOO_LARGE_TO_SCAN
+
+    clamd_factory(b"INSTREAM size limit exceeded. ERROR")
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=SCANNING
+    )
+
+    result = sanitizer.scan_version(version_cid)
+
+    assert result.state == HELD
+    assert result.failing_check == CHECK_TOO_LARGE_TO_SCAN
+    assert state_of(version_cid) == HELD
+    assert status_of(bundle.cid) == RESULT_FAILED
+    assert [
+        (report.check_name, report.result)
+        for report in sanitizer.reports_for(bundle.cid)
+    ] == [(CHECK_TOO_LARGE_TO_SCAN, RESULT_FAILED)]
+
+
+def test_a_found_answer_still_holds_the_version_as_malware(suspended, clamd_factory):
+    clamd_factory(b"stream: Eicar-Test-Signature FOUND")
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=SCANNING
+    )
+
+    result = sanitizer.scan_version(version_cid)
+
+    assert result.state == HELD
+    assert result.failing_check == CHECK_MALWARE
+    assert state_of(version_cid) == HELD
+    assert status_of(bundle.cid) == RESULT_FAILED
+
+
+# --------------------------------------------------------------------------- #
+# The periodic rescan
+# --------------------------------------------------------------------------- #
+
+
+def test_the_rescan_job_is_registered_and_scheduled_every_fifteen_minutes():
+    from app.modules.sanitizer import RESCAN_JOB
+
+    assert RESCAN_JOB == "sanitizer.rescan"
+    assert jobs.schedule_registry.period(RESCAN_JOB) == timedelta(minutes=15)
+
+
+def test_the_rescan_job_moves_a_waiting_version_on_once_clamd_answers(
+    suspended, clamd_factory, node_key
+):
+    from app.modules.sanitizer import RESCAN_JOB
+
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=SCANNING
+    )
+    first = sanitizer.scan_version(version_cid)
+    assert first.state == SCANNING
+    assert state_of(version_cid) == SCANNING
+
+    # The antivirus comes back and the next scheduled pass scans the version.
+    clamd_factory(b"stream: OK")
+    jobs.enqueue(RESCAN_JOB, {})
+
+    assert state_of(version_cid) == MODERATION
+    assert status_of(bundle.cid) == RESULT_PASSED
+    assert renditions_of(version_cid) != []
+
+
+def test_a_version_held_only_for_av_unavailable_is_reopened_and_scanned(
+    suspended, clamd_factory, node_key
+):
+    """A version a previous outage held is not left for dead."""
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=HELD
+    )
+    sanitizer.record_report(bundle.cid, CHECK_AV_UNAVAILABLE, result=RESULT_FAILED)
+
+    events = []
+    subscribe_version_state_changed(events.append)
+    clamd_factory(b"stream: OK")
+
+    scanned = sanitizer.rescan_versions()
+
+    assert scanned >= 1
+    assert state_of(version_cid) == MODERATION
+    assert status_of(bundle.cid) == RESULT_PASSED
+    reopened = [
+        event
+        for event in events
+        if event.version_cid == version_cid and event.state == SCANNING
+    ]
+    assert reopened
+    assert reopened[-1].reason == "re-scan: the antivirus was unavailable"
+    assert renditions_of(version_cid) != []
+
+
+def test_a_version_held_for_a_conclusive_finding_is_not_reopened(
+    suspended, clamd_factory
+):
+    clamd_factory(b"stream: Eicar-Test-Signature FOUND")
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=SCANNING
+    )
+    held = sanitizer.scan_version(version_cid)
+    assert held.state == HELD
+
+    # Even a working antivirus must not re-open a version held on a finding.
+    clamd_factory(b"stream: OK")
+    sanitizer.rescan_versions()
+
+    assert state_of(version_cid) == HELD
+    assert status_of(bundle.cid) == RESULT_FAILED
+
+
+def test_a_superseded_held_version_is_not_reopened(suspended, clamd_factory):
+    paper_cid = f"bafyreipaper{uuid.uuid4().hex}"
+    old_bundle = stored(clean_zip(), BUNDLE)
+    old = make_version_in_chain(
+        paper_cid,
+        1,
+        [entry(old_bundle, "source.zip", BUNDLE, "source")],
+        state=HELD,
+    )
+    sanitizer.record_report(old_bundle.cid, CHECK_AV_UNAVAILABLE, result=RESULT_FAILED)
+    new_bundle = stored(clean_zip(), BUNDLE)
+    new = make_version_in_chain(
+        paper_cid,
+        2,
+        [entry(new_bundle, "source.zip", BUNDLE, "source")],
+        state=SCANNING,
+    )
+
+    clamd_factory(b"stream: OK")
+    sanitizer.rescan_versions()
+
+    # The newest version is scanned; the superseded one is never surfaced again.
+    assert state_of(old) == HELD
+    assert state_of(new) == MODERATION
+
+
+def test_a_held_version_with_a_moderation_decision_is_not_reopened(
+    suspended, clamd_factory
+):
+    from app.modules.moderation.models import ModerationDecision, ensure_tables
+
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=HELD
+    )
+    sanitizer.record_report(bundle.cid, CHECK_AV_UNAVAILABLE, result=RESULT_FAILED)
+    ensure_tables()
+    with db.SessionLocal() as session:
+        session.add(
+            ModerationDecision(
+                decision_cid=f"bafyreidecision{uuid.uuid4().hex}",
+                target_cid=version_cid,
+                action="hold",
+                clause="policy-1",
+                moderator_did="did:key:z6Mkexample",
+                decided_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        session.commit()
+
+    clamd_factory(b"stream: OK")
+    sanitizer.rescan_versions()
+
+    assert state_of(version_cid) == HELD
+
+
+def test_a_pass_that_leaves_versions_waiting_logs_one_warning(
+    suspended, clamd_factory, caplog
+):
+    bundle = stored(clean_zip(), BUNDLE)
+    make_version([entry(bundle, "source.zip", BUNDLE, "source")], state=SCANNING)
+
+    with caplog.at_level(logging.WARNING, logger="app.modules.sanitizer.scan_job"):
+        sanitizer.rescan_versions()
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "still waiting for the antivirus" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "CLAMD_SOCKET" in warnings[0]
+
+
+def test_a_held_version_with_no_scan_report_is_not_reopened(
+    files_not_scanned_early, clamd_factory
+):
+    """Only a hold caused by ``av_unavailable`` may be re-opened."""
+    bundle = stored(clean_zip(), BUNDLE)
+    version_cid = make_version(
+        [entry(bundle, "source.zip", BUNDLE, "source")], state=HELD
+    )
+    assert sanitizer.reports_for(bundle.cid) == []
+
+    clamd_factory(b"stream: OK")
+    sanitizer.rescan_versions()
+
+    assert state_of(version_cid) == HELD
+
+
+def test_a_held_version_with_an_unreadable_manifest_is_not_reopened(
+    suspended, clamd_factory
+):
+    """An unreadable manifest is a conclusive hold, not an AV outage."""
+    version_cid = make_version(
+        [], manifest_cid=f"bafyreimissing{uuid.uuid4().hex}", state=HELD
+    )
+
+    clamd_factory(b"stream: OK")
+    sanitizer.rescan_versions()
+
+    assert state_of(version_cid) == HELD
