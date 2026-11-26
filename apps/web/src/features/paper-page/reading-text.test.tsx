@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ANNOTATION_CREATED_EVENT } from "../paper-discussion/annotations";
@@ -439,6 +439,109 @@ describe("ReadingText: the annotation margin column", () => {
     // paragraph it belongs to opens.
     await waitFor(() => expect(marker.getAttribute("aria-expanded")).toBe("true"));
     expect(await screen.findByText(POSTED_NOTE)).toBeTruthy();
+  });
+});
+
+describe("ReadingText: an author's own hidden annotation", () => {
+  const OWN_TEXT = "My own note, withheld from everyone else.";
+  const OWN_NOTE =
+    "An annotation the reader wrote and a moderator hid. The reading column must tell the author it is theirs.";
+
+  /**
+   * Answer the annotations read with the given paragraph groups, the way the
+   * node answers the author's own read: the hidden annotation carries
+   * `is_own` and the author's `own_text`; another reader's carries neither.
+   */
+  function stubAnnotationRead(groups: Record<string, unknown[]>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        if (/\/annotations$/.test(path) && init?.method !== "POST") {
+          return jsonResponse({ annotations: groups });
+        }
+        return new Response("{}", {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+  }
+
+  const OWN_HIDDEN = [
+    {
+      id: "own-hidden",
+      paragraph_id: "p2",
+      hidden: true,
+      hidden_reason: "Off topic",
+      is_own: true,
+      isOwn: true,
+      own_text: OWN_TEXT,
+      ownText: OWN_TEXT,
+      quote: "Every note on this paragraph was hidden by a moderator.",
+    },
+  ];
+
+  it("tells the author it is theirs, reveals their text on request and links to the appeal", async () => {
+    stubAnnotationRead({ p2: OWN_HIDDEN });
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    fireEvent.click(await screen.findByTestId("margin-marker-p2"));
+    const list = await screen.findByRole("list", { name: "Annotations for p2" });
+
+    // The author's notice, not the anonymous placeholder.
+    expect(within(list).getByText(/Your annotation was hidden: Off topic\./)).toBeTruthy();
+    expect(within(list).queryByText(/Hidden by moderation/)).toBeNull();
+    // Their words stay out of the page until they ask for them.
+    expect(within(list).queryByText(OWN_TEXT)).toBeNull();
+    const show = within(list).getByRole("button", { name: "Show my annotation" });
+    expect(show.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(show);
+    expect(await within(list).findByText(OWN_TEXT)).toBeTruthy();
+    // The revealed annotation keeps the passage it was written on.
+    expect(
+      within(list).getByText("Every note on this paragraph was hidden by a moderator."),
+    ).toBeTruthy();
+    expect(
+      within(list).getByRole("button", { name: "Hide my annotation" }).getAttribute("aria-expanded"),
+    ).toBe("true");
+
+    // Appeal is filed on the paper's discussion page, at the post.
+    const appeal = within(list).getByRole("link", { name: "Appeal" });
+    expect(appeal.getAttribute("href")).toBe(
+      "/discussion/6sel-2dio-orm6/v2#post-own-hidden",
+    );
+
+    fireEvent.click(within(list).getByRole("button", { name: "Hide my annotation" }));
+    expect(within(list).queryByText(OWN_TEXT)).toBeNull();
+    expect(within(list).getByRole("button", { name: "Show my annotation" })).toBeTruthy();
+  });
+
+  it("shows another reader the anonymous placeholder and none of the author's text", async () => {
+    stubAnnotationRead({
+      p3: [
+        {
+          id: "theirs-hidden",
+          paragraph_id: "p3",
+          hidden: true,
+          hidden_reason: "Harassment",
+          // The node serves no `own_text` or `is_own` to another reader; a
+          // quote on the placeholder must not surface through either.
+          quote: OWN_NOTE,
+        },
+      ],
+    });
+    renderText(loadKatex, ANNOTATED_PARAGRAPHS);
+
+    fireEvent.click(await screen.findByTestId("margin-marker-p3"));
+    const list = await screen.findByRole("list", { name: "Annotations for p3" });
+
+    expect(within(list).getByText("Hidden by moderation: Harassment")).toBeTruthy();
+    expect(within(list).queryByText(/was hidden/)).toBeNull();
+    expect(within(list).queryByText(OWN_NOTE)).toBeNull();
+    expect(within(list).queryByRole("button", { name: /my annotation/ })).toBeNull();
+    expect(within(list).queryByRole("link", { name: "Appeal" })).toBeNull();
   });
 });
 

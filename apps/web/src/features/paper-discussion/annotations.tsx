@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { ApiError, NetworkError, api, type ApiClient, type ApiRequestOptions } from "../../lib/api";
 import { signRecord, type SignedRecord } from "../web-auth/sign-record";
 import { isPasskeyCancellation, isRecordSigningError, isDeviceKeyError } from "../web-auth/errors";
-import { DiscussionPost } from "./discussion";
+import { discussionPath, hiddenOwnNotice } from "./discussion";
 import "./paper-discussion.css";
 
 /* -------------------------------------------------------------------------- */
@@ -48,6 +48,21 @@ export interface Annotation {
   readonly textCid?: string | null;
   readonly text_cid?: string | null;
   readonly parent?: string | null;
+  /** A moderator hid it: the body is withheld and a placeholder takes its place. */
+  readonly hidden?: boolean;
+  /** The moderator's reason for hiding it, when the node serves one. */
+  readonly hidden_reason?: string | null;
+  readonly hiddenReason?: string | null;
+  /**
+   * The node says this hidden annotation belongs to the signed-in viewer. It
+   * serves the flag, and `own_text`, only to the annotation's author: the
+   * margin decides nothing from the author alone.
+   */
+  readonly is_own?: boolean;
+  readonly isOwn?: boolean;
+  /** The author's own hidden body, served only to them. */
+  readonly own_text?: string | null;
+  readonly ownText?: string | null;
   [key: string]: unknown;
 }
 
@@ -136,6 +151,15 @@ function normalizeAnnotation(raw: unknown): Annotation {
       textCid: readText(record.textCid) ?? readText(record.text_cid) ?? null,
       text_cid: readText(record.textCid) ?? readText(record.text_cid) ?? null,
       parent: readText(record.parent) ?? readText(record.parent_cid) ?? readText(record.parentCid) ?? null,
+      // A hidden annotation's placeholder, and the author's own copy under it,
+      // may arrive in either spelling.
+      hidden: record.hidden === true,
+      hidden_reason: readText(record.hidden_reason) ?? readText(record.hiddenReason),
+      hiddenReason: readText(record.hidden_reason) ?? readText(record.hiddenReason),
+      is_own: record.is_own === true || record.isOwn === true,
+      isOwn: record.is_own === true || record.isOwn === true,
+      own_text: readText(record.own_text) ?? readText(record.ownText),
+      ownText: readText(record.own_text) ?? readText(record.ownText),
       ...record,
     };
     return annotation;
@@ -540,6 +564,9 @@ export function MarginMarkers(props: MarginMarkersProps) {
   const paperId = (paperIdProp ?? paper ?? id ?? "").toString().trim();
   const version = normalizeVersion(versionProp ?? versionNumber ?? versionNo ?? n);
   const versionCid = (versionCidProp ?? versionCID ?? versionId ?? target ?? "").toString().trim();
+  // The standalone discussion page is addressed by version number, not by the
+  // version's cid: an annotation's appeal is filed on its version's page.
+  const discussionVersion = typeof version === "number" ? version : undefined;
 
   const paragraphs = useMemo<AnnotationParagraph[]>(() => {
     const source = paragraphsProp ?? paragraphList ?? text ?? data;
@@ -567,6 +594,8 @@ export function MarginMarkers(props: MarginMarkersProps) {
 
   const [selected, setSelected] = useState<string | null>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  // The author's own hidden annotations whose text they have asked to see.
+  const [ownOpenIds, setOwnOpenIds] = useState<Set<string>>(() => new Set());
   const [composerFor, setComposerFor] = useState<string | null>(null);
   const [composerText, setComposerText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -642,6 +671,19 @@ export function MarginMarkers(props: MarginMarkersProps) {
     setComposerFor(paragraphId);
     setComposerText("");
     setComposerError(null);
+  };
+
+  /** Show or hide one author's own hidden annotation text. */
+  const toggleOwnText = (rowKey: string) => {
+    setOwnOpenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowKey)) {
+        next.delete(rowKey);
+      } else {
+        next.add(rowKey);
+      }
+      return next;
+    });
   };
 
   const closeComposer = () => {
@@ -832,31 +874,93 @@ export function MarginMarkers(props: MarginMarkersProps) {
                   className="pd-annotation-list"
                   aria-label={`Annotations for ${paragraph.id}`}
                 >
-                  {paragraphAnnotations.map((annotation, index) => (
-                    <li
-                      key={annotation.id || index}
-                      className="pd-annotation"
-                      data-annotation-id={annotation.id}
-                    >
-                      {annotation.hidden === true ? (
-                        <p className="pd-annotation__text pd-post__text--hidden" data-hidden="true">
-                          {typeof annotation.hidden_reason === "string" &&
-                          annotation.hidden_reason.trim() !== ""
-                            ? `Hidden by moderation: ${annotation.hidden_reason.trim()}`
-                            : "Hidden by moderation."}
-                        </p>
-                      ) : (
-                        <>
+                  {paragraphAnnotations.map((annotation, index) => {
+                    const rowKey = annotation.id || `${paragraph.id}-${index}`;
+                    if (annotation.hidden !== true) {
+                      return (
+                        <li
+                          key={rowKey}
+                          className="pd-annotation"
+                          data-annotation-id={annotation.id}
+                        >
                           {annotation.quote ? (
                             <blockquote className="pd-annotation__quote">{annotation.quote}</blockquote>
                           ) : null}
                           {annotation.text ? (
                             <p className="pd-annotation__text">{annotation.text}</p>
                           ) : null}
-                        </>
-                      )}
-                    </li>
-                  ))}
+                        </li>
+                      );
+                    }
+                    // A hidden annotation keeps its place but its body is
+                    // withheld: every reader gets the moderator's reason. Its
+                    // author is told it is theirs, can read their own words on
+                    // request, and can follow the way to appeal it (D1); the
+                    // node serves those to the author alone.
+                    if (annotation.is_own === true) {
+                      const ownText = readText(annotation.own_text);
+                      const ownId = `pd-annotation-own-${rowKey}`;
+                      const ownOpen = ownOpenIds.has(rowKey);
+                      const appealHref = `${discussionPath(paperId, discussionVersion)}#post-${encodeURIComponent(
+                        annotation.id,
+                      )}`;
+                      return (
+                        <li
+                          key={rowKey}
+                          className="pd-annotation"
+                          data-annotation-id={annotation.id}
+                          data-own-hidden="true"
+                        >
+                          <p className="pd-annotation__text pd-post__text--hidden" data-hidden="true">
+                            {hiddenOwnNotice(annotation.hidden_reason, { isAnnotation: true })}{" "}
+                            <a className="pd-action" href={appealHref}>
+                              Appeal
+                            </a>
+                          </p>
+                          {ownText !== null ? (
+                            <>
+                              {ownOpen ? (
+                                <>
+                                  {annotation.quote ? (
+                                    <blockquote className="pd-annotation__quote">
+                                      {annotation.quote}
+                                    </blockquote>
+                                  ) : null}
+                                  <p className="pd-annotation__text" id={ownId} data-own-text="true">
+                                    {ownText}
+                                  </p>
+                                </>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="pd-action"
+                                data-action="show-own-annotation"
+                                aria-expanded={ownOpen}
+                                aria-controls={ownOpen ? ownId : undefined}
+                                onClick={() => toggleOwnText(rowKey)}
+                              >
+                                {ownOpen ? "Hide my annotation" : "Show my annotation"}
+                              </button>
+                            </>
+                          ) : null}
+                        </li>
+                      );
+                    }
+                    return (
+                      <li
+                        key={rowKey}
+                        className="pd-annotation"
+                        data-annotation-id={annotation.id}
+                      >
+                        <p className="pd-annotation__text pd-post__text--hidden" data-hidden="true">
+                          {typeof annotation.hidden_reason === "string" &&
+                          annotation.hidden_reason.trim() !== ""
+                            ? `Hidden by moderation: ${annotation.hidden_reason.trim()}`
+                            : "Hidden by moderation."}
+                        </p>
+                      </li>
+                    );
+                  })}
                 </ul>
               ) : null}
             </div>
