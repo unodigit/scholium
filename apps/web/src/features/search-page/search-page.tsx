@@ -204,38 +204,6 @@ function statusValueLabel(status: string): string {
 /** The empty facet counts shown before the first keyword answer. */
 const NO_FACETS: FacetCounts = { category: {}, status: {} };
 
-/**
- * Facet values remembered for one query, and the answer they came from.
- *
- * The query is the text and the mode: a new one starts a fresh set, so an
- * earlier query's categories and statuses cannot survive into the next
- * answer. Within one query the values accumulate, because the API counts
- * facets over the filtered matches.
- */
-interface FacetMemory {
-  /** Query text and mode, as {@link queryKeyOf} renders them. */
-  readonly query: string;
-  /** `searchStateKey` of the answer merged last; null before the first. */
-  readonly answer: string | null;
-  readonly facets: FacetCounts;
-}
-
-/** The identity of a query, without its filters. */
-function queryKeyOf(state: SearchState): string {
-  return `${state.q.trim()}\u0000${state.mode}`;
-}
-
-function copyFacets(facets: FacetCounts): FacetCounts {
-  return { category: { ...facets.category }, status: { ...facets.status } };
-}
-
-function mergeFacets(remembered: FacetCounts, answer: FacetCounts): FacetCounts {
-  return {
-    category: { ...remembered.category, ...answer.category },
-    status: { ...remembered.status, ...answer.status },
-  };
-}
-
 /** Search page with results, facet filters and a semantic toggle. */
 export function SearchPage({
   initialState = EMPTY_SEARCH_STATE,
@@ -253,24 +221,6 @@ export function SearchPage({
     initialView(initialState, initialResult, initialError),
   );
   const [attempt, setAttempt] = useState(0);
-  // Facet values seen for the current query. The API counts facets over the
-  // filtered matches, so selecting `cs.LG` would otherwise make `cs.AI`
-  // disappear and leave no way to add it to the OR filter. A new query text
-  // or mode starts a fresh set; within one query the values accumulate.
-  const [facetMemory, setFacetMemory] = useState<FacetMemory>(() => {
-    let initial: SearchResult | undefined;
-    let answer: string | null = null;
-    if (view.status === "ready" && isResults(view.result)) {
-      initial = view.result;
-      answer = view.key;
-    }
-    return {
-      query: queryKeyOf(initialState),
-      answer,
-      facets: initial !== undefined ? copyFacets(initial.facets) : NO_FACETS,
-    };
-  });
-
   // The key of the request already answered or in flight. A ref rather than
   // state so the fetch effect can tell "same search" from "new search"
   // without depending on `view` and re-running in a loop.
@@ -502,43 +452,25 @@ export function SearchPage({
 
   const semantic = state.mode === "semantic";
   const filtersDisabled = semantic;
-  // Only treat the view's result as the current answer when it actually
-  // answers the state on screen; a stale result from the previous query must
-  // not seed the facet memory while the new answer loads.
+  // The answer on screen, whatever it answers (the list shows it as is).
   const answered = view.status === "ready" ? view.result : undefined;
+  // The facet column reads only the answer to the state on screen. The API
+  // counts each facet over the matches that pass every filter except that
+  // facet's own, so these counts are exactly what ticking a value would
+  // return: nothing is remembered from an earlier answer, whose counts would
+  // describe a different filter set. While an answer is loading the column
+  // lists only the selected values, so they can still be unticked.
   const ready =
     view.status === "ready" && view.key === key ? view.result : undefined;
-  const keywordFacets =
-    ready !== undefined && isResults(ready) ? ready.facets : undefined;
-
-  const queryKey = queryKeyOf(state);
-
-  // Keep the remembered facets in step with the state and answer on screen.
-  // Adjusting the state during render (rather than in an effect) means a new
-  // query never paints with the previous query's column: React re-renders
-  // before committing, and the guards settle after one pass.
-  let memory = facetMemory;
-  if (memory.query !== queryKey) {
-    memory = { query: queryKey, answer: null, facets: NO_FACETS };
-  }
-  if (keywordFacets !== undefined && memory.answer !== key) {
-    memory = {
-      query: memory.query,
-      answer: key,
-      facets:
-        memory.answer === null
-          ? copyFacets(keywordFacets)
-          : mergeFacets(memory.facets, keywordFacets),
-    };
-  }
-  if (memory !== facetMemory) {
-    setFacetMemory(memory);
-  }
-
-  const facets = memory.facets;
+  const facets = ready !== undefined && isResults(ready) ? ready.facets : NO_FACETS;
   const results = answered?.results ?? [];
   const categoryChoices = facetOptions(facets.category, state.categories);
-  const statusChoices = statusOptions(facets.status, state.statuses);
+  // `statusOptions` lists every known status; here a status the answer does
+  // not count is offered only when it is selected, since ticking it would
+  // return nothing.
+  const statusChoices = statusOptions(facets.status, state.statuses).filter(
+    (choice) => choice.count > 0 || state.statuses.includes(choice.value),
+  );
   const showClear = hasActiveFilters(state);
 
   return (
@@ -666,29 +598,33 @@ export function SearchPage({
 
           <fieldset className="sp-filter-group" disabled={filtersDisabled}>
             <legend className="sp-filter-legend">Status</legend>
-            <ul className="sp-filter-list">
-              {statusChoices.map((choice) => {
-                const id = `sp-status-${choice.value}`;
-                return (
-                  <li key={choice.value}>
-                    <input
-                      id={id}
-                      type="checkbox"
-                      checked={state.statuses.includes(choice.value)}
-                      onChange={() => apply(toggleStatus(state, choice.value), "replace")}
-                    />
-                    <label htmlFor={id}>
-                      <span className="sp-filter-value">
-                        {statusValueLabel(choice.value)}
-                      </span>
-                      {choice.count > 0 ? (
-                        <span className="sp-filter-count">{choice.count}</span>
-                      ) : null}
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
+            {statusChoices.length === 0 ? (
+              <p className="sp-filter-none">Statuses appear with results.</p>
+            ) : (
+              <ul className="sp-filter-list">
+                {statusChoices.map((choice) => {
+                  const id = `sp-status-${choice.value}`;
+                  return (
+                    <li key={choice.value}>
+                      <input
+                        id={id}
+                        type="checkbox"
+                        checked={state.statuses.includes(choice.value)}
+                        onChange={() => apply(toggleStatus(state, choice.value), "replace")}
+                      />
+                      <label htmlFor={id}>
+                        <span className="sp-filter-value">
+                          {statusValueLabel(choice.value)}
+                        </span>
+                        {choice.count > 0 ? (
+                          <span className="sp-filter-count">{choice.count}</span>
+                        ) : null}
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </fieldset>
 
           <fieldset className="sp-filter-group" disabled={filtersDisabled}>

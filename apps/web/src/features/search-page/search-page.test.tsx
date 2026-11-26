@@ -499,37 +499,175 @@ describe("SearchPage facets across queries", () => {
     expect(screen.queryByRole("checkbox", { name: /astro-ph\.HE/ })).toBeNull();
   });
 
-  it("keeps the earlier facet values listed while filters stay within one query", async () => {
-    const filtered: SearchResult = {
-      ...RESULT,
-      total: 1,
-      results: [HIT],
-      facets: {
-        category: { "cs.LG": 1 },
-        status: { reviewed: 1 },
-      },
-    };
-    const loadKeyword = vi.fn(async (_next: SearchState) => filtered);
+  // "Rafael Silva": three papers. The API counts each facet over the matches
+  // that pass every filter except that facet's own, so with cs.LG ticked the
+  // category column still counts cs.AI and cs.MA, while the status column
+  // counts only the one cs.LG paper.
+  const RAFAEL_ALL: SearchResult = {
+    query: "Rafael Silva",
+    total: 3,
+    results: [
+      { ...HIT, versionCid: "bafy-r-1", title: "Rafael one", status: "under_review" },
+      { ...HIT, versionCid: "bafy-r-2", title: "Rafael two", status: "corrected" },
+      { ...HIT, versionCid: "bafy-r-3", title: "Rafael three", status: "preprint" },
+    ],
+    facets: {
+      category: { "cs.AI": 2, "cs.LG": 1, "cs.MA": 1 },
+      status: { under_review: 1, corrected: 1, preprint: 1 },
+    },
+  };
+  const RAFAEL_LG: SearchResult = {
+    query: "Rafael Silva",
+    total: 1,
+    results: [
+      { ...HIT, versionCid: "bafy-r-1", title: "Rafael one", status: "under_review" },
+    ],
+    facets: {
+      category: { "cs.AI": 2, "cs.LG": 1, "cs.MA": 1 },
+      status: { under_review: 1 },
+    },
+  };
 
+  function renderRafael(loadKeyword: (next: SearchState) => Promise<SearchResult>) {
+    return render(
+      <SearchPage
+        initialState={state({ q: "Rafael Silva" })}
+        initialResult={RAFAEL_ALL}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+  }
+
+  it("within one query, selecting a category still lists the others, from the answer's own counts", async () => {
+    const loadKeyword = vi.fn(async (_next: SearchState) => RAFAEL_LG);
+    renderRafael(loadKeyword);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+
+    // The answer's disjunctive counts keep cs.AI and cs.MA listed, with the
+    // counts that ticking them would add.
+    expect(
+      await screen.findByRole("checkbox", { name: /cs\.AI\s*2/ }),
+    ).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /cs\.MA\s*1/ })).toBeTruthy();
+    const lg = screen.getByRole("checkbox", { name: /cs\.LG\s*1/ });
+    expect((lg as HTMLInputElement).checked).toBe(true);
+    expect(loadKeyword).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not list a status the current answer lacks, unless it is selected", async () => {
+    const loadKeyword = vi.fn(async (_next: SearchState) => RAFAEL_LG);
+    renderRafael(loadKeyword);
+
+    // Before the filter every status of the first answer is listed.
+    expect(screen.getByRole("checkbox", { name: /Preprint\s*1/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+    await screen.findByRole("checkbox", { name: /Under review\s*1/ });
+
+    // Ticking "Preprint 1" would give 0 results, so it is not offered; nor is
+    // any other status the answer does not count — not even with no count.
+    expect(screen.queryByRole("checkbox", { name: /Preprint/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Corrected/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Reviewed/ })).toBeNull();
+  });
+
+  it("offers only values that give a result when ticked", async () => {
+    const loadKeyword = vi.fn(async (_next: SearchState) => RAFAEL_LG);
+    renderRafael(loadKeyword);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+    await screen.findByRole("checkbox", { name: /Under review\s*1/ });
+
+    const aside = screen.getByRole("complementary", { name: "Search filters" });
+    const unselected = (
+      within(aside).getAllByRole("checkbox") as HTMLInputElement[]
+    ).filter((box) => !box.checked && box.id !== "sp-code");
+    expect(unselected.length).toBeGreaterThan(0);
+    for (const box of unselected) {
+      // Every listed, unselected value carries a count of at least one.
+      expect(box.labels?.[0]?.textContent ?? "").toMatch(/[1-9]\d*$/);
+    }
+  });
+
+  it("keeps a selected category the answer lacks listed, so it can be unticked", async () => {
+    // cs.MA is selected but the answer (a date filter, say) no longer counts it.
+    const loadKeyword = vi.fn(async (_next: SearchState) => RAFAEL_ALL);
     render(
       <SearchPage
-        initialState={state()}
-        initialResult={RESULT}
+        initialState={state({ q: "Rafael Silva", categories: ["cs.MA"] })}
+        initialResult={{
+          ...RAFAEL_ALL,
+          total: 0,
+          results: [],
+          facets: { category: { "cs.AI": 2 }, status: {} },
+        }}
         updateUrl={vi.fn()}
         loadKeyword={loadKeyword}
       />,
     );
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    const ma = screen.getByRole("checkbox", { name: /cs\.MA/ }) as HTMLInputElement;
+    expect((ma as HTMLInputElement).checked).toBe(true);
+    // No stale count is shown for it.
+    expect(ma.labels?.[0]?.textContent).toBe("cs.MA");
 
+    fireEvent.click(ma);
     await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+    expect(loadKeyword.mock.calls[0][0]).toMatchObject({ categories: [] });
+  });
 
-    // The answer no longer counts astro-ph.HE, but its row stays so the
-    // reader can add it to the OR filter.
+  it("keeps a selected status the answer lacks listed, so it can be unticked", async () => {
+    const loadKeyword = vi.fn(async (_next: SearchState) => RAFAEL_ALL);
+    render(
+      <SearchPage
+        initialState={state({ q: "Rafael Silva", statuses: ["retracted"] })}
+        initialResult={{
+          ...RAFAEL_ALL,
+          total: 0,
+          results: [],
+          facets: { category: { "cs.AI": 2 }, status: { preprint: 1 } },
+        }}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+
+    const retracted = screen.getByRole("checkbox", {
+      name: /Retracted/,
+    }) as HTMLInputElement;
+    expect((retracted as HTMLInputElement).checked).toBe(true);
+    expect(retracted.labels?.[0]?.textContent).toBe("Retracted");
+    // A status that is neither counted nor selected is not listed.
+    expect(screen.queryByRole("checkbox", { name: /Corrected/ })).toBeNull();
+
+    fireEvent.click(retracted);
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+    expect(loadKeyword.mock.calls[0][0]).toMatchObject({ statuses: [] });
+  });
+
+  it("shows the answer's own values after each filter step, never an earlier answer's", async () => {
+    const answers = [RAFAEL_LG, RAFAEL_ALL];
+    const loadKeyword = vi.fn(async (_next: SearchState) => answers.shift()!);
+    renderRafael(loadKeyword);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+    await screen.findByRole("checkbox", { name: /Under review\s*1/ });
+    expect(screen.queryByRole("checkbox", { name: /Preprint/ })).toBeNull();
+
+    // Unticking cs.LG widens the answer again, and its statuses come back
+    // with it: they are read from the answer, not remembered.
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(2));
     expect(
-      screen.getByRole("checkbox", { name: /astro-ph\.HE\s*2/ }),
+      await screen.findByRole("checkbox", { name: /Preprint\s*1/ }),
     ).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: /cs\.LG\s*1/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /Corrected\s*1/ })).toBeTruthy();
   });
 });
 
@@ -924,8 +1062,14 @@ describe("SearchPage semantic toggle", () => {
     expect(
       screen.getByText("Facet filters apply to keyword search."),
     ).toBeTruthy();
-    const checkbox = screen.getByRole("checkbox", { name: /Preprint/ });
-    expect(checkbox.closest("fieldset")?.hasAttribute("disabled")).toBe(true);
+    // A semantic answer carries no facets, so the status group lists no
+    // values; the group itself is what is disabled.
+    expect(
+      screen.getByRole("group", { name: "Status" }).hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("group", { name: "Category" }).hasAttribute("disabled"),
+    ).toBe(true);
     expect((screen.getByLabelText("From") as HTMLInputElement).closest("fieldset")?.hasAttribute("disabled")).toBe(true);
   });
 
