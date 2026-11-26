@@ -445,9 +445,13 @@ export function unlistedBanner(
     };
   }
   if (state === "scanning") {
+    // `scanning` covers a scan in progress and one waiting because the node's
+    // antivirus is unavailable (it is retried automatically): say what is
+    // true of both, and leave the reason to the status tracker below.
     return {
-      label: "Checks are running",
-      detail: "The node is scanning this version's files.",
+      label: "Waiting for the safety scan",
+      detail:
+        "Its files open, and it goes to moderation, once they pass the safety scan. The status tracker below says where the scan is.",
       tone: "neutral",
       icon: "circle",
       decision: action === null ? null : decision,

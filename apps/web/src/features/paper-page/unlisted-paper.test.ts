@@ -246,6 +246,20 @@ describe("unlistedBanner", () => {
     expect(banner.tone).toBe("neutral");
   });
 
+  it("says a scanning version is waiting for the safety scan, without claiming the scan is running", () => {
+    // A version in `scanning` may be mid-scan or waiting because the node's
+    // antivirus is unavailable (bug_spec_verify27 D2/D3); the banner must be
+    // true in both cases and leave the reason to the status tracker.
+    const banner = unlistedBanner("scanning", null);
+
+    expect(banner.label).toBe("Waiting for the safety scan");
+    expect(banner.detail).toBe(
+      "Its files open, and it goes to moderation, once they pass the safety scan. The status tracker below says where the scan is.",
+    );
+    expect(banner.label).not.toMatch(/running/i);
+    expect(banner.tone).toBe("neutral");
+  });
+
   it("says a version awaiting consent is awaiting its co-authors", () => {
     const banner = unlistedBanner("awaiting_consent", null);
 

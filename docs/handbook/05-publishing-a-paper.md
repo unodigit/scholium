@@ -147,7 +147,7 @@ Before anyone can open your files, Scholium inspects them:
 - **PDFs** are checked for embedded JavaScript, embedded files, actions that launch programs, hidden text (tiny, white or invisible) and text that tries to instruct AI tools. Encrypted or unreadable PDFs fail.
 - **Archives** are checked for unsafe paths and links, and scanned for malware.
 
-Files are inspected, never altered. If a file fails, the version is **held** and the tracker shows, for example, "paper.pdf failed the safety scan: JavaScript…" with **Needs fixing** and **Replace in Files**. Fix the file and submit a new version.
+Files are inspected, never altered. If a file fails, the version is **held** and the tracker shows, for example, "paper.pdf failed the safety scan: JavaScript…" with **Needs fixing** and a **Publish a new version** link. Fix the file, then publish the new version from there.
 
 If this node cannot run its malware scan, the version waits instead of being held: it is scanned again automatically, and there is nothing for you to do. Files are never opened or listed before they pass. A file that is too large for the malware scan is the exception — it is held, and the tracker names it "too large for the malware scan".
 
