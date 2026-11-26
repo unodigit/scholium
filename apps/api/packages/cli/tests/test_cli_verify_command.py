@@ -666,6 +666,259 @@ def test_a_released_hold_does_not_count_as_held(car_file, capsys):
     assert "Result: VERIFIED — 2 papers (2 listed)" in out
 
 
+def moderation_decision(
+    name,
+    action,
+    target,
+    *,
+    clause="MOD-05",
+    reason=None,
+    reason_cid=None,
+    state=None,
+    created="2026-11-14T05:34:00Z",
+):
+    """A moderator's signed decision, with the fields the checklist reads."""
+    body = {"target": target, "action": action}
+    if clause is not None:
+        body["clause"] = clause
+    if reason is not None:
+        body["reason"] = reason
+    if reason_cid is not None:
+        body["reasonCid"] = reason_cid
+    if state is not None:
+        body["state"] = state
+    return signed(name, "moderation.decision", body, created=created)
+
+
+def decided_paper(car_file, capsys, *decisions):
+    """A listed paper beside one carrying ``decisions``; verify the archive.
+
+    Each decision is a mapping of :func:`moderation_decision`'s arguments
+    (``name`` and ``action`` plus any optional field) without ``target``: the
+    decided paper's only version is the target, as the node records it.  Returns
+    the verified output and the decisions as recorded.
+    """
+    listed, decided = make_paper(seed="one"), make_paper(seed="two")
+    listed.extra.append(list_decision("committee", listed.versions[0]["id"]))
+    target = decided.versions[0]["id"]
+    records = []
+    for spec in decisions:
+        spec = dict(spec)
+        name = spec.pop("name")
+        action = spec.pop("action")
+        records.append(moderation_decision(name, action, target, **spec))
+    decided.extra.extend(records)
+    data = whole_node_archive([listed.records(), decided.records()])
+    code, out, err = verify(car_file, data, capsys=capsys)
+    return code, out, err, records
+
+
+def test_a_held_paper_says_it_is_held_and_why(car_file, capsys):
+    """A hold in force is a line under the paper, with its clause and reason.
+
+    The summary already counts the paper as held; a reader who opens the
+    paper's own section must be able to tell which decision holds it (D1,
+    bug_spec_verify29).
+    """
+    code, out, err, records = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "committee",
+            "action": "hold",
+            "clause": "MOD-05",
+            "reason": "The figures need a second look.",
+        },
+    )
+    record = records[0]
+
+    assert code == 0, out
+    assert err == ""
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 held)" in out
+    assert (
+        "Held from listing by a moderator (MOD-05): "
+        "The figures need a second look." in out
+    )
+    assert (
+        f"moderation.decision {record['id']} signed by {did('committee')}" in out
+    )
+
+
+def test_a_rejected_paper_says_a_moderator_rejected_it(car_file, capsys):
+    """A rejection in force is named, with the clause and reason."""
+    code, out, _, records = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "committee",
+            "action": "reject",
+            "clause": "MOD-03",
+            "reason": "Out of scope for this node.",
+        },
+    )
+    record = records[0]
+
+    assert code == 0, out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 rejected)" in out
+    assert (
+        "Not listed: a moderator rejected it (MOD-03): "
+        "Out of scope for this node." in out
+    )
+    assert f"moderation.decision {record['id']}" in out
+
+
+def test_a_delisted_paper_says_a_moderator_removed_it(car_file, capsys):
+    """A delisting in force is named, with the clause and reason."""
+    code, out, _, _ = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "committee",
+            "action": "delist",
+            "clause": "MOD-07",
+            "reason": "Removed at the authors' request.",
+        },
+    )
+
+    assert code == 0, out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 delisted)" in out
+    assert (
+        "Removed from the catalog by a moderator (MOD-07): "
+        "Removed at the authors' request." in out
+    )
+
+
+def test_a_released_hold_leaves_no_moderation_line(car_file, capsys):
+    """A release in force is not a hold: the line goes with the hold."""
+    code, out, _, _ = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "committee",
+            "action": "hold",
+            "reason": "The figures need a second look.",
+        },
+        {
+            "name": "committee",
+            "action": "release",
+            "state": "listed",
+            "reason": "The figures were checked.",
+            "created": "2026-11-14T05:36:00Z",
+        },
+    )
+
+    assert code == 0, out
+    assert "Result: VERIFIED — 2 papers (2 listed)" in out
+    assert "Held from listing" not in out
+
+
+def test_a_later_list_decision_leaves_no_moderation_line(car_file, capsys):
+    """The newest decision is the one in force: a later list ends the hold."""
+    code, out, _, _ = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "committee",
+            "action": "hold",
+            "reason": "The figures need a second look.",
+            "created": "2026-11-14T05:34:00Z",
+        },
+        {
+            "name": "committee",
+            "action": "list",
+            "clause": "MOD-01",
+            "reason": "Checked and in scope.",
+            "created": "2026-11-14T05:36:00Z",
+        },
+    )
+
+    assert code == 0, out
+    assert "Result: VERIFIED — 2 papers (2 listed)" in out
+    assert "Held from listing" not in out
+
+
+def test_a_moderation_reason_record_is_named(car_file, capsys):
+    """A decision may point at a reason record instead of carrying the text."""
+    code, out, _, _ = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "committee",
+            "action": "hold",
+            "reason_cid": "bafyreiexamplereason",
+        },
+    )
+
+    assert code == 0, out
+    assert (
+        "Held from listing by a moderator (MOD-05): "
+        "(reason in record bafyreiexamplereason)" in out
+    )
+
+
+def test_a_moderation_reason_is_one_truncated_line(car_file, capsys):
+    """The reason is collapsed onto one line and cut at about 200 characters."""
+    reason = "  The figures\nneed   a second look. " * 30
+    code, out, _, _ = decided_paper(
+        car_file,
+        capsys,
+        {"name": "committee", "action": "hold", "reason": reason},
+    )
+
+    assert code == 0, out
+    line = next(
+        line
+        for line in out.splitlines()
+        if "Held from listing by a moderator (MOD-05):" in line
+    )
+    text = line.split("Held from listing by a moderator (MOD-05): ", 1)[1]
+    assert text == " ".join(reason.split())[:200] + "..."
+    assert len(text) <= 203
+
+
+def test_a_moderation_clause_is_omitted_with_its_parentheses(car_file, capsys):
+    """A decision that cites no clause reads without an empty parenthesis."""
+    code, out, _, _ = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "committee",
+            "action": "hold",
+            "clause": None,
+            "reason": "A second look.",
+        },
+    )
+
+    assert code == 0, out
+    assert "Held from listing by a moderator: A second look." in out
+    assert "Held from listing by a moderator (" not in out
+
+
+def test_a_decision_is_shown_as_recorded_whatever_its_signer(car_file, capsys):
+    """Offline, verify has no moderator key list, so it reports what the log holds.
+
+    Moderation authority is a node-side trust tier; an archive verifier cannot
+    know it.  The decision is therefore shown as recorded, with its signer.
+    """
+    code, out, _, records = decided_paper(
+        car_file,
+        capsys,
+        {
+            "name": "mallory",
+            "action": "hold",
+            "reason": "Not authorised, but on the record.",
+        },
+    )
+    record = records[0]
+
+    assert code == 0, out
+    assert (
+        "Held from listing by a moderator (MOD-05): "
+        "Not authorised, but on the record." in out
+    )
+    assert f"moderation.decision {record['id']} signed by {did('mallory')}" in out
+
+
 def test_a_whole_node_archive_narrows_to_one_paper_with_paper(car_file, capsys):
     one, two = make_paper(seed="one"), make_paper(seed="two")
     data = whole_node_archive([one.records(), two.records()])

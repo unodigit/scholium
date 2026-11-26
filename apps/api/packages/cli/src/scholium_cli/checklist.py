@@ -57,6 +57,7 @@ __all__ = [
     "Verdict",
     "build_verdict",
     "manifest_files",
+    "moderation_item",
     "unreadable_verdict",
 ]
 
@@ -287,7 +288,13 @@ def _truncate_reason(text: str) -> str:
     return collapsed[:200] + "..."
 
 
-def _withdrawal_reason(record: Mapping[str, Any]) -> str:
+def _reason_text(record: Mapping[str, Any]) -> str:
+    """A record's reason, one line and cut at about 200 characters, or its id.
+
+    Both a withdrawal and a moderation decision carry a reason inline, or name
+    a record holding it with ``reasonCid``.  An offline verifier cannot follow
+    the cid, so it points at the record instead of inventing text.
+    """
     body = record.get("body")
     body = body if isinstance(body, Mapping) else {}
     reason = body.get("reason")
@@ -328,7 +335,7 @@ def _withdrawal_records(archive: Archive, paper_id: str) -> list[tuple[str, str,
             applied = True
             reason_not_applied = ""
         found.append(
-            (record_id, signer or "", _withdrawal_reason(record), applied, reason_not_applied)
+            (record_id, signer or "", _reason_text(record), applied, reason_not_applied)
         )
     found.sort(key=lambda item: item[0])
     return found
@@ -384,6 +391,55 @@ def _withdrawal_items(report: VerificationReport, archive: Archive | None = None
             )
         )
     return tuple(items)
+
+
+#: The plain words for a moderation decision in force that keeps a paper out of
+#: the catalog (D1).  Any other action -- a ``release``, a later ``list``, a
+#: ``tombstone`` (the supersession line names it) or a decision that sets no
+#: state -- adds no line of its own here.
+_MODERATION_WORDING = {
+    "hold": "Held from listing by a moderator",
+    "reject": "Not listed: a moderator rejected it",
+    "delist": "Removed from the catalog by a moderator",
+}
+
+
+def moderation_item(record: Mapping[str, Any]) -> Item | None:
+    """One WARN line for the moderation decision in force on a paper's version.
+
+    ``record`` is the newest state-setting ``moderation.decision`` on the
+    paper's newest version.  A hold, a rejection or a delisting is named with
+    the policy clause it cites and the moderator's own reason (one line, cut at
+    about 200 characters, or a pointer to the reason record).  A ``release`` or
+    a later ``list`` adds no line: the decision in force no longer keeps the
+    paper out of the catalog.
+
+    Offline, the archive carries no list of moderator keys, so the signer is
+    reported as recorded rather than checked against a trust tier.
+    """
+    body = record.get("body")
+    if not isinstance(body, Mapping):
+        return None
+    action = body.get("action")
+    wording = (
+        _MODERATION_WORDING.get(action.strip().lower())
+        if isinstance(action, str)
+        else None
+    )
+    if wording is None:
+        return None
+    clause = body.get("clause")
+    clause = clause.strip() if isinstance(clause, str) and clause.strip() else None
+    text = f"{wording} ({clause})" if clause else wording
+    reason = _reason_text(record)
+    if reason:
+        text = f"{text}: {reason}"
+    record_id = record.get("id")
+    signer = record.get("author")
+    details: tuple[str, ...] = ()
+    if isinstance(record_id, str) and isinstance(signer, str):
+        details = (f"moderation.decision {record_id} signed by {signer}",)
+    return Item("moderation", WARN, text, details)
 
 
 # --- verdicts -----------------------------------------------------------

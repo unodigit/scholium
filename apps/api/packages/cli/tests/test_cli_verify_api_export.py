@@ -104,6 +104,100 @@ with TestClient(create_app()) as client:
 """
 
 
+#: Build a listed paper beside a queued one a moderator holds, then export.
+#: The archive names the hold in the summary; the paper's own section must name
+#: the decision too, with its clause, reason and signer (bug_spec_verify29, D1).
+BUILD_HELD = """
+import json
+import sys
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+from nacl.signing import SigningKey
+
+from app.main import create_app
+from app.modules import ledger
+from app.modules.export.tests.test_paper_car import build_paper
+from app.modules.submissions import LISTED, MODERATION
+from scholium_record_core import did_key_from_signing_key, sign_record
+
+with TestClient(create_app()) as client:
+    listed = build_paper(state=LISTED)
+    held = build_paper(state=MODERATION)
+    for paper in (listed, held):
+        paper.append(
+            paper.sign(
+                "coauthor.consent",
+                {
+                    "version": paper.version["id"],
+                    "role": "author",
+                    "decision": "accept",
+                },
+            )
+        )
+    moderator_key = SigningKey.generate()
+    moderator_did = did_key_from_signing_key(moderator_key)
+
+    def decide(paper, action, clause, reason, created):
+        record = sign_record(
+            {
+                "v": 1,
+                "type": "moderation.decision",
+                "author": moderator_did,
+                "created": created,
+                "prev": None,
+                "body": {
+                    "target": paper.version["id"],
+                    "action": action,
+                    "clause": clause,
+                    "reason": reason,
+                },
+                "proofs": [],
+            },
+            moderator_key,
+        )
+        ledger.append(record)
+        return record
+
+    decide(listed, "list", "MOD-01", "In scope and scholarly form.", "2026-11-15T09:00:03Z")
+    hold = decide(
+        held,
+        "hold",
+        "MOD-05",
+        "The figures need a second look.",
+        "2026-11-15T09:00:04Z",
+    )
+    response = client.get("/v1/export/archive.car")
+    if response.status_code != 200:
+        print(
+            f"archive export failed: {response.status_code} {response.text}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    Path(sys.argv[1]).write_bytes(response.content)
+    print(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "short_id": paper.short_id,
+                        "genesis": paper.genesis["id"],
+                        "version": paper.version["id"],
+                    }
+                    for paper in (listed, held)
+                ],
+                "hold": {
+                    "id": hold["id"],
+                    "signer": moderator_did,
+                    "clause": "MOD-05",
+                    "reason": "The figures need a second look.",
+                },
+            }
+        )
+    )
+"""
+
+
 #: Build a paper whose v1 is listed and whose v2 is still in the queue, beside
 #: a paper with no listed version at all, then export.  The node keeps serving
 #: the listed v1 (``GET /v1/papers/{id}`` resolves to it), so the summary must
@@ -704,6 +798,37 @@ def test_an_export_reports_a_withdrawal_signed_by_an_author(tmp_path, capsys):
     outsider_block = paper_block(out, by_outsider["short_id"])
     assert "Withdrawn by the authors" not in outsider_block
     assert "No retraction, correction or tombstone applies" in outsider_block
+
+
+def test_an_export_names_the_hold_that_keeps_a_paper_out_of_the_catalog(
+    tmp_path, capsys
+):
+    """A held paper's own section names the decision in force, and why.
+
+    The summary counts the paper as held.  A reader who opens the paper's block
+    must be told which public decision holds it: its policy clause, the
+    moderator's reason, and the signed record that carries them (D1,
+    bug_spec_verify29).  The status, summary counts and exit code do not change.
+    """
+    archive, built = export_a_whole_node(tmp_path, BUILD_HELD)
+    listed, held = built["papers"]
+    hold = built["hold"]
+
+    code = main(["verify", str(archive)])
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "Result: VERIFIED — 2 papers (1 listed, 1 held)" in out
+    block = paper_block(out, held["short_id"])
+    assert (
+        f"Held from listing by a moderator ({hold['clause']}): {hold['reason']}"
+        in block
+    )
+    assert (
+        f"moderation.decision {hold['id']} signed by {hold['signer']}" in block
+    )
+    # The listed paper is not held, so its block carries no such line.
+    assert "Held from listing" not in paper_block(out, listed["short_id"])
 
 
 def test_an_export_lists_a_withdrawal_by_an_outsider_as_not_applied(

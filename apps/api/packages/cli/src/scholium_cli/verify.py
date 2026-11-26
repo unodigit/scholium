@@ -66,6 +66,7 @@ from .checklist import (
     Verdict,
     _archive_item,
     build_verdict,
+    moderation_item,
     unreadable_verdict,
 )
 from .rebuild import (
@@ -560,6 +561,34 @@ def _decision_in_force(archive: Archive, target: str) -> tuple[str | None, str |
     return current[1], current[2]
 
 
+def _decision_record_in_force(
+    archive: Archive, target: str
+) -> Mapping[str, Any] | None:
+    """The newest state-setting decision on ``target``, as a record.
+
+    :func:`_decision_in_force` answers what the decision *does*; this returns
+    the record itself so the per-paper checklist can name its clause, reason
+    and signer.  ``None`` means no decision sets the target's state.
+    """
+    current: tuple[tuple[datetime, str], Mapping[str, Any]] | None = None
+    for record in archive.records:
+        if record.get("type") != "moderation.decision":
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping) or body.get("target") != target:
+            continue
+        if _state_of_decision(body) is None:
+            continue
+        record_id = record.get("id")
+        order = (
+            _created(record.get("created")),
+            record_id if isinstance(record_id, str) else "",
+        )
+        if current is None or order > current[0]:
+            current = (order, record)
+    return current[1] if current is not None else None
+
+
 def _unlisted_status(archive: Archive, paper_id: str) -> tuple[str, bool]:
     """How an unlisted paper reads, and whether a public decision is in force.
 
@@ -697,6 +726,17 @@ def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) 
                     "queue are not part of the public record.",
                 ),
             )
+    # A hold, rejection or delisting in force on the newest version is the
+    # public decision that explains the paper's state; name it with its clause
+    # and reason, as a "not listed yet" paper and a withdrawal are named (D1,
+    # bug_spec_verify29).  A release or a later list adds no line.
+    decision = _decision_record_in_force(
+        archive, _newest_version_id(archive, paper_id) or paper_id
+    )
+    if decision is not None:
+        notice = moderation_item(decision)
+        if notice is not None:
+            items += (notice,)
     withdrawn_count = sum(1 for item in items if item.key == "withdrawal")
     return PaperVerdict(
         label=verdict.version or report.short_id or label,
