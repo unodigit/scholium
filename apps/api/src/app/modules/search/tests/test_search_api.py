@@ -275,6 +275,102 @@ def test_facet_counts_cover_every_match(client):
     assert body["facets"]["status"] == {"preprint": 3, "reviewed": 1}
 
 
+def test_a_selected_category_leaves_the_other_categories_in_the_counts(client):
+    # D2: a facet's counts are over the matches that pass every filter except
+    # that facet's own, so selecting one category still shows what widening the
+    # OR would add.  The other filters (here, status) still apply.
+    word = unique_word()
+    ai = listed(f"{word} ai", categories=("cs.AI",), status="under_review")
+    lg = listed(f"{word} lg", categories=("cs.LG",), status="under_review")
+    ma = listed(f"{word} ma", categories=("cs.MA",), status="preprint")
+
+    # No selection in the facet: its counts are unchanged.
+    assert ok(client, word)["facets"]["category"] == {"cs.AI": 1, "cs.LG": 1, "cs.MA": 1}
+
+    body = ok(client, word, category="cs.LG")
+
+    assert cids(body) == [lg.version_cid]
+    assert body["total"] == 1
+    assert body["facets"]["category"] == {"cs.AI": 1, "cs.LG": 1, "cs.MA": 1}
+    # The status facet still applies the selected category.
+    assert body["facets"]["status"] == {"under_review": 1}
+    assert ai.version_cid not in cids(body)
+    assert ma.version_cid not in cids(body)
+
+
+def test_a_selected_status_leaves_the_other_statuses_in_the_counts(client):
+    word = unique_word()
+    under_review = listed(f"{word} review", categories=("cs.AI",), status="under_review")
+    preprint = listed(f"{word} preprint", categories=("cs.LG",), status="preprint")
+
+    body = ok(client, word, status="preprint")
+
+    assert cids(body) == [preprint.version_cid]
+    assert body["facets"]["status"] == {"under_review": 1, "preprint": 1}
+    # The category facet still applies the selected status.
+    assert body["facets"]["category"] == {"cs.LG": 1}
+    assert under_review.version_cid not in cids(body)
+
+
+def test_both_facets_selected_each_ignores_only_its_own_filter(client):
+    word = unique_word()
+    lg_review = listed(f"{word} lg review", categories=("cs.LG",), status="under_review")
+    lg_preprint = listed(f"{word} lg preprint", categories=("cs.LG",), status="preprint")
+    ai_review = listed(f"{word} ai review", categories=("cs.AI",), status="under_review")
+
+    body = ok(client, word, category="cs.LG", status="under_review")
+
+    assert cids(body) == [lg_review.version_cid]
+    # Category counts ignore the category but keep the status.
+    assert body["facets"]["category"] == {"cs.AI": 1, "cs.LG": 1}
+    # Status counts ignore the status but keep the category.
+    assert body["facets"]["status"] == {"under_review": 1, "preprint": 1}
+    assert ai_review.version_cid not in cids(body)
+    assert lg_preprint.version_cid not in cids(body)
+
+
+def test_facet_counts_still_apply_the_other_filters(client):
+    word = unique_word()
+    listed(f"{word} ai code", categories=("cs.AI",), has_code=True)
+    lg_code = listed(f"{word} lg code", categories=("cs.LG",), has_code=True)
+    listed(f"{word} lg plain", categories=("cs.LG",))
+
+    body = ok(client, word, category="cs.LG", has_code="true")
+
+    assert cids(body) == [lg_code.version_cid]
+    # Widening the category OR never brings back a version that fails has_code.
+    assert body["facets"]["category"] == {"cs.AI": 1, "cs.LG": 1}
+
+
+def test_facet_counts_count_each_paper_once(client):
+    word = unique_word()
+    target = listed(f"{word} v1", categories=("cs.LG",))
+    version_cid = new_cid()
+    save_version(
+        version_cid=version_cid,
+        paper_cid=target.paper_cid,
+        n=2,
+        title=f"{word} v2",
+        abstract="A short abstract.",
+        manifest_cid=new_cid(),
+        licence="CC-BY-4.0",
+        prev_cid=target.version_cid,
+    )
+    transition_version(version_cid, SCANNING)
+    transition_version(version_cid, MODERATION)
+    transition_version(version_cid, LISTED)
+
+    body = ok(client, word)
+    widened = ok(client, word, category="cs.LG")
+
+    # One hit per paper, in the results and in both facet counts.
+    assert body["total"] == 1
+    assert body["facets"]["category"] == {"cs.LG": 1}
+    assert body["facets"]["status"] == {"preprint": 1}
+    assert widened["facets"]["category"] == {"cs.LG": 1}
+    assert widened["facets"]["status"] == {"preprint": 1}
+
+
 def test_results_are_ranked_by_relevance(client):
     word = unique_word()
     filler = " ".join(f"background{i}" for i in range(60))

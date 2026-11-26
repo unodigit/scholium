@@ -29,9 +29,13 @@ How a query is answered
    (the paper's current status), ``has_code`` (a manifest file whose role is
    ``code``) and an inclusive ``listed_at`` date range -- narrow that ranked
    list.
-4. Facet counts are computed over the *filtered* matches, across all of them
-   (not just the page returned), so the caller can see what else narrowing by
-   one more facet would find.
+4. Facet counts are disjunctive: the category counts are computed over every
+   match that passes every filter *except* the category filter, and the status
+   counts over every match that passes every filter *except* the status filter
+   (the other filters still apply).  A selected value therefore still reports
+   what widening that facet's OR would add, while with no value selected the
+   counts are exactly the results' own.  Both count one hit per paper, across
+   all matches (not just the page returned).
 
 Every hit carries the paper metadata readers need to render a result: the
 version and paper cids, the ``sch:`` short id, title, abstract, categories,
@@ -96,7 +100,11 @@ class SearchHit:
 
 @dataclass(frozen=True)
 class FacetCounts:
-    """How many filtered matches carry each category and each status."""
+    """How many matches carry each category and each status.
+
+    Each facet ignores its own filter and applies every other one, so the
+    counts show what selecting a different value would add.
+    """
 
     category: dict[str, int] = field(default_factory=dict)
     status: dict[str, int] = field(default_factory=dict)
@@ -306,14 +314,23 @@ def _listed_at(value: Any) -> Optional[datetime]:
 
 
 def _passes(
-    row: Any, filters: SearchQuery, code_cache: dict[str, bool]
+    row: Any,
+    filters: SearchQuery,
+    code_cache: dict[str, bool],
+    *,
+    ignore: Optional[str] = None,
 ) -> bool:
-    """Whether one ranked row passes every filter."""
-    if filters.categories:
+    """Whether one ranked row passes every filter.
+
+    ``ignore`` names one facet -- ``"category"`` or ``"status"`` -- whose
+    filter is skipped, so the facet's own counts can be computed over the
+    matches that pass every *other* filter (see :func:`search_versions`).
+    """
+    if filters.categories and ignore != "category":
         paper_categories = set(_category_list(row.categories))
         if not paper_categories.intersection(filters.categories):
             return False
-    if filters.statuses:
+    if filters.statuses and ignore != "status":
         status = (row.status or "").lower()
         if status not in {s.lower() for s in filters.statuses}:
             return False
@@ -333,19 +350,64 @@ def _passes(
     return True
 
 
-def _facets(rows: list[Any]) -> FacetCounts:
-    """Count the filtered matches per category and per status."""
+def _matched_rows(
+    priority: list[Any],
+    rest: list[Any],
+    filters: SearchQuery,
+    code_cache: dict[str, bool],
+    *,
+    ignore: Optional[str] = None,
+) -> list[Any]:
+    """The priority hits then the ranked hits that pass ``filters``."""
+    return [
+        row for row in priority if _passes(row, filters, code_cache, ignore=ignore)
+    ] + [
+        row for row in rest if _passes(row, filters, code_cache, ignore=ignore)
+    ]
+
+
+def _representatives(matched: list[Any]) -> list[Any]:
+    """One hit per paper: its latest listed version among ``matched``.
+
+    A multi-version paper appears once, so the results, the total and both
+    facet counts all count one hit per paper.
+    """
+    by_paper: dict[str, list[Any]] = {}
+    for row in matched:
+        by_paper.setdefault(row.paper_cid, []).append(row)
+    paper_min_index: dict[str, int] = {}
+    for paper_cid, rows in by_paper.items():
+        paper_min_index[paper_cid] = min(matched.index(row) for row in rows)
+    representatives: list[Any] = []
+    for paper_cid, rows in by_paper.items():
+        # prefer highest n, then smallest version_cid
+        candidates = sorted(
+            rows,
+            key=lambda r: (-int(getattr(r, "n", 0)), str(getattr(r, "version_cid", ""))),
+        )
+        representatives.append(candidates[0])
+    representatives.sort(
+        key=lambda r: (paper_min_index[r.paper_cid], str(getattr(r, "version_cid", "")))
+    )
+    return representatives
+
+
+def _category_counts(rows: list[Any]) -> dict[str, int]:
+    """Count the papers in ``rows`` per category (a paper counts once each)."""
     categories: dict[str, int] = {}
-    statuses: dict[str, int] = {}
     for row in rows:
         for category in _category_list(row.categories):
             categories[str(category)] = categories.get(str(category), 0) + 1
+    return _ordered(categories)
+
+
+def _status_counts(rows: list[Any]) -> dict[str, int]:
+    """Count the papers in ``rows`` per status (a paper counts once)."""
+    statuses: dict[str, int] = {}
+    for row in rows:
         if row.status:
             statuses[str(row.status)] = statuses.get(str(row.status), 0) + 1
-    return FacetCounts(
-        category=_ordered(categories),
-        status=_ordered(statuses),
-    )
+    return _ordered(statuses)
 
 
 def _ordered(counts: dict[str, int]) -> dict[str, int]:
@@ -439,29 +501,26 @@ def search_versions(query: str, limit: int = 20, **filters: Any) -> SearchResult
     priority_ids = {row.version_cid for row in priority}
     rest = [row for row in fts_rows if row.version_cid not in priority_ids]
 
-    matched_priority = [row for row in priority if _passes(row, criteria, code_cache)]
-    matched_rest = [row for row in rest if _passes(row, criteria, code_cache)]
-    matched = matched_priority + matched_rest
+    matched = _representatives(_matched_rows(priority, rest, criteria, code_cache))
 
-    # One hit per paper: keep its latest listed version among the matched
-    # versions, so a multi-version paper is not listed once per version.
-    by_paper: dict[str, list[Any]] = {}
-    for row in matched:
-        by_paper.setdefault(row.paper_cid, []).append(row)
-    paper_min_index: dict[str, int] = {}
-    for paper_cid, rows in by_paper.items():
-        paper_min_index[paper_cid] = min(matched.index(row) for row in rows)
-    representatives: list[Any] = []
-    for paper_cid, rows in by_paper.items():
-        # prefer highest n, then smallest version_cid
-        candidates = sorted(rows, key=lambda r: (-int(getattr(r, "n", 0)), str(getattr(r, "version_cid", ""))))
-        rep = candidates[0]
-        representatives.append(rep)
-    representatives.sort(
-        key=lambda r: (paper_min_index[r.paper_cid], str(getattr(r, "version_cid", "")))
+    # Facets are disjunctive (D2): each facet counts the matches that pass
+    # every filter except its own, so a selected value still shows what
+    # widening its OR would add.  With no value selected, every filter applies
+    # and the counts are exactly the results' own.
+    category_rows = matched
+    if criteria.categories:
+        category_rows = _representatives(
+            _matched_rows(priority, rest, criteria, code_cache, ignore="category")
+        )
+    status_rows = matched
+    if criteria.statuses:
+        status_rows = _representatives(
+            _matched_rows(priority, rest, criteria, code_cache, ignore="status")
+        )
+    facets = FacetCounts(
+        category=_category_counts(category_rows),
+        status=_status_counts(status_rows),
     )
-    matched = representatives
-    facets = _facets(matched)
 
     hits: list[SearchHit] = []
     for row in matched[: max(limit, 0)]:
