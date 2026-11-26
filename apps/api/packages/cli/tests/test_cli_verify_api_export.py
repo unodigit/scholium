@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from car_helpers import archive_car, flip, make_paper, signed, write_car
+from car_helpers import archive_car, flip, make_paper, notice, signed, write_car
 from scholium_cli.car import read_car
 from scholium_cli.main import main
 
@@ -258,6 +258,122 @@ with TestClient(create_app()) as client:
                 }
                 for paper in (mixed, queued)
             ]
+        )
+    )
+"""
+
+
+#: Two listed papers, each withdrawn: one by a listed author (the papers'
+#: own withdrawer), one by an outsider who has nothing to do with the paper.
+#: A withdrawal is a notice, not a retraction, so both papers stay listed and
+#: only the author-signed one is reported as withdrawn.
+BUILD_WITHDRAWALS = """
+import json
+import sys
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+from nacl.signing import SigningKey
+
+from app.main import create_app
+from app.modules import ledger
+from app.modules.export.tests.test_paper_car import build_paper
+from app.modules.submissions import LISTED
+from scholium_record_core import did_key_from_signing_key, sign_record
+
+with TestClient(create_app()) as client:
+    moderator_key = SigningKey.generate()
+    moderator_did = did_key_from_signing_key(moderator_key)
+
+    def list_version(paper, second):
+        ledger.append(
+            sign_record(
+                {
+                    "v": 1,
+                    "type": "moderation.decision",
+                    "author": moderator_did,
+                    "created": f"2026-11-15T09:00:1{second}Z",
+                    "prev": None,
+                    "body": {
+                        "target": paper.version["id"],
+                        "action": "list",
+                        "clause": "MOD-01",
+                        "reason": "In scope and scholarly form.",
+                    },
+                    "proofs": [],
+                },
+                moderator_key,
+            )
+        )
+
+    by_author = build_paper(state=LISTED)
+    by_author.append(
+        by_author.sign(
+            "coauthor.consent",
+            {"version": by_author.version["id"], "role": "author", "decision": "accept"},
+        )
+    )
+    author_withdrawal = by_author.sign(
+        "withdrawal",
+        {
+            "target": by_author.version["id"],
+            "reason": "The measurements were wrong.",
+        },
+    )
+    by_author.append(author_withdrawal)
+    list_version(by_author, 1)
+
+    by_outsider = build_paper(state=LISTED)
+    by_outsider.append(
+        by_outsider.sign(
+            "coauthor.consent",
+            {"version": by_outsider.version["id"], "role": "author", "decision": "accept"},
+        )
+    )
+    outsider_key = SigningKey.generate()
+    outsider_did = did_key_from_signing_key(outsider_key)
+    outsider_withdrawal = sign_record(
+        {
+            "v": 1,
+            "type": "withdrawal",
+            "author": outsider_did,
+            "created": "2026-11-15T09:00:09Z",
+            "prev": None,
+            "body": {
+                "target": by_outsider.genesis["id"],
+                "reason": "Not my paper.",
+            },
+            "proofs": [],
+        },
+        outsider_key,
+    )
+    by_outsider.append(outsider_withdrawal)
+    list_version(by_outsider, 2)
+
+    response = client.get("/v1/export/archive.car")
+    if response.status_code != 200:
+        print(
+            f"archive export failed: {response.status_code} {response.text}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    Path(sys.argv[1]).write_bytes(response.content)
+    print(
+        json.dumps(
+            {
+                "papers": [
+                    {"short_id": paper.short_id, "did": paper.did}
+                    for paper in (by_author, by_outsider)
+                ],
+                "author_withdrawal": {
+                    "id": author_withdrawal["id"],
+                    "signer": by_author.did,
+                },
+                "outsider_withdrawal": {
+                    "id": outsider_withdrawal["id"],
+                    "signer": outsider_did,
+                },
+            }
         )
     )
 """
@@ -537,3 +653,80 @@ def test_the_documented_command_names_a_paper_that_does_not_verify(tmp_path, cap
     assert code == 1, out
     assert "Result: NOT VERIFIED" in out
     assert broken_paper["short_id"] in out
+
+
+def test_the_summary_names_how_many_papers_were_withdrawn(tmp_path, capsys):
+    """The suffix is plural, and counts papers, once per withdrawn paper."""
+    first = make_paper(seed="first")
+    first.extra.append(listing_decision("list", first.versions[0]["id"]))
+    first.extra.append(notice("alice", "withdrawal", first.paper_id, reason="wrong"))
+    second = make_paper(seed="second")
+    second.extra.append(listing_decision("list", second.versions[0]["id"]))
+    second.extra.append(
+        notice("bob", "withdrawal", second.versions[-1]["id"], reason="wrong")
+    )
+
+    code, out = verify_papers(tmp_path, capsys, first, second)
+
+    assert code == 0, out
+    assert (
+        "Result: VERIFIED — 2 papers (2 listed, 2 withdrawn by their authors)" in out
+    )
+
+
+def test_an_export_reports_a_withdrawal_signed_by_an_author(tmp_path, capsys):
+    """The archive says a paper was withdrawn by its authors, and why.
+
+    A reader who downloads a node's export must see a withdrawal notice the
+    authors signed, as a warning line and in the summary.  A withdrawal is a
+    notice, not a retraction: the paper stays listed, the "No retraction..."
+    line stays, and the archive still verifies.
+    """
+    archive, built = export_a_whole_node(tmp_path, BUILD_WITHDRAWALS)
+    by_author, by_outsider = built["papers"]
+    withdrawal = built["author_withdrawal"]
+
+    code = main(["verify", str(archive)])
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert (
+        "Result: VERIFIED — 2 papers (2 listed, 1 withdrawn by its authors)" in out
+    )
+    block = paper_block(out, by_author["short_id"])
+    assert "Withdrawn by the authors: The measurements were wrong." in block
+    assert (
+        f"withdrawal {withdrawal['id']} signed by {withdrawal['signer']} (applies)"
+        in block
+    )
+    assert "No retraction, correction or tombstone applies" in block
+
+    outsider_block = paper_block(out, by_outsider["short_id"])
+    assert "Withdrawn by the authors" not in outsider_block
+    assert "No retraction, correction or tombstone applies" in outsider_block
+
+
+def test_an_export_lists_a_withdrawal_by_an_outsider_as_not_applied(
+    tmp_path, capsys
+):
+    """A withdrawal nobody on the paper signed is shown as not applied.
+
+    It is not the authors withdrawing their paper, so it adds no warning line
+    and no summary suffix -- but the proof tab's notices detail still lists
+    it, with the same "(not applied: ...)" wording as the other notices.
+    """
+    archive, built = export_a_whole_node(tmp_path, BUILD_WITHDRAWALS)
+    by_outsider = built["papers"][1]
+    withdrawal = built["outsider_withdrawal"]
+
+    code = main(["verify", str(archive), "--verbose"])
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "1 withdrawn by its authors" in out
+    block = paper_block(out, by_outsider["short_id"])
+    assert "Withdrawn by the authors" not in block
+    assert (
+        f"withdrawal {withdrawal['id']} signed by {withdrawal['signer']} "
+        "(not applied: not signed by an author of this paper)" in block
+    )

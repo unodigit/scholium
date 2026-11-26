@@ -44,6 +44,7 @@ from scholium_record_core import (
     parse_file_cid,
     validate_manifest_body,
 )
+from scholium_record_core.verify import record_problem
 
 from .archive import Archive
 
@@ -245,16 +246,115 @@ def _anchor_item() -> Item:
     )
 
 
-def _supersession_item(report: VerificationReport) -> Item:
+def _paper_version_ids(archive: Archive, paper_id: str) -> set[str]:
+    ids = {paper_id}
+    for record in archive.records:
+        if record.get("type") != "paper.version":
+            continue
+        body = record.get("body")
+        if isinstance(body, Mapping) and body.get("paper") == paper_id:
+            record_id = record.get("id")
+            if isinstance(record_id, str):
+                ids.add(record_id)
+    return ids
+
+
+def _paper_authors(archive: Archive, paper_id: str) -> set[str]:
+    authors: set[str] = set()
+    for record in archive.records:
+        if record.get("type") == "paper.genesis" and record.get("id") == paper_id:
+            author = record.get("author")
+            if isinstance(author, str):
+                authors.add(author)
+        if record.get("type") == "paper.version":
+            body = record.get("body")
+            if isinstance(body, Mapping) and body.get("paper") == paper_id:
+                author = record.get("author")
+                if isinstance(author, str):
+                    authors.add(author)
+                for entry in body.get("authors") or []:
+                    if isinstance(entry, Mapping):
+                        did = entry.get("did")
+                        if isinstance(did, str):
+                            authors.add(did)
+    return authors
+
+
+def _truncate_reason(text: str) -> str:
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= 200:
+        return collapsed
+    return collapsed[:200] + "..."
+
+
+def _withdrawal_reason(record: Mapping[str, Any]) -> str:
+    body = record.get("body")
+    body = body if isinstance(body, Mapping) else {}
+    reason = body.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return _truncate_reason(reason)
+    cid = body.get("reasonCid")
+    if isinstance(cid, str) and cid.strip():
+        return f"(reason in record {cid})"
+    return ""
+
+
+def _withdrawal_records(archive: Archive, paper_id: str) -> list[tuple[str, str, str, bool, str]]:
+    targets = _paper_version_ids(archive, paper_id)
+    authors = _paper_authors(archive, paper_id)
+    found: list[tuple[str, str, str, bool, str]] = []
+    for record in archive.records:
+        if record.get("type") != "withdrawal":
+            continue
+        body = record.get("body")
+        if not isinstance(body, Mapping):
+            continue
+        target = body.get("target")
+        if not isinstance(target, str) or target not in targets:
+            continue
+        record_id = record.get("id")
+        if not isinstance(record_id, str):
+            continue
+        signer = record.get("author")
+        signer = signer if isinstance(signer, str) else None
+        problem = record_problem(record)
+        if problem is not None:
+            applied = False
+            reason_not_applied = f"not authentic: {problem}"
+        elif signer is None or signer not in authors:
+            applied = False
+            reason_not_applied = "not signed by an author of this paper"
+        else:
+            applied = True
+            reason_not_applied = ""
+        found.append(
+            (record_id, signer or "", _withdrawal_reason(record), applied, reason_not_applied)
+        )
+    found.sort(key=lambda item: item[0])
+    return found
+
+
+def _supersession_item(report: VerificationReport, archive: Archive | None = None) -> Item:
     check = report.checks["supersession"]
     if not check.passed:
         return _item_from_checks("retraction", None, check)
 
-    notices = tuple(
+    notices = [
         f"{s.kind} {s.id} signed by {s.author}"
         + (" (applies)" if s.applied else f" (not applied: {s.reason})")
         for s in report.supersessions
-    )
+    ]
+    if archive is not None and report.genesis is not None:
+        for record_id, signer, _reason, applied, reason_not_applied in _withdrawal_records(
+            archive, report.genesis
+        ):
+            if applied:
+                continue
+            notices.append(
+                f"withdrawal {record_id} signed by {signer} "
+                f"(not applied: {reason_not_applied})"
+            )
+
     if report.status == STATUS_RETRACTED:
         text = "Retracted: a retraction notice applies (the history still verifies)"
     elif report.status == STATUS_TOMBSTONED:
@@ -262,8 +362,28 @@ def _supersession_item(report: VerificationReport) -> Item:
     elif report.status == STATUS_CORRECTED:
         text = "Corrected: a correction notice applies to this paper"
     else:
-        return Item("retraction", PASS, "No retraction, correction or tombstone applies", notices)
-    return Item("retraction", WARN, text, notices)
+        return Item("retraction", PASS, "No retraction, correction or tombstone applies", tuple(notices))
+    return Item("retraction", WARN, text, tuple(notices))
+
+
+def _withdrawal_items(report: VerificationReport, archive: Archive | None = None) -> tuple[Item, ...]:
+    if archive is None or report.genesis is None:
+        return ()
+    items: list[Item] = []
+    for record_id, signer, reason, applied, _reason_not_applied in _withdrawal_records(
+        archive, report.genesis
+    ):
+        if not applied:
+            continue
+        items.append(
+            Item(
+                "withdrawal",
+                WARN,
+                f"Withdrawn by the authors: {reason}",
+                (f"withdrawal {record_id} signed by {signer} (applies)",),
+            )
+        )
+    return tuple(items)
 
 
 # --- verdicts -----------------------------------------------------------
@@ -294,8 +414,8 @@ def build_verdict(archive: Archive, report: VerificationReport) -> Verdict:
         ),
         _files_item(report, archive),
         _anchor_item(),
-        _supersession_item(report),
-    )
+        _supersession_item(report, archive),
+    ) + _withdrawal_items(report, archive)
     failed = any(item.state == FAIL for item in items) or not report.valid
     return Verdict(
         items=items,

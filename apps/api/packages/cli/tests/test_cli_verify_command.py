@@ -312,6 +312,92 @@ def test_a_correction_is_a_warning_not_a_failure(car_file, capsys):
     assert "Result: VERIFIED (status: corrected)" in out
 
 
+def test_a_withdrawal_by_an_author_is_a_warning_not_a_failure(car_file, capsys):
+    """A signed withdrawal is reported, not silently ignored (bug withdrawal).
+
+    The authors take the paper back with a ``withdrawal`` record.  The record
+    does not retract or tombstone it, so the "No retraction..." line stays and
+    the status is still verified -- but the reader must be told the authors
+    withdrew it, and why.
+    """
+    paper = make_paper()
+    withdrawal = notice(
+        "bob", "withdrawal", paper.versions[-1]["id"], reason="The data was wrong."
+    )
+    paper.extra.append(withdrawal)
+
+    code, out, _ = verify(car_file, paper.car(), capsys=capsys)
+
+    assert code == 0, out
+    assert "Withdrawn by the authors: The data was wrong." in out
+    assert (
+        f"withdrawal {withdrawal['id']} signed by {did('bob')} (applies)" in out
+    )
+    assert "No retraction, correction or tombstone applies" in out
+    assert "Result: VERIFIED\n" in out
+
+
+def test_a_withdrawal_signed_by_an_outsider_does_not_apply(car_file, capsys):
+    """A withdrawal from someone who is not a listed author changes nothing."""
+    paper = make_paper()
+    withdrawal = notice(
+        "mallory", "withdrawal", paper.paper_id, reason="Not my paper."
+    )
+    paper.extra.append(withdrawal)
+    data = paper.car()
+
+    code, out, _ = verify(car_file, data, capsys=capsys)
+
+    assert code == 0, out
+    assert "Withdrawn by the authors" not in out
+    assert "No retraction, correction or tombstone applies" in out
+    assert "Result: VERIFIED\n" in out
+
+    detail = verify_detail(car_file, data, capsys)
+    assert (
+        f"withdrawal {withdrawal['id']} signed by {did('mallory')} "
+        "(not applied: not signed by an author of this paper)" in detail
+    )
+
+
+def test_a_withdrawal_with_only_a_reason_record_names_it(car_file, capsys):
+    """A withdrawal may point at a reason record instead of carrying the text."""
+    paper = make_paper()
+    paper.extra.append(
+        signed(
+            "alice",
+            "withdrawal",
+            {"target": paper.paper_id, "reasonCid": "bafyreiexamplereason"},
+        )
+    )
+
+    code, out, _ = verify(car_file, paper.car(), capsys=capsys)
+
+    assert code == 0, out
+    assert (
+        "Withdrawn by the authors: (reason in record bafyreiexamplereason)" in out
+    )
+
+
+def test_a_withdrawal_reason_is_one_truncated_line(car_file, capsys):
+    """The reason is collapsed onto one line and cut at about 200 characters."""
+    paper = make_paper()
+    reason = "  The data\nwas   wrong. " * 30
+    paper.extra.append(
+        notice("alice", "withdrawal", paper.paper_id, reason=reason)
+    )
+
+    code, out, _ = verify(car_file, paper.car(), capsys=capsys)
+
+    assert code == 0, out
+    line = next(
+        line for line in out.splitlines() if "Withdrawn by the authors:" in line
+    )
+    text = line.split("Withdrawn by the authors: ", 1)[1]
+    assert text == " ".join(reason.split())[:200] + "..."
+    assert len(text) <= 203
+
+
 def test_a_tombstone_applies_only_from_a_trusted_authority(car_file, capsys):
     paper = make_paper()
     paper.extra.append(tombstone("committee", paper.paper_id))

@@ -98,7 +98,7 @@ _UNICODE_MARKS = {PASS: "✓", FAIL: "✗", PENDING: "…", WARN: "!"}
 _ASCII_MARKS = {PASS: "[ok]", FAIL: "[FAIL]", PENDING: "[..]", WARN: "[!]"}
 
 #: The checklist lines that describe one paper, shown under its summary.
-_PAPER_ITEM_KEYS = ("authors", "history", "files", "retraction")
+_PAPER_ITEM_KEYS = ("authors", "history", "files", "retraction", "withdrawal")
 
 #: ``status`` values, most severe first, when reports of several papers merge.
 _STATUS_SEVERITY = ("invalid", "retracted", "tombstoned", "corrected")
@@ -161,6 +161,7 @@ class PaperVerdict:
     problems: tuple[str, ...] = ()
     """Why the paper could not be verified at all, when it could not."""
     status: str = "invalid"
+    withdrawn: int = 0
 
     @property
     def ok(self) -> bool:
@@ -696,11 +697,13 @@ def _paper_verdict(archive: Archive, paper_id: str, authorities: Iterable[str]) 
                     "queue are not part of the public record.",
                 ),
             )
+    withdrawn_count = sum(1 for item in items if item.key == "withdrawal")
     return PaperVerdict(
         label=verdict.version or report.short_id or label,
         report=report,
         items=items,
         status=status,
+        withdrawn=withdrawn_count,
     )
 
 
@@ -876,6 +879,7 @@ def _whole_node_result_line(verdict: ArchiveVerdict) -> str:
     not_listed = 0
     rejected = 0
     delisted = 0
+    withdrawn = 0
     for paper in verdict.papers:
         if paper.status == "verified":
             listed += 1
@@ -889,6 +893,8 @@ def _whole_node_result_line(verdict: ArchiveVerdict) -> str:
             delisted += 1
         else:
             counts[paper.status] = counts.get(paper.status, 0) + 1
+        if paper.withdrawn:
+            withdrawn += 1
     parts = [f"{listed} listed"]
     if held:
         parts.append(f"{held} held")
@@ -901,6 +907,11 @@ def _whole_node_result_line(verdict: ArchiveVerdict) -> str:
     for status in ("corrected", "retracted", "tombstoned"):
         if counts.get(status):
             parts.append(f"{counts[status]} {status}")
+    if withdrawn:
+        if withdrawn == 1:
+            parts.append("1 withdrawn by its authors")
+        else:
+            parts.append(f"{withdrawn} withdrawn by their authors")
     return (
         f"Result: VERIFIED — {_plural(len(verdict.papers), 'paper')} "
         f"({', '.join(parts)})"
