@@ -515,6 +515,18 @@
   border-top: 1px solid var(--rule);
 }
 
+/*
+ * While the next answer for the same query loads, the previous results stay
+ * where they are (search-page.tsx keeps them mounted) and read as updating.
+ * Only the opacity changes, so the list keeps its height and a scrolled page
+ * does not jump; the groups of the facet column use the same de-emphasis.
+ */
+.sp-result-list[aria-busy="true"],
+.sp-empty[aria-busy="true"] {
+  opacity: 0.55;
+  transition: opacity var(--duration-fast) var(--ease-decel);
+}
+
 .sp-result {
   display: flex;
   flex-direction: column;
@@ -614,7 +626,9 @@
 @media (prefers-reduced-motion: reduce) {
   .sp-search-button,
   .sp-clear,
-  .sp-mode {
+  .sp-mode,
+  .sp-result-list[aria-busy="true"],
+  .sp-empty[aria-busy="true"] {
     transition: none;
   }
 }

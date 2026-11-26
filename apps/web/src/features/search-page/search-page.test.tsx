@@ -746,6 +746,168 @@ describe("SearchPage facets across queries", () => {
   });
 });
 
+describe("SearchPage results while the next answer loads", () => {
+  // One query's answer, and the narrower answer a filter tick asks for. The
+  // page keeps the first on screen (stale-while-loading) so a scrolled list
+  // does not collapse to one "Searching…" line and jump the page.
+  const RAFAEL_FIRST: SearchResult = {
+    query: "Rafael Silva",
+    total: 2,
+    results: [
+      {
+        ...HIT,
+        versionCid: "bafy-stale-1",
+        title: "Rafael one",
+        categories: ["cs.AI"],
+        status: "under_review",
+      },
+      {
+        ...HIT,
+        versionCid: "bafy-stale-2",
+        title: "Rafael two",
+        categories: ["cs.MA"],
+        status: "corrected",
+      },
+    ],
+    facets: {
+      category: { "cs.AI": 1, "cs.LG": 1, "cs.MA": 1 },
+      status: { under_review: 1, corrected: 1 },
+    },
+  };
+  const RAFAEL_FILTERED: SearchResult = {
+    query: "Rafael Silva",
+    total: 1,
+    results: [
+      {
+        ...HIT,
+        versionCid: "bafy-stale-1",
+        title: "Rafael one",
+        categories: ["cs.LG"],
+        status: "under_review",
+      },
+    ],
+    facets: { category: { "cs.LG": 1 }, status: { under_review: 1 } },
+  };
+  const NEW_QUERY: SearchResult = {
+    query: "1260 tasks",
+    total: 1,
+    results: [{ ...HIT, versionCid: "bafy-new", title: "Doing 1260 tasks at once" }],
+    facets: { category: { "cs.AI": 1 }, status: { reviewed: 1 } },
+  };
+
+  /** A promise whose answer the test releases when it wants to. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  function renderRafael(
+    loadKeyword: (next: SearchState) => Promise<SearchResult>,
+  ) {
+    return render(
+      <SearchPage
+        initialState={state({ q: "Rafael Silva" })}
+        initialResult={RAFAEL_FIRST}
+        updateUrl={vi.fn()}
+        loadKeyword={loadKeyword}
+      />,
+    );
+  }
+
+  it("keeps the previous results on screen, marked busy, while a filter change loads", async () => {
+    const answer = deferred<SearchResult>();
+    const loadKeyword = vi.fn(() => answer.promise);
+    const { container } = renderRafael(loadKeyword);
+
+    expect(screen.getByText("2 results for “Rafael Silva”")).toBeTruthy();
+    const list = container.querySelector(".sp-result-list") as HTMLElement;
+    expect(list).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /cs\.LG/ }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+
+    // The same list stays mounted with the same rows: nothing collapses to
+    // "Searching…", so the page height holds and a scrolled page does not jump.
+    expect(screen.queryByText("Searching…")).toBeNull();
+    expect(container.querySelector(".sp-result-list")).toBe(list);
+    expect(list.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByRole("heading", { level: 2, name: "Rafael one" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Rafael two" })).toBeTruthy();
+    // A polite status says the list is being updated. It replaces the count in
+    // the same one-line element, so the status itself adds no height.
+    const summary = container.querySelector(".sp-summary") as HTMLElement;
+    expect(summary.getAttribute("role")).toBe("status");
+    expect(summary.textContent).toBe("Updating results…");
+
+    await act(async () => {
+      answer.resolve(RAFAEL_FILTERED);
+    });
+
+    // The answer replaces the stale rows and the list settles.
+    await screen.findByText("1 result for “Rafael Silva”");
+    expect(list.getAttribute("aria-busy")).toBe("false");
+    expect(screen.queryByRole("heading", { level: 2, name: "Rafael two" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 2, name: "Rafael one" })).toBeTruthy();
+  });
+
+  it("shows “Searching…” without the previous query's results when a new query loads", async () => {
+    const answer = deferred<SearchResult>();
+    const loadKeyword = vi.fn(() => answer.promise);
+    const { container } = renderRafael(loadKeyword);
+
+    fireEvent.change(screen.getByLabelText("Search papers"), {
+      target: { value: "1260 tasks" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(loadKeyword).toHaveBeenCalledTimes(1));
+
+    // Another query's answer is not this query's answer: keep today's
+    // "Searching…" and never show the earlier query's rows or count.
+    expect(screen.getByText("Searching…")).toBeTruthy();
+    expect(screen.queryByText("Updating results…")).toBeNull();
+    expect(container.querySelector(".sp-result-list")).toBeNull();
+    expect(container.querySelector(".sp-summary")).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "Rafael one" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "Rafael two" })).toBeNull();
+
+    await act(async () => {
+      answer.resolve(NEW_QUERY);
+    });
+
+    expect(await screen.findByText("1 result for “1260 tasks”")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Doing 1260 tasks at once" }),
+    ).toBeTruthy();
+  });
+
+  it("shows “Searching…” without the previous results when the mode changes", async () => {
+    const answer = deferred<SemanticResult>();
+    const loadSemantic = vi.fn(() => answer.promise);
+    const { container } = render(
+      <SearchPage
+        initialState={state({ q: "Rafael Silva" })}
+        initialResult={RAFAEL_FIRST}
+        updateUrl={vi.fn()}
+        loadSemantic={loadSemantic}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Semantic" }));
+    await waitFor(() => expect(loadSemantic).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByText("Searching…")).toBeTruthy();
+    expect(container.querySelector(".sp-result-list")).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "Rafael one" })).toBeNull();
+
+    await act(async () => {
+      answer.resolve(SEMANTIC);
+    });
+  });
+});
+
 describe("SearchPage back and forward", () => {
   // The page's own box records its search with `history.pushState`, while the
   // header box goes through the Next router, which re-renders this component

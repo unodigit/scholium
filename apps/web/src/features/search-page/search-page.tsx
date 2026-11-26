@@ -205,17 +205,18 @@ function statusValueLabel(status: string): string {
 const NO_FACETS: FacetCounts = { category: {}, status: {} };
 
 /**
- * The facet counts of an answer, and the query text and mode they answer.
+ * The last answer on screen, and the query text and mode it answers.
  *
  * While the next answer for the *same* query loads (a filter tick or untick)
- * the column keeps showing these, so it does not collapse to the selected
- * values and re-expand when the counts arrive. A different query text or a
- * mode change makes them unusable: their counts describe another search.
+ * the page keeps showing this one, so the results list and the facet column do
+ * not collapse and re-expand — a scrolled page keeps its height instead of
+ * jumping. A different query text or a mode change makes it unusable: it
+ * describes another search.
  */
-interface FacetSnapshot {
+interface AnswerSnapshot {
   /** Query text and mode, as {@link queryKeyOf} renders them. */
   readonly query: string;
-  readonly facets: FacetCounts;
+  readonly result: SearchResult | SemanticResult;
 }
 
 /** The identity of a query, without its filters. */
@@ -240,13 +241,13 @@ export function SearchPage({
     initialView(initialState, initialResult, initialError),
   );
   const [attempt, setAttempt] = useState(0);
-  // The facet counts of the last answer for the current query text and mode.
-  // They stay on screen while the next answer for the same query loads, so a
-  // filter tick does not collapse the column and re-expand it; a different
-  // query text or mode starts a fresh column (see `facets` below).
-  const [facetsFor, setFacetsFor] = useState<FacetSnapshot | null>(() =>
-    view.status === "ready" && isResults(view.result)
-      ? { query: queryKeyOf(initialState), facets: view.result.facets }
+  // The last answer on screen for the current query text and mode. It stays
+  // rendered while the next answer for the same query loads (stale-while-
+  // loading), so a filter tick neither collapses the results list nor the
+  // facet column; a different query text or mode starts over (see `kept`).
+  const [lastAnswer, setLastAnswer] = useState<AnswerSnapshot | null>(() =>
+    view.status === "ready"
+      ? { query: queryKeyOf(initialState), result: view.result }
       : null,
   );
   // The key of the request already answered or in flight. A ref rather than
@@ -446,26 +447,16 @@ export function SearchPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, attempt]);
 
-  // Remember each answer's facet counts with the query they answer, so the
-  // next request on the same query can keep showing them while it loads.
+  // Remember each answer with the query it answers, so the next request on the
+  // same query text and mode can keep showing it while it loads.
   useEffect(() => {
-    if (view.status === "ready" && view.key === key && isResults(view.result)) {
-      setFacetsFor({ query: queryKeyOf(state), facets: view.result.facets });
+    if (view.status === "ready" && view.key === key) {
+      setLastAnswer({ query: queryKeyOf(state), result: view.result });
     }
-    // `state` is read for the query identity only; the guards above decide
+    // `state` is read for the query identity only; the guard above decides
     // whether the view is the answer to it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, key, state.q, state.mode]);
-
-  // A mode change starts a fresh column: the previous mode's counts must not
-  // reappear while the new mode's answer loads, even for the same query text.
-  const lastModeRef = useRef(state.mode);
-  useEffect(() => {
-    if (lastModeRef.current !== state.mode) {
-      lastModeRef.current = state.mode;
-      setFacetsFor(null);
-    }
-  }, [state.mode]);
 
   const retry = useCallback(() => {
     requestedRef.current = null;
@@ -501,33 +492,43 @@ export function SearchPage({
 
   const semantic = state.mode === "semantic";
   const filtersDisabled = semantic;
-  // The answer on screen, whatever it answers (the list shows it as is).
-  const answered = view.status === "ready" ? view.result : undefined;
-  // Whether the answer on screen answers the state on screen. A filter step
+  // Whether the answer in `view` answers the state on screen. A filter step
   // repaints once with the previous answer before the fetch effect marks the
   // new request loading; both that paint and the loading one count as
-  // awaiting, so the column does not collapse in between.
+  // awaiting, so nothing collapses in between.
   const answeredNow = view.status === "ready" && view.key === key;
   const awaitingAnswer =
     view.status === "loading" || (view.status === "ready" && !answeredNow);
+  // While the next answer for the same query text and mode loads, the previous
+  // answer stays on screen (stale-while-loading): the list keeps its rows and
+  // the column its counts, so a scrolled page neither shortens nor jumps. A
+  // new query text or mode never reuses another search's answer.
+  const queryId = queryKeyOf(state);
+  const kept =
+    awaitingAnswer && lastAnswer !== null && lastAnswer.query === queryId
+      ? lastAnswer.result
+      : undefined;
+  // The answer to render: the current one, or the one kept while its
+  // successor loads. The kept one is marked busy and de-emphasised.
+  const shown = answeredNow ? view.result : kept;
+  const updating = !answeredNow && kept !== undefined;
   // The facet column reads the answer to the state on screen. The API counts
   // each facet over the matches that pass every filter except that facet's
   // own, so these counts are exactly what ticking a value would return. While
   // the next answer for the same query text and mode loads, the previous
-  // answer's values and counts stay listed (marked as updating) instead of
-  // collapsing to the selected values; a different query or mode never
-  // borrows another search's counts.
-  const queryId = queryKeyOf(state);
+  // answer's values and counts stay listed instead of collapsing to the
+  // selected values; a different query or mode never borrows another search's
+  // counts.
   const ready = answeredNow ? view.result : undefined;
-  const retained =
-    awaitingAnswer && facetsFor !== null && facetsFor.query === queryId
-      ? facetsFor.facets
-      : undefined;
+  const retainedFacets =
+    kept !== undefined && isResults(kept) ? kept.facets : undefined;
   const facets =
     ready !== undefined && isResults(ready)
       ? ready.facets
-      : retained ?? NO_FACETS;
-  const results = answered?.results ?? [];
+      : retainedFacets ?? NO_FACETS;
+  const results = shown?.results ?? [];
+  // Only a search with no answer to keep falls back to "Searching…".
+  const searching = awaitingAnswer && shown === undefined;
   const categoryChoices = facetOptions(facets.category, state.categories);
   // `statusOptions` lists every known status; here a status the answer does
   // not count is offered only when it is selected, since ticking it would
@@ -753,7 +754,7 @@ export function SearchPage({
             </p>
           ) : null}
 
-          {view.status === "loading" ? (
+          {searching ? (
             <p className="sp-loading" role="status">
               Searching…
             </p>
@@ -768,24 +769,30 @@ export function SearchPage({
             </div>
           ) : null}
 
-          {view.status === "ready" ? (
+          {shown !== undefined ? (
             <>
               <p className="sp-summary" role="status">
-                {resultSummary(
-                  state.q,
-                  isResults(view.result) ? view.result.total : view.result.results.length,
-                  semantic ? "semantic" : "keyword",
-                )}
-                {isResults(view.result) ? null : (
-                  <span className="sp-embedder" title={view.result.embedder}>
-                    {" "}
-                    · Semantic match
-                  </span>
+                {updating ? (
+                  "Updating results…"
+                ) : (
+                  <>
+                    {resultSummary(
+                      state.q,
+                      isResults(shown) ? shown.total : shown.results.length,
+                      semantic ? "semantic" : "keyword",
+                    )}
+                    {isResults(shown) ? null : (
+                      <span className="sp-embedder" title={shown.embedder}>
+                        {" "}
+                        · Semantic match
+                      </span>
+                    )}
+                  </>
                 )}
               </p>
 
               {results.length === 0 ? (
-                <div className="sp-empty">
+                <div className="sp-empty" aria-busy={updating}>
                   <p>No listed papers match this search.</p>
                   <p className="sp-empty-hint">
                     {semantic
@@ -803,7 +810,7 @@ export function SearchPage({
                   ) : null}
                 </div>
               ) : (
-                <ol className="sp-result-list">
+                <ol className="sp-result-list" aria-busy={updating}>
                   {results.map((hit) => (
                     <ResultRow
                       key={`${hit.versionCid || hit.title}-${hit.n}`}
