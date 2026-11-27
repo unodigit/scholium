@@ -34,6 +34,8 @@ from email.message import EmailMessage
 from typing import Any, Mapping, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
+from app.settings import settings
+
 from .email_template import render_html
 
 __all__ = [
@@ -284,6 +286,12 @@ def parse_smtp_url(url: str) -> SMTPConfig:
         starttls = True
 
     port = parsed.port or (465 if use_ssl else 587 if starttls else 25)
+    if settings.BREVO_SMTP_PORT and parsed.hostname in {
+        "smtp-relay.brevo.com", "smtp-relay.sendinblue.com",
+    }:
+        port = settings.BREVO_SMTP_PORT
+        use_ssl = port == 465
+        starttls = not use_ssl
     username = unquote(parsed.username) if parsed.username else None
     password = unquote(parsed.password) if parsed.password else None
     return SMTPConfig(

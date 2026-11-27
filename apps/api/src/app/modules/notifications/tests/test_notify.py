@@ -320,3 +320,11 @@ def test_parse_smtp_url(url, host, port, use_ssl, starttls):
     assert config.port == port
     assert config.use_ssl is use_ssl
     assert config.starttls is starttls
+
+
+def test_brevo_port_override_keeps_credentials_and_uses_starttls(monkeypatch):
+    monkeypatch.setattr(settings, "BREVO_SMTP_PORT", 2525)
+    config = parse_smtp_url("smtps://user:p%40ss@smtp-relay.brevo.com:465")
+    assert (config.port, config.use_ssl, config.starttls) == (2525, False, True)
+    assert (config.username, config.password) == ("user", "p@ss")
+    assert parse_smtp_url("smtp://example.org:587").port == 587
