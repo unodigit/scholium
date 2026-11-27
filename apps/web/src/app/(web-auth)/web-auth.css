@@ -327,6 +327,15 @@
   margin: 0;
 }
 
+.wa-email-signin {
+  padding-top: 16px;
+  border-top: 1px solid var(--wa-rule);
+}
+
+.wa-email-signin .wa-button {
+  margin-top: 10px;
+}
+
 .wa-field + .wa-field {
   margin-top: 10px;
 }

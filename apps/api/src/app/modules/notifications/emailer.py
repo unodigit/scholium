@@ -296,17 +296,16 @@ def parse_smtp_url(url: str) -> SMTPConfig:
     )
 
 
-def send_email(email: Email, smtp_url: str) -> None:
+def send_email(email: Email, smtp_url: str, *, timeout: float | None = None) -> None:
     """Deliver ``email`` through the SMTP server described by ``smtp_url``.
 
     Raises whatever the underlying :mod:`smtplib` call raises; ``notify``
     catches that and falls back to the outbox.
     """
     config = parse_smtp_url(smtp_url)
-    if config.use_ssl:
-        server = smtplib.SMTP_SSL(config.host, config.port)
-    else:
-        server = smtplib.SMTP(config.host, config.port)
+    client = smtplib.SMTP_SSL if config.use_ssl else smtplib.SMTP
+    options = {"timeout": timeout} if timeout is not None else {}
+    server = client(config.host, config.port, **options)
     try:
         if config.starttls:
             server.starttls()

@@ -73,6 +73,18 @@ class Account(db.Base):
         return f"<Account did={self.did!r} tier={self.tier}>"
 
 
+class EmailSignIn(db.Base):
+    """An email login binding and its latest one-time challenge."""
+
+    __tablename__ = "email_signins"
+
+    email_hash = Column(Text, primary_key=True)
+    did = Column(Text, nullable=True, unique=True)
+    token_hash = Column(Text, nullable=True, unique=True)
+    expires_at = Column(DateTime, nullable=False)
+    requested_at = Column(DateTime, nullable=False)
+
+
 class RefreshToken(db.Base):
     """One hashed, rotating refresh token issued at sign-in.
 
@@ -215,6 +227,7 @@ class AccountKey(db.Base):
 _table_lock = threading.Lock()
 _table_engines: dict[str, Optional[Engine]] = {
     "auth_challenges": None,
+    "email_signins": None,
     "accounts": None,
     "refresh_tokens": None,
     "account_keys": None,
@@ -242,6 +255,11 @@ def ensure_table() -> None:
     _create(Account, "accounts", db.engine)
     _create(RefreshToken, "refresh_tokens", db.engine)
     _create(AccountKey, "account_keys", db.engine)
+
+
+def ensure_email_signins_table() -> None:
+    """Create the email sign-in table on first use."""
+    _create(EmailSignIn, "email_signins", db.engine)
 
 
 def ensure_account_table() -> None:

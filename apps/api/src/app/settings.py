@@ -316,6 +316,9 @@ class Settings:
     )
     OLLAMA_URL: str = field(default_factory=lambda: _env("OLLAMA_URL", "http://localhost:11434"))
     SMTP_URL: str = field(default_factory=lambda: _env("SMTP_URL", ""))
+    EMAIL_SIGNIN_KEY: str = field(default_factory=lambda: _env("EMAIL_SIGNIN_KEY", "").strip(), repr=False)
+    RESEND_API_KEY: str = field(default_factory=lambda: _env("RESEND_API_KEY", "").strip(), repr=False)
+    SMTP_FROM: str = field(default_factory=lambda: _env("SMTP_FROM", "").strip())
     JOBS_EAGER: int = field(default_factory=lambda: _int("JOBS_EAGER", 1))
     # JOBS_MODE picks how queued jobs get run: ``eager`` runs them inline on the
     # caller, ``thread`` on the API's own in-process worker, ``external`` not at

@@ -443,7 +443,7 @@ class WriteThrottleMiddleware:
 
     @staticmethod
     def _is_signin_path(path: str) -> bool:
-        return path.endswith("/auth/challenge") or path.endswith("/auth/verify")
+        return path.endswith(("/auth/challenge", "/auth/verify", "/auth/email/start", "/auth/email/verify"))
 
     @staticmethod
     def _is_excluded_path(path: str) -> bool:

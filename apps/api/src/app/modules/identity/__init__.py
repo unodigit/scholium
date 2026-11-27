@@ -29,6 +29,7 @@ from .document import (
     resolve_did_document,
     router as document_router,
 )
+from .email_signin import router as email_signin_router
 from .logout import (
     LOGOUT_UNAUTHENTICATED_TYPE,
     LogoutRequest,
@@ -106,6 +107,7 @@ from .verify import (
 router = APIRouter()
 router.include_router(challenge_router)
 router.include_router(document_router)
+router.include_router(email_signin_router)
 router.include_router(logout_router)
 router.include_router(refresh_router)
 router.include_router(verify_router)

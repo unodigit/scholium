@@ -16,6 +16,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { EmailSignInForm } from "./email-signin-form";
 import { SIGNIN_ROTATED_MESSAGE, SIGNIN_UNSUPPORTED_MESSAGE } from "./signin-messages";
 import { useSignIn, type SignInAuth } from "./use-signin";
 
@@ -48,7 +49,7 @@ export function SignInForm({ next, auth, rotated = false, signup = false }: Sign
       </h1>
       <p className="wa-lede">
         {signup
-          ? "Create a passkey to join Scholium. Scholium never sees your key."
+          ? "Join Scholium with your email address or a passkey."
           : "Use your passkey to sign in. Scholium never sees your key."}
       </p>
 
@@ -86,6 +87,8 @@ export function SignInForm({ next, auth, rotated = false, signup = false }: Sign
           <strong>Couldn&rsquo;t sign in.</strong> {error}
         </p>
       ) : null}
+
+      <EmailSignInForm signup={signup} />
 
       <p className="wa-meta">
         {signup ? "Already have an account? " : "New here? "}
