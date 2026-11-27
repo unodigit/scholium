@@ -932,7 +932,7 @@ describe("HomeNav on a fresh load of the homepage", () => {
       "/me",
     );
     expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Submit a paper" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Sign up" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -946,8 +946,8 @@ describe("HomeNav on a fresh load of the homepage", () => {
       "/signin",
     );
     expect(
-      screen.getByRole("link", { name: "Submit a paper" }).getAttribute("href"),
-    ).toBe("/submit");
+      screen.getByRole("link", { name: "Sign up" }).getAttribute("href"),
+    ).toBe("/signup");
     expect(screen.queryByRole("link", { name: "Your dashboard" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
