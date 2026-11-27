@@ -27,10 +27,12 @@ export interface SignInFormProps {
   auth?: SignInAuth;
   /** True when this device's key was just rotated. */
   rotated?: boolean;
+  /** Show account creation copy for visitors arriving from /signup. */
+  signup?: boolean;
 }
 
 /** The sign-in button, its progress line and its failure message. */
-export function SignInForm({ next, auth, rotated = false }: SignInFormProps) {
+export function SignInForm({ next, auth, rotated = false, signup = false }: SignInFormProps) {
   const router = useRouter();
   const { working, done, unsupported, progress, error, start } = useSignIn({
     next,
@@ -42,10 +44,12 @@ export function SignInForm({ next, auth, rotated = false }: SignInFormProps) {
     <section className="wa-card" aria-labelledby="signin-heading">
       <p className="wa-wordmark">scholium</p>
       <h1 id="signin-heading" className="wa-title">
-        Sign in
+        {signup ? "Create your account" : "Sign in"}
       </h1>
       <p className="wa-lede">
-        Use your passkey to sign in. Scholium never sees your key.
+        {signup
+          ? "Create a passkey to join Scholium. Scholium never sees your key."
+          : "Use your passkey to sign in. Scholium never sees your key."}
       </p>
 
       {rotated ? (
@@ -61,7 +65,9 @@ export function SignInForm({ next, auth, rotated = false }: SignInFormProps) {
         disabled={working || done || unsupported}
         aria-busy={working}
       >
-        {working ? "Waiting for your passkey…" : "Sign in with passkey"}
+        {working
+          ? "Waiting for your passkey…"
+          : signup ? "Continue with a passkey" : "Sign in with passkey"}
       </button>
 
       {/* Always rendered so assistive tech registers the region before it changes. */}
@@ -82,8 +88,10 @@ export function SignInForm({ next, auth, rotated = false }: SignInFormProps) {
       ) : null}
 
       <p className="wa-meta">
-        New here? Your first sign-in on this device creates a passkey and your
-        account.
+        {signup ? "Already have an account? " : "New here? "}
+        <Link className="wa-link" href={signup ? "/signin" : "/signup"}>
+          {signup ? "Sign in" : "Create an account"}
+        </Link>
       </p>
 
       <p className="wa-meta">

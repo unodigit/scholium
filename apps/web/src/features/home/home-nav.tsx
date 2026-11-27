@@ -45,7 +45,7 @@ export function HomeNav({ signedIn: signedInProp }: HomeNavProps = {}) {
           ) : (
             <>
               <a className="nav-signin" href="/signin">Sign in</a>
-              <a className="btn btn-filled btn-sm" href="/submit">Submit a paper</a>
+              <a className="btn btn-filled btn-sm" href="/signup">Sign up</a>
             </>
           )}
         </div>
