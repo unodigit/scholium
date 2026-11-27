@@ -67,7 +67,7 @@ export function SignInForm({ next, auth, rotated = false, signup = false }: Sign
       >
         {working
           ? "Waiting for your passkey…"
-          : signup ? "Continue with a passkey" : "Sign in with passkey"}
+          : signup ? "Sign up with a passkey" : "Sign in with passkey"}
       </button>
 
       {/* Always rendered so assistive tech registers the region before it changes. */}
