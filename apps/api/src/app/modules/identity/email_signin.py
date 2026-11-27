@@ -98,7 +98,20 @@ def _reserve_link(email_hash: str, token_hash: str, now: datetime) -> bool:
 def _deliver(message: Email) -> None:
     from app.modules.notifications.emailer import send_email
 
-    if settings.RESEND_API_KEY:
+    if settings.BREVO_API_KEY:
+        response = httpx.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"api-key": settings.BREVO_API_KEY},
+            json={
+                "sender": {"email": message.from_addr},
+                "to": [{"email": message.to}],
+                "subject": message.subject,
+                "textContent": message.body,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+    elif settings.RESEND_API_KEY:
         response = httpx.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
@@ -123,7 +136,7 @@ def start_email_signin(body: EmailStart, response: Response) -> dict[str, str]:
     if not EMAIL.fullmatch(email):
         raise ProblemException(422, "Enter a valid email address.")
     if (
-        not (settings.RESEND_API_KEY or settings.SMTP_URL.strip())
+        not (settings.BREVO_API_KEY or settings.RESEND_API_KEY or settings.SMTP_URL.strip())
         or not settings.SMTP_FROM
         or len(settings.EMAIL_SIGNIN_KEY) < 32
     ):

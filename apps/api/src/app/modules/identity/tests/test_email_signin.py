@@ -17,6 +17,7 @@ VERIFY = "/v1/auth/email/verify"
 @pytest.fixture
 def mailbox(monkeypatch):
     messages = []
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "")
     monkeypatch.setattr(settings, "RESEND_API_KEY", "")
     monkeypatch.setattr(settings, "SMTP_URL", "smtp://example.test:587")
     monkeypatch.setattr(settings, "SMTP_FROM", "sender@example.test")
@@ -94,3 +95,24 @@ def test_email_delivery_uses_https_when_resend_is_configured(client, mailbox, mo
     assert options["json"]["from"] == "sender@example.test"
     assert options["json"]["to"] == [address]
     assert "https://scholium.example.test/signin/email#token=" in options["json"]["text"]
+
+
+def test_email_delivery_prefers_brevo_when_configured(client, mailbox, monkeypatch):
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "brevo-test-key")
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "resend-test-key")
+    calls = []
+
+    def send(url, **options):
+        calls.append((url, options))
+        return httpx.Response(201, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(email_signin.httpx, "post", send)
+    address = f"{uuid4().hex}@example.test"
+    assert client.post(START, json={"email": address}).status_code == 202
+    assert not mailbox
+    [(url, options)] = calls
+    assert url == "https://api.brevo.com/v3/smtp/email"
+    assert options["headers"] == {"api-key": "brevo-test-key"}
+    assert options["json"]["sender"] == {"email": "sender@example.test"}
+    assert options["json"]["to"] == [{"email": address}]
+    assert "https://scholium.example.test/signin/email#token=" in options["json"]["textContent"]

@@ -80,6 +80,7 @@ x-app-environment: &app-environment
   COMMITTEE_PUBLIC_KEY: ${COMMITTEE_PUBLIC_KEY:-}
   SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025}
   SMTP_FROM: ${SMTP_FROM:-noreply@scholium.local}
+  BREVO_API_KEY: ${BREVO_API_KEY:-}
   RESEND_API_KEY: ${RESEND_API_KEY:-}
   EMAIL_SIGNIN_KEY: ${EMAIL_SIGNIN_KEY:-}
   ORCID_CLIENT_ID: ${ORCID_CLIENT_ID:-}
