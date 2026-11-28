@@ -44,7 +44,7 @@ export function ArxivPicks() {
       <div className="fd-category-head">
         <h2 id="arxiv-picks-heading" className="fd-row-title">arXiv picks</h2>
         <Link className="fd-category-feed" href="/papers/arxiv">
-          Browse and search {catalog.papers.length} papers
+          Browse and search arXiv picks
         </Link>
       </div>
       <ArxivPaperList papers={catalog.papers.slice(0, 6)} />

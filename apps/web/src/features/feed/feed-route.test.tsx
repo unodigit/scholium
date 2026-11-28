@@ -371,7 +371,7 @@ describe("public arXiv catalog search", () => {
       const markup = await renderCatalog({ page: String(page) });
       const links = [...markup.matchAll(/href="https:\/\/arxiv\.org\/abs\/(\d+\.\d+)"/g)];
       expect(links).toHaveLength(20);
-      expect(markup).toContain("of 200 papers");
+      expect(markup).not.toMatch(/200 papers/);
       for (const [, id] of links) ids.add(id);
     }
     expect(ids.size).toBe(200);

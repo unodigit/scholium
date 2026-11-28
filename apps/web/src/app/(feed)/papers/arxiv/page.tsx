@@ -10,7 +10,7 @@ const PATH = "/papers/arxiv";
 
 export const metadata: Metadata = {
   title: `${catalog.year} arXiv picks`,
-  description: "Browse and search 200 arXiv papers selected from Hugging Face Daily Papers.",
+  description: "Browse and search arXiv papers selected from Hugging Face Daily Papers.",
   alternates: { canonical: PATH },
 };
 
@@ -51,7 +51,7 @@ export default async function ArxivCatalogPage({
       <header className="fd-category-header">
         <h1 className="fd-category-title">{catalog.year} arXiv picks</h1>
         <p className="fd-category-lede">
-          {catalog.papers.length} papers selected from{" "}
+          Selected from{" "}
           <a href="https://huggingface.co/papers">Hugging Face Daily Papers</a>{" "}
           through <time dateTime={catalog.selectedOn}>{catalog.selectedOn}</time>.
         </p>
@@ -68,7 +68,7 @@ export default async function ArxivCatalogPage({
         <h2 id="arxiv-results" className="fd-row-title">
           {matches.length === 0
             ? "No matching papers"
-            : `Showing ${start + 1}–${start + visible.length} of ${matches.length} papers`}
+            : "Papers"}
         </h2>
         <ArxivPaperList papers={visible} showAuthors />
       </section>
