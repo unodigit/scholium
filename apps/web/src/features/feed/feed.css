@@ -345,6 +345,7 @@
 
 .fd-error-message {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .fd-more-error {

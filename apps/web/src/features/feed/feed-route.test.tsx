@@ -281,6 +281,24 @@ describe("feed route (server render)", () => {
     expect(html).toContain(">Reviewed</a>");
   });
 
+  it.each(["text/html; charset=utf-8", "text/plain"])(
+    "shows a short retry message for a gateway HTML page served as %s",
+    async (contentType) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+        new Response("<!DOCTYPE html><html><body>Gateway error page</body></html>", {
+          status: 503,
+          headers: { "content-type": contentType },
+        }),
+      ));
+
+      const html = await render();
+
+      expect(html).toContain("Papers are temporarily unavailable.");
+      expect(html).toContain("Try again");
+      expect(html).not.toContain("Gateway error page");
+    },
+  );
+
   it("renders the API's own message for a refused request", async () => {
     stubApi(
       { type: "about:blank", title: "Internal Server Error", status: 500, detail: "The catalog is rebuilding." },

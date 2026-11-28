@@ -222,6 +222,12 @@ export function toProblemDetails(
 
 /** Read a response body and convert it to problem details. Never throws. */
 export async function problemFromResponse(response: Response): Promise<ProblemDetails> {
+  const instance = response.url || undefined;
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (contentType === "text/html" || contentType === "application/xhtml+xml") {
+    return toProblemDetails(undefined, response.status, instance);
+  }
+
   let body: unknown;
   try {
     const text = await response.text();
@@ -229,14 +235,17 @@ export async function problemFromResponse(response: Response): Promise<ProblemDe
       try {
         body = JSON.parse(text);
       } catch {
-        body = text;
+        // Some gateways mislabel their error page as plain text.
+        if (!/^\s*<(?:!doctype\s+html\b|html(?:[\s>]|$))/i.test(text)) {
+          body = text;
+        }
       }
     }
   } catch {
     // A body that cannot be read still yields a usable error.
-    return toProblemDetails(undefined, response.status, response.url || undefined);
+    return toProblemDetails(undefined, response.status, instance);
   }
-  return toProblemDetails(body, response.status, response.url || undefined);
+  return toProblemDetails(body, response.status, instance);
 }
 
 /**

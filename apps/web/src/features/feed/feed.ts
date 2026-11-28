@@ -433,6 +433,9 @@ export function describeFeedError(error: unknown, tab: FeedTab = "latest"): stri
     if (error.status === 429) {
       return "Too many requests just now. Wait a moment and try again.";
     }
+    if (!error.problem.detail && [502, 503, 504].includes(error.status)) {
+      return "Papers are temporarily unavailable. Please try again in a moment.";
+    }
     return error.detail || error.title || "The API could not load the feed. Try again.";
   }
   if (error instanceof NetworkError) {
