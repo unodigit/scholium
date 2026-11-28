@@ -2,6 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import ArxivCatalogPage from "../../app/(feed)/papers/arxiv/page";
 import FeedLayout from "../../app/(feed)/layout";
 import FeedRoutePage, { dynamic, metadata } from "../../app/(feed)/papers/page";
 
@@ -356,5 +357,36 @@ describe("feed layout", () => {
 
     expect(html).toContain("scholium");
     expect(html).toMatch(/<main class="fd-shell"><p>inside<\/p><\/main>/);
+  });
+});
+
+
+describe("public arXiv catalog search", () => {
+  const renderCatalog = async (params: { q?: string; page?: string } = {}) =>
+    renderToStaticMarkup(await ArxivCatalogPage({ searchParams: Promise.resolve(params) }));
+
+  it("offers all 200 unique papers across ten pages", async () => {
+    const ids = new Set<string>();
+    for (let page = 1; page <= 10; page++) {
+      const markup = await renderCatalog({ page: String(page) });
+      const links = [...markup.matchAll(/href="https:\/\/arxiv\.org\/abs\/(\d+\.\d+)"/g)];
+      expect(links).toHaveLength(20);
+      expect(markup).toContain("of 200 papers");
+      for (const [, id] of links) ids.add(id);
+    }
+    expect(ids.size).toBe(200);
+  });
+
+  it.each(["recurrent latent", "Bjorn Engdahl", "arXiv:2608.09888"])(
+    "finds papers by title, author, or identifier using %s",
+    async (q) => {
+      expect(await renderCatalog({ q })).toContain("https://arxiv.org/abs/2608.09888");
+    },
+  );
+
+  it("shows an empty state for a query with no matches", async () => {
+    const markup = await renderCatalog({ q: "zzzz-no-matching-arxiv-paper-zzzz" });
+    expect(markup).toContain("No matching papers");
+    expect(markup).toContain("Clear search");
   });
 });
