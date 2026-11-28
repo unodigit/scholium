@@ -38,6 +38,7 @@ import {
   useState,
   type FormEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 
 import { DEFAULT_CATEGORIES } from "../../components/nav/categories";
@@ -88,6 +89,8 @@ export interface FeedPageProps {
   initialPage?: FeedPageData;
   /** Failure message from the server-side fetch; the page offers a retry. */
   initialError?: string;
+  /** Public recommendations shown on the unfiltered Latest tab. */
+  latestRecommendations?: ReactNode;
   /** Pin the sign-in state (`true`/`false`); by default it is read from the token store. */
   signedIn?: boolean;
   /** Replace the page loader, for tests or an alternate API client. */
@@ -199,6 +202,7 @@ export function FeedPage({
   initialState = DEFAULT_FEED_STATE,
   initialPage,
   initialError,
+  latestRecommendations,
   signedIn,
   load,
   updateUrl,
@@ -458,6 +462,8 @@ export function FeedPage({
           </noscript>
         </form>
       </div>
+
+      {state.tab === "latest" && !state.category ? latestRecommendations : null}
 
       <section
         className="fd-results"

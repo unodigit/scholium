@@ -267,6 +267,16 @@ describe("feed route (server render)", () => {
     expect(html).not.toContain("Sign in to follow");
   });
 
+  it("shows the six public arXiv picks on the unfiltered Latest tab", async () => {
+    stubApi({ items: [], nextCursor: null });
+
+    const html = await render();
+
+    expect(html).toContain("arXiv picks");
+    expect(html.match(/href="https:\/\/arxiv\.org\/abs\//g)).toHaveLength(6);
+    expect(await render({ tab: "reviewed" })).not.toContain("arXiv picks");
+  });
+
   it("renders a retryable notice instead of throwing when the API is down", async () => {
     vi.stubGlobal(
       "fetch",

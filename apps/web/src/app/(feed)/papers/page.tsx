@@ -10,6 +10,8 @@ import {
   type FeedState,
 } from "../../../features/feed";
 
+import { ArxivPicks } from "../../../features/feed/arxiv-picks";
+
 export const metadata: Metadata = {
   title: "Papers",
   description:
@@ -63,6 +65,7 @@ export default async function FeedRoutePage({ searchParams }: FeedRouteProps) {
       initialState={state}
       initialPage={initialPage}
       initialError={initialError}
+      latestRecommendations={<ArxivPicks />}
     />
   );
 }
