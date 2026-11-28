@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Callable, Optional
 
 from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -93,6 +94,16 @@ def _failing_dependencies() -> list[str]:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    if (settings.STORAGE_BACKEND or "").strip().lower() == "s3":
+        # The first S3 client build imports boto3 and loads its service models.
+        # Do that before requests so a cold process can spend the readiness
+        # deadline checking the bucket rather than initializing the SDK.
+        try:
+            await run_in_threadpool(get_object_store)
+        except Exception as exc:
+            # Keep liveness available and let readiness report the dependency.
+            logger.warning("S3 client warm-up failed: %s", type(exc).__name__)
+
     # In thread mode an in-process worker drains the queue. Eager mode runs
     # jobs inline on enqueue; external mode leaves them for a separate worker.
     if jobs.is_thread():

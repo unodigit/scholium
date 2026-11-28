@@ -229,3 +229,13 @@ def test_healthz_does_not_depend_on_the_database_or_the_object_store(
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_startup_initializes_s3_before_the_first_readiness_request(s3_bucket, monkeypatch):
+    s3_bucket.create_bucket(Bucket=BUCKET, CreateBucketConfiguration={"LocationConstraint": REGION})
+    monkeypatch.setattr(settings, "JOBS_MODE", "eager")
+
+    with TestClient(app) as client:
+        assert _s3_store.cache_info().currsize == 1
+        assert client.get("/readyz").status_code == 200
+        assert _s3_store.cache_info().misses == 1
