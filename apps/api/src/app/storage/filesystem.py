@@ -25,10 +25,12 @@ between threads.
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 import tempfile
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Optional
 
@@ -108,67 +110,79 @@ class FilesystemObjectStore(ObjectStore):
                 pass  # renamed into place
         return source.stored(key)
 
+    @contextmanager
+    def _directory(self, segments: tuple[str, ...], *, create: bool = False) -> Iterator[int]:
+        """Open one segment at a time to keep syscalls below the OS path limit."""
+        fd = os.open(self._root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for segment in segments:
+                if create:
+                    try:
+                        os.mkdir(segment, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                    else:
+                        _fsync_dir(fd)
+                child = os.open(segment, os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            yield fd
+        finally:
+            os.close(fd)
+
     def _install(self, tmp_name: str, final: Path) -> None:
-        """Atomically rename the finished ``tmp_name`` to ``final`` and make that durable."""
-        parent = final.parent
-        created_dirs = not parent.is_dir()
+        """Rename the finished file into place and make the rename durable."""
+        *parents, name = final.relative_to(self._root).parts
         for attempt in range(_INSTALL_ATTEMPTS):
             try:
-                parent.mkdir(parents=True, exist_ok=True)
-                os.replace(tmp_name, final)
-                break
+                with self._directory(tuple(parents), create=True) as fd:
+                    os.replace(tmp_name, name, dst_dir_fd=fd)
+                    _fsync_dir(fd)
+                return
             except (NotADirectoryError, IsADirectoryError) as exc:
                 raise self._conflict(final) from exc
-            except (FileNotFoundError, FileExistsError) as exc:
-                # Either a real clash (a file where a directory must go) or a
-                # concurrent delete pruning the then-empty directory between
-                # our mkdir and rename.  Only a clash survives trying again.
-                if attempt < _INSTALL_ATTEMPTS - 1 and os.path.exists(tmp_name):
+            except OSError as exc:
+                # A concurrent delete can unlink an empty parent between mkdir
+                # and rename. Darwin can report EINVAL for that rename.
+                retryable = {errno.ENOENT, errno.EEXIST, errno.EINVAL}
+                if exc.errno in retryable and attempt < _INSTALL_ATTEMPTS - 1:
                     continue
                 if isinstance(exc, FileExistsError):
                     raise self._conflict(final) from exc
                 raise
-        _fsync_dir(parent)
-        if created_dirs and parent != self._root:
-            # Directories this write created are themselves new entries in
-            # their parents: make the whole chain up to the root durable.
-            for ancestor in parent.parents:
-                _fsync_dir(ancestor)
-                if ancestor == self._root:
-                    break
 
     def _conflict(self, final: Path) -> KeyConflictError:
         key = final.relative_to(self._root).as_posix()
         return KeyConflictError(f"{key!r} clashes with another key's directory")
 
     def delete(self, key: str) -> None:
-        path = self.path_for(key)
+        *parents, name = validate_key(key).split("/")
         try:
-            path.unlink()
+            with self._directory(tuple(parents)) as fd:
+                try:
+                    os.unlink(name, dir_fd=fd)
+                except (IsADirectoryError, PermissionError):
+                    if stat.S_ISDIR(os.stat(name, dir_fd=fd).st_mode):
+                        return
+                    raise
         except (FileNotFoundError, NotADirectoryError):
             return
-        except (IsADirectoryError, PermissionError):
-            if path.is_dir():
-                return  # a directory is a key prefix, not an object
-            raise
-        self._prune(path.parent)
-
-    def _prune(self, directory: Path) -> None:
-        """Remove ``directory`` and its parents while they are empty, never the root."""
-        while directory != self._root and self._root in directory.parents:
+        while parents:
+            component = parents.pop()
             try:
-                os.rmdir(directory)
+                with self._directory(tuple(parents)) as fd:
+                    os.rmdir(component, dir_fd=fd)
             except OSError:
-                return  # not empty (or already gone): stop
-            directory = directory.parent
+                break
 
     # -- reading ------------------------------------------------------------
 
     def open(self, key: str, *, offset: int = 0, length: Optional[int] = None) -> BinaryIO:
-        path = self.path_for(key)
+        *parents, name = validate_key(key).split("/")
         validate_range(offset, length)
         try:
-            handle = open(path, "rb")
+            with self._directory(tuple(parents)) as fd:
+                handle = open(name, "rb", opener=lambda path, flags: os.open(path, flags, dir_fd=fd))
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
             raise ObjectNotFoundError(f"no object at {key!r}") from None
         if offset == 0 and length is None:
@@ -190,7 +204,9 @@ class FilesystemObjectStore(ObjectStore):
 
     def size(self, key: str) -> int:
         try:
-            info = self.path_for(key).stat()
+            *parents, name = validate_key(key).split("/")
+            with self._directory(tuple(parents)) as fd:
+                info = os.stat(name, dir_fd=fd)
         except (FileNotFoundError, NotADirectoryError):
             raise ObjectNotFoundError(f"no object at {key!r}") from None
         if not stat.S_ISREG(info.st_mode):
@@ -198,7 +214,11 @@ class FilesystemObjectStore(ObjectStore):
         return info.st_size
 
     def exists(self, key: str) -> bool:
-        return self.path_for(key).is_file()
+        try:
+            self.size(key)
+        except ObjectNotFoundError:
+            return False
+        return True
 
     def list(self, prefix: str = "") -> Iterator[str]:
         validate_prefix(prefix)
@@ -209,11 +229,11 @@ class FilesystemObjectStore(ObjectStore):
         # rest (a partial segment) filters names inside it.
         directory, slash, _ = prefix.rpartition("/")
         base = directory + slash  # "" or "uploads/" or "uploads/Zk3x/"
-        yield from self._walk_dir(self._root / directory if directory else self._root, base, prefix)
+        yield from self._walk_dir(tuple(directory.split("/")) if directory else (), base, prefix)
 
-    def _walk_dir(self, directory: Path, base: str, prefix: str) -> Iterator[str]:
+    def _walk_dir(self, directory: tuple[str, ...], base: str, prefix: str) -> Iterator[str]:
         try:
-            with os.scandir(directory) as scan:
+            with self._directory(directory) as fd, os.scandir(fd) as scan:
                 entries = [(entry.name, entry.is_dir(), entry.is_file()) for entry in scan]
         except (FileNotFoundError, NotADirectoryError):
             return
@@ -228,20 +248,14 @@ class FilesystemObjectStore(ObjectStore):
             if is_dir:
                 nested = key + "/"
                 if nested.startswith(prefix) or prefix.startswith(nested):
-                    yield from self._walk_dir(directory / name, nested, prefix)
+                    yield from self._walk_dir((*directory, name), nested, prefix)
             elif is_file and key.startswith(prefix) and is_valid_key(key):
                 yield key
 
 
-def _fsync_dir(path: Path) -> None:
-    """Make a rename inside ``path`` durable; best effort where unsupported."""
-    try:
-        fd = os.open(path, os.O_RDONLY)
-    except OSError:
-        return
+def _fsync_dir(fd: int) -> None:
+    """Make a directory update durable where the filesystem supports it."""
     try:
         os.fsync(fd)
     except OSError:
         pass
-    finally:
-        os.close(fd)

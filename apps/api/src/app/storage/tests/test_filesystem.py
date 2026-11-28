@@ -645,9 +645,16 @@ def test_a_write_goes_through_a_temp_file_fsync_and_rename(root, monkeypatch):
         events.append(("fsync", "dir" if stat.S_ISDIR(mode) else "file"))
         return real_fsync(fd)
 
-    def replace(src, dst):
-        events.append(("replace", os.path.dirname(src), str(dst), os.path.exists(dst)))
-        return real_replace(src, dst)
+    def replace(src, dst, *, dst_dir_fd):
+        try:
+            os.stat(dst, dir_fd=dst_dir_fd)
+        except FileNotFoundError:
+            existed = False
+        else:
+            existed = True
+        assert os.fstat(dst_dir_fd).st_ino == root.stat().st_ino
+        events.append(("replace", os.path.dirname(src), str(dst), existed))
+        return real_replace(src, dst, dst_dir_fd=dst_dir_fd)
 
     monkeypatch.setattr(os, "fsync", fsync)
     monkeypatch.setattr(os, "replace", replace)
@@ -658,7 +665,7 @@ def test_a_write_goes_through_a_temp_file_fsync_and_rename(root, monkeypatch):
     assert kinds == [("fsync", "file"), "replace", ("fsync", "dir")]
     _, source_dir, destination, existed = events[1]
     assert source_dir == str(root / TMP_DIRNAME)  # written beside the destination's filesystem
-    assert destination == str(root / CID)
+    assert destination == CID
     assert existed is False  # nothing was visible at the key before the rename
 
 
